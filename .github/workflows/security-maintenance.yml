@@ -17,12 +17,48 @@ jobs:
       with:
         fetch-depth: 0
     
-    - name: Update Gitleaks Configuration
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        cache-dependency-path: |
+          agent_go/go.sum
+          planner/go.sum
+    
+    - name: Install Security Tools
       run: |
-        # Check for gitleaks updates
-        echo "Checking for gitleaks updates..."
+        # Install jq for JSON processing
+        sudo apt-get update && sudo apt-get install -y jq
+        
+        # Install gitleaks
+        echo "Installing gitleaks..."
         curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r '.tag_name' > latest-gitleaks.txt
-        echo "Latest gitleaks version: $(cat latest-gitleaks.txt)"
+        GITLEAKS_VERSION=$(cat latest-gitleaks.txt)
+        echo "Installing gitleaks version: $GITLEAKS_VERSION"
+        wget -O gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz"
+        tar -xzf gitleaks.tar.gz
+        sudo mv gitleaks /usr/local/bin/
+        rm gitleaks.tar.gz
+        
+        # Install govulncheck
+        echo "Installing govulncheck..."
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        
+        # Verify installations
+        echo "Verifying tool installations:"
+        gitleaks version
+        govulncheck -version
+        jq --version
+        npm --version
+        go version
     
     - name: Security Dependencies Update
       run: |
@@ -88,16 +124,14 @@ jobs:
         fi
         
         # Check Go vulnerabilities
-        if command -v govulncheck &> /dev/null; then
-          echo "Checking Go vulnerabilities..."
-          cd agent_go && govulncheck ./... > ../go-vuln.txt 2>&1 || true
-          cd ..
-          
-          if grep -q "No vulnerabilities found" go-vuln.txt; then
-            echo "✅ **Go Dependencies**: No vulnerabilities" >> security-report.md
-          else
-            echo "⚠️ **Go Dependencies**: Vulnerabilities detected" >> security-report.md
-          fi
+        echo "Checking Go vulnerabilities..."
+        cd agent_go && govulncheck ./... > ../go-vuln.txt 2>&1 || true
+        cd ..
+        
+        if grep -q "No vulnerabilities found" go-vuln.txt; then
+          echo "✅ **Go Dependencies**: No vulnerabilities" >> security-report.md
+        else
+          echo "⚠️ **Go Dependencies**: Vulnerabilities detected" >> security-report.md
         fi
         
         echo "" >> security-report.md
@@ -117,6 +151,7 @@ jobs:
           gitleaks-maintenance.json
           npm-audit.json
           go-vuln.txt
+        if-no-files-found: ignore
     
     - name: Create Security Issue (if secrets found)
       if: failure()

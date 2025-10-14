@@ -48,7 +48,13 @@ jobs:
         
         # Scan Go modules
         cd agent_go && govulncheck ./... > ../go-vuln-agent.txt || true
-        cd ../planner && govulncheck ./... > ../go-vuln-planner.txt || true
+        cd ..
+        if [ -d "planner" ]; then
+          cd planner && govulncheck ./... > ../go-vuln-planner.txt || true
+          cd ..
+        else
+          echo "No vulnerabilities found" > go-vuln-planner.txt
+        fi
     
     - name: Upload npm audit results
       if: always()

@@ -25,6 +25,7 @@ bin/*
 *secret*
 *credential*
 *password*
+!scripts/*secret*.sh
 
 # Binary files
 *.exe

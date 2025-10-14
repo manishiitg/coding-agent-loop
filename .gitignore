@@ -74,6 +74,8 @@ agent_go/service-account.json
 
 # Gitleaks reports and cache
 gitleaks-report.json
+gitleaks-current-only.json
+gitleaks-maintenance.json
 .gitleaks-cache/
 
 .cursor/mcp.json

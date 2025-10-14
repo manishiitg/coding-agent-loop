@@ -65,10 +65,13 @@ export const ChatInput = React.memo<ChatInputProps>(({
 
   // Wrapper for LLM selection to convert LLMOption to LLMConfiguration
   const onPrimaryLLMSelect = useCallback((llm: {provider: string, model: string, label: string, description?: string}) => {
+    // Get current config to preserve fallback models and cross-provider fallback
+    const currentPrimaryConfig = useLLMStore.getState().primaryConfig
+    
     setPrimaryConfig({
-      provider: llm.provider as 'openrouter' | 'bedrock',
-      model_id: llm.model,
-      fallback_models: []
+      ...currentPrimaryConfig, // ✅ Preserve all existing configuration
+      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
+      model_id: llm.model
     })
   }, [setPrimaryConfig])
 

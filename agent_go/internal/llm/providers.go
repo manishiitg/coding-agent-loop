@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"runtime"
 	"strings"
@@ -1171,4 +1172,519 @@ func WithOpenRouterUsage() llms.CallOption {
 		fmt.Printf("🔧 DEBUG: Set OpenRouter usage metadata: %+v\n", opts.Metadata)
 		fmt.Printf("🔧 [DEBUG] WithOpenRouterUsage completed\n")
 	}
+}
+
+// LLM Configuration Management Functions
+
+// LLMDefaultsResponse represents the response structure for LLM defaults
+type LLMDefaultsResponse struct {
+	PrimaryConfig    map[string]interface{} `json:"primary_config"`
+	OpenrouterConfig map[string]interface{} `json:"openrouter_config"`
+	BedrockConfig    map[string]interface{} `json:"bedrock_config"`
+	OpenaiConfig     map[string]interface{} `json:"openai_config"`
+	AvailableModels  map[string][]string    `json:"available_models"`
+}
+
+// APIKeyValidationRequest represents a request to validate an API key
+type APIKeyValidationRequest struct {
+	Provider string `json:"provider"`
+	APIKey   string `json:"api_key"`
+	ModelID  string `json:"model_id,omitempty"` // Optional model ID for Bedrock validation
+}
+
+// APIKeyValidationResponse represents the response for API key validation
+type APIKeyValidationResponse struct {
+	Valid   bool   `json:"valid"`
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// GetLLMDefaults returns default LLM configurations from environment variables
+func GetLLMDefaults() LLMDefaultsResponse {
+	// Get primary configuration from environment
+	defaultProvider := os.Getenv("AGENT_PROVIDER")
+	if defaultProvider == "" {
+		defaultProvider = "openrouter" // fallback default
+	}
+
+	defaultModel := os.Getenv("AGENT_MODEL")
+	if defaultModel == "" {
+		defaultModel = "x-ai/grok-code-fast-1" // fallback default
+	}
+
+	// Parse fallback models
+	fallbackStr := os.Getenv("OPENROUTER_FALLBACK_MODELS")
+	var fallbackModels []string
+	if fallbackStr != "" {
+		fallbackModels = strings.Split(fallbackStr, ",")
+		for i, model := range fallbackModels {
+			fallbackModels[i] = strings.TrimSpace(model)
+		}
+	} else {
+		fallbackModels = []string{} // No fallback defaults
+	}
+
+	// Parse cross-provider fallback
+	crossProvider := os.Getenv("OPENROUTER_CROSS_FALLBACK_PROVIDER")
+	if crossProvider == "" {
+		crossProvider = "openai" // Default fallback provider
+	}
+	crossModelsStr := os.Getenv("OPENROUTER_CROSS_FALLBACK_MODELS")
+	if crossModelsStr == "" {
+		crossModelsStr = os.Getenv("OPEN_ROUTER_CROSS_FALLBACK_MODELS") // Fallback to old naming
+	}
+	var crossModels []string
+	if crossModelsStr != "" {
+		crossModels = strings.Split(crossModelsStr, ",")
+		for i, model := range crossModels {
+			crossModels[i] = strings.TrimSpace(model)
+		}
+	} else {
+		crossModels = []string{} // No cross-provider fallback defaults
+	}
+
+	var crossProviderFallback *map[string]interface{}
+	if crossProvider != "" && len(crossModels) > 0 {
+		crossProviderFallback = &map[string]interface{}{
+			"provider": crossProvider,
+			"models":   crossModels,
+		}
+	}
+
+	// Get API keys from environment for prefilling
+	openrouterAPIKey := os.Getenv("OPENROUTER_API_KEY")
+	if openrouterAPIKey == "" {
+		openrouterAPIKey = os.Getenv("OPEN_ROUTER_API_KEY") // Fallback to old naming
+	}
+	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
+
+	// Bedrock configuration
+	bedrockModel := os.Getenv("BEDROCK_MODEL")
+	if bedrockModel == "" {
+		bedrockModel = os.Getenv("BEDROCK_PRIMARY_MODEL") // Fallback to old naming
+	}
+	if bedrockModel == "" {
+		bedrockModel = "us.anthropic.claude-sonnet-4-20250514-v1:0" // fallback default
+	}
+
+	bedrockFallbackStr := os.Getenv("BEDROCK_FALLBACK_MODELS")
+	var bedrockFallbacks []string
+	if bedrockFallbackStr != "" {
+		bedrockFallbacks = strings.Split(bedrockFallbackStr, ",")
+		for i, model := range bedrockFallbacks {
+			bedrockFallbacks[i] = strings.TrimSpace(model)
+		}
+	} else {
+		bedrockFallbacks = []string{} // No fallback defaults
+	}
+
+	bedrockRegion := os.Getenv("BEDROCK_REGION")
+	if bedrockRegion == "" {
+		bedrockRegion = "us-east-1" // fallback default
+	}
+
+	bedrockCrossProvider := os.Getenv("BEDROCK_CROSS_FALLBACK_PROVIDER")
+	if bedrockCrossProvider == "" {
+		bedrockCrossProvider = "openai" // Default fallback provider
+	}
+	bedrockCrossModelsStr := os.Getenv("BEDROCK_CROSS_FALLBACK_MODELS")
+	if bedrockCrossModelsStr == "" {
+		bedrockCrossModelsStr = os.Getenv("BEDROCK_OPENAI_FALLBACK_MODELS") // Fallback to old naming
+	}
+	var bedrockCrossModels []string
+	if bedrockCrossModelsStr != "" {
+		bedrockCrossModels = strings.Split(bedrockCrossModelsStr, ",")
+		for i, model := range bedrockCrossModels {
+			bedrockCrossModels[i] = strings.TrimSpace(model)
+		}
+	} else {
+		bedrockCrossModels = []string{} // No cross-provider fallback defaults
+	}
+
+	var bedrockCrossProviderFallback *map[string]interface{}
+	if bedrockCrossProvider != "" && len(bedrockCrossModels) > 0 {
+		bedrockCrossProviderFallback = &map[string]interface{}{
+			"provider": bedrockCrossProvider,
+			"models":   bedrockCrossModels,
+		}
+	}
+
+	// OpenAI configuration
+	openaiModel := os.Getenv("OPENAI_MODEL")
+	if openaiModel == "" {
+		openaiModel = os.Getenv("OPENAI_PRIMARY_MODEL") // Fallback to old naming
+	}
+	if openaiModel == "" {
+		openaiModel = "gpt-4o" // fallback default
+	}
+
+	openaiFallbackStr := os.Getenv("OPENAI_FALLBACK_MODELS")
+	var openaiFallbacks []string
+	if openaiFallbackStr != "" {
+		openaiFallbacks = strings.Split(openaiFallbackStr, ",")
+		for i, model := range openaiFallbacks {
+			openaiFallbacks[i] = strings.TrimSpace(model)
+		}
+	} else {
+		openaiFallbacks = []string{} // No fallback defaults
+	}
+
+	openaiCrossProvider := os.Getenv("OPENAI_CROSS_FALLBACK_PROVIDER")
+	if openaiCrossProvider == "" {
+		openaiCrossProvider = "bedrock" // Default fallback provider
+	}
+	openaiCrossModelsStr := os.Getenv("OPENAI_CROSS_FALLBACK_MODELS")
+	if openaiCrossModelsStr == "" {
+		openaiCrossModelsStr = os.Getenv("OPENAI_BEDROCK_FALLBACK_MODELS") // Fallback to old naming
+	}
+	var openaiCrossModels []string
+	if openaiCrossModelsStr != "" {
+		openaiCrossModels = strings.Split(openaiCrossModelsStr, ",")
+		for i, model := range openaiCrossModels {
+			openaiCrossModels[i] = strings.TrimSpace(model)
+		}
+	} else {
+		openaiCrossModels = []string{} // No cross-provider fallback defaults
+	}
+
+	var openaiCrossProviderFallback *map[string]interface{}
+	if openaiCrossProvider != "" && len(openaiCrossModels) > 0 {
+		openaiCrossProviderFallback = &map[string]interface{}{
+			"provider": openaiCrossProvider,
+			"models":   openaiCrossModels,
+		}
+	}
+
+	// Build response
+	return LLMDefaultsResponse{
+		PrimaryConfig: map[string]interface{}{
+			"provider":                defaultProvider,
+			"model_id":                defaultModel,
+			"fallback_models":         fallbackModels,
+			"cross_provider_fallback": crossProviderFallback,
+		},
+		OpenrouterConfig: map[string]interface{}{
+			"provider":                "openrouter",
+			"model_id":                defaultModel,
+			"fallback_models":         fallbackModels,
+			"cross_provider_fallback": crossProviderFallback,
+			"api_key":                 openrouterAPIKey, // Prefill from environment if available
+		},
+		BedrockConfig: map[string]interface{}{
+			"provider":                "bedrock",
+			"model_id":                bedrockModel,
+			"fallback_models":         bedrockFallbacks,
+			"cross_provider_fallback": bedrockCrossProviderFallback,
+			"region":                  bedrockRegion,
+		},
+		OpenaiConfig: map[string]interface{}{
+			"provider":                "openai",
+			"model_id":                openaiModel,
+			"fallback_models":         openaiFallbacks,
+			"cross_provider_fallback": openaiCrossProviderFallback,
+			"api_key":                 openaiAPIKey, // Prefill from environment if available
+		},
+		AvailableModels: map[string][]string{
+			"bedrock":    getBedrockAvailableModels(),
+			"openrouter": getOpenRouterAvailableModels(),
+			"openai":     getOpenAIAvailableModels(),
+		},
+	}
+}
+
+// ValidateAPIKey validates API keys for OpenRouter, OpenAI, and Bedrock
+func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
+	fmt.Printf("[API KEY VALIDATION] Request received\n")
+
+	keyPrefix := req.APIKey
+	if len(keyPrefix) > 10 {
+		keyPrefix = keyPrefix[:10]
+	}
+	fmt.Printf("[API KEY VALIDATION] Provider: %s, Key prefix: %s...\n", req.Provider, keyPrefix)
+
+	var isValid bool
+	var message string
+	var err error
+
+	fmt.Printf("[API KEY VALIDATION] Validating %s API key\n", req.Provider)
+	switch req.Provider {
+	case "openrouter":
+		isValid, message, err = validateOpenRouterAPIKey(req.APIKey)
+	case "openai":
+		isValid, message, err = validateOpenAIAPIKey(req.APIKey)
+	case "bedrock":
+		// Bedrock uses AWS credentials, test them instead of API key
+		fmt.Printf("[API KEY VALIDATION] Testing AWS Bedrock credentials\n")
+		isValid, message, err = validateBedrockCredentials(req.ModelID)
+	default:
+		fmt.Printf("[API KEY VALIDATION WARN] Unsupported provider: %s\n", req.Provider)
+		return APIKeyValidationResponse{
+			Valid: false,
+			Error: "Unsupported provider",
+		}
+	}
+
+	// Handle validation errors
+	if err != nil {
+		fmt.Printf("[API KEY VALIDATION ERROR] %s validation failed: %v\n", req.Provider, err)
+		return APIKeyValidationResponse{
+			Valid: false,
+			Error: fmt.Sprintf("Validation failed: %v", err),
+		}
+	}
+
+	// Return validation result
+	if isValid {
+		fmt.Printf("[API KEY VALIDATION SUCCESS] %s: %s\n", req.Provider, message)
+	} else {
+		fmt.Printf("[API KEY VALIDATION FAILED] %s: %s\n", req.Provider, message)
+	}
+
+	return APIKeyValidationResponse{
+		Valid:   isValid,
+		Message: message,
+	}
+}
+
+// validateOpenRouterAPIKey validates an OpenRouter API key
+func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
+	fmt.Printf("[OPENROUTER VALIDATION] Starting API key validation\n")
+
+	// Basic format validation
+	if !strings.HasPrefix(apiKey, "sk-or-") {
+		fmt.Printf("[OPENROUTER VALIDATION WARN] Format validation failed - missing sk-or- prefix\n")
+		return false, "Invalid OpenRouter API key format", nil
+	}
+	fmt.Printf("[OPENROUTER VALIDATION] Format validation passed\n")
+
+	// Test the API key by making a request to OpenRouter
+	fmt.Printf("[OPENROUTER VALIDATION] Making request to OpenRouter API\n")
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", "https://openrouter.ai/api/v1/models", nil)
+	if err != nil {
+		fmt.Printf("[OPENROUTER VALIDATION ERROR] Failed to create request: %v\n", err)
+		return false, "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	fmt.Printf("[OPENROUTER VALIDATION] Sending request to OpenRouter API\n")
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("[OPENROUTER VALIDATION ERROR] Request failed: %v\n", err)
+		return false, "", fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("[OPENROUTER VALIDATION] Response status: %d\n", resp.StatusCode)
+
+	switch resp.StatusCode {
+	case 200:
+		fmt.Printf("[OPENROUTER VALIDATION SUCCESS] API key is valid\n")
+		return true, "OpenRouter API key is valid", nil
+	case 401:
+		fmt.Printf("[OPENROUTER VALIDATION FAILED] Unauthorized - invalid API key\n")
+		return false, "Invalid OpenRouter API key", nil
+	case 429:
+		fmt.Printf("[OPENROUTER VALIDATION FAILED] Rate limit exceeded\n")
+		return false, "OpenRouter API rate limit exceeded", nil
+	default:
+		fmt.Printf("[OPENROUTER VALIDATION FAILED] Unexpected status: %d\n", resp.StatusCode)
+		return false, fmt.Sprintf("OpenRouter API returned status %d", resp.StatusCode), nil
+	}
+}
+
+// validateOpenAIAPIKey validates an OpenAI API key
+func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
+	fmt.Printf("[OPENAI VALIDATION] Starting API key validation\n")
+
+	// Basic format validation
+	if !strings.HasPrefix(apiKey, "sk-") {
+		fmt.Printf("[OPENAI VALIDATION WARN] Format validation failed - missing sk- prefix\n")
+		return false, "Invalid OpenAI API key format", nil
+	}
+	fmt.Printf("[OPENAI VALIDATION] Format validation passed\n")
+
+	// Test the API key by making a request to OpenAI
+	fmt.Printf("[OPENAI VALIDATION] Making request to OpenAI API\n")
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
+	if err != nil {
+		fmt.Printf("[OPENAI VALIDATION ERROR] Failed to create request: %v\n", err)
+		return false, "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	fmt.Printf("[OPENAI VALIDATION] Sending request to OpenAI API\n")
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("[OPENAI VALIDATION ERROR] Request failed: %v\n", err)
+		return false, "", fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("[OPENAI VALIDATION] Response status: %d\n", resp.StatusCode)
+
+	switch resp.StatusCode {
+	case 200:
+		fmt.Printf("[OPENAI VALIDATION SUCCESS] API key is valid\n")
+		return true, "OpenAI API key is valid", nil
+	case 401:
+		fmt.Printf("[OPENAI VALIDATION FAILED] Unauthorized - invalid API key\n")
+		return false, "Invalid OpenAI API key", nil
+	case 429:
+		fmt.Printf("[OPENAI VALIDATION FAILED] Rate limit exceeded\n")
+		return false, "OpenAI API rate limit exceeded", nil
+	default:
+		fmt.Printf("[OPENAI VALIDATION FAILED] Unexpected status: %d\n", resp.StatusCode)
+		return false, fmt.Sprintf("OpenAI API returned status %d", resp.StatusCode), nil
+	}
+}
+
+// validateBedrockCredentials validates AWS Bedrock credentials and region
+func validateBedrockCredentials(modelID string) (bool, string, error) {
+	fmt.Printf("[BEDROCK VALIDATION] Starting AWS Bedrock credentials validation\n")
+
+	// Check if AWS region is configured
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		fmt.Printf("[BEDROCK VALIDATION WARN] AWS_REGION environment variable not set\n")
+		return false, "AWS_REGION environment variable not set", nil
+	}
+	fmt.Printf("[BEDROCK VALIDATION] AWS region: %s\n", region)
+
+	// Check if AWS credentials are configured
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+
+	if accessKey == "" || secretKey == "" {
+		fmt.Printf("[BEDROCK VALIDATION WARN] AWS credentials not configured\n")
+		return false, "AWS credentials not configured (AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY missing)", nil
+	}
+	fmt.Printf("[BEDROCK VALIDATION] AWS credentials configured\n")
+
+	// Use provided model ID or fallback to default
+	if modelID == "" {
+		modelID = "us.anthropic.claude-3-haiku-20240307-v1:0" // fallback default
+		fmt.Printf("[BEDROCK VALIDATION] Using fallback model ID: %s\n", modelID)
+	} else {
+		fmt.Printf("[BEDROCK VALIDATION] Using provided model ID: %s\n", modelID)
+	}
+
+	// Test Bedrock access by creating a Bedrock LLM instance
+	fmt.Printf("[BEDROCK VALIDATION] Testing Bedrock access by creating LLM instance\n")
+
+	// Create Bedrock LLM instance
+	llm, err := bedrock.New(bedrock.WithModel(modelID))
+	if err != nil {
+		fmt.Printf("[BEDROCK VALIDATION ERROR] Failed to create Bedrock LLM: %v\n", err)
+		// Check for specific error types
+		if strings.Contains(err.Error(), "UnauthorizedOperation") || strings.Contains(err.Error(), "AccessDenied") {
+			return false, "AWS credentials do not have permission to access Bedrock", nil
+		}
+		if strings.Contains(err.Error(), "InvalidUserID.NotFound") {
+			return false, "AWS credentials are invalid", nil
+		}
+		if strings.Contains(err.Error(), "timeout") {
+			return false, "Bedrock service timeout - check network connectivity", nil
+		}
+		return false, fmt.Sprintf("Bedrock access failed: %v", err), nil
+	}
+
+	// Test the LLM with a simple generation call
+	fmt.Printf("[BEDROCK VALIDATION] Making test generation call to Bedrock\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_, err = llm.GenerateContent(ctx, []llms.MessageContent{
+		{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextPart("test")},
+		},
+	})
+	if err != nil {
+		fmt.Printf("[BEDROCK VALIDATION ERROR] Bedrock test generation failed: %v\n", err)
+		// Check for specific error types
+		if strings.Contains(err.Error(), "UnauthorizedOperation") || strings.Contains(err.Error(), "AccessDenied") {
+			return false, "AWS credentials do not have permission to access Bedrock", nil
+		}
+		if strings.Contains(err.Error(), "InvalidUserID.NotFound") {
+			return false, "AWS credentials are invalid", nil
+		}
+		if strings.Contains(err.Error(), "timeout") {
+			return false, "Bedrock service timeout - check network connectivity", nil
+		}
+		return false, fmt.Sprintf("Bedrock test generation failed: %v", err), nil
+	}
+
+	fmt.Printf("[BEDROCK VALIDATION SUCCESS] AWS Bedrock credentials are valid\n")
+	return true, "AWS Bedrock credentials are valid", nil
+}
+
+// Helper functions to get available models from environment variables
+
+// getBedrockAvailableModels returns available Bedrock models from environment variables
+func getBedrockAvailableModels() []string {
+	// Get from environment variable
+	modelsStr := os.Getenv("BEDROCK_AVAILABLE_MODELS")
+	if modelsStr == "" {
+		// Fallback to old naming
+		modelsStr = os.Getenv("BEDROCK_MODELS")
+	}
+	if modelsStr == "" {
+		// Return empty array if no environment variable is set
+		return []string{}
+	}
+
+	// Parse comma-separated models
+	models := strings.Split(modelsStr, ",")
+	for i, model := range models {
+		models[i] = strings.TrimSpace(model)
+	}
+	return models
+}
+
+// getOpenRouterAvailableModels returns available OpenRouter models from environment variables
+func getOpenRouterAvailableModels() []string {
+	// Get from environment variable
+	modelsStr := os.Getenv("OPENROUTER_AVAILABLE_MODELS")
+	if modelsStr == "" {
+		// Fallback to old naming
+		modelsStr = os.Getenv("OPEN_ROUTER_MODELS")
+	}
+	if modelsStr == "" {
+		// Return empty array if no environment variable is set
+		return []string{}
+	}
+
+	// Parse comma-separated models
+	models := strings.Split(modelsStr, ",")
+	for i, model := range models {
+		models[i] = strings.TrimSpace(model)
+	}
+	return models
+}
+
+// getOpenAIAvailableModels returns available OpenAI models from environment variables
+func getOpenAIAvailableModels() []string {
+	// Get from environment variable
+	modelsStr := os.Getenv("OPENAI_AVAILABLE_MODELS")
+	if modelsStr == "" {
+		// Fallback to old naming
+		modelsStr = os.Getenv("OPENAI_MODELS")
+	}
+	if modelsStr == "" {
+		// Return empty array if no environment variable is set
+		return []string{}
+	}
+
+	// Parse comma-separated models
+	models := strings.Split(modelsStr, ",")
+	for i, model := range models {
+		models[i] = strings.TrimSpace(model)
+	}
+	return models
 }

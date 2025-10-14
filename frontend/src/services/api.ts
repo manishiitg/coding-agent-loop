@@ -22,7 +22,7 @@ import type {
   ReconnectSessionResponse,
   SessionStatusResponse,
   LLMGuidanceResponse,
-  HumanFeedbackResponse
+  HumanFeedbackResponse,
 } from './api-types'
 
 // Re-export types for other components to use
@@ -208,6 +208,7 @@ export const agentApi = {
     const response = await api.get('/api/capabilities')
     return response.data
   },
+
 
   // LLM Guidance Management
   // Set LLM guidance for a session

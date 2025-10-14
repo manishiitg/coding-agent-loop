@@ -72,6 +72,8 @@ paths = [
   '''^agent_go/\.env\.backup$''', # Ignore backup env files (contain real secrets but are backups)
   '''^agent_go/pkg/external/ENV_GUIDE\.md$''', # Ignore ENV guide (contains example secrets)
   '''^bugs-tasks-complete-progress/''', # Ignore bug documentation files
+  '''^docker-compose\.yml$''', # Ignore docker-compose.yml (contains test API keys)
+  '''^agent_go/run_server_with_logging\.sh$''', # Ignore run_server_with_logging.sh (contains test API keys)
   '''^bug\.md$''', # Ignore bug documentation files
   '''^configs/mcp_servers_clean\.json$''', # Example config, no real secrets
   '''^configs/mcp_servers_clean_user\.json$''', # Example config, no real secrets

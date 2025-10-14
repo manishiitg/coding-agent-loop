@@ -33,10 +33,10 @@ verbose = true
 # Output configuration
 [output]
   # Output format (json, sarif, csv, or noop)
-  format = "json"
+  format = "sarif"
   
   # Output file path
-  path = "gitleaks-report.json"
+  path = "gitleaks-report.sarif"
   
   # Include additional metadata
   verbose = true
@@ -82,7 +82,8 @@ paths = [
   '''env.example''', # Example environment file, no real secrets
   '''agent_go/env.example''', # Example environment file, no real secrets
   '''agent_go/service-account.json''', # Google Cloud service account key (should be in .gitignore)
-  '''gitleaks-report.json''', # Ignore gitleaks report itself
+  '''gitleaks-report.sarif''', # Ignore gitleaks SARIF report itself
+  '''gitleaks-report.json''', # Ignore gitleaks JSON report (legacy)
   '''gitleaks-current-scan.json''', # Ignore current scan report
   '''gitleaks-test.json''', # Ignore test scan report
   '''gitleaks-final-test.json''', # Ignore final test scan report
@@ -244,4 +245,4 @@ paths = [
   
 [[rules.exclude]]
   # Exclude gitleaks reports
-  path = '''gitleaks-report\.json'''
+  path = '''gitleaks-report\.(json|sarif)'''

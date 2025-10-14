@@ -147,7 +147,7 @@ export const useLLMStore = create<LLMState>()(
           if (!customBedrockModels.includes(model)) {
             set({ customBedrockModels: [...customBedrockModels, model] })
           }
-        },
+        }, 
         
         removeCustomBedrockModel: (model) => {
           const { customBedrockModels } = get()
@@ -194,29 +194,6 @@ export const useLLMStore = create<LLMState>()(
               defaultsLoaded: true,
               error: null
             })
-
-            // Automatically test prefilled API keys after state is updated
-            const { testAPIKey } = get()
-            
-            // Test OpenRouter API key if present
-            if (defaults.openrouter_config.api_key) {
-              try {
-                const isValid = await testAPIKey('openrouter', defaults.openrouter_config.api_key)
-                console.log('OpenRouter API key validation:', isValid ? 'valid' : 'invalid')
-              } catch (error) {
-                console.log('OpenRouter API key validation failed:', error)
-              }
-            }
-
-            // Test OpenAI API key if present
-            if (defaults.openai_config.api_key) {
-              try {
-                const isValid = await testAPIKey('openai', defaults.openai_config.api_key)
-                console.log('OpenAI API key validation:', isValid ? 'valid' : 'invalid')
-              } catch (error) {
-                console.log('OpenAI API key validation failed:', error)
-              }
-            }
           } catch (error) {
             console.error('Failed to load LLM defaults from backend:', error)
             set({ 
@@ -229,11 +206,18 @@ export const useLLMStore = create<LLMState>()(
         // API key testing
         testAPIKey: async (provider, apiKey, modelId?: string) => {
           try {
-            if (!apiKey.trim()) return { valid: false, error: 'API key is empty' }
+            // Only check for empty API key for non-Bedrock providers
+            if (provider !== 'bedrock' && !apiKey.trim()) {
+              return { valid: false, error: 'API key is empty' }
+            }
             
             const request: APIKeyValidationRequest = {
-              provider,
-              api_key: apiKey
+              provider
+            }
+            
+            // Only include api_key for non-Bedrock providers
+            if (provider !== 'bedrock') {
+              request.api_key = apiKey
             }
             
             // Add model ID for Bedrock validation

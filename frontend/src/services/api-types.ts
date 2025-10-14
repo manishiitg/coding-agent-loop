@@ -67,7 +67,7 @@ export interface LLMDefaultsResponse {
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
   provider: 'openrouter' | 'openai' | 'bedrock'
-  api_key: string
+  api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
 }
 

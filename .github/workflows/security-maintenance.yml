@@ -81,10 +81,12 @@ jobs:
     
     - name: Generate Security Report
       run: |
-        echo "# Security Maintenance Report - $(date)" > security-report.md
-        echo "" >> security-report.md
-        echo "## Gitleaks Scan Results" >> security-report.md
-        echo "" >> security-report.md
+        {
+          echo "# Security Maintenance Report - $(date)"
+          echo
+          echo "## Gitleaks Scan Results"
+          echo
+        } > security-report.md
         
         # Run gitleaks scan
         gitleaks detect --source . --config .gitleaks.toml --report-path gitleaks-maintenance.json --verbose --redact || true
@@ -105,9 +107,11 @@ jobs:
           echo "✅ **Status**: No secrets detected" >> security-report.md
         fi
         
-        echo "" >> security-report.md
-        echo "## Dependency Security" >> security-report.md
-        echo "" >> security-report.md
+        {
+          echo
+          echo "## Dependency Security"
+          echo
+        } >> security-report.md
         
         # Check npm vulnerabilities
         if [ -f "frontend/package-lock.json" ]; then
@@ -115,9 +119,10 @@ jobs:
           npm audit --audit-level=moderate --json > ../npm-audit.json 2>/dev/null || echo '{"vulnerabilities":{}}' > ../npm-audit.json
           cd ..
           
-          vuln_count=$(jq '.vulnerabilities | length' npm-audit.json)
-          if [ "$vuln_count" -gt 0 ]; then
-            echo "⚠️ **NPM Vulnerabilities**: $vuln_count found" >> security-report.md
+          # npm v8+ often includes a summary object
+          total=$(jq 'try (.metadata.vulnerabilities | to_entries | map(.value) | add) catch 0' npm-audit.json)
+          if [ "${total:-0}" -gt 0 ]; then
+            echo "⚠️ **NPM Vulnerabilities**: $total found" >> security-report.md
           else
             echo "✅ **NPM Dependencies**: No vulnerabilities" >> security-report.md
           fi
@@ -125,22 +130,25 @@ jobs:
         
         # Check Go vulnerabilities
         echo "Checking Go vulnerabilities..."
-        cd agent_go && govulncheck ./... > ../go-vuln.txt 2>&1 || true
+        cd agent_go && govulncheck -json ./... > ../go-vuln.json 2>&1 || true
         cd ..
         
-        if grep -q "No vulnerabilities found" go-vuln.txt; then
-          echo "✅ **Go Dependencies**: No vulnerabilities" >> security-report.md
-        else
+        has_vulns=$(jq 'try (.vulns | length) catch 0' go-vuln.json 2>/dev/null || echo 0)
+        if [ "${has_vulns:-0}" -gt 0 ]; then
           echo "⚠️ **Go Dependencies**: Vulnerabilities detected" >> security-report.md
+        else
+          echo "✅ **Go Dependencies**: No vulnerabilities" >> security-report.md
         fi
         
-        echo "" >> security-report.md
-        echo "## Recommendations" >> security-report.md
-        echo "" >> security-report.md
-        echo "- Review and address any detected secrets" >> security-report.md
-        echo "- Update vulnerable dependencies" >> security-report.md
-        echo "- Run manual security scans regularly" >> security-report.md
-        echo "- Keep security tools updated" >> security-report.md
+        {
+          echo
+          echo "## Recommendations"
+          echo
+          echo "- Review and address any detected secrets"
+          echo "- Update vulnerable dependencies"
+          echo "- Run manual security scans regularly"
+          echo "- Keep security tools updated"
+        } >> security-report.md
     
     - name: Upload Security Report
       uses: actions/upload-artifact@v4
@@ -150,7 +158,7 @@ jobs:
           security-report.md
           gitleaks-maintenance.json
           npm-audit.json
-          go-vuln.txt
+          go-vuln.json
         if-no-files-found: ignore
     
     - name: Create Security Issue (if secrets found)

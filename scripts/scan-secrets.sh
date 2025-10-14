@@ -3,12 +3,11 @@
 # Manual Secret Scanning Script
 # Run this to scan for secrets in your repository
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
@@ -28,7 +27,14 @@ echo "Scanning path: $SCAN_PATH"
 echo ""
 
 # Run gitleaks scan
-if gitleaks detect --source "$SCAN_PATH" --config .gitleaks.toml --verbose --report-format json --report-path gitleaks-report.json; then
+CONFIG_FILE=".gitleaks.toml"
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo -e "${YELLOW:-}⚠️ Config $CONFIG_FILE not found; running with gitleaks defaults${NC}"
+  CONFIG_ARGS=""
+else
+  CONFIG_ARGS="--config $CONFIG_FILE"
+fi
+if gitleaks detect --source "$SCAN_PATH" $CONFIG_ARGS --verbose --report-format json --report-path gitleaks-report.json; then
     echo -e "${GREEN}✅ No secrets detected in $SCAN_PATH${NC}"
     rm -f gitleaks-report.json
 else

@@ -11,6 +11,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/logger"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
@@ -1394,19 +1395,15 @@ func GetLLMDefaults() LLMDefaultsResponse {
 
 // ValidateAPIKey validates API keys for OpenRouter, OpenAI, and Bedrock
 func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
-	fmt.Printf("[API KEY VALIDATION] Request received\n")
-
-	keyPrefix := req.APIKey
-	if len(keyPrefix) > 10 {
-		keyPrefix = keyPrefix[:10]
-	}
-	fmt.Printf("[API KEY VALIDATION] Provider: %s, Key prefix: %s...\n", req.Provider, keyPrefix)
+	// Create logger for structured logging
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[API KEY VALIDATION] Request received for provider: %s", req.Provider)
 
 	var isValid bool
 	var message string
 	var err error
 
-	fmt.Printf("[API KEY VALIDATION] Validating %s API key\n", req.Provider)
+	logger.Infof("[API KEY VALIDATION] Validating %s API key", req.Provider)
 	switch req.Provider {
 	case "openrouter":
 		isValid, message, err = validateOpenRouterAPIKey(req.APIKey)
@@ -1414,10 +1411,10 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 		isValid, message, err = validateOpenAIAPIKey(req.APIKey)
 	case "bedrock":
 		// Bedrock uses AWS credentials, test them instead of API key
-		fmt.Printf("[API KEY VALIDATION] Testing AWS Bedrock credentials\n")
+		logger.Infof("[API KEY VALIDATION] Testing AWS Bedrock credentials")
 		isValid, message, err = validateBedrockCredentials(req.ModelID)
 	default:
-		fmt.Printf("[API KEY VALIDATION WARN] Unsupported provider: %s\n", req.Provider)
+		logger.Warnf("[API KEY VALIDATION WARN] Unsupported provider: %s", req.Provider)
 		return APIKeyValidationResponse{
 			Valid: false,
 			Error: "Unsupported provider",
@@ -1426,7 +1423,7 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 
 	// Handle validation errors
 	if err != nil {
-		fmt.Printf("[API KEY VALIDATION ERROR] %s validation failed: %v\n", req.Provider, err)
+		logger.Errorf("[API KEY VALIDATION ERROR] %s validation failed: %v", req.Provider, err)
 		return APIKeyValidationResponse{
 			Valid: false,
 			Error: fmt.Sprintf("Validation failed: %v", err),
@@ -1435,9 +1432,9 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 
 	// Return validation result
 	if isValid {
-		fmt.Printf("[API KEY VALIDATION SUCCESS] %s: %s\n", req.Provider, message)
+		logger.Infof("[API KEY VALIDATION SUCCESS] %s: %s", req.Provider, message)
 	} else {
-		fmt.Printf("[API KEY VALIDATION FAILED] %s: %s\n", req.Provider, message)
+		logger.Warnf("[API KEY VALIDATION FAILED] %s: %s", req.Provider, message)
 	}
 
 	return APIKeyValidationResponse{
@@ -1448,139 +1445,142 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 
 // validateOpenRouterAPIKey validates an OpenRouter API key
 func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
-	fmt.Printf("[OPENROUTER VALIDATION] Starting API key validation\n")
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[OPENROUTER VALIDATION] Starting API key validation")
 
 	// Basic format validation
 	if !strings.HasPrefix(apiKey, "sk-or-") {
-		fmt.Printf("[OPENROUTER VALIDATION WARN] Format validation failed - missing sk-or- prefix\n")
+		logger.Warnf("[OPENROUTER VALIDATION WARN] Format validation failed - missing sk-or- prefix")
 		return false, "Invalid OpenRouter API key format", nil
 	}
-	fmt.Printf("[OPENROUTER VALIDATION] Format validation passed\n")
+	logger.Infof("[OPENROUTER VALIDATION] Format validation passed")
 
 	// Test the API key by making a request to OpenRouter
-	fmt.Printf("[OPENROUTER VALIDATION] Making request to OpenRouter API\n")
+	logger.Infof("[OPENROUTER VALIDATION] Making request to OpenRouter API")
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://openrouter.ai/api/v1/models", nil)
 	if err != nil {
-		fmt.Printf("[OPENROUTER VALIDATION ERROR] Failed to create request: %v\n", err)
+		logger.Errorf("[OPENROUTER VALIDATION ERROR] Failed to create request: %v", err)
 		return false, "", fmt.Errorf("failed to create request: %v", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	fmt.Printf("[OPENROUTER VALIDATION] Sending request to OpenRouter API\n")
+	logger.Infof("[OPENROUTER VALIDATION] Sending request to OpenRouter API")
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("[OPENROUTER VALIDATION ERROR] Request failed: %v\n", err)
+		logger.Errorf("[OPENROUTER VALIDATION ERROR] Request failed: %v", err)
 		return false, "", fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("[OPENROUTER VALIDATION] Response status: %d\n", resp.StatusCode)
+	logger.Infof("[OPENROUTER VALIDATION] Response status: %d", resp.StatusCode)
 
 	switch resp.StatusCode {
 	case 200:
-		fmt.Printf("[OPENROUTER VALIDATION SUCCESS] API key is valid\n")
+		logger.Infof("[OPENROUTER VALIDATION SUCCESS] API key is valid")
 		return true, "OpenRouter API key is valid", nil
 	case 401:
-		fmt.Printf("[OPENROUTER VALIDATION FAILED] Unauthorized - invalid API key\n")
+		logger.Warnf("[OPENROUTER VALIDATION FAILED] Unauthorized - invalid API key")
 		return false, "Invalid OpenRouter API key", nil
 	case 429:
-		fmt.Printf("[OPENROUTER VALIDATION FAILED] Rate limit exceeded\n")
+		logger.Warnf("[OPENROUTER VALIDATION FAILED] Rate limit exceeded")
 		return false, "OpenRouter API rate limit exceeded", nil
 	default:
-		fmt.Printf("[OPENROUTER VALIDATION FAILED] Unexpected status: %d\n", resp.StatusCode)
+		logger.Warnf("[OPENROUTER VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
 		return false, fmt.Sprintf("OpenRouter API returned status %d", resp.StatusCode), nil
 	}
 }
 
 // validateOpenAIAPIKey validates an OpenAI API key
 func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
-	fmt.Printf("[OPENAI VALIDATION] Starting API key validation\n")
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[OPENAI VALIDATION] Starting API key validation")
 
 	// Basic format validation
 	if !strings.HasPrefix(apiKey, "sk-") {
-		fmt.Printf("[OPENAI VALIDATION WARN] Format validation failed - missing sk- prefix\n")
+		logger.Warnf("[OPENAI VALIDATION WARN] Format validation failed - missing sk- prefix")
 		return false, "Invalid OpenAI API key format", nil
 	}
-	fmt.Printf("[OPENAI VALIDATION] Format validation passed\n")
+	logger.Infof("[OPENAI VALIDATION] Format validation passed")
 
 	// Test the API key by making a request to OpenAI
-	fmt.Printf("[OPENAI VALIDATION] Making request to OpenAI API\n")
+	logger.Infof("[OPENAI VALIDATION] Making request to OpenAI API")
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
 	if err != nil {
-		fmt.Printf("[OPENAI VALIDATION ERROR] Failed to create request: %v\n", err)
+		logger.Errorf("[OPENAI VALIDATION ERROR] Failed to create request: %v", err)
 		return false, "", fmt.Errorf("failed to create request: %v", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	fmt.Printf("[OPENAI VALIDATION] Sending request to OpenAI API\n")
+	logger.Infof("[OPENAI VALIDATION] Sending request to OpenAI API")
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("[OPENAI VALIDATION ERROR] Request failed: %v\n", err)
+		logger.Errorf("[OPENAI VALIDATION ERROR] Request failed: %v", err)
 		return false, "", fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("[OPENAI VALIDATION] Response status: %d\n", resp.StatusCode)
+	logger.Infof("[OPENAI VALIDATION] Response status: %d", resp.StatusCode)
 
 	switch resp.StatusCode {
 	case 200:
-		fmt.Printf("[OPENAI VALIDATION SUCCESS] API key is valid\n")
+		logger.Infof("[OPENAI VALIDATION SUCCESS] API key is valid")
 		return true, "OpenAI API key is valid", nil
 	case 401:
-		fmt.Printf("[OPENAI VALIDATION FAILED] Unauthorized - invalid API key\n")
+		logger.Warnf("[OPENAI VALIDATION FAILED] Unauthorized - invalid API key")
 		return false, "Invalid OpenAI API key", nil
 	case 429:
-		fmt.Printf("[OPENAI VALIDATION FAILED] Rate limit exceeded\n")
+		logger.Warnf("[OPENAI VALIDATION FAILED] Rate limit exceeded")
 		return false, "OpenAI API rate limit exceeded", nil
 	default:
-		fmt.Printf("[OPENAI VALIDATION FAILED] Unexpected status: %d\n", resp.StatusCode)
+		logger.Warnf("[OPENAI VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
 		return false, fmt.Sprintf("OpenAI API returned status %d", resp.StatusCode), nil
 	}
 }
 
 // validateBedrockCredentials validates AWS Bedrock credentials and region
 func validateBedrockCredentials(modelID string) (bool, string, error) {
-	fmt.Printf("[BEDROCK VALIDATION] Starting AWS Bedrock credentials validation\n")
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[BEDROCK VALIDATION] Starting AWS Bedrock credentials validation")
 
 	// Check if AWS region is configured
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
-		fmt.Printf("[BEDROCK VALIDATION WARN] AWS_REGION environment variable not set\n")
+		logger.Warnf("[BEDROCK VALIDATION WARN] AWS_REGION environment variable not set")
 		return false, "AWS_REGION environment variable not set", nil
 	}
-	fmt.Printf("[BEDROCK VALIDATION] AWS region: %s\n", region)
+	logger.Infof("[BEDROCK VALIDATION] AWS region: %s", region)
 
 	// Check if AWS credentials are configured
 	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
 	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 	if accessKey == "" || secretKey == "" {
-		fmt.Printf("[BEDROCK VALIDATION WARN] AWS credentials not configured\n")
+		logger.Warnf("[BEDROCK VALIDATION WARN] AWS credentials not configured")
 		return false, "AWS credentials not configured (AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY missing)", nil
 	}
-	fmt.Printf("[BEDROCK VALIDATION] AWS credentials configured\n")
+	logger.Infof("[BEDROCK VALIDATION] AWS credentials configured")
 
 	// Use provided model ID or fallback to default
 	if modelID == "" {
 		modelID = "us.anthropic.claude-3-haiku-20240307-v1:0" // fallback default
-		fmt.Printf("[BEDROCK VALIDATION] Using fallback model ID: %s\n", modelID)
+		logger.Infof("[BEDROCK VALIDATION] Using fallback model ID: %s", modelID)
 	} else {
-		fmt.Printf("[BEDROCK VALIDATION] Using provided model ID: %s\n", modelID)
+		logger.Infof("[BEDROCK VALIDATION] Using provided model ID: %s", modelID)
 	}
 
 	// Test Bedrock access by creating a Bedrock LLM instance
-	fmt.Printf("[BEDROCK VALIDATION] Testing Bedrock access by creating LLM instance\n")
+	logger.Infof("[BEDROCK VALIDATION] Testing Bedrock access by creating LLM instance")
 
 	// Create Bedrock LLM instance
 	llm, err := bedrock.New(bedrock.WithModel(modelID))
 	if err != nil {
-		fmt.Printf("[BEDROCK VALIDATION ERROR] Failed to create Bedrock LLM: %v\n", err)
+		logger.Errorf("[BEDROCK VALIDATION ERROR] Failed to create Bedrock LLM: %v", err)
 		// Check for specific error types
 		if strings.Contains(err.Error(), "UnauthorizedOperation") || strings.Contains(err.Error(), "AccessDenied") {
 			return false, "AWS credentials do not have permission to access Bedrock", nil
@@ -1595,7 +1595,7 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 	}
 
 	// Test the LLM with a simple generation call
-	fmt.Printf("[BEDROCK VALIDATION] Making test generation call to Bedrock\n")
+	logger.Infof("[BEDROCK VALIDATION] Making test generation call to Bedrock")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -1606,7 +1606,7 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 		},
 	})
 	if err != nil {
-		fmt.Printf("[BEDROCK VALIDATION ERROR] Bedrock test generation failed: %v\n", err)
+		logger.Errorf("[BEDROCK VALIDATION ERROR] Bedrock test generation failed: %v", err)
 		// Check for specific error types
 		if strings.Contains(err.Error(), "UnauthorizedOperation") || strings.Contains(err.Error(), "AccessDenied") {
 			return false, "AWS credentials do not have permission to access Bedrock", nil
@@ -1620,7 +1620,7 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 		return false, fmt.Sprintf("Bedrock test generation failed: %v", err), nil
 	}
 
-	fmt.Printf("[BEDROCK VALIDATION SUCCESS] AWS Bedrock credentials are valid\n")
+	logger.Infof("[BEDROCK VALIDATION SUCCESS] AWS Bedrock credentials are valid")
 	return true, "AWS Bedrock credentials are valid", nil
 }
 

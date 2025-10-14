@@ -999,12 +999,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     let llmConfigToUse = llmConfig // Default to sidebar's llmConfig
     
     if ((agentMode === 'simple' || agentMode === 'ReAct') && primaryLLM) {
-      // For Simple/ReAct modes, use primaryLLM selection if available
+      // For Simple/ReAct modes, use primaryLLM selection but preserve complete configuration
       llmConfigToUse = {
-        provider: primaryLLM.provider as "openrouter" | "bedrock",
-        model_id: primaryLLM.model,
-        fallback_models: [], // Could be enhanced to include fallbacks
-        cross_provider_fallback: undefined // Could be enhanced to include cross-provider fallback
+        ...llmConfig, // ✅ Preserve all existing configuration (fallbacks, cross-provider, etc.)
+        provider: primaryLLM.provider as "openrouter" | "bedrock" | "openai",
+        model_id: primaryLLM.model
       }
     }
 

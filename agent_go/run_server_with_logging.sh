@@ -76,6 +76,11 @@ export OPENROUTER_FALLBACK_MODELS="x-ai/grok-code-fast-1,openai/gpt-5-mini"
 export OPENROUTER_CROSS_FALLBACK_PROVIDER="openai"
 export OPENROUTER_CROSS_FALLBACK_MODELS="gpt-5-mini"
 
+# Set available models for each provider
+export BEDROCK_AVAILABLE_MODELS="global.anthropic.claude-sonnet-4-5-20250929-v1:0,us.anthropic.claude-sonnet-4-20250514-v1:0,us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+export OPENROUTER_AVAILABLE_MODELS="x-ai/grok-code-fast-1,x-ai/grok-4-fast"
+export OPENAI_AVAILABLE_MODELS="gpt-5-mini,gpt-4.1-mini"
+
 # Set structured output LLM to Bedrock for better JSON generation
 export DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER="bedrock"
 export DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -113,6 +118,9 @@ echo "- Main LLM Model: $DEEP_SEARCH_MAIN_LLM_MODEL" | tee -a "$LOG_FILE"
 echo "- Main LLM Temperature: $DEEP_SEARCH_MAIN_LLM_TEMPERATURE" | tee -a "$LOG_FILE"
 echo "- OpenRouter Fallback Models: $OPENROUTER_FALLBACK_MODELS" | tee -a "$LOG_FILE"
 echo "- OpenRouter Cross-Provider Fallback: $OPENROUTER_CROSS_FALLBACK_PROVIDER/$OPENROUTER_CROSS_FALLBACK_MODELS" | tee -a "$LOG_FILE"
+echo "- Available Bedrock Models: $BEDROCK_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
+echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
+echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" | tee -a "$LOG_FILE"
 echo "- Workspace tools: Enabled" | tee -a "$LOG_FILE"
 echo "- Memory API URL: $MEMORY_API_URL" | tee -a "$LOG_FILE"

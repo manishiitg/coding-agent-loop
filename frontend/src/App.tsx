@@ -9,6 +9,7 @@ import { resetSessionId } from "./services/api";
 import type { ActiveSessionInfo } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import { useAppStore, useLLMStore, useMCPStore } from "./stores";
+import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
 
 // Extend window interface for global functions
@@ -27,6 +28,9 @@ function App() {
 
   // Store subscriptions
   const { setAgentMode } = useAppStore()
+  
+  // Load LLM defaults from backend
+  useLLMDefaults()
   
   // Legacy state for backward compatibility (will be removed)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

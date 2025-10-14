@@ -3,13 +3,28 @@ import type { PollingEventSchema } from '../generated/events-bridge'
 
 // LLM Configuration types
 export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock'
+  provider: 'openrouter' | 'bedrock' | 'openai'
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
     provider: 'openai' | 'bedrock' | 'openrouter'
     models: string[]
   }
+  // API keys for each provider
+  api_keys?: {
+    openrouter?: string
+    openai?: string
+    bedrock?: {
+      region: string
+      // AWS credentials handled via IAM roles
+    }
+  }
+}
+
+// Extended LLM Configuration for frontend (secrets/UI-only)
+export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
+  api_key?: string
+  region?: string
 }
 
 // Agent streaming types
@@ -34,6 +49,32 @@ export interface AgentQueryResponse {
   sse_endpoint?: string
   observer_id?: string
   session_id?: string
+}
+
+// LLM Defaults Configuration Response
+export interface LLMDefaultsResponse {
+  primary_config: LLMConfiguration
+  openrouter_config: ExtendedLLMConfiguration
+  bedrock_config: ExtendedLLMConfiguration
+  openai_config: ExtendedLLMConfiguration
+  available_models: {
+    bedrock: string[]
+    openrouter: string[]
+    openai: string[]
+  }
+}
+
+// API Key Validation Request/Response
+export interface APIKeyValidationRequest {
+  provider: 'openrouter' | 'openai' | 'bedrock'
+  api_key?: string // Optional for Bedrock (uses IAM credentials)
+  model_id?: string // Optional model ID for Bedrock validation
+}
+
+export interface APIKeyValidationResponse {
+  valid: boolean
+  message?: string
+  error?: string
 }
 
 // LLM Guidance types

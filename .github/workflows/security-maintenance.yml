@@ -1,0 +1,196 @@
+name: Security Maintenance
+
+on:
+  schedule:
+    # Run weekly on Sundays at 1 AM UTC
+    - cron: '0 1 * * 0'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  security-maintenance:
+    name: Security Maintenance
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        cache-dependency-path: |
+          agent_go/go.sum
+          planner/go.sum
+    
+    - name: Install Security Tools
+      run: |
+        # Install jq for JSON processing
+        sudo apt-get update && sudo apt-get install -y jq
+        
+        # Install gitleaks
+        echo "Installing gitleaks..."
+        curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r '.tag_name' > latest-gitleaks.txt
+        GITLEAKS_VERSION=$(cat latest-gitleaks.txt)
+        echo "Installing gitleaks version: $GITLEAKS_VERSION"
+        wget -O gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz"
+        tar -xzf gitleaks.tar.gz
+        sudo mv gitleaks /usr/local/bin/
+        rm gitleaks.tar.gz
+        
+        # Install govulncheck
+        echo "Installing govulncheck..."
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        
+        # Verify installations
+        echo "Verifying tool installations:"
+        gitleaks version
+        govulncheck -version
+        jq --version
+        npm --version
+        go version
+    
+    - name: Security Dependencies Update
+      run: |
+        # Update security-related dependencies
+        echo "Checking for security updates..."
+        
+        # Check npm security updates
+        if [ -f "frontend/package-lock.json" ]; then
+          cd frontend
+          npm audit fix --dry-run
+          cd ..
+        fi
+        
+        # Check Go security updates
+        if [ -f "agent_go/go.mod" ]; then
+          cd agent_go
+          go list -u -m all | grep -E '\[SECURITY\]'
+          cd ..
+        fi
+    
+    - name: Generate Security Report
+      run: |
+        {
+          echo "# Security Maintenance Report - $(date)"
+          echo
+          echo "## Gitleaks Scan Results"
+          echo
+        } > security-report.md
+        
+        # Run gitleaks scan
+        gitleaks detect --source . --config .gitleaks.toml --report-path gitleaks-maintenance.json --verbose --redact || true
+        
+        if [ -f "gitleaks-maintenance.json" ]; then
+          findings=$(jq length gitleaks-maintenance.json)
+          echo "**Findings**: $findings" >> security-report.md
+          
+          if [ "$findings" -gt 0 ]; then
+            echo "⚠️ **Action Required**: $findings secrets detected" >> security-report.md
+            echo "" >> security-report.md
+            echo "### Detected Secrets:" >> security-report.md
+            jq -r '.[] | "- **File**: \(.File) **Line**: \(.StartLine) **Rule**: \(.RuleID)"' gitleaks-maintenance.json >> security-report.md
+          else
+            echo "✅ **Status**: No secrets detected" >> security-report.md
+          fi
+        else
+          echo "✅ **Status**: No secrets detected" >> security-report.md
+        fi
+        
+        {
+          echo
+          echo "## Dependency Security"
+          echo
+        } >> security-report.md
+        
+        # Check npm vulnerabilities
+        if [ -f "frontend/package-lock.json" ]; then
+          cd frontend
+          npm audit --audit-level=moderate --json > ../npm-audit.json 2>/dev/null || echo '{"vulnerabilities":{}}' > ../npm-audit.json
+          cd ..
+          
+          # npm v8+ often includes a summary object
+          total=$(jq 'try (.metadata.vulnerabilities | to_entries | map(.value) | add) catch 0' npm-audit.json)
+          if [ "${total:-0}" -gt 0 ]; then
+            echo "⚠️ **NPM Vulnerabilities**: $total found" >> security-report.md
+          else
+            echo "✅ **NPM Dependencies**: No vulnerabilities" >> security-report.md
+          fi
+        fi
+        
+        # Check Go vulnerabilities
+        echo "Checking Go vulnerabilities..."
+        cd agent_go && govulncheck -json ./... > ../go-vuln.json 2>&1 || true
+        cd ..
+        
+        has_vulns=$(jq 'try (.vulns | length) catch 0' go-vuln.json 2>/dev/null || echo 0)
+        if [ "${has_vulns:-0}" -gt 0 ]; then
+          echo "⚠️ **Go Dependencies**: Vulnerabilities detected" >> security-report.md
+        else
+          echo "✅ **Go Dependencies**: No vulnerabilities" >> security-report.md
+        fi
+        
+        {
+          echo
+          echo "## Recommendations"
+          echo
+          echo "- Review and address any detected secrets"
+          echo "- Update vulnerable dependencies"
+          echo "- Run manual security scans regularly"
+          echo "- Keep security tools updated"
+        } >> security-report.md
+    
+    - name: Upload Security Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-maintenance-report
+        path: |
+          security-report.md
+          gitleaks-maintenance.json
+          npm-audit.json
+          go-vuln.json
+        if-no-files-found: ignore
+    
+    - name: Create Security Issue (if secrets found)
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          try {
+            const report = JSON.parse(fs.readFileSync('gitleaks-maintenance.json', 'utf8'));
+            if (report.length > 0) {
+              github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🚨 Security Alert: ${report.length} secrets detected in weekly scan`,
+                body: `## Security Scan Results
+                
+                **Date**: ${new Date().toISOString()}
+                **Findings**: ${report.length} secrets detected
+                
+                ### Detected Secrets:
+                ${report.map(secret => `- **File**: ${secret.File} **Line**: ${secret.StartLine} **Rule**: ${secret.RuleID}`).join('\n')}
+                
+                ### Action Required:
+                1. Review the detected secrets
+                2. Remove or replace them with secure alternatives
+                3. Update the security configuration if needed
+                
+                This issue was automatically created by the security maintenance workflow.`,
+                labels: ['security', 'automated', 'high-priority']
+              });
+            }
+          } catch (error) {
+            console.log('No secrets found or error reading report');
+          }

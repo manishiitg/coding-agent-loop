@@ -1781,18 +1781,20 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 			return fresp, nil, usage
 		} else {
 			sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
+			// Emit fallback attempt event for generation failure
+			failureEvent := events.NewFallbackAttemptEvent(
+				turn, i+1, len(sameProviderFallbacks),
+				fallbackModelID, string(detectProviderFromModelID(fallbackModelID)), "same_provider",
+				false, time.Since(errorStartTime), ferr2.Error(),
+			)
+			a.EmitTypedEvent(ctx, failureEvent)
 		}
 	}
 
 	// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
 	if len(crossProviderFallbacks) > 0 {
 		// Detect provider for the first cross-provider model to show in phase message
-		var crossProviderName string
-		if len(crossProviderFallbacks) > 0 {
-			crossProviderName = string(detectProviderFromModelID(crossProviderFallbacks[0]))
-		} else {
-			crossProviderName = "cross-provider"
-		}
+		crossProviderName := string(detectProviderFromModelID(crossProviderFallbacks[0]))
 		sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), crossProviderName))
 		for i, fallbackModelID := range crossProviderFallbacks {
 			fallbackProvider := detectProviderFromModelID(fallbackModelID)
@@ -1846,6 +1848,13 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 				return fresp, nil, usage
 			} else {
 				sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
+				// Emit fallback attempt event for generation failure
+				failureEvent := events.NewFallbackAttemptEvent(
+					turn, i+1, len(crossProviderFallbacks),
+					fallbackModelID, string(detectProviderFromModelID(fallbackModelID)), "cross_provider",
+					false, time.Since(errorStartTime), ferr2.Error(),
+				)
+				a.EmitTypedEvent(ctx, failureEvent)
 			}
 		}
 	}

@@ -798,7 +798,7 @@ func cacheFreshConnectionData(
 			SystemPrompt: result.SystemPrompt,
 			CreatedAt:    time.Now(),
 			LastAccessed: time.Now(),
-			TTLMinutes:   30,
+			TTLMinutes:   cacheManager.GetTTL(), // Use configured TTL instead of hardcoded 30 minutes
 			Protocol:     string(serverConfig.Protocol),
 			IsValid:      true,
 		}

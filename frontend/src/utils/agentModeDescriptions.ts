@@ -10,7 +10,7 @@ export const getAgentModeDescription = (agentMode: AgentMode): string => {
     case 'ReAct':
       return 'Step-by-step reasoning do more indepth reasoning and has access to memory.'
     case 'orchestrator':
-      return 'Create multi-step plans with long term memory and might take hours'
+      return 'Deep Search: Create multi-step plans with long term memory and might take hours'
     case 'workflow':
       return 'Todo-list-based workflow execution with human verification and sequential task completion'
     case 'simple':

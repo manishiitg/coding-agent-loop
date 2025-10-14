@@ -359,7 +359,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
         </div>
       )}
 
-      {/* Hint when files in context but no Tasks folder for Orchestrator */}
+      {/* Hint when files in context but no Tasks folder for Deep Search */}
       {agentMode === 'orchestrator' && chatFileContext.length > 0 && !isRequiredFolderSelected && (
         <div className="px-4">
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-1.5 py-0.5 mb-0">
@@ -436,7 +436,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
                         }`}
                       >
                         <Workflow className="w-3 h-3 inline mr-1" />
-                        Orchestrator
+                        Deep Search
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>

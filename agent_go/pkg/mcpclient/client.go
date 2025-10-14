@@ -449,19 +449,24 @@ type ParallelToolDiscoveryResult struct {
 func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.ExtendedLogger) []ParallelToolDiscoveryResult {
 	servers := cfg.ListServers()
 	if len(servers) == 0 {
+		logger.Infof("🔍 DiscoverAllToolsParallel: No servers configured, returning empty result")
 		return []ParallelToolDiscoveryResult{}
 	}
 
 	logger.Infof("🚀 DiscoverAllToolsParallel started: server_count=%d, servers=%v", len(servers), servers)
+	logger.Infof("🔍 DiscoverAllToolsParallel: Parent context info - done=%v, err=%v", ctx.Done(), ctx.Err())
 
 	resultsCh := make(chan ParallelToolDiscoveryResult, len(servers))
 	var wg sync.WaitGroup
 
+	logger.Infof("🔍 DiscoverAllToolsParallel: Starting goroutines for %d servers", len(servers))
 	for _, name := range servers {
 		srvCfg, _ := cfg.GetServer(name) // ignore error, will be caught below
 		wg.Add(1)
+		logger.Infof("🔍 DiscoverAllToolsParallel: Starting goroutine for server=%s, protocol=%s", name, srvCfg.Protocol)
 		go func(name string, srvCfg MCPServerConfig) {
 			defer wg.Done()
+			logger.Infof("🔍 DiscoverAllToolsParallel: Goroutine started for server=%s", name)
 
 			client := New(srvCfg, logger)
 			var cancel context.CancelFunc
@@ -471,18 +476,20 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.
 				// For SSE, create a new background context with timeout to avoid parent cancellation
 				// IMPORTANT: Do NOT defer cancel() here - we need the context to remain valid for the entire client lifecycle
 				connCtx, cancel = context.WithTimeout(context.Background(), 15*time.Minute)
-				logger.Infof("🔍 Using SSE protocol with isolated context: server_name=%s, timeout=15m", name)
+				logger.Infof("🔍 DiscoverAllToolsParallel: Using SSE protocol with isolated context: server_name=%s, timeout=15m", name)
 			} else {
 				// For stdio and other protocols, also use isolated context with longer timeout
 				connCtx, cancel = context.WithTimeout(context.Background(), 15*time.Minute)
 				defer cancel() // Safe to cancel immediately for non-SSE protocols
-				logger.Infof("🔍 Using %s protocol with isolated context: server_name=%s, timeout=15m", srvCfg.Protocol, name)
+				logger.Infof("🔍 DiscoverAllToolsParallel: Using %s protocol with isolated context: server_name=%s, timeout=15m", srvCfg.Protocol, name)
 			}
 
-			logger.Infof("🔍 Attempting connection: server_name=%s", name)
+			logger.Infof("🔍 DiscoverAllToolsParallel: Attempting connection for server=%s", name)
+			connectStartTime := time.Now()
 
 			if err := client.ConnectWithRetry(connCtx); err != nil {
-				logger.Errorf("❌ Connection failed: server_name=%s, error=%v", name, err)
+				connectDuration := time.Since(connectStartTime)
+				logger.Errorf("❌ DiscoverAllToolsParallel: Connection failed for server=%s, error=%v, duration=%v", name, err, connectDuration)
 				if cancel != nil {
 					cancel() // Clean up context on connection failure
 				}
@@ -490,28 +497,26 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.
 				return
 			}
 
-			logger.Infof("✅ Connection successful: server_name=%s", name)
+			connectDuration := time.Since(connectStartTime)
+			logger.Infof("✅ DiscoverAllToolsParallel: Connection successful for server=%s, duration=%v", name, connectDuration)
 
 			// For SSE connections, the SSE manager now uses background context for Start() automatically
 			// For other protocols, no additional Start() call is needed
-			logger.Infof("✅ Client ready for use: server_name=%s", name)
+			logger.Infof("✅ DiscoverAllToolsParallel: Client ready for use: server=%s", name)
 
 			// For SSE connections, use the same isolated context for tool listing
 			// For other protocols, use the same isolated context
-			var listCtx context.Context
-			listCtx = connCtx // Use the same isolated context for all protocols
+			listCtx := connCtx // Use the same isolated context for all protocols
 
-			logger.Infof("🔍 Listing tools: server_name=%s", name)
-
-			logger.Infof("🔧 [PARALLEL DEBUG] About to call ListTools: server_name=%s", name)
-			logger.Infof("🔧 [PARALLEL DEBUG] Context info before ListTools: server_name=%s, context_done=%v, context_err=%v", name, listCtx.Done(), listCtx.Err())
+			logger.Infof("🔍 DiscoverAllToolsParallel: Starting tool listing for server=%s", name)
+			logger.Infof("🔧 DiscoverAllToolsParallel: Context info before ListTools: server=%s, context_done=%v, context_err=%v", name, listCtx.Done(), listCtx.Err())
 			listStartTime := time.Now()
 
-			logger.Infof("🔧 [PARALLEL DEBUG] Calling client.ListTools NOW...: server_name=%s", name)
+			logger.Infof("🔧 DiscoverAllToolsParallel: Calling client.ListTools for server=%s", name)
 			tools, err := client.ListTools(listCtx)
 
 			listDuration := time.Since(listStartTime)
-			logger.Infof("🔧 [PARALLEL DEBUG] ListTools call completed: server_name=%s, duration=%s, error=%v", name, listDuration.String(), err)
+			logger.Infof("🔧 DiscoverAllToolsParallel: ListTools completed for server=%s, duration=%v, error=%v", name, listDuration, err)
 
 			// Don't close the client here - we need to reuse it for agent creation
 			// _ = client.Close()
@@ -527,12 +532,14 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.
 			}
 
 			if err != nil {
-				logger.Errorf("❌ Tool listing failed: server_name=%s, error=%v", name, err)
+				logger.Errorf("❌ DiscoverAllToolsParallel: Tool listing failed for server=%s, error=%v", name, err)
 			} else {
-				logger.Infof("✅ Tool listing successful: server_name=%s, tool_count=%d", name, len(tools))
+				logger.Infof("✅ DiscoverAllToolsParallel: Tool listing successful for server=%s, tools_count=%d", name, len(tools))
 			}
 
+			logger.Infof("🔍 DiscoverAllToolsParallel: Sending result for server=%s", name)
 			resultsCh <- ParallelToolDiscoveryResult{ServerName: name, Tools: tools, Error: err, Client: client}
+			logger.Infof("✅ DiscoverAllToolsParallel: Result sent for server=%s", name)
 		}(name, srvCfg)
 	}
 
@@ -540,35 +547,43 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.
 	received := make(map[string]bool)
 	total := len(servers)
 
+	logger.Infof("🔍 DiscoverAllToolsParallel: Starting result collection loop for %d servers", total)
 	timeout := false
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
+		logger.Infof("🔍 DiscoverAllToolsParallel: All goroutines finished, closing done channel")
 		close(done)
 	}()
 
-	for receivedCount := 0; receivedCount < total; {
+	resultCollectionStartTime := time.Now()
+	for receivedCount := 0; receivedCount < total && !timeout; {
+		logger.Infof("🔍 DiscoverAllToolsParallel: Waiting for results, received=%d/%d", receivedCount, total)
 		select {
 		case r := <-resultsCh:
 			results = append(results, r)
 			received[r.ServerName] = true
 			receivedCount++
+			logger.Infof("✅ DiscoverAllToolsParallel: Received result for server=%s, total_received=%d/%d", r.ServerName, receivedCount, total)
 		case <-ctx.Done():
+			logger.Warnf("⚠️ DiscoverAllToolsParallel: Parent context cancelled, stopping result collection")
 			timeout = true
-			break
 		case <-done:
+			logger.Infof("✅ DiscoverAllToolsParallel: All goroutines finished, stopping result collection")
 			// All goroutines finished
-			break
-		}
-		if timeout {
-			break
 		}
 	}
 
+	resultCollectionDuration := time.Since(resultCollectionStartTime)
+	logger.Infof("🔍 DiscoverAllToolsParallel: Result collection completed, duration=%v, timeout=%v, received=%d/%d",
+		resultCollectionDuration, timeout, len(results), total)
+
 	// If timeout, add missing servers as timeouts
 	if timeout {
+		logger.Warnf("⚠️ DiscoverAllToolsParallel: Timeout detected, adding missing servers as timeouts")
 		for _, name := range servers {
 			if !received[name] {
+				logger.Warnf("⚠️ DiscoverAllToolsParallel: Adding timeout result for missing server=%s", name)
 				results = append(results, ParallelToolDiscoveryResult{
 					ServerName: name,
 					Tools:      nil,
@@ -584,7 +599,7 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.
 		case r := <-resultsCh:
 			results = append(results, r)
 		default:
-			break
+			// No more results available
 		}
 	}
 
@@ -609,6 +624,22 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.
 	// Log comprehensive cache event for debugging
 	logger.Infof("🔍 Comprehensive cache event for active tool discovery: servers_count=%d, servers=%v, total_tools=%d",
 		len(serverNames), serverNames, len(results))
+
+	// Final summary logging
+	successCount := 0
+	errorCount := 0
+	totalTools := 0
+	for _, result := range results {
+		if result.Error == nil {
+			successCount++
+			totalTools += len(result.Tools)
+		} else {
+			errorCount++
+		}
+	}
+
+	logger.Infof("🎯 DiscoverAllToolsParallel: FINAL SUMMARY - total_servers=%d, successful=%d, failed=%d, total_tools=%d",
+		len(results), successCount, errorCount, totalTools)
 
 	// Note: To emit actual events, we would need to pass tracers to this function
 	// For now, we log the information so it appears in the server logs

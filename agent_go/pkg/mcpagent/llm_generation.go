@@ -1754,19 +1754,30 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 		if ferr2 == nil {
 			usage := extractUsageMetricsWithMessages(fresp, messages)
 
-			// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-			a.ModelID = fallbackModelID
-			a.LLM = fallbackLLM
+			// Detect the actual provider for the fallback model
+			fallbackProvider := detectProviderFromModelID(fallbackModelID)
 
 			// Emit fallback attempt event for successful attempt
 			fallbackAttemptEvent := events.NewFallbackAttemptEvent(
 				turn, i+1, len(sameProviderFallbacks),
-				fallbackModelID, string(a.provider), "same_provider",
+				fallbackModelID, string(fallbackProvider), "same_provider",
 				true, time.Since(errorStartTime), "",
 			)
 			a.EmitTypedEvent(ctx, fallbackAttemptEvent)
 
-			sendMessage(fmt.Sprintf("\n✅ %s fallback successful with %s model: %s", errorType, string(a.provider), fallbackModelID))
+			// Emit fallback model used event
+			fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, string(fallbackProvider), errorType, time.Since(errorStartTime))
+			a.EmitTypedEvent(ctx, fallbackEvent)
+
+			// Emit model change event to track the permanent model change
+			modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", string(fallbackProvider), time.Since(errorStartTime))
+			a.EmitTypedEvent(ctx, modelChangeEvent)
+
+			// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
+			a.ModelID = fallbackModelID
+			a.LLM = fallbackLLM
+
+			sendMessage(fmt.Sprintf("\n✅ %s fallback successful with %s model: %s", errorType, string(fallbackProvider), fallbackModelID))
 			return fresp, nil, usage
 		} else {
 			sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
@@ -1775,9 +1786,17 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 
 	// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
 	if len(crossProviderFallbacks) > 0 {
-		sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (openai) fallback models...", len(crossProviderFallbacks)))
+		// Detect provider for the first cross-provider model to show in phase message
+		var crossProviderName string
+		if len(crossProviderFallbacks) > 0 {
+			crossProviderName = string(detectProviderFromModelID(crossProviderFallbacks[0]))
+		} else {
+			crossProviderName = "cross-provider"
+		}
+		sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), crossProviderName))
 		for i, fallbackModelID := range crossProviderFallbacks {
-			sendMessage(fmt.Sprintf("\n🔄 Trying openai fallback model %d/%d: %s", i+1, len(crossProviderFallbacks), fallbackModelID))
+			fallbackProvider := detectProviderFromModelID(fallbackModelID)
+			sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", string(fallbackProvider), i+1, len(crossProviderFallbacks), fallbackModelID))
 
 			origModelID := a.ModelID
 			a.ModelID = fallbackModelID
@@ -1800,19 +1819,30 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 			if ferr2 == nil {
 				usage := extractUsageMetricsWithMessages(fresp, messages)
 
-				// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-				a.ModelID = fallbackModelID
-				a.LLM = fallbackLLM
+				// Detect the actual provider for the fallback model
+				fallbackProvider := detectProviderFromModelID(fallbackModelID)
 
 				// Emit fallback attempt event for successful attempt
 				fallbackAttemptEvent := events.NewFallbackAttemptEvent(
 					turn, i+1, len(crossProviderFallbacks),
-					fallbackModelID, "openai", "cross_provider",
+					fallbackModelID, string(fallbackProvider), "cross_provider",
 					true, time.Since(errorStartTime), "",
 				)
 				a.EmitTypedEvent(ctx, fallbackAttemptEvent)
 
-				sendMessage(fmt.Sprintf("\n✅ %s cross-provider fallback successful with openai model: %s", errorType, fallbackModelID))
+				// Emit fallback model used event
+				fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, string(fallbackProvider), errorType, time.Since(errorStartTime))
+				a.EmitTypedEvent(ctx, fallbackEvent)
+
+				// Emit model change event to track the permanent model change
+				modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", string(fallbackProvider), time.Since(errorStartTime))
+				a.EmitTypedEvent(ctx, modelChangeEvent)
+
+				// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
+				a.ModelID = fallbackModelID
+				a.LLM = fallbackLLM
+
+				sendMessage(fmt.Sprintf("\n✅ %s cross-provider fallback successful with %s model: %s", errorType, string(fallbackProvider), fallbackModelID))
 				return fresp, nil, usage
 			} else {
 				sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))

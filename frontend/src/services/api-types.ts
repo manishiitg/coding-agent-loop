@@ -21,8 +21,8 @@ export interface LLMConfiguration {
   }
 }
 
-// Extended LLM Configuration with API keys for frontend use
-export interface ExtendedLLMConfiguration extends LLMConfiguration {
+// Extended LLM Configuration for frontend (secrets/UI-only)
+export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
   api_key?: string
   region?: string
 }

@@ -8,6 +8,7 @@ import ServerSelectionDropdown from './ServerSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import type { PlannerFile } from '../services/api-types'
+import type { LLMOption } from '../stores/types'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
@@ -64,7 +65,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
   const { scrollToFile } = useWorkspaceStore()
 
   // Wrapper for LLM selection to convert LLMOption to LLMConfiguration
-  const onPrimaryLLMSelect = useCallback((llm: {provider: string, model: string, label: string, description?: string}) => {
+  const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
     // Get current config to preserve fallback models and cross-provider fallback
     const currentPrimaryConfig = useLLMStore.getState().primaryConfig
     

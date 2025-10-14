@@ -162,7 +162,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     
     // Convert to LLMConfiguration for primary config
     const primaryConfig: LLMConfiguration = {
-      provider: provider as 'openrouter' | 'bedrock' | 'openai',
+      provider: provider,
       model_id: configToUse.model_id,
       fallback_models: configToUse.fallback_models,
       cross_provider_fallback: configToUse.cross_provider_fallback

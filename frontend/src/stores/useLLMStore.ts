@@ -73,7 +73,7 @@ export const useLLMStore = create<LLMState>()(
       (set, get) => ({
         // Initial state - will be loaded from backend
         primaryConfig: {
-          provider: 'openrouter' as 'openrouter' | 'bedrock' | 'openai',
+          provider: 'openrouter',
           model_id: '',
           fallback_models: [],
           cross_provider_fallback: undefined
@@ -181,6 +181,7 @@ export const useLLMStore = create<LLMState>()(
         // Load defaults from backend
         loadDefaultsFromBackend: async () => {
           try {
+            set({ isLoadingLLMs: true })
             const defaults = await llmConfigService.getLLMDefaults()
             
             set({
@@ -192,13 +193,15 @@ export const useLLMStore = create<LLMState>()(
               availableOpenRouterModels: defaults.available_models.openrouter,
               availableOpenAIModels: defaults.available_models.openai,
               defaultsLoaded: true,
-              error: null
+              error: null,
+              isLoadingLLMs: false
             })
           } catch (error) {
             console.error('Failed to load LLM defaults from backend:', error)
             set({ 
               error: 'Failed to load LLM defaults from backend',
-              defaultsLoaded: false 
+              defaultsLoaded: false,
+              isLoadingLLMs: false
             })
           }
         },
@@ -342,7 +345,7 @@ export const useLLMStore = create<LLMState>()(
         reset: () => {
           set({
             primaryConfig: {
-              provider: 'openrouter' as 'openrouter' | 'bedrock' | 'openai',
+              provider: 'openrouter',
               model_id: '',
               fallback_models: [],
               cross_provider_fallback: undefined

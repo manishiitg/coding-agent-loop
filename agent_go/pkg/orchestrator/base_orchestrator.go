@@ -139,23 +139,24 @@ func (bo *BaseOrchestrator) emitEvent(ctx context.Context, eventType events.Even
 }
 
 // EmitOrchestratorStart emits an orchestrator start event
-func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective string, agentsCount int) {
+func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective string, agentsCount int, executionMode string) {
 	bo.getLogger().Infof("📤 Emitting orchestrator start event")
 
 	eventData := &events.OrchestratorStartEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective:    objective,
-		AgentsCount:  agentsCount,
-		ServersCount: len(bo.getConfig().ServerNames),
+		Objective:     objective,
+		AgentsCount:   agentsCount,
+		ServersCount:  len(bo.getConfig().ServerNames),
+		ExecutionMode: executionMode,
 	}
 
 	bo.emitEvent(ctx, events.OrchestratorStart, eventData)
 }
 
 // EmitOrchestratorEnd emits an orchestrator end event
-func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, result, status, message string) {
+func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, result, status, message string, executionMode string) {
 	bo.getLogger().Infof("📤 Emitting orchestrator end event: %s", status)
 
 	duration := time.Since(bo.startTime)
@@ -163,10 +164,11 @@ func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, 
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective: objective,
-		Result:    result,
-		Status:    status,
-		Duration:  duration,
+		Objective:     objective,
+		Result:        result,
+		Status:        status,
+		Duration:      duration,
+		ExecutionMode: executionMode,
 	}
 
 	bo.emitEvent(ctx, events.OrchestratorEnd, eventData)
@@ -237,7 +239,7 @@ func (bo *BaseOrchestrator) Execute(ctx context.Context, templateVars map[string
 	if bo.orchestratorType == OrchestratorTypePlanner {
 		agentsCount = 5 // planning, execution, validation, plan organizer, report generation
 	}
-	bo.EmitOrchestratorStart(ctx, objective, agentsCount)
+	bo.EmitOrchestratorStart(ctx, objective, agentsCount, "sequential_execution") // Default mode
 
 	// Delegate to BaseOrchestratorAgent's ExecuteWithInputProcessor for agent event emission
 	result, err := bo.BaseOrchestratorAgent.ExecuteWithInputProcessor(ctx, templateVars, func(vars map[string]string) string {
@@ -259,7 +261,7 @@ func (bo *BaseOrchestrator) Execute(ctx context.Context, templateVars map[string
 	if err != nil {
 		status = "failed"
 	}
-	bo.EmitOrchestratorEnd(ctx, objective, result, status, "")
+	bo.EmitOrchestratorEnd(ctx, objective, result, status, "", "sequential_execution") // Default mode
 
 	return result, err
 }

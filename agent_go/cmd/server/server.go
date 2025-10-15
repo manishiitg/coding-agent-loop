@@ -1313,6 +1313,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						AgentsCount:   5, // planning, execution, validation, organizer, report generation
 						ServersCount:  len(selectedServers),
 						Configuration: fmt.Sprintf("Provider: %s, Model: %s", req.Provider, req.ModelID),
+						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
 					}
 
 					// Create unified event wrapper
@@ -1427,11 +1428,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						BaseEventData: unifiedevents.BaseEventData{
 							Timestamp: time.Now(),
 						},
-						Objective: req.Query,
-						Result:    result,
-						Duration:  duration,
-						Status:    status,
-						Error:     errorMsg,
+						Objective:     req.Query,
+						Result:        result,
+						Duration:      duration,
+						Status:        status,
+						Error:         errorMsg,
+						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
 					}
 
 					// Create unified event wrapper

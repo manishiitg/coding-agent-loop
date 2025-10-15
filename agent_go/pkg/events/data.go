@@ -1696,6 +1696,7 @@ type OrchestratorStartEvent struct {
 	AgentsCount   int    `json:"agents_count"`
 	ServersCount  int    `json:"servers_count"`
 	Configuration string `json:"configuration,omitempty"`
+	ExecutionMode string `json:"execution_mode"` // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorStartEvent) GetEventType() EventType {
@@ -1704,11 +1705,12 @@ func (e *OrchestratorStartEvent) GetEventType() EventType {
 
 type OrchestratorEndEvent struct {
 	BaseEventData
-	Objective string        `json:"objective"`
-	Result    string        `json:"result"`
-	Duration  time.Duration `json:"duration"`
-	Status    string        `json:"status"`
-	Error     string        `json:"error,omitempty"`
+	Objective     string        `json:"objective"`
+	Result        string        `json:"result"`
+	Duration      time.Duration `json:"duration"`
+	Status        string        `json:"status"`
+	Error         string        `json:"error,omitempty"`
+	ExecutionMode string        `json:"execution_mode"` // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorEndEvent) GetEventType() EventType {
@@ -1717,9 +1719,10 @@ func (e *OrchestratorEndEvent) GetEventType() EventType {
 
 type OrchestratorErrorEvent struct {
 	BaseEventData
-	Context  string        `json:"context"`
-	Error    string        `json:"error"`
-	Duration time.Duration `json:"duration"`
+	Context       string        `json:"context"`
+	Error         string        `json:"error"`
+	Duration      time.Duration `json:"duration"`
+	ExecutionMode string        `json:"execution_mode"` // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorErrorEvent) GetEventType() EventType {

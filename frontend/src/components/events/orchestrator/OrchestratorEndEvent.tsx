@@ -35,6 +35,7 @@ export const OrchestratorEndEventDisplay: React.FC<OrchestratorEndEventDisplayPr
               {getStatusIcon()} Deep Search Completed{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Status: {event.status} | Duration: {formatDuration(event.duration || 0)}
+                {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}
               </span>
             </div>
           </div>

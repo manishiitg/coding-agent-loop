@@ -1003,6 +1003,7 @@ export interface OrchestratorStartEvent {
   agents_count?: number;
   servers_count?: number;
   configuration?: string;
+  execution_mode?: string;
 }
 export interface OrchestratorEndEvent {
   timestamp?: string;
@@ -1023,6 +1024,7 @@ export interface OrchestratorEndEvent {
   duration?: number;
   status?: string;
   error?: string;
+  execution_mode?: string;
 }
 export interface OrchestratorErrorEvent {
   timestamp?: string;
@@ -1041,6 +1043,7 @@ export interface OrchestratorErrorEvent {
   context?: string;
   error?: string;
   duration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentStartEvent {
   timestamp?: string;

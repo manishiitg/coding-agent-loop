@@ -31,6 +31,29 @@ func (r *GenericStructuredResponseImpl) GetData() interface{} {
 	return r.Data
 }
 
+// StructuredOutputEvent represents structured output operation events
+type StructuredOutputEvent struct {
+	events.BaseEventData
+	Operation string `json:"operation"`
+	EventType string `json:"event_type"`
+	Error     string `json:"error,omitempty"`
+	Duration  string `json:"duration,omitempty"`
+}
+
+// GetEventType returns the event type for StructuredOutputEvent
+func (e *StructuredOutputEvent) GetEventType() events.EventType {
+	switch e.EventType {
+	case "structured_output_start":
+		return events.StructuredOutputStart
+	case "structured_output_end":
+		return events.StructuredOutputEnd
+	case "structured_output_error":
+		return events.StructuredOutputError
+	default:
+		return events.StructuredOutputStart // Default fallback
+	}
+}
+
 // StructuredOutputLLM represents a generic structured output LLM for any structured output extraction
 type StructuredOutputLLM struct {
 	llm          llms.Model
@@ -60,13 +83,14 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 
 	// Emit start event
 	if s.eventEmitter != nil {
-		startEvent := &events.GenericEventData{
+		startEventData := &StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: startTime,
 			},
-			Data: map[string]interface{}{"operation": "generate_structured_output", "event_type": "structured_output_start"},
+			Operation: "generate_structured_output",
+			EventType: "structured_output_start",
 		}
-		s.eventEmitter(ctx, startEvent)
+		s.eventEmitter(ctx, startEventData)
 	}
 
 	// Create structured output generator
@@ -82,13 +106,15 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 	if err != nil {
 		// Emit error event
 		if s.eventEmitter != nil {
-			errorEvent := &events.GenericEventData{
+			errorEventData := &StructuredOutputEvent{
 				BaseEventData: events.BaseEventData{
 					Timestamp: time.Now(),
 				},
-				Data: map[string]interface{}{"operation": "generate_structured_output", "error": err.Error(), "event_type": "structured_output_error"},
+				Operation: "generate_structured_output",
+				EventType: "structured_output_error",
+				Error:     err.Error(),
 			}
-			s.eventEmitter(ctx, errorEvent)
+			s.eventEmitter(ctx, errorEventData)
 		}
 		return "", fmt.Errorf("failed to generate structured output: %w", err)
 	}
@@ -97,13 +123,15 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 
 	// Emit end event
 	if s.eventEmitter != nil {
-		endEvent := &events.GenericEventData{
+		endEventData := &StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
 			},
-			Data: map[string]interface{}{"operation": "generate_structured_output", "duration": duration.String(), "event_type": "structured_output_end"},
+			Operation: "generate_structured_output",
+			EventType: "structured_output_end",
+			Duration:  duration.String(),
 		}
-		s.eventEmitter(ctx, endEvent)
+		s.eventEmitter(ctx, endEventData)
 	}
 
 	s.logger.Infof("✅ Successfully generated structured output in %v", duration)

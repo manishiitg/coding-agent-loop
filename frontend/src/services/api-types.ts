@@ -27,6 +27,8 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
   region?: string
 }
 
+export type OrchestratorExecutionMode = 'sequential_execution' | 'parallel_execution'
+
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
@@ -41,7 +43,7 @@ export interface AgentQueryRequest {
   llm_config?: LLMConfiguration
   preset_query_id?: string
   // Orchestrator execution mode selection
-  orchestrator_execution_mode?: 'sequential_execution' | 'parallel_execution'
+  orchestrator_execution_mode?: OrchestratorExecutionMode
 }
 
 export interface AgentQueryResponse {

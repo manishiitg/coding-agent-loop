@@ -126,6 +126,7 @@ const (
 	// Structured output events
 	StructuredOutputStart EventType = "structured_output_start"
 	StructuredOutputEnd   EventType = "structured_output_end"
+	StructuredOutputError EventType = "structured_output_error"
 	JSONValidationStart   EventType = "json_validation_start"
 	JSONValidationEnd     EventType = "json_validation_end"
 
@@ -164,6 +165,9 @@ const (
 	OrchestratorAgentStart EventType = "orchestrator_agent_start"
 	OrchestratorAgentEnd   EventType = "orchestrator_agent_end"
 	OrchestratorAgentError EventType = "orchestrator_agent_error"
+
+	// Parallel execution events
+	IndependentStepsSelected EventType = "independent_steps_selected"
 
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"

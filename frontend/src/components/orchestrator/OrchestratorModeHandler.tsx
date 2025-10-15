@@ -6,12 +6,12 @@ import { Info, Zap, Clock, CheckCircle } from 'lucide-react'
 import { useAppStore } from '@/stores'
 
 export interface OrchestratorModeHandlerRef {
-  getSelectedExecutionMode: () => string
+  getSelectedExecutionMode: () => OrchestratorExecutionMode
   resetSelection: () => void
 }
 
 export interface OrchestratorModeHandlerProps {
-  onExecutionModeChange?: (mode: string) => void
+  onExecutionModeChange?: (mode: OrchestratorExecutionMode) => void
   children?: React.ReactNode
 }
 
@@ -24,10 +24,9 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
   const { agentMode } = useAppStore()
   const [selectedMode, setSelectedMode] = useState<OrchestratorExecutionMode>('sequential_execution')
 
-  const handleModeChange = useCallback((mode: string) => {
-    const executionMode = mode as OrchestratorExecutionMode
-    setSelectedMode(executionMode)
-    onExecutionModeChange?.(executionMode)
+  const handleModeChange = useCallback((mode: OrchestratorExecutionMode) => {
+    setSelectedMode(mode)
+    onExecutionModeChange?.(mode)
   }, [onExecutionModeChange])
 
   const getSelectedExecutionMode = useCallback(() => {
@@ -76,7 +75,7 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
                   name="executionMode"
                   value="sequential_execution"
                   checked={selectedMode === 'sequential_execution'}
-                  onChange={(e) => handleModeChange(e.target.value)}
+                  onChange={(e) => handleModeChange(e.target.value as OrchestratorExecutionMode)}
                   className="mt-1"
                 />
                 <div className="flex-1 space-y-2">
@@ -123,7 +122,7 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
                   name="executionMode"
                   value="parallel_execution"
                   checked={selectedMode === 'parallel_execution'}
-                  onChange={(e) => handleModeChange(e.target.value)}
+                  onChange={(e) => handleModeChange(e.target.value as OrchestratorExecutionMode)}
                   className="mt-1"
                 />
                 <div className="flex-1 space-y-2">

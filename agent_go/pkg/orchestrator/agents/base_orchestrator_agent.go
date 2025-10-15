@@ -179,6 +179,11 @@ func (boa *BaseOrchestratorAgent) GetTracer() observability.Tracer {
 	return boa.tracer
 }
 
+// GetEventBridge returns the event bridge
+func (boa *BaseOrchestratorAgent) GetEventBridge() interface{} {
+	return boa.eventBridge
+}
+
 // emitEvent emits an event through the event bridge
 func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType events.EventType, data events.EventData) {
 	// Create agent event

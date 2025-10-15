@@ -5,7 +5,7 @@ import { EventModeProvider, EventModeToggle } from './events'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
-import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
+import { OrchestratorModeHandler, type OrchestratorExecutionMode, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
 import { getAgentModeDescription } from '../utils/agentModeDescriptions'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -152,11 +152,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Add ref for orchestrator mode handler
   const orchestratorModeHandlerRef = useRef<OrchestratorModeHandlerRef>(null)
   
+  
   // Orchestrator execution mode state
-  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<string>('sequential_execution')
+  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>('sequential_execution')
   
   // Handle orchestrator execution mode change
-  const handleOrchestratorExecutionModeChange = useCallback((mode: string) => {
+  const handleOrchestratorExecutionModeChange = useCallback((mode: OrchestratorExecutionMode) => {
     setOrchestratorExecutionMode(mode)
   }, [])
   
@@ -1031,7 +1032,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         llm_config: llmConfigToUse,
         preset_query_id: selectedWorkflowPreset || undefined,
         // Add orchestrator execution mode for orchestrator mode
-        orchestrator_execution_mode: agentMode === 'orchestrator' ? (orchestratorExecutionMode as 'sequential_execution' | 'parallel_execution') : undefined,
+        orchestrator_execution_mode: agentMode === 'orchestrator' ? orchestratorExecutionMode : undefined,
       }
 
 
@@ -1240,27 +1241,34 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           {/* Show ReAct explanation when in ReAct mode */}
           <ReActExplanation agentMode={agentMode} />
 
-        <WorkflowModeHandler
-          ref={workflowModeHandlerRef}
-          onPresetSelected={handleWorkflowPresetSelected}
-          onPresetCleared={handleWorkflowPresetCleared}
-          onWorkflowPhaseChange={setWorkflowPhase}
-        >
+        {agentMode === 'workflow' ? (
+          <WorkflowModeHandler
+            ref={workflowModeHandlerRef}
+            onPresetSelected={handleWorkflowPresetSelected}
+            onPresetCleared={handleWorkflowPresetCleared}
+            onWorkflowPhaseChange={setWorkflowPhase}
+          >
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+              onApproveWorkflow={handleApproveWorkflow}
+            />
+          </WorkflowModeHandler>
+        ) : agentMode === 'orchestrator' ? (
+          <OrchestratorModeHandler
+            ref={orchestratorModeHandlerRef}
+            onExecutionModeChange={handleOrchestratorExecutionModeChange}
+          >
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+              onApproveWorkflow={handleApproveWorkflow}
+            />
+          </OrchestratorModeHandler>
+        ) : (
           <EventDisplay 
             onDismissUserMessage={() => setShowUserMessage(false)}
             onApproveWorkflow={handleApproveWorkflow}
           />
-        </WorkflowModeHandler>
-
-        <OrchestratorModeHandler
-          ref={orchestratorModeHandlerRef}
-          onExecutionModeChange={handleOrchestratorExecutionModeChange}
-        >
-          <EventDisplay 
-            onDismissUserMessage={() => setShowUserMessage(false)}
-            onApproveWorkflow={handleApproveWorkflow}
-          />
-        </OrchestratorModeHandler>
+        )}
         </div>
       </div>
 

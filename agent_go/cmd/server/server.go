@@ -1138,9 +1138,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			orchestrator := orchtypes.NewPlannerOrchestrator(
 				api.logger,
 				api.config.AgentMode,
-				api.config.StructuredOutputProvider,
-				api.config.StructuredOutputModel,
-				api.config.StructuredOutputTemp,
 				selectedOptions, // Pass selected options with execution mode
 			)
 			log.Printf("[ORCHESTRATOR DEBUG] Created fresh orchestrator for session %s", sessionID)

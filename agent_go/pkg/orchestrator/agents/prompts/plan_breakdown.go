@@ -38,18 +38,24 @@ func NewPlanBreakdownPrompts() *PlanBreakdownPrompts {
 
 Remember: It's better to have fewer parallel steps that are truly independent than to have many steps that might conflict with each other.
 
+## Current Context
+**OBJECTIVE**: {{.Objective}}
+**WORKSPACE**: {{.WorkspacePath}}
+**PLANNING RESULT**: {{.PlanningResult}}
+
 ## Expected Output Format:
-Step 1: [Description]
-- Dependencies: [List of dependencies or "None"]
-- Independent: [true/false]
-- Reasoning: [Explanation]
-
-Step 2: [Description]
-- Dependencies: [List of dependencies or "None"]
-- Independent: [true/false]
-- Reasoning: [Explanation]
-
-[Continue for all steps...]
+Return a JSON object with the following structure:
+{
+  "steps": [
+    {
+      "id": "step_1",
+      "description": "Clear description of what this step does",
+      "dependencies": ["step_2", "step_3"] or [],
+      "is_independent": true or false,
+      "reasoning": "Clear explanation for independence assessment"
+    }
+  ]
+}
 
 Focus on identifying the maximum number of truly independent steps that can be executed in parallel without conflicts.`
 

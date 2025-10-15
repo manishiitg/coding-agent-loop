@@ -62,7 +62,14 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
           <CardContent>
             <div className="space-y-4">
               {/* Sequential Execution Option */}
-              <div className="flex items-start space-x-3 p-4 border rounded-lg hover:bg-muted/50 transition-colors">
+              <div 
+                className={`flex items-start space-x-3 p-4 border rounded-lg transition-colors cursor-pointer ${
+                  selectedMode === 'sequential_execution' 
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20' 
+                    : 'hover:bg-muted/50'
+                }`}
+                onClick={() => handleModeChange('sequential_execution')}
+              >
                 <input 
                   type="radio" 
                   id="sequential" 
@@ -102,7 +109,14 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
               </div>
 
               {/* Parallel Execution Option */}
-              <div className="flex items-start space-x-3 p-4 border rounded-lg hover:bg-muted/50 transition-colors">
+              <div 
+                className={`flex items-start space-x-3 p-4 border rounded-lg transition-colors cursor-pointer ${
+                  selectedMode === 'parallel_execution' 
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20' 
+                    : 'hover:bg-muted/50'
+                }`}
+                onClick={() => handleModeChange('parallel_execution')}
+              >
                 <input 
                   type="radio" 
                   id="parallel" 

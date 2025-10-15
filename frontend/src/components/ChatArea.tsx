@@ -1,11 +1,12 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
+import React, { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import { agentApi, type AgentQueryRequest } from '../services/api'
-import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
+import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
+import { EXECUTION_MODES } from '../services/api-types'
 import { EventModeProvider, EventModeToggle } from './events'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
-import { OrchestratorModeHandler, type OrchestratorExecutionMode, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
+import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
 import { getAgentModeDescription } from '../utils/agentModeDescriptions'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -154,7 +155,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   
   
   // Orchestrator execution mode state
-  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>('sequential_execution')
+  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.SEQUENTIAL)
   
   // Handle orchestrator execution mode change
   const handleOrchestratorExecutionModeChange = useCallback((mode: OrchestratorExecutionMode) => {
@@ -377,6 +378,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setIsApprovingWorkflow(false)  // Clear loading state
     }
   }, [workflowPresetQueryId, pollingInterval, setIsApprovingWorkflow, setEvents, setTotalEvents, setLastEventCount, setLastEventIndex, setFinalResponse, setIsCompleted, setCurrentUserMessage, setShowUserMessage, setWorkflowPhase, setPollingInterval])
+
+  // Shared EventDisplay component to avoid duplication
+  const SharedEventDisplay = React.memo(() => (
+    <EventDisplay 
+      onDismissUserMessage={() => setShowUserMessage(false)}
+      onApproveWorkflow={handleApproveWorkflow}
+    />
+  ))
 
   // Initialize observer on mount (only if not loading from chat session)
   useEffect(() => {
@@ -1075,8 +1084,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       // Only reset streaming state if query fails
       setIsStreaming(false)
       setIsCompleted(false)
+      // Reset orchestrator mode selection to default on error
+      setOrchestratorExecutionMode(EXECUTION_MODES.SEQUENTIAL)
+      orchestratorModeHandlerRef.current?.resetSelection?.()
     }
-  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode])
+  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode, setOrchestratorExecutionMode])
 
 
   // Handle new chat - clear backend session and reset all chat state
@@ -1096,12 +1108,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     // Reset frontend state
     resetChatState()
     
+    // Reset orchestrator mode selection to default
+    setOrchestratorExecutionMode('sequential_execution')
+    orchestratorModeHandlerRef.current?.resetSelection?.()
+    
     // Clear guidance state
     setSessionId(null)
     
     // Call the parent's new chat handler
     onNewChat()
-  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId])
+  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, setOrchestratorExecutionMode])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {
@@ -1248,26 +1264,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             onPresetCleared={handleWorkflowPresetCleared}
             onWorkflowPhaseChange={setWorkflowPhase}
           >
-            <EventDisplay 
-              onDismissUserMessage={() => setShowUserMessage(false)}
-              onApproveWorkflow={handleApproveWorkflow}
-            />
+            <SharedEventDisplay />
           </WorkflowModeHandler>
         ) : agentMode === 'orchestrator' ? (
           <OrchestratorModeHandler
             ref={orchestratorModeHandlerRef}
             onExecutionModeChange={handleOrchestratorExecutionModeChange}
           >
-            <EventDisplay 
-              onDismissUserMessage={() => setShowUserMessage(false)}
-              onApproveWorkflow={handleApproveWorkflow}
-            />
+            <SharedEventDisplay />
           </OrchestratorModeHandler>
         ) : (
-          <EventDisplay 
-            onDismissUserMessage={() => setShowUserMessage(false)}
-            onApproveWorkflow={handleApproveWorkflow}
-          />
+          <SharedEventDisplay />
         )}
         </div>
       </div>

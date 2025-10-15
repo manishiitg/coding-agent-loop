@@ -276,14 +276,7 @@ func isOrchestratorEvent(eventType unifiedevents.EventType) bool {
 
 // getExecutionModeLabel returns a human-readable label for execution mode
 func getExecutionModeLabel(mode string) string {
-	switch mode {
-	case "sequential_execution":
-		return "Sequential Execution"
-	case "parallel_execution":
-		return "Parallel Execution"
-	default:
-		return "Sequential Execution" // Default fallback
-	}
+	return orchtypes.ParseExecutionMode(mode).GetLabel()
 }
 
 // QueryRequest represents an agent query request
@@ -300,7 +293,7 @@ type QueryRequest struct {
 	PresetQueryID  string               `json:"preset_query_id,omitempty"`
 	LLMGuidance    string               `json:"llm_guidance,omitempty"` // LLM guidance message
 	// Orchestrator execution mode selection
-	OrchestratorExecutionMode string `json:"orchestrator_execution_mode,omitempty"` // "sequential_execution" or "parallel_execution"
+	OrchestratorExecutionMode orchtypes.ExecutionMode `json:"orchestrator_execution_mode,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1111,27 +1104,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				selectedOptions = &orchtypes.PlannerSelectedOptions{
 					Selections: []orchtypes.PlannerSelectedOption{
 						{
-							OptionID:    req.OrchestratorExecutionMode,
-							OptionLabel: getExecutionModeLabel(req.OrchestratorExecutionMode),
-							OptionValue: req.OrchestratorExecutionMode,
+							OptionID:    req.OrchestratorExecutionMode.String(),
+							OptionLabel: req.OrchestratorExecutionMode.GetLabel(),
+							OptionValue: req.OrchestratorExecutionMode.String(),
 							Group:       "execution_strategy",
 						},
 					},
 				}
-				log.Printf("[ORCHESTRATOR DEBUG] Using execution mode from request: %s", req.OrchestratorExecutionMode)
+				log.Printf("[ORCHESTRATOR DEBUG] Using execution mode from request: %s", req.OrchestratorExecutionMode.String())
 			} else {
 				// Default to sequential execution if no mode specified
+				defaultMode := orchtypes.SequentialExecution
 				selectedOptions = &orchtypes.PlannerSelectedOptions{
 					Selections: []orchtypes.PlannerSelectedOption{
 						{
-							OptionID:    "sequential_execution",
-							OptionLabel: "Sequential Execution",
-							OptionValue: "sequential_execution",
+							OptionID:    defaultMode.String(),
+							OptionLabel: defaultMode.GetLabel(),
+							OptionValue: defaultMode.String(),
 							Group:       "execution_strategy",
 						},
 					},
 				}
-				log.Printf("[ORCHESTRATOR DEBUG] Using default execution mode: sequential_execution")
+				log.Printf("[ORCHESTRATOR DEBUG] Using default execution mode: %s", defaultMode.String())
 			}
 
 			// Always create a fresh orchestrator for this session

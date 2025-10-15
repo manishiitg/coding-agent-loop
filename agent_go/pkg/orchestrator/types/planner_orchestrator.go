@@ -114,7 +114,6 @@ type PlannerOrchestrator struct {
 	agentMode     string
 
 	// Execution mode configuration
-	executionMode   string                  // "sequential" or "parallel"
 	selectedOptions *PlannerSelectedOptions // Selected execution options
 
 	// Selected servers for execution
@@ -298,12 +297,12 @@ func (po *PlannerOrchestrator) ExecuteFlow(ctx context.Context, objective string
 
 	// Determine execution mode and route accordingly
 	executionMode := po.GetExecutionMode()
-	po.AgentTemplate.GetLogger().Infof("🎯 Execution mode: %s", executionMode)
+	po.AgentTemplate.GetLogger().Infof("🎯 Execution mode: %s", executionMode.String())
 
 	switch executionMode {
-	case "parallel_execution":
+	case ParallelExecution:
 		return po.executeParallel(ctx, objective, maxIterations, startIteration)
-	case "sequential_execution":
+	case SequentialExecution:
 		fallthrough
 	default:
 		return po.executeSequential(ctx, objective, maxIterations, startIteration)
@@ -700,7 +699,7 @@ func (po *PlannerOrchestrator) executeParallel(ctx context.Context, objective st
 	}
 
 	// Step 3: Select up to 3 independent steps for parallel execution
-	parallelSteps := po.selectParallelSteps(independentSteps)
+	parallelSteps := po.selectParallelSteps(ctx, independentSteps)
 
 	// Step 4: Execute steps in parallel with goroutines
 	parallelResults, err := po.executeStepsInParallel(ctx, parallelSteps)
@@ -810,7 +809,7 @@ func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planning
 }
 
 // selectParallelSteps selects up to 3 independent steps for parallel execution
-func (po *PlannerOrchestrator) selectParallelSteps(independentSteps []ParallelStep) []ParallelStep {
+func (po *PlannerOrchestrator) selectParallelSteps(ctx context.Context, independentSteps []ParallelStep) []ParallelStep {
 	po.AgentTemplate.GetLogger().Infof("🎯 Selecting up to 3 independent steps from %d available steps", len(independentSteps))
 
 	// Filter for truly independent steps (no dependencies)
@@ -859,7 +858,7 @@ func (po *PlannerOrchestrator) selectParallelSteps(independentSteps []ParallelSt
 	}
 
 	// Emit independent steps selected event using context-aware bridge
-	po.emitIndependentStepsSelectedEvent(context.Background(), independentSteps, trulyIndependent)
+	po.emitIndependentStepsSelectedEvent(ctx, independentSteps, trulyIndependent)
 
 	po.AgentTemplate.GetLogger().Infof("✅ Selected %d steps for parallel execution", len(trulyIndependent))
 	return trulyIndependent
@@ -1578,25 +1577,20 @@ func (po *PlannerOrchestrator) SetReportResults(results []string) {
 // Execution mode management methods
 
 // GetExecutionMode returns the current execution mode
-func (po *PlannerOrchestrator) GetExecutionMode() string {
+func (po *PlannerOrchestrator) GetExecutionMode() ExecutionMode {
 	if po.selectedOptions != nil {
 		for _, selection := range po.selectedOptions.Selections {
 			if selection.Group == "execution_strategy" {
-				return selection.OptionID
+				return ParseExecutionMode(selection.OptionID)
 			}
 		}
 	}
-	return "sequential_execution" // default
-}
-
-// SetExecutionMode sets the execution mode
-func (po *PlannerOrchestrator) SetExecutionMode(mode string) {
-	po.executionMode = mode
+	return SequentialExecution // default
 }
 
 // IsParallelMode returns true if the orchestrator is in parallel mode
 func (po *PlannerOrchestrator) IsParallelMode() bool {
-	return po.GetExecutionMode() == "parallel_execution"
+	return po.GetExecutionMode() == ParallelExecution
 }
 
 // Parallel execution state management methods

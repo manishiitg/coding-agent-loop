@@ -27,7 +27,13 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
   region?: string
 }
 
-export type OrchestratorExecutionMode = 'sequential_execution' | 'parallel_execution'
+// Execution mode constants matching backend enum
+export const EXECUTION_MODES = {
+  SEQUENTIAL: 'sequential_execution',
+  PARALLEL: 'parallel_execution'
+} as const
+
+export type OrchestratorExecutionMode = typeof EXECUTION_MODES[keyof typeof EXECUTION_MODES]
 
 // Agent streaming types
 export interface AgentQueryRequest {

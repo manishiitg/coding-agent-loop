@@ -229,16 +229,27 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 // Helper function to get component from event type
 func GetComponentFromEventType(eventType EventType) string {
 	switch {
-	case eventType == OrchestratorStart || eventType == OrchestratorEnd || eventType == OrchestratorError:
+	case eventType == OrchestratorStart || eventType == OrchestratorEnd || eventType == OrchestratorError ||
+		eventType == OrchestratorAgentStart || eventType == OrchestratorAgentEnd || eventType == OrchestratorAgentError ||
+		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
+		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
+		eventType == IndependentStepsSelected:
 		return "orchestrator"
-	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
+	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError ||
+		eventType == ReActReasoningStart || eventType == ReActReasoningStep ||
+		eventType == ReActReasoningFinal || eventType == ReActReasoningEnd || eventType == ReActReasoning:
 		return "agent"
-	case eventType == LLMGenerationStart || eventType == LLMGenerationEnd || eventType == LLMGenerationError:
+	case eventType == LLMGenerationStart || eventType == LLMGenerationEnd || eventType == LLMGenerationError ||
+		eventType == SmartRoutingStart || eventType == SmartRoutingEnd:
 		return "llm"
 	case eventType == ToolCallStart || eventType == ToolCallEnd || eventType == ToolCallError:
 		return "tool"
 	case eventType == ConversationStart || eventType == ConversationEnd || eventType == ConversationError || eventType == ConversationTurn || eventType == ConversationThinking:
 		return "conversation"
+	case eventType == CacheHit || eventType == CacheMiss || eventType == CacheWrite ||
+		eventType == CacheExpired || eventType == CacheCleanup || eventType == CacheError ||
+		eventType == CacheOperationStart || eventType == ComprehensiveCache:
+		return "cache"
 	case eventType == SystemPrompt || eventType == UserMessage:
 		return "system"
 	default:

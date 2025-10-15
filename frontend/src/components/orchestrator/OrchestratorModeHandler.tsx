@@ -1,9 +1,11 @@
-import React, { forwardRef, useImperativeHandle, useState, useCallback } from 'react'
+import React, { forwardRef, useImperativeHandle, useState, useCallback, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Info, Zap, Clock, CheckCircle } from 'lucide-react'
 import { useAppStore } from '@/stores'
+import type { OrchestratorExecutionMode } from '@/services/api-types'
+import { EXECUTION_MODES } from '@/services/api-types'
 
 export interface OrchestratorModeHandlerRef {
   getSelectedExecutionMode: () => OrchestratorExecutionMode
@@ -15,14 +17,12 @@ export interface OrchestratorModeHandlerProps {
   children?: React.ReactNode
 }
 
-export type OrchestratorExecutionMode = 'sequential_execution' | 'parallel_execution'
-
 export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, OrchestratorModeHandlerProps>(({
   onExecutionModeChange,
   children
 }, ref) => {
   const { agentMode } = useAppStore()
-  const [selectedMode, setSelectedMode] = useState<OrchestratorExecutionMode>('sequential_execution')
+  const [selectedMode, setSelectedMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.SEQUENTIAL)
 
   const handleModeChange = useCallback((mode: OrchestratorExecutionMode) => {
     setSelectedMode(mode)
@@ -34,8 +34,13 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
   }, [selectedMode])
 
   const resetSelection = useCallback(() => {
-    setSelectedMode('sequential_execution')
-    onExecutionModeChange?.('sequential_execution')
+    setSelectedMode(EXECUTION_MODES.SEQUENTIAL)
+    onExecutionModeChange?.(EXECUTION_MODES.SEQUENTIAL)
+  }, [onExecutionModeChange])
+
+  // Sync initial mode with parent on mount to prevent state drift
+  useEffect(() => {
+    onExecutionModeChange?.(EXECUTION_MODES.SEQUENTIAL)
   }, [onExecutionModeChange])
 
   // Expose methods through ref
@@ -63,18 +68,18 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
               {/* Sequential Execution Option */}
               <div 
                 className={`flex items-start space-x-3 p-4 border rounded-lg transition-colors cursor-pointer ${
-                  selectedMode === 'sequential_execution' 
+                  selectedMode === EXECUTION_MODES.SEQUENTIAL 
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20' 
                     : 'hover:bg-muted/50'
                 }`}
-                onClick={() => handleModeChange('sequential_execution')}
+                onClick={() => handleModeChange(EXECUTION_MODES.SEQUENTIAL)}
               >
                 <input 
                   type="radio" 
                   id="sequential" 
                   name="executionMode"
-                  value="sequential_execution"
-                  checked={selectedMode === 'sequential_execution'}
+                  value={EXECUTION_MODES.SEQUENTIAL}
+                  checked={selectedMode === EXECUTION_MODES.SEQUENTIAL}
                   onChange={(e) => handleModeChange(e.target.value as OrchestratorExecutionMode)}
                   className="mt-1"
                 />
@@ -110,18 +115,18 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
               {/* Parallel Execution Option */}
               <div 
                 className={`flex items-start space-x-3 p-4 border rounded-lg transition-colors cursor-pointer ${
-                  selectedMode === 'parallel_execution' 
+                  selectedMode === EXECUTION_MODES.PARALLEL 
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20' 
                     : 'hover:bg-muted/50'
                 }`}
-                onClick={() => handleModeChange('parallel_execution')}
+                onClick={() => handleModeChange(EXECUTION_MODES.PARALLEL)}
               >
                 <input 
                   type="radio" 
                   id="parallel" 
                   name="executionMode"
-                  value="parallel_execution"
-                  checked={selectedMode === 'parallel_execution'}
+                  value={EXECUTION_MODES.PARALLEL}
+                  checked={selectedMode === EXECUTION_MODES.PARALLEL}
                   onChange={(e) => handleModeChange(e.target.value as OrchestratorExecutionMode)}
                   className="mt-1"
                 />

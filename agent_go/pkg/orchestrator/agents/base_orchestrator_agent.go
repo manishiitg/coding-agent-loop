@@ -11,6 +11,7 @@ import (
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
+	"mcp-agent/agent_go/pkg/mcpagent"
 )
 
 // OrchestratorContext holds context information for event emission
@@ -180,8 +181,11 @@ func (boa *BaseOrchestratorAgent) GetTracer() observability.Tracer {
 }
 
 // GetEventBridge returns the event bridge
-func (boa *BaseOrchestratorAgent) GetEventBridge() interface{} {
-	return boa.eventBridge
+func (boa *BaseOrchestratorAgent) GetEventBridge() mcpagent.AgentEventListener {
+	if bridge, ok := boa.eventBridge.(mcpagent.AgentEventListener); ok {
+		return bridge
+	}
+	return nil
 }
 
 // emitEvent emits an event through the event bridge

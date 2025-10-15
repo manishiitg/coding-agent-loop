@@ -18,29 +18,6 @@ import (
 	"github.com/tmc/langchaingo/llms"
 )
 
-// PlanBreakdownStructuredOutputEvent represents structured output operation events for plan breakdown
-type PlanBreakdownStructuredOutputEvent struct {
-	events.BaseEventData
-	Operation string `json:"operation"`
-	EventType string `json:"event_type"`
-	Error     string `json:"error,omitempty"`
-	Duration  string `json:"duration,omitempty"`
-}
-
-// GetEventType returns the event type for PlanBreakdownStructuredOutputEvent
-func (e *PlanBreakdownStructuredOutputEvent) GetEventType() events.EventType {
-	switch e.EventType {
-	case "structured_output_start":
-		return events.StructuredOutputStart
-	case "structured_output_end":
-		return events.StructuredOutputEnd
-	case "structured_output_error":
-		return events.StructuredOutputError
-	default:
-		return events.StructuredOutputStart // Default fallback
-	}
-}
-
 // PlanBreakdownAgent analyzes dependencies and creates independent steps for parallel execution
 type PlanBreakdownAgent struct {
 	*BaseOrchestratorAgent
@@ -179,7 +156,7 @@ func (pba *PlanBreakdownAgent) AnalyzeDependenciesStructured(ctx context.Context
 
 	// Emit structured output start event
 	if pba.GetEventBridge() != nil {
-		startEventData := &PlanBreakdownStructuredOutputEvent{
+		startEventData := &events.StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: startTime,
 			},
@@ -251,7 +228,7 @@ func (pba *PlanBreakdownAgent) AnalyzeDependenciesStructured(ctx context.Context
 
 	// Emit structured output end event
 	if pba.GetEventBridge() != nil {
-		endEventData := &PlanBreakdownStructuredOutputEvent{
+		endEventData := &events.StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
 			},
@@ -282,7 +259,7 @@ func (pba *PlanBreakdownAgent) AnalyzeDependenciesStructured(ctx context.Context
 func (pba *PlanBreakdownAgent) emitStructuredOutputError(ctx context.Context, operation string, err error, startTime time.Time) {
 	if pba.GetEventBridge() != nil {
 		duration := time.Since(startTime)
-		errorEventData := &PlanBreakdownStructuredOutputEvent{
+		errorEventData := &events.StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
 			},
@@ -311,19 +288,17 @@ func (pba *PlanBreakdownAgent) emitStructuredOutputError(ctx context.Context, op
 func (pba *PlanBreakdownAgent) AnalyzeDependencies(ctx context.Context, planningResult, objective, workspacePath string) (string, error) {
 	pba.AgentTemplate.GetLogger().Infof("🔍 Starting dependency analysis for plan breakdown")
 
-	// Try structured output first if available
-	if pba.structuredOutputLLM != nil {
-		response, err := pba.AnalyzeDependenciesStructured(ctx, planningResult, objective, workspacePath)
+	// Try structured output first (with on-demand initialization)
+	response, err := pba.AnalyzeDependenciesStructured(ctx, planningResult, objective, workspacePath)
+	if err != nil {
+		pba.AgentTemplate.GetLogger().Warnf("⚠️ Structured analysis failed, falling back to text: %v", err)
+	} else {
+		// Return structured response as JSON string for backward compatibility
+		jsonBytes, err := json.Marshal(response)
 		if err != nil {
-			pba.AgentTemplate.GetLogger().Warnf("⚠️ Structured analysis failed, falling back to text: %v", err)
+			pba.AgentTemplate.GetLogger().Warnf("⚠️ Failed to marshal structured response, falling back to text: %v", err)
 		} else {
-			// Return structured response as JSON string for backward compatibility
-			jsonBytes, err := json.Marshal(response)
-			if err != nil {
-				pba.AgentTemplate.GetLogger().Warnf("⚠️ Failed to marshal structured response, falling back to text: %v", err)
-			} else {
-				return string(jsonBytes), nil
-			}
+			return string(jsonBytes), nil
 		}
 	}
 
@@ -334,13 +309,13 @@ func (pba *PlanBreakdownAgent) AnalyzeDependencies(ctx context.Context, planning
 		"WorkspacePath":  workspacePath,
 	}
 
-	response, err := pba.Execute(ctx, templateVars, []llms.MessageContent{})
+	textResponse, err := pba.Execute(ctx, templateVars, []llms.MessageContent{})
 	if err != nil {
 		return "", fmt.Errorf("failed to generate dependency analysis: %w", err)
 	}
 
 	pba.AgentTemplate.GetLogger().Infof("✅ Dependency analysis completed successfully")
-	return response, nil
+	return textResponse, nil
 }
 
 // GetAgentType returns the agent type

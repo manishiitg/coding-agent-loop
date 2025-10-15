@@ -31,29 +31,6 @@ func (r *GenericStructuredResponseImpl) GetData() interface{} {
 	return r.Data
 }
 
-// StructuredOutputEvent represents structured output operation events
-type StructuredOutputEvent struct {
-	events.BaseEventData
-	Operation string `json:"operation"`
-	EventType string `json:"event_type"`
-	Error     string `json:"error,omitempty"`
-	Duration  string `json:"duration,omitempty"`
-}
-
-// GetEventType returns the event type for StructuredOutputEvent
-func (e *StructuredOutputEvent) GetEventType() events.EventType {
-	switch e.EventType {
-	case "structured_output_start":
-		return events.StructuredOutputStart
-	case "structured_output_end":
-		return events.StructuredOutputEnd
-	case "structured_output_error":
-		return events.StructuredOutputError
-	default:
-		return events.StructuredOutputStart // Default fallback
-	}
-}
-
 // StructuredOutputLLM represents a generic structured output LLM for any structured output extraction
 type StructuredOutputLLM struct {
 	llm          llms.Model
@@ -83,7 +60,7 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 
 	// Emit start event
 	if s.eventEmitter != nil {
-		startEventData := &StructuredOutputEvent{
+		startEventData := &events.StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: startTime,
 			},
@@ -106,7 +83,7 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 	if err != nil {
 		// Emit error event
 		if s.eventEmitter != nil {
-			errorEventData := &StructuredOutputEvent{
+			errorEventData := &events.StructuredOutputEvent{
 				BaseEventData: events.BaseEventData{
 					Timestamp: time.Now(),
 				},
@@ -123,7 +100,7 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 
 	// Emit end event
 	if s.eventEmitter != nil {
-		endEventData := &StructuredOutputEvent{
+		endEventData := &events.StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
 			},
@@ -212,8 +189,13 @@ func CreateStructuredOutputLLMWithEventBridge(
 		}
 
 		// Create agent event
+		eventType := data.GetEventType()
+		if eventType == "" {
+			eventType = events.OrchestratorAgentStart // Fallback to current default
+		}
+
 		agentEvent := &events.AgentEvent{
-			Type:      events.OrchestratorAgentStart, // Will be overridden by the structured output LLM
+			Type:      eventType,
 			Timestamp: time.Now(),
 			Data:      data,
 		}

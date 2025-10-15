@@ -149,9 +149,9 @@ func (pba *PlanBreakdownAgent) GetBreakdownSchema() string {
 	}`
 }
 
-// AnalyzeDependenciesStructured analyzes dependencies using structured output
-func (pba *PlanBreakdownAgent) AnalyzeDependenciesStructured(ctx context.Context, planningResult, objective, workspacePath string) (*BreakdownResponse, error) {
-	pba.AgentTemplate.GetLogger().Infof("🔍 Starting structured dependency analysis for plan breakdown")
+// AnalyzeDependencies analyzes dependencies using structured output
+func (pba *PlanBreakdownAgent) AnalyzeDependencies(ctx context.Context, planningResult, objective, workspacePath string) (*BreakdownResponse, error) {
+	pba.AgentTemplate.GetLogger().Infof("🔍 Starting dependency analysis for plan breakdown")
 	startTime := time.Now()
 
 	// Emit structured output start event
@@ -251,7 +251,7 @@ func (pba *PlanBreakdownAgent) AnalyzeDependenciesStructured(ctx context.Context
 		}
 	}
 
-	pba.AgentTemplate.GetLogger().Infof("✅ Structured dependency analysis completed successfully with %d steps", len(response.Steps))
+	pba.AgentTemplate.GetLogger().Infof("✅ Dependency analysis completed successfully with %d steps", len(response.Steps))
 	return &response, nil
 }
 
@@ -282,40 +282,6 @@ func (pba *PlanBreakdownAgent) emitStructuredOutputError(ctx context.Context, op
 			pba.AgentTemplate.GetLogger().Infof("✅ Emitted structured output error event")
 		}
 	}
-}
-
-// AnalyzeDependencies analyzes the planning result and returns independent steps
-func (pba *PlanBreakdownAgent) AnalyzeDependencies(ctx context.Context, planningResult, objective, workspacePath string) (string, error) {
-	pba.AgentTemplate.GetLogger().Infof("🔍 Starting dependency analysis for plan breakdown")
-
-	// Try structured output first (with on-demand initialization)
-	response, err := pba.AnalyzeDependenciesStructured(ctx, planningResult, objective, workspacePath)
-	if err != nil {
-		pba.AgentTemplate.GetLogger().Warnf("⚠️ Structured analysis failed, falling back to text: %v", err)
-	} else {
-		// Return structured response as JSON string for backward compatibility
-		jsonBytes, err := json.Marshal(response)
-		if err != nil {
-			pba.AgentTemplate.GetLogger().Warnf("⚠️ Failed to marshal structured response, falling back to text: %v", err)
-		} else {
-			return string(jsonBytes), nil
-		}
-	}
-
-	// Fallback to original text-based approach
-	templateVars := map[string]string{
-		"PlanningResult": planningResult,
-		"Objective":      objective,
-		"WorkspacePath":  workspacePath,
-	}
-
-	textResponse, err := pba.Execute(ctx, templateVars, []llms.MessageContent{})
-	if err != nil {
-		return "", fmt.Errorf("failed to generate dependency analysis: %w", err)
-	}
-
-	pba.AgentTemplate.GetLogger().Infof("✅ Dependency analysis completed successfully")
-	return textResponse, nil
 }
 
 // GetAgentType returns the agent type

@@ -2,7 +2,6 @@ package types
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -773,24 +772,9 @@ func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planning
 	breakdownAgent.SetOrchestratorContext(0, 0, "Analyze plan dependencies", "plan-breakdown-agent")
 
 	// Use structured output directly from breakdown agent
-	breakdownResponse, err := breakdownAgent.(*agents.PlanBreakdownAgent).AnalyzeDependenciesStructured(ctx, planningResult, po.GetObjective(), po.workspacePath)
+	breakdownResponse, err := breakdownAgent.(*agents.PlanBreakdownAgent).AnalyzeDependencies(ctx, planningResult, po.GetObjective(), po.workspacePath)
 	if err != nil {
-		po.AgentTemplate.GetLogger().Warnf("⚠️ Structured analysis failed, falling back to text parsing: %v", err)
-
-		// Fallback to text-based analysis
-		breakdownResult, err := breakdownAgent.(*agents.PlanBreakdownAgent).AnalyzeDependencies(ctx, planningResult, po.GetObjective(), po.workspacePath)
-		if err != nil {
-			return nil, fmt.Errorf("plan breakdown failed: %w", err)
-		}
-
-		// Parse breakdown result to extract independent steps
-		independentSteps, err := po.parseIndependentSteps(breakdownResult, planningResult)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse independent steps: %w", err)
-		}
-
-		po.AgentTemplate.GetLogger().Infof("✅ Found %d independent steps for parallel execution (text fallback)", len(independentSteps))
-		return independentSteps, nil
+		return nil, fmt.Errorf("plan breakdown failed: %w", err)
 	}
 
 	// Convert structured response to ParallelStep format
@@ -804,7 +788,7 @@ func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planning
 		})
 	}
 
-	po.AgentTemplate.GetLogger().Infof("✅ Found %d independent steps for parallel execution (structured output)", len(parallelSteps))
+	po.AgentTemplate.GetLogger().Infof("✅ Found %d independent steps for parallel execution", len(parallelSteps))
 	return parallelSteps, nil
 }
 
@@ -912,142 +896,6 @@ func (po *PlannerOrchestrator) emitIndependentStepsSelectedEvent(ctx context.Con
 			po.AgentTemplate.GetLogger().Infof("✅ Emitted independent steps selected event: %d steps selected", len(selectedSteps))
 		}
 	}
-}
-
-// parseIndependentSteps parses the breakdown result to extract ALL independent steps
-func (po *PlannerOrchestrator) parseIndependentSteps(breakdownResult string, originalPlan string) ([]ParallelStep, error) {
-	if po.AgentTemplate != nil && po.AgentTemplate.GetLogger() != nil {
-		po.AgentTemplate.GetLogger().Infof("📋 Parsing breakdown result to extract independent steps")
-	}
-
-	// Trim whitespace and check for empty input
-	trimmedResult := strings.TrimSpace(breakdownResult)
-	if len(trimmedResult) == 0 {
-		if po.AgentTemplate != nil && po.AgentTemplate.GetLogger() != nil {
-			po.AgentTemplate.GetLogger().Warnf("⚠️ Empty breakdown result received, creating full plan step for execution agent")
-		}
-		// Return a single step with the full original plan when breakdown is empty
-		return []ParallelStep{
-			{
-				ID:            "full_plan_execution",
-				Description:   originalPlan,
-				Dependencies:  []string{},
-				IsIndependent: true,
-			},
-		}, nil
-	}
-
-	// Try to parse as JSON first (structured output)
-	if trimmedResult[0] == '{' {
-		return po.parseIndependentStepsFromJSON(breakdownResult, originalPlan)
-	}
-
-	// Fallback to text parsing (legacy format)
-	return po.parseIndependentStepsFromText(breakdownResult, originalPlan)
-}
-
-// parseIndependentStepsFromJSON parses JSON breakdown result
-func (po *PlannerOrchestrator) parseIndependentStepsFromJSON(breakdownResult string, originalPlan string) ([]ParallelStep, error) {
-	po.AgentTemplate.GetLogger().Infof("📋 Parsing JSON breakdown result")
-
-	// Parse JSON response
-	var response struct {
-		Steps []struct {
-			ID            string   `json:"id"`
-			Description   string   `json:"description"`
-			Dependencies  []string `json:"dependencies"`
-			IsIndependent bool     `json:"is_independent"`
-			Reasoning     string   `json:"reasoning"`
-		} `json:"steps"`
-	}
-
-	if err := json.Unmarshal([]byte(breakdownResult), &response); err != nil {
-		po.AgentTemplate.GetLogger().Warnf("⚠️ Failed to parse JSON breakdown result, falling back to text parsing: %v", err)
-		return po.parseIndependentStepsFromText(breakdownResult, originalPlan)
-	}
-
-	// Convert to ParallelStep format
-	var steps []ParallelStep
-	for _, step := range response.Steps {
-		steps = append(steps, ParallelStep{
-			ID:            step.ID,
-			Description:   step.Description,
-			Dependencies:  step.Dependencies,
-			IsIndependent: step.IsIndependent,
-		})
-	}
-
-	po.AgentTemplate.GetLogger().Infof("✅ Successfully parsed %d steps from JSON breakdown result", len(steps))
-	return steps, nil
-}
-
-// parseIndependentStepsFromText parses text breakdown result (legacy format)
-func (po *PlannerOrchestrator) parseIndependentStepsFromText(breakdownResult string, originalPlan string) ([]ParallelStep, error) {
-	po.AgentTemplate.GetLogger().Infof("📋 Parsing text breakdown result")
-
-	// Parse the breakdown result text to extract independent steps
-	// The breakdown result should contain step information in the format:
-	// Step 1: [Description]
-	// - Dependencies: [List of dependencies or "None"]
-	// - Independent: [true/false]
-	// - Reasoning: [Explanation]
-
-	lines := strings.Split(breakdownResult, "\n")
-	var steps []ParallelStep
-	var currentStep *ParallelStep
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-
-		// Check if this is a new step
-		if strings.HasPrefix(line, "Step ") && strings.Contains(line, ":") {
-			// Save previous step if exists
-			if currentStep != nil {
-				steps = append(steps, *currentStep)
-			}
-
-			// Create new step
-			currentStep = &ParallelStep{
-				ID:            fmt.Sprintf("step_%d", len(steps)+1),
-				Description:   strings.TrimSpace(strings.Split(line, ":")[1]),
-				Dependencies:  []string{},
-				IsIndependent: false, // Default to false, will be updated
-			}
-		} else if currentStep != nil {
-			// Parse step details
-			if strings.HasPrefix(line, "- Dependencies:") {
-				depsStr := strings.TrimSpace(strings.TrimPrefix(line, "- Dependencies:"))
-				if depsStr != "None" && depsStr != "" {
-					// Simple parsing - in real implementation, you'd parse more complex dependencies
-					currentStep.Dependencies = []string{depsStr}
-				}
-			} else if strings.HasPrefix(line, "- Independent:") {
-				indepStr := strings.TrimSpace(strings.TrimPrefix(line, "- Independent:"))
-				currentStep.IsIndependent = (indepStr == "true")
-			}
-		}
-	}
-
-	// Add the last step
-	if currentStep != nil {
-		steps = append(steps, *currentStep)
-	}
-
-	// If no steps were parsed, create a full plan step
-	if len(steps) == 0 {
-		po.AgentTemplate.GetLogger().Warnf("⚠️ No steps parsed from breakdown result, creating full plan step for execution agent")
-		steps = []ParallelStep{
-			{
-				ID:            "full_plan_execution",
-				Description:   originalPlan,
-				Dependencies:  []string{},
-				IsIndependent: true,
-			},
-		}
-	}
-
-	po.AgentTemplate.GetLogger().Infof("📋 Parsed %d independent steps from breakdown analysis", len(steps))
-	return steps, nil
 }
 
 // executeStepsInParallel executes steps in parallel with goroutines

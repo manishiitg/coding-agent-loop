@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Migration represents a database migration
@@ -169,6 +170,28 @@ func (mr *MigrationRunner) runMigration(migration Migration) error {
 	// Execute migration SQL
 	_, err = tx.Exec(migration.SQL)
 	if err != nil {
+		// Check if this is a duplicate column error for migration 006
+		if migration.Version == 6 && migration.Name == "add_selected_folders_to_presets" {
+			errorStr := err.Error()
+			if strings.Contains(errorStr, "duplicate column name") && strings.Contains(errorStr, "selected_folder") {
+				// This is expected - the column already exists, so we can safely ignore this error
+				fmt.Printf("⚠️  Migration %d: %s - Column 'selected_folder' already exists, skipping\n", migration.Version, migration.Name)
+
+				// Record migration as applied even though we skipped the SQL
+				_, recordErr := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, migration.Version)
+				if recordErr != nil {
+					return fmt.Errorf("failed to record migration: %w", recordErr)
+				}
+
+				// Commit transaction
+				if err := tx.Commit(); err != nil {
+					return fmt.Errorf("failed to commit migration: %w", err)
+				}
+
+				fmt.Printf("✅ Applied migration %d: %s (skipped duplicate column)\n", migration.Version, migration.Name)
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to execute migration SQL: %w", err)
 	}
 

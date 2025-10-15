@@ -35,7 +35,11 @@ export default function LLMConfigurationSummary({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setShowLLMModal(true)}
+              onClick={(e) => {
+                console.log('LLM config button clicked, stopping propagation')
+                e.stopPropagation()
+                setShowLLMModal(true)
+              }}
               className="p-2 text-muted-foreground hover:text-foreground transition-colors"
               title="LLM Configuration"
             >

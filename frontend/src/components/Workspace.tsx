@@ -11,6 +11,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 import { useFolderExpansion } from '../hooks/useFolderExpansion'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores'
+import { useModeStore } from '../stores/useModeStore'
+import { usePresetStore } from '../stores/usePresetStore'
 
 interface WorkspaceProps {
   minimized: boolean
@@ -30,6 +32,9 @@ export default function Workspace({
     setLoadingFileContent,
     setShowFileContent
   } = useAppStore()
+  
+  const { selectedModeCategory } = useModeStore()
+  const { getActivePreset } = usePresetStore()
   
   const {
     files,
@@ -432,6 +437,32 @@ export default function Workspace({
               <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
                 Workspace
               </h2>
+              {/* Mode-specific workspace info */}
+              {selectedModeCategory && (
+                <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  {selectedModeCategory === 'chat' && (
+                    <span>File context for chat conversations</span>
+                  )}
+                  {selectedModeCategory === 'deep-research' && (
+                    <span>
+                      Tasks/ folder for research projects
+                      {(() => {
+                        const activePreset = getActivePreset('deep-research')
+                        return activePreset ? ` • ${activePreset.name}` : ''
+                      })()}
+                    </span>
+                  )}
+                  {selectedModeCategory === 'workflow' && (
+                    <span>
+                      Workflow/ folder for task execution
+                      {(() => {
+                        const activePreset = getActivePreset('workflow')
+                        return activePreset ? ` • ${activePreset.name}` : ''
+                      })()}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Tooltip>

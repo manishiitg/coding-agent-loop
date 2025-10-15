@@ -16,6 +16,12 @@ interface PresetState {
   presets: FolderPreset[]
   selectedPreset: FolderPreset | null
   
+  // Active preset tracking per category
+  activePreset: {
+    'deep-research': string | null
+    'workflow': string | null
+  }
+  
   // Actions
   createPreset: (preset: Omit<FolderPreset, 'id' | 'createdAt' | 'updatedAt'>) => void
   updatePreset: (id: string, updates: Partial<Omit<FolderPreset, 'id' | 'createdAt' | 'updatedAt'>>) => void
@@ -23,6 +29,10 @@ interface PresetState {
   selectPreset: (id: string | null) => void
   getPresetsByCategory: (category: 'workflow' | 'orchestrator') => FolderPreset[]
   getPresetById: (id: string) => FolderPreset | undefined
+  
+  // Active preset management
+  setActivePreset: (category: 'deep-research' | 'workflow', presetId: string | null) => void
+  getActivePreset: (category: 'deep-research' | 'workflow') => FolderPreset | null
 }
 
 export const usePresetStore = create<PresetState>()(
@@ -30,6 +40,10 @@ export const usePresetStore = create<PresetState>()(
     (set, get) => ({
       presets: [],
       selectedPreset: null,
+      activePreset: {
+        'deep-research': null,
+        'workflow': null
+      },
 
       createPreset: (presetData) => {
         const newPreset: FolderPreset = {
@@ -76,12 +90,31 @@ export const usePresetStore = create<PresetState>()(
 
       getPresetById: (id) => {
         return get().presets.find(preset => preset.id === id)
+      },
+
+      // Active preset management
+      setActivePreset: (category, presetId) => {
+        set((state) => ({
+          activePreset: {
+            ...state.activePreset,
+            [category]: presetId
+          }
+        }))
+      },
+
+      getActivePreset: (category) => {
+        const state = get()
+        const presetId = state.activePreset[category]
+        return presetId ? state.presets.find(p => p.id === presetId) || null : null
       }
     }),
     {
       name: 'folder-presets-storage',
-      // Only persist presets, not selectedPreset (which is temporary state)
-      partialize: (state) => ({ presets: state.presets })
+      // Only persist presets and active presets, not selectedPreset (which is temporary state)
+      partialize: (state) => ({ 
+        presets: state.presets,
+        activePreset: state.activePreset
+      })
     }
   )
 )

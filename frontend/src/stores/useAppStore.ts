@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
 import type { PlannerFile, FileContextItem, AgentMode } from './types'
+import { useModeStore, type ModeCategory } from './useModeStore'
 
 interface AppState {
   // Agent configuration
@@ -37,6 +38,11 @@ interface AppState {
   
   // Actions
   setAgentMode: (mode: AgentMode) => void
+  
+  // Mode category helpers
+  getModeCategory: () => ModeCategory
+  setModeCategory: (category: ModeCategory) => void
+  requiresNewChat: boolean
   
   // Workspace actions
   setFiles: (files: PlannerFile[]) => void
@@ -79,6 +85,7 @@ export const useAppStore = create<AppState>()(
       (set, get) => ({
         // Initial state
         agentMode: 'ReAct',
+        requiresNewChat: false,
         files: [],
         selectedFile: null,
         fileContent: '',
@@ -98,7 +105,23 @@ export const useAppStore = create<AppState>()(
 
         // Actions
         setAgentMode: (mode) => {
-          set({ agentMode: mode })
+          const currentMode = get().agentMode
+          set({ 
+            agentMode: mode,
+            requiresNewChat: currentMode !== mode
+          })
+        },
+
+        // Mode category helpers
+        getModeCategory: () => {
+          const { getModeCategoryFromAgentMode } = useModeStore.getState()
+          return getModeCategoryFromAgentMode(get().agentMode)
+        },
+
+        setModeCategory: (category) => {
+          const { getAgentModeFromCategory } = useModeStore.getState()
+          const agentMode = getAgentModeFromCategory(category)
+          get().setAgentMode(agentMode as AgentMode)
         },
 
         // Workspace actions
@@ -202,12 +225,13 @@ export const useAppStore = create<AppState>()(
       {
         name: 'app-store',
         partialize: (state) => ({
-          // Only persist user preferences and important state
-          agentMode: state.agentMode,
-          sidebarMinimized: state.sidebarMinimized,
-          workspaceMinimized: state.workspaceMinimized,
-          chatFileContext: state.chatFileContext,
-          selectedPresetId: state.selectedPresetId
+        // Only persist user preferences and important state
+        agentMode: state.agentMode,
+        sidebarMinimized: state.sidebarMinimized,
+        workspaceMinimized: state.workspaceMinimized,
+        chatFileContext: state.chatFileContext,
+        selectedPresetId: state.selectedPresetId
+        // Note: requiresNewChat is not persisted as it's temporary state
         })
       }
     ),

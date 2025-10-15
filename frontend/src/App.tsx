@@ -8,7 +8,9 @@ import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
 import { resetSessionId } from "./services/api";
 import type { ActiveSessionInfo } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
+import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { useAppStore, useLLMStore, useMCPStore } from "./stores";
+import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
 
@@ -27,13 +29,13 @@ function App() {
   const chatAreaRef = useRef<ChatAreaRef>(null)
 
   // Store subscriptions
-  const { setAgentMode } = useAppStore()
+  const { setAgentMode, setSidebarMinimized } = useAppStore()
+  const { hasCompletedInitialSetup, selectedModeCategory } = useModeStore()
   
   // Load LLM defaults from backend
   useLLMDefaults()
   
   // Legacy state for backward compatibility (will be removed)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [currentPresetServers, setCurrentPresetServers] = useState<string[]>([]) // Used in onPresetSelect
   const [selectedPresetFolder, setSelectedPresetFolder] = useState<string | null>(null)
   
@@ -51,7 +53,6 @@ function App() {
     setChatSessionTitle,
     setSelectedPresetId,
     sidebarMinimized,
-    setSidebarMinimized,
     workspaceMinimized,
     setWorkspaceMinimized
   } = useAppStore()
@@ -72,6 +73,16 @@ function App() {
     // Initialize LLM store
     useLLMStore.getState().refreshAvailableLLMs()
   }, [])
+
+  // Auto-minimize sidebar when mode is selected or preset is selected
+  useEffect(() => {
+    if (selectedModeCategory && !sidebarMinimized) {
+      setSidebarMinimized(true)
+    }
+  }, [selectedModeCategory, sidebarMinimized, setSidebarMinimized])
+
+  // Show mode selection modal if initial setup not completed
+  const showModeSelection = !hasCompletedInitialSetup
 
   // Start new chat function
   const startNewChat = useCallback(() => {
@@ -176,6 +187,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        {/* Mode Selection Modal */}
+        <ModeSelectionModal 
+          isOpen={showModeSelection}
+          onClose={() => {}} // Modal handles its own closing
+        />
+        
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
@@ -214,6 +231,18 @@ function App() {
                 onNewChat={startNewChat}
                 selectedPresetFolder={selectedPresetFolder}
                 currentPresetServers={currentPresetServers}
+                onPresetSelect={(servers, agentMode) => {
+                  // Clear previous file context when switching presets
+                  clearFileContext();
+                  setCurrentPresetServers(servers);
+                  if (agentMode) {
+                    setAgentMode(agentMode);
+                  }
+                }}
+                onPresetFolderSelect={(folderPath) => {
+                  // Store the selected preset folder path
+                  setSelectedPresetFolder(folderPath || null);
+                }}
               />
             </div>
             
@@ -300,7 +329,7 @@ function App() {
           isOpen={showRevisionsModal}
           onClose={() => setShowRevisionsModal(false)}
           filepath={selectedFile?.path || ''}
-          onRestoreVersion={(version) => {
+          onRestoreVersion={() => {
             // TODO: Implement version restoration
             setShowRevisionsModal(false)
           }}

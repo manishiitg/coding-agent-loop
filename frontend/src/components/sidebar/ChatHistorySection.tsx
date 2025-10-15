@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { agentApi } from '../../services/api'
 import type { ChatSession, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
+import { useModeStore } from '../../stores/useModeStore'
+import { usePresetStore } from '../../stores/usePresetStore'
+import { ChevronDown, Plus } from 'lucide-react'
 
 interface ChatHistorySectionProps {
   onSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
@@ -24,6 +27,13 @@ export default function ChatHistorySection({
   
   // Active session state
   const [activeSessions, setActiveSessions] = useState<ActiveSessionInfo[]>([])
+  
+  // Mode and preset store subscriptions
+  const { selectedModeCategory } = useModeStore()
+  const { getActivePreset, setActivePreset, getPresetsByCategory } = usePresetStore()
+  
+  // Preset selector state
+  const [showPresetSelector, setShowPresetSelector] = useState(false)
 
   // Fetch preset query details
   const fetchPresetQuery = useCallback(async (presetQueryId: string) => {
@@ -63,18 +73,61 @@ export default function ChatHistorySection({
     return activeSessions.find(session => session.session_id === sessionId)
   }, [activeSessions])
 
+  // Filter sessions based on mode and active preset
+  const filterSessionsByMode = useCallback((sessions: ChatSession[]) => {
+    if (!selectedModeCategory) return sessions
+
+    switch (selectedModeCategory) {
+      case 'chat':
+        // Show all sessions where agentMode is 'simple' or 'ReAct'
+        return sessions.filter(session => 
+          session.agent_mode === 'simple' || session.agent_mode === 'ReAct'
+        )
+      
+      case 'deep-research': {
+        // Show sessions filtered by active preset (orchestrator category)
+        const activePreset = getActivePreset('deep-research')
+        if (activePreset) {
+          return sessions.filter(session => 
+            session.agent_mode === 'orchestrator' && 
+            session.preset_query_id === activePreset.id
+          )
+        }
+        return sessions.filter(session => session.agent_mode === 'orchestrator')
+      }
+      
+      case 'workflow': {
+        // Show sessions filtered by active preset (workflow category)
+        const workflowPreset = getActivePreset('workflow')
+        if (workflowPreset) {
+          return sessions.filter(session => 
+            session.agent_mode === 'workflow' && 
+            session.preset_query_id === workflowPreset.id
+          )
+        }
+        return sessions.filter(session => session.agent_mode === 'workflow')
+      }
+      
+      default:
+        return sessions
+    }
+  }, [selectedModeCategory, getActivePreset])
+
   // Load chat sessions
   const loadSessions = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await agentApi.getChatSessions(50, 0, selectedPresetId || undefined) // Load last 50 sessions, filtered by preset
-      // Ensure sessions is always an array, never null
-      const sessions = response.sessions || []
-      setSessions(sessions)
+      // Load all sessions first, then filter by mode
+      const response = await agentApi.getChatSessions(100, 0) // Load more sessions for filtering
+      const allSessions = response.sessions || []
+      
+      // Filter sessions based on current mode
+      const filteredSessions = filterSessionsByMode(allSessions)
+      setSessions(filteredSessions)
       
       // Fetch preset details for sessions that have preset_query_id
-      const presetPromises = sessions
+      const presetPromises = filteredSessions
         .filter(session => session.preset_query_id && !presetCache[session.preset_query_id])
         .map(session => fetchPresetQuery(session.preset_query_id!))
       
@@ -87,7 +140,7 @@ export default function ChatHistorySection({
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, selectedPresetId])
+  }, [presetCache, fetchPresetQuery, filterSessionsByMode])
 
   // Load sessions and active sessions on mount
   useEffect(() => {
@@ -181,7 +234,11 @@ export default function ChatHistorySection({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setExpanded(!expanded)}
+              onClick={(e) => {
+                console.log('Chat history button clicked, stopping propagation')
+                e.stopPropagation()
+                setExpanded(!expanded)
+              }}
               className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
               title="Chat History"
             >
@@ -244,6 +301,104 @@ export default function ChatHistorySection({
           </button>
         </div>
       </div>
+
+      {/* Preset Selector for Deep Research and Workflow modes */}
+      {(selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') && (
+        <div className="space-y-2">
+          {/* Current Active Preset Display */}
+          {(() => {
+            const activePreset = getActivePreset(selectedModeCategory)
+            const presets = getPresetsByCategory(selectedModeCategory === 'deep-research' ? 'orchestrator' : 'workflow')
+            
+            return (
+              <div className="space-y-2">
+                {/* Active Preset */}
+                {activePreset ? (
+                  <div className="flex items-center justify-between p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                        {activePreset.name}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowPresetSelector(!showPresetSelector)}
+                      className="p-1 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 transition-colors"
+                    >
+                      <ChevronDown className={`w-3 h-3 transition-transform ${showPresetSelector ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+                    <span className="text-sm text-gray-600 dark:text-gray-400">
+                      No preset selected
+                    </span>
+                    <button
+                      onClick={() => setShowPresetSelector(!showPresetSelector)}
+                      className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                    >
+                      <ChevronDown className={`w-3 h-3 transition-transform ${showPresetSelector ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Preset Selector Dropdown */}
+                {showPresetSelector && (
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-slate-800 shadow-lg">
+                    <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
+                      {presets.length === 0 ? (
+                        <div className="p-3 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No presets available
+                        </div>
+                      ) : (
+                        presets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            onClick={() => {
+                              setActivePreset(selectedModeCategory, preset.id)
+                              setShowPresetSelector(false)
+                              loadSessions() // Reload sessions with new preset filter
+                            }}
+                            className={`w-full text-left p-2 rounded-md text-sm transition-colors ${
+                              activePreset?.id === preset.id
+                                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
+                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                            }`}
+                          >
+                            <div className="font-medium">{preset.name}</div>
+                            {preset.description && (
+                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                {preset.description}
+                              </div>
+                            )}
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                              {preset.folders.length} folder{preset.folders.length !== 1 ? 's' : ''}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                      
+                      {/* Create New Preset Button */}
+                      <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
+                        <button
+                          onClick={() => {
+                            // TODO: Open preset creation modal
+                            setShowPresetSelector(false)
+                          }}
+                          className="w-full flex items-center gap-2 p-2 text-sm text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Create New Preset
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+        </div>
+      )}
 
       {/* Content */}
       {expanded && (

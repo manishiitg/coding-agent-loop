@@ -5,6 +5,8 @@ import MCPServersSection from './sidebar/MCPServersSection'
 import PresetQueriesSection from './sidebar/PresetQueriesSection'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
+import { ModeInfoPanel } from './ModeInfoPanel'
+import { ModeSwitchSection } from './ModeSwitchSection'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useAppStore, useMCPStore, useChatStore, useLLMStore } from '../stores'
@@ -127,6 +129,12 @@ export default function WorkspaceSidebar({
               onPresetAdded={onPresetAdded}
             />
 
+            {/* Mode Information Panel */}
+            <ModeInfoPanel minimized={minimized} />
+
+            {/* Mode Switch Section */}
+            <ModeSwitchSection minimized={minimized} />
+
             {/* Chat History */}
             <ChatHistorySection
               onSessionSelect={(sessionId, sessionTitle, sessionType, activeSessionInfo) => {
@@ -143,12 +151,41 @@ export default function WorkspaceSidebar({
 
       {/* Minimized Icons */}
       {minimized && (
-        <div className="flex-1 flex flex-col items-center py-4 space-y-4">
+        <div 
+          onClick={(e) => {
+            console.log('Minimized sidebar clicked!', e.target)
+            onToggleMinimize()
+          }}
+          className="flex-1 flex flex-col items-center py-4 space-y-4 cursor-pointer"
+          title="Click to expand sidebar"
+        >
+          {/* Expand Sidebar Button */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleMinimize}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                title="Expand sidebar"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand sidebar (Ctrl+5)</p>
+            </TooltipContent>
+          </Tooltip>
+
           {/* Agent Mode Icon */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setAgentMode(agentMode === 'ReAct' ? 'simple' : 'ReAct')}
+                onClick={(e) => {
+                  console.log('Agent mode button clicked, stopping propagation')
+                  e.stopPropagation()
+                  setAgentMode(agentMode === 'ReAct' ? 'simple' : 'ReAct')
+                }}
                 className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -168,7 +205,11 @@ export default function WorkspaceSidebar({
 
           {/* MCP Servers Icon */}
           <button
-            onClick={() => setShowMCPDetails(!showMCPDetails)}
+            onClick={(e) => {
+              console.log('MCP servers button clicked, stopping propagation')
+              e.stopPropagation()
+              setShowMCPDetails(!showMCPDetails)
+            }}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
             title="MCP Servers"
           >

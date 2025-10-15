@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo } from 'react'
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import { agentApi, type AgentQueryRequest } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import { EventModeProvider, EventModeToggle } from './events'
@@ -14,6 +14,11 @@ import { WorkflowExplanation } from './WorkflowExplanation'
 import { ReActExplanation } from './ReActExplanation'
 import GuidanceFloatingIcon from './GuidanceFloatingIcon'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
+import { useModeStore } from '../stores/useModeStore'
+import { usePresetStore } from '../stores/usePresetStore'
+import { MessageCircle, Search, Workflow, Settings } from 'lucide-react'
+import { ModeEmptyState } from './ModeEmptyState'
+import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 
 interface ChatAreaProps {
   // New chat handler
@@ -24,6 +29,10 @@ interface ChatAreaProps {
   
   // Current preset servers (from preset selection)
   currentPresetServers?: string[]
+  
+  // Preset selection callbacks
+  onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void
+  onPresetFolderSelect?: (folderPath?: string) => void
 }
 
 // Ref interface for ChatArea component
@@ -38,7 +47,9 @@ export interface ChatAreaRef {
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   onNewChat,
   selectedPresetFolder,
-  currentPresetServers = []
+  currentPresetServers = [],
+  onPresetSelect,
+  onPresetFolderSelect
 }, ref) => {
   // Store subscriptions
   const { 
@@ -50,6 +61,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     chatSessionId,
     chatSessionTitle
   } = useAppStore()
+  
+  const { selectedModeCategory } = useModeStore()
+  const { getActivePreset } = usePresetStore()
   
   const { 
     primaryConfig: llmConfig,
@@ -133,6 +147,162 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Use currentPresetServers from props (passed from App.tsx when preset is selected)
   const primaryLLM = getCurrentLLMOption()
+  
+  // Mode indicator helpers
+  const getModeIcon = (category: typeof selectedModeCategory) => {
+    switch (category) {
+      case 'chat':
+        return <MessageCircle className="w-4 h-4 text-blue-600" />
+      case 'deep-research':
+        return <Search className="w-4 h-4 text-blue-600" />
+      case 'workflow':
+        return <Workflow className="w-4 h-4 text-blue-600" />
+      default:
+        return <MessageCircle className="w-4 h-4 text-gray-400" />
+    }
+  }
+
+  const getModeName = (category: typeof selectedModeCategory) => {
+    switch (category) {
+      case 'chat':
+        return 'Chat Mode'
+      case 'deep-research':
+        return 'Deep Research Mode'
+      case 'workflow':
+        return 'Workflow Mode'
+      default:
+        return 'Unknown Mode'
+    }
+  }
+
+  // State for mode switching
+  const [showModeSwitch, setShowModeSwitch] = useState(false)
+  
+  // State for preset selection overlay
+  const [showPresetSelection, setShowPresetSelection] = useState(false)
+  const [pendingModeCategory, setPendingModeCategory] = useState<'deep-research' | 'workflow' | null>(null)
+  
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showModeSwitch) {
+        const target = event.target as Element
+        if (!target.closest('.mode-switch-dropdown')) {
+          setShowModeSwitch(false)
+        }
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showModeSwitch])
+
+  // Handle mode selection from dropdown
+  const handleModeSelect = (category: 'chat' | 'deep-research' | 'workflow') => {
+    if (category === selectedModeCategory) {
+      setShowModeSwitch(false)
+      return
+    }
+
+    // Check if there's an active chat session
+    const hasActiveChat = events.length > 0 || isStreaming
+    
+    if (hasActiveChat) {
+      // Show confirmation dialog
+      // For now, we'll use a simple confirm dialog
+      const confirmed = window.confirm(
+        `Switching to ${category === 'chat' ? 'Chat Mode' : category === 'deep-research' ? 'Deep Research Mode' : 'Workflow Mode'} will start a new chat session and clear your current conversation. Continue?`
+      )
+      
+      if (confirmed) {
+        handleModeSwitchWithPreset(category)
+      }
+    } else {
+      // Switch mode directly
+      handleModeSwitchWithPreset(category)
+    }
+    
+    setShowModeSwitch(false)
+  }
+
+  // Handle mode switching with preset selection for Deep Research/Workflow
+  const handleModeSwitchWithPreset = (category: 'chat' | 'deep-research' | 'workflow') => {
+    if (category === 'chat') {
+      // Chat mode doesn't need preset selection
+      switchMode(category)
+    } else {
+      // Deep Research or Workflow mode - check if preset is needed
+      const { getActivePreset } = usePresetStore.getState()
+      const activePreset = getActivePreset(category)
+      
+      if (activePreset) {
+        // Preset already selected, switch mode directly
+        switchMode(category)
+      } else {
+        // No preset selected, show preset selection overlay
+        setPendingModeCategory(category)
+        setShowPresetSelection(true)
+      }
+    }
+  }
+
+  // Switch mode function
+  const switchMode = (category: 'chat' | 'deep-research' | 'workflow') => {
+    const { setModeCategory } = useModeStore.getState()
+    const { setAgentMode } = useAppStore.getState()
+    
+    setModeCategory(category)
+    
+    // Set the corresponding agent mode
+    let agentModeToSet: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+    switch (category) {
+      case 'chat':
+        agentModeToSet = 'ReAct' // Default to ReAct for chat
+        break
+      case 'deep-research':
+        agentModeToSet = 'orchestrator'
+        break
+      case 'workflow':
+        agentModeToSet = 'workflow'
+        break
+      default:
+        agentModeToSet = 'ReAct'
+    }
+    
+    setAgentMode(agentModeToSet)
+    
+    // Start a new chat when switching modes
+    // Note: startNewChat will be handled by the parent component
+  }
+
+  // Handle preset selection from overlay
+  const handlePresetSelected = (presetId: string) => {
+    if (pendingModeCategory) {
+      const { setActivePreset } = usePresetStore.getState()
+      setActivePreset(pendingModeCategory, presetId)
+      
+      // Now switch to the mode
+      switchMode(pendingModeCategory)
+      
+      // Close overlay
+      setShowPresetSelection(false)
+      setPendingModeCategory(null)
+    }
+  }
+
+  // Handle preset selection overlay close
+  const handlePresetSelectionClose = () => {
+    setShowPresetSelection(false)
+    setPendingModeCategory(null)
+  }
+
+  const getActivePresetName = () => {
+    if (!selectedModeCategory || (selectedModeCategory !== 'deep-research' && selectedModeCategory !== 'workflow')) {
+      return null
+    }
+    const activePreset = getActivePreset(selectedModeCategory)
+    return activePreset?.name || null
+  }
   
   // Filter toasts to only include types supported by ToastContainer
   const filteredToasts = toasts.filter((toast: { type: string }) => toast.type === 'success' || toast.type === 'info') as Array<{id: string, message: string, type: 'success' | 'info'}>
@@ -1104,13 +1274,129 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   return (
     <div className="flex flex-col h-full min-w-0">
+      {/* Preset Selection Overlay */}
+      {showPresetSelection && pendingModeCategory && (
+        <PresetSelectionOverlay
+          isOpen={showPresetSelection}
+          onClose={handlePresetSelectionClose}
+          onPresetSelected={handlePresetSelected}
+          modeCategory={pendingModeCategory}
+          onPresetSelect={onPresetSelect}
+          onPresetFolderSelect={onPresetFolderSelect}
+          setCurrentQuery={setCurrentQuery}
+        />
+      )}
+
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-16">
         <div className="flex items-center justify-between h-full">
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">
-              {chatSessionTitle ? `Chat: ${chatSessionTitle}` : 'Chat'}
-            </h2>
+            {/* Mode Indicator and Title */}
+            <div className="flex items-center gap-2 mb-1">
+              {selectedModeCategory && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowModeSwitch(!showModeSwitch)}
+                    className="flex items-center gap-1 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors cursor-pointer"
+                    title="Click to change mode"
+                  >
+                    {getModeIcon(selectedModeCategory)}
+                    <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                      {getModeName(selectedModeCategory)}
+                    </span>
+                    <Settings className="w-3 h-3 text-blue-600" />
+                  </button>
+                  
+                  {/* Direct Mode Selection Dropdown */}
+                  {showModeSwitch && (
+                    <div className="mode-switch-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
+                      <div className="p-2 space-y-1">
+                        {/* Chat Mode */}
+                        <button
+                          onClick={() => handleModeSelect('chat')}
+                          className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
+                            selectedModeCategory === 'chat'
+                              ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <MessageCircle className="w-4 h-4 text-blue-600" />
+                            <div>
+                              <div className="font-medium">Chat Mode</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">
+                                Quick conversations and questions
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                        
+                        {/* Deep Research Mode */}
+                        <button
+                          onClick={() => handleModeSelect('deep-research')}
+                          className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
+                            selectedModeCategory === 'deep-research'
+                              ? 'bg-green-100 dark:bg-green-900/30 text-green-900 dark:text-green-100'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Search className="w-4 h-4 text-green-600" />
+                            <div>
+                              <div className="font-medium">Deep Research Mode</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">
+                                Multi-step analysis and research
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                        
+                        {/* Workflow Mode */}
+                        <button
+                          onClick={() => handleModeSelect('workflow')}
+                          className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
+                            selectedModeCategory === 'workflow'
+                              ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-900 dark:text-purple-100'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Workflow className="w-4 h-4 text-purple-600" />
+                            <div>
+                              <div className="font-medium">Workflow Mode</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">
+                                Todo-based task execution
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">
+                {chatSessionTitle ? `Chat: ${chatSessionTitle}` : 'Chat'}
+              </h2>
+            </div>
+            
+            {/* Preset Name (for Deep Research/Workflow modes) */}
+            {(() => {
+              const activePresetName = getActivePresetName()
+              if (activePresetName) {
+                return (
+                  <div className="flex items-center gap-1 mb-1">
+                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
+                    <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                      {activePresetName}
+                    </span>
+                  </div>
+                )
+              }
+              return null
+            })()}
+            
+            {/* Session Status or Mode Description */}
             <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
               {chatSessionId ? (
                 sessionState === 'active' ? 'Live Session' : 
@@ -1232,11 +1518,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onPresetCleared={handleWorkflowPresetCleared}
           onWorkflowPhaseChange={setWorkflowPhase}
         >
-            <EventDisplay 
-              onDismissUserMessage={() => setShowUserMessage(false)}
-              onApproveWorkflow={handleApproveWorkflow}
-            />
-          </WorkflowModeHandler>
+          {/* Empty State - Show when no events and not in historical session */}
+          {!chatSessionId && events.length === 0 && !isStreaming && (
+            <ModeEmptyState modeCategory={selectedModeCategory} />
+          )}
+          
+          <EventDisplay 
+            onDismissUserMessage={() => setShowUserMessage(false)}
+            onApproveWorkflow={handleApproveWorkflow}
+          />
+        </WorkflowModeHandler>
         </div>
       </div>
 

@@ -15,6 +15,8 @@ interface PresetModalProps {
   onSave: (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
+  hideAgentModeSelection?: boolean;
+  fixedAgentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow';
 }
 
 const PresetModal: React.FC<PresetModalProps> = ({
@@ -23,6 +25,8 @@ const PresetModal: React.FC<PresetModalProps> = ({
   onSave,
   editingPreset,
   availableServers = [],
+  hideAgentModeSelection = false,
+  fixedAgentMode,
 }) => {
   const [label, setLabel] = useState('');
   const [query, setQuery] = useState('');
@@ -43,10 +47,10 @@ const PresetModal: React.FC<PresetModalProps> = ({
       setLabel('');
       setQuery('');
       setSelectedServers([]);
-      setAgentMode('ReAct');
+      setAgentMode(fixedAgentMode || 'ReAct');
       setSelectedFolder(null);
     }
-  }, [editingPreset]);
+  }, [editingPreset, fixedAgentMode]);
 
   const handleServerToggle = (server: string) => {
     setSelectedServers(prev => 
@@ -143,6 +147,55 @@ const PresetModal: React.FC<PresetModalProps> = ({
             />
           </div>
 
+          {/* Folder Selection */}
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Folder {agentMode === 'orchestrator' || agentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
+            </label>
+            <div className="space-y-2">
+              {selectedFolder && (
+                <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+                  <div className="flex items-center gap-2">
+                    <Folder className="w-4 h-4 text-blue-600" />
+                    <span className="text-sm text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveFolder}
+                    className="p-1 text-gray-500 hover:text-red-600 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                data-folder-button
+                onClick={handleSelectFolders}
+                className={`w-full p-3 border-2 border-dashed rounded-md transition-colors ${
+                  (agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder
+                    ? 'border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500'
+                    : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-blue-500'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Plus className="w-4 h-4" />
+                  <span>{selectedFolder ? 'Change Folder' : 'Select Folder'}</span>
+                </div>
+              </button>
+            </div>
+            {selectedFolder && (
+              <p className="text-xs text-gray-500 mt-1">
+                Selected: {selectedFolder.filepath}
+              </p>
+            )}
+            {(agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder && (
+              <p className="text-xs text-red-500 mt-1">
+                ⚠️ Folder selection is required for {agentMode} presets
+              </p>
+            )}
+          </div>
+
           <div>
             <label htmlFor="preset-query" className="block text-sm font-medium mb-2">
               Query
@@ -157,87 +210,62 @@ const PresetModal: React.FC<PresetModalProps> = ({
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Agent Mode
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
-                { value: 'ReAct', label: 'ReAct', description: 'Step-by-step reasoning' },
-                { value: 'orchestrator', label: 'Deep Search', description: 'Multi-step plans' },
-                { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
-              ].map((mode) => (
-                <div key={mode.value} className="flex items-center space-x-2">
-                  <input
-                    type="radio"
-                    id={`agent-mode-${mode.value}`}
-                    name="agentMode"
-                    value={mode.value}
-                    checked={agentMode === mode.value}
-                    onChange={(e) => setAgentMode(e.target.value as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')}
-                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
-                  />
-                  <label
-                    htmlFor={`agent-mode-${mode.value}`}
-                    className="text-sm cursor-pointer flex-1"
-                  >
-                    <div className="font-medium">{mode.label}</div>
-                    <div className="text-xs text-gray-500">{mode.description}</div>
-                  </label>
-                </div>
-              ))}
+          {!hideAgentModeSelection && (
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Agent Mode
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
+                  { value: 'ReAct', label: 'ReAct', description: 'Step-by-step reasoning' },
+                  { value: 'orchestrator', label: 'Deep Search', description: 'Multi-step plans' },
+                  { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
+                ].map((mode) => (
+                  <div key={mode.value} className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id={`agent-mode-${mode.value}`}
+                      name="agentMode"
+                      value={mode.value}
+                      checked={agentMode === mode.value}
+                      onChange={(e) => setAgentMode(e.target.value as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')}
+                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
+                    />
+                    <label
+                      htmlFor={`agent-mode-${mode.value}`}
+                      className="text-sm cursor-pointer flex-1"
+                    >
+                      <div className="font-medium">{mode.label}</div>
+                      <div className="text-xs text-gray-500">{mode.description}</div>
+                    </label>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-        {/* Folder Selection */}
-        <div>
-          <label className="block text-sm font-medium mb-2">
-            Folder {agentMode === 'orchestrator' || agentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
-          </label>
-          <div className="space-y-2">
-            {selectedFolder && (
-              <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+          {hideAgentModeSelection && fixedAgentMode && (
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Agent Mode
+              </label>
+              <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
                 <div className="flex items-center gap-2">
-                  <Folder className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
+                  <div className="font-medium text-gray-900 dark:text-white">
+                    {fixedAgentMode === 'simple' ? 'Simple' : 
+                     fixedAgentMode === 'ReAct' ? 'ReAct' :
+                     fixedAgentMode === 'orchestrator' ? 'Deep Search' : 'Workflow'}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {fixedAgentMode === 'simple' ? 'Ask simple questions' :
+                     fixedAgentMode === 'ReAct' ? 'Step-by-step reasoning' :
+                     fixedAgentMode === 'orchestrator' ? 'Multi-step plans' : 'Todo-list execution'}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleRemoveFolder}
-                  className="p-1 text-gray-500 hover:text-red-600 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
               </div>
-            )}
-            <button
-              type="button"
-              data-folder-button
-              onClick={handleSelectFolders}
-              className={`w-full p-3 border-2 border-dashed rounded-md transition-colors ${
-                (agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder
-                  ? 'border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500'
-                  : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-blue-500'
-              }`}
-            >
-              <div className="flex items-center justify-center gap-2">
-                <Plus className="w-4 h-4" />
-                <span>{selectedFolder ? 'Change Folder' : 'Select Folder'}</span>
-              </div>
-            </button>
-          </div>
-          {selectedFolder && (
-            <p className="text-xs text-gray-500 mt-1">
-              Selected: {selectedFolder.filepath}
-            </p>
+            </div>
           )}
-          {(agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder && (
-            <p className="text-xs text-red-500 mt-1">
-              ⚠️ Folder selection is required for {agentMode} presets
-            </p>
-          )}
-        </div>
 
           {availableServers.length > 0 && (
             <div>

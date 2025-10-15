@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -770,11 +771,28 @@ func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planning
 
 	// Set orchestrator context for breakdown agent
 	breakdownAgent.SetOrchestratorContext(0, 0, "Analyze plan dependencies", "plan-breakdown-agent")
+	// Also update the context-aware event bridge
+	if po.orchestratorUtils != nil {
+		po.orchestratorUtils.UpdateAgentContext("plan breakdown agent", "plan_breakdown", 0, 0)
+	}
 
-	// Use structured output directly from breakdown agent
-	breakdownResponse, err := breakdownAgent.(*agents.PlanBreakdownAgent).AnalyzeDependencies(ctx, planningResult, po.GetObjective(), po.workspacePath)
+	// Use Execute method to get both agent events and structured output events
+	templateVars := map[string]string{
+		"PlanningResult": planningResult,
+		"Objective":      po.GetObjective(),
+		"WorkspacePath":  po.workspacePath,
+	}
+
+	// Execute the breakdown agent through normal execution flow
+	breakdownResult, err := breakdownAgent.Execute(ctx, templateVars, po.conversationHistory)
 	if err != nil {
-		return nil, fmt.Errorf("plan breakdown failed: %w", err)
+		return nil, fmt.Errorf("plan breakdown execution failed: %w", err)
+	}
+
+	// Parse the structured response from the execution result
+	var breakdownResponse agents.BreakdownResponse
+	if err := json.Unmarshal([]byte(breakdownResult), &breakdownResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse breakdown response: %w", err)
 	}
 
 	// Convert structured response to ParallelStep format

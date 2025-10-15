@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent/agent_go/internal/observability"
@@ -56,41 +53,49 @@ func (pba *PlanBreakdownAgent) Initialize(ctx context.Context) error {
 
 // Execute executes the plan breakdown agent with breakdown-specific input processing
 func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
-	return pba.ExecuteWithInputProcessor(ctx, templateVars, pba.breakdownInputProcessor, conversationHistory)
+	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
+	// This will automatically emit agent start/end events
+	result, err := pba.ExecuteWithInputProcessor(ctx, templateVars, pba.breakdownInputProcessor, conversationHistory)
+	if err != nil {
+		return "", fmt.Errorf("plan breakdown execution failed: %w", err)
+	}
+
+	// The result should already be the structured JSON response from the LLM
+	// Parse it to validate it's proper JSON
+	var breakdownResponse BreakdownResponse
+	if err := json.Unmarshal([]byte(result), &breakdownResponse); err != nil {
+		return "", fmt.Errorf("failed to parse breakdown response: %w", err)
+	}
+
+	// Return the JSON string result
+	return result, nil
 }
 
 // breakdownInputProcessor processes inputs specifically for plan breakdown using structured output
 func (pba *PlanBreakdownAgent) breakdownInputProcessor(templateVars map[string]string) string {
-	// Use the predefined prompt with template variable replacement
-	templateStr := pba.breakdownPrompts.AnalyzeDependenciesPrompt
+	// Extract template variables for dependency analysis
+	planningResult := templateVars["PlanningResult"]
+	objective := templateVars["Objective"]
+	workspacePath := templateVars["WorkspacePath"]
 
-	// Parse and execute the template
-	tmpl, err := template.New("breakdown").Parse(templateStr)
+	// Call AnalyzeDependencies to get structured response
+	// This will emit structured output events
+	breakdownResponse, err := pba.AnalyzeDependencies(context.Background(), planningResult, objective, workspacePath)
 	if err != nil {
-		// Log the full error for debugging
-		if pba.AgentTemplate != nil && pba.AgentTemplate.GetLogger() != nil {
-			pba.AgentTemplate.GetLogger().Errorf("Error parsing breakdown template: %v", err)
-		} else {
-			log.Printf("Error parsing breakdown template: %v", err)
-		}
-		// Return original template with safe context
-		return templateStr + "\n\n[NOTE: rendering failed; using raw template]"
+		// Return error as JSON string
+		errorResponse := fmt.Sprintf(`{"error": "dependency analysis failed: %s"}`, err.Error())
+		return errorResponse
 	}
 
-	var result strings.Builder
-	err = tmpl.Execute(&result, templateVars)
+	// Convert structured response back to JSON string
+	jsonResponse, err := json.Marshal(breakdownResponse)
 	if err != nil {
-		// Log the full error for debugging
-		if pba.AgentTemplate != nil && pba.AgentTemplate.GetLogger() != nil {
-			pba.AgentTemplate.GetLogger().Errorf("Error executing breakdown template: %v", err)
-		} else {
-			log.Printf("Error executing breakdown template: %v", err)
-		}
-		// Return original template with safe context
-		return templateStr + "\n\n[NOTE: rendering failed; using raw template]"
+		// Return error as JSON string
+		errorResponse := fmt.Sprintf(`{"error": "failed to marshal breakdown response: %s"}`, err.Error())
+		return errorResponse
 	}
 
-	return result.String()
+	return string(jsonResponse)
 }
 
 // BreakdownStep represents a step in the breakdown analysis

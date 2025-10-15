@@ -10,7 +10,7 @@ import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orch
 import { getAgentModeDescription } from '../utils/agentModeDescriptions'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { WORKFLOW_PHASES, type WorkflowPhase } from '../constants/workflow'
+import { WORKFLOW_PHASES } from '../constants/workflow'
 import { OrchestratorExplanation } from './OrchestratorExplanation'
 import { WorkflowExplanation } from './WorkflowExplanation'
 import { ReActExplanation } from './ReActExplanation'
@@ -90,11 +90,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     lastScrollTop,
     setLastScrollTop,
     finalResponse,
-    setFinalResponse,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    setFinalResponse: _setFinalResponse,
     setIsCompleted,
     isLoadingHistory,
     setIsLoadingHistory,
-    setIsApprovingWorkflow,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    setIsApprovingWorkflow: _setIsApprovingWorkflow,
     sessionState,
     setSessionState,
     isCheckingActiveSessions,
@@ -103,7 +105,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setSelectedWorkflowPreset,
     workflowPhase,
     setWorkflowPhase,
-    workflowPresetQueryId,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    workflowPresetQueryId: _workflowPresetQueryId,
     setWorkflowPresetQueryId,
     toasts,
     addToast,
@@ -333,6 +336,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   }, [setSelectedWorkflowPreset, setWorkflowPresetQueryId, setWorkflowPhase])
 
   // Handle human verification actions
+  // TODO: Re-enable when RequestHumanFeedbackEvent is available
+  /*
   const handleApproveWorkflow = useCallback(async (_requestId: string, eventData?: { next_phase?: string }) => {
     
     setIsApprovingWorkflow(true)  // Set loading state
@@ -378,12 +383,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setIsApprovingWorkflow(false)  // Clear loading state
     }
   }, [workflowPresetQueryId, pollingInterval, setIsApprovingWorkflow, setEvents, setTotalEvents, setLastEventCount, setLastEventIndex, setFinalResponse, setIsCompleted, setCurrentUserMessage, setShowUserMessage, setWorkflowPhase, setPollingInterval])
+  */
 
   // Shared EventDisplay component to avoid duplication
   const SharedEventDisplay = React.memo(() => (
     <EventDisplay 
       onDismissUserMessage={() => setShowUserMessage(false)}
-      onApproveWorkflow={handleApproveWorkflow}
     />
   ))
 

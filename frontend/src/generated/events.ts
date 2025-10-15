@@ -52,6 +52,9 @@ export interface UnifiedEventsCompleteSchema {
   orchestrator_agent_start?: OrchestratorAgentStartEvent;
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
+  structured_output_start?: StructuredOutputStartEvent;
+  structured_output_end?: StructuredOutputEndEvent;
+  independent_steps_selected?: IndependentStepsSelectedEvent;
 }
 export interface ToolCallStartEvent {
   timestamp?: string;
@@ -970,6 +973,7 @@ export interface OrchestratorStartEvent {
   agents_count?: number;
   servers_count?: number;
   configuration?: string;
+  execution_mode?: string;
 }
 export interface OrchestratorEndEvent {
   timestamp?: string;
@@ -990,6 +994,7 @@ export interface OrchestratorEndEvent {
   duration?: number;
   status?: string;
   error?: string;
+  execution_mode?: string;
 }
 export interface OrchestratorErrorEvent {
   timestamp?: string;
@@ -1008,6 +1013,7 @@ export interface OrchestratorErrorEvent {
   context?: string;
   error?: string;
   duration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentStartEvent {
   timestamp?: string;
@@ -1036,6 +1042,7 @@ export interface OrchestratorAgentStartEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentEndEvent {
   timestamp?: string;
@@ -1068,6 +1075,7 @@ export interface OrchestratorAgentEndEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentErrorEvent {
   timestamp?: string;
@@ -1095,4 +1103,65 @@ export interface OrchestratorAgentErrorEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
+}
+export interface StructuredOutputStartEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  operation?: string;
+  event_type?: string;
+}
+export interface StructuredOutputEndEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  operation?: string;
+  event_type?: string;
+  error?: string;
+  duration?: string;
+}
+export interface IndependentStepsSelectedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  steps_count?: number;
+  selected_steps?: (string | {
+    id?: string;
+    description?: string;
+    dependencies?: string[];
+    is_independent?: boolean;
+  })[];
+  execution_mode?: string;
+  plan_id?: string;
 }

@@ -1687,6 +1687,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1763,6 +1766,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1983,6 +1989,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,

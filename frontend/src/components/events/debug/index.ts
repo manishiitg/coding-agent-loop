@@ -22,3 +22,7 @@ export { SmartRoutingEndEventDisplay } from './SmartRoutingEndEvent'
 // Unified cache event component
 export { CacheEventDisplay } from './CacheEvent'
 export { ComprehensiveCacheEventDisplay } from './ComprehensiveCacheEvent'
+
+// Structured output event components
+export { StructuredOutputStartEventDisplay } from './StructuredOutputStartEvent'
+export { StructuredOutputEndEventDisplay } from './StructuredOutputEndEvent'

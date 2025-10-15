@@ -7,13 +7,12 @@ import { useChatStore } from '../stores'
 interface EventDisplayProps {
   // Callbacks only
   onDismissUserMessage?: () => void
-  onApproveWorkflow?: (requestId: string) => void
+  // onApproveWorkflow?: (requestId: string) => void
 }
 
 // Isolated event display component that can re-render without affecting input
 export const EventDisplay = React.memo<EventDisplayProps>(({ 
-  onDismissUserMessage,
-  onApproveWorkflow
+  onDismissUserMessage
 }) => {
   // Store subscriptions
   const {
@@ -22,7 +21,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({
     isCompleted,
     currentUserMessage,
     showUserMessage,
-    isApprovingWorkflow: isApproving
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    isApprovingWorkflow: _isApproving
   } = useChatStore()
 
   // Debug: Log events received by EventDisplay
@@ -100,8 +100,6 @@ export const EventDisplay = React.memo<EventDisplayProps>(({
           <div className="min-w-0">
             <EventList 
               events={events} 
-              onApproveWorkflow={onApproveWorkflow}
-              isApproving={isApproving}
             />
           </div>
         </div>

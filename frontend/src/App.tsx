@@ -33,7 +33,6 @@ function App() {
   useLLMDefaults()
   
   // Legacy state for backward compatibility (will be removed)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [currentPresetServers, setCurrentPresetServers] = useState<string[]>([]) // Used in onPresetSelect
   const [selectedPresetFolder, setSelectedPresetFolder] = useState<string | null>(null)
   
@@ -300,7 +299,7 @@ function App() {
           isOpen={showRevisionsModal}
           onClose={() => setShowRevisionsModal(false)}
           filepath={selectedFile?.path || ''}
-          onRestoreVersion={(version) => {
+          onRestoreVersion={() => {
             // TODO: Implement version restoration
             setShowRevisionsModal(false)
           }}

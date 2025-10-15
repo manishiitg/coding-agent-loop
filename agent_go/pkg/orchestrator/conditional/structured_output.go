@@ -151,9 +151,8 @@ func CreateStructuredOutputLLMWithEventBridge(
 
 	// Add cross-provider fallback models if configured
 	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.CrossProviderFallback.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Infof("🔧 Added cross-provider fallback models for structured output LLM: %v", crossProviderFallbacks)
+		fallbackModels = append(fallbackModels, config.CrossProviderFallback.Models...)
+		logger.Infof("🔧 Using configured cross-provider fallback models for structured output LLM: %v", config.CrossProviderFallback.Models)
 	} else {
 		// Add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.Provider))

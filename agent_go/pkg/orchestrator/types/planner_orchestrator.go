@@ -784,7 +784,7 @@ func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planning
 		}
 
 		// Parse breakdown result to extract independent steps
-		independentSteps, err := po.parseIndependentSteps(breakdownResult)
+		independentSteps, err := po.parseIndependentSteps(breakdownResult, planningResult)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse independent steps: %w", err)
 		}
@@ -915,20 +915,39 @@ func (po *PlannerOrchestrator) emitIndependentStepsSelectedEvent(ctx context.Con
 }
 
 // parseIndependentSteps parses the breakdown result to extract ALL independent steps
-func (po *PlannerOrchestrator) parseIndependentSteps(breakdownResult string) ([]ParallelStep, error) {
-	po.AgentTemplate.GetLogger().Infof("📋 Parsing breakdown result to extract independent steps")
+func (po *PlannerOrchestrator) parseIndependentSteps(breakdownResult string, originalPlan string) ([]ParallelStep, error) {
+	if po.AgentTemplate != nil && po.AgentTemplate.GetLogger() != nil {
+		po.AgentTemplate.GetLogger().Infof("📋 Parsing breakdown result to extract independent steps")
+	}
+
+	// Trim whitespace and check for empty input
+	trimmedResult := strings.TrimSpace(breakdownResult)
+	if len(trimmedResult) == 0 {
+		if po.AgentTemplate != nil && po.AgentTemplate.GetLogger() != nil {
+			po.AgentTemplate.GetLogger().Warnf("⚠️ Empty breakdown result received, creating full plan step for execution agent")
+		}
+		// Return a single step with the full original plan when breakdown is empty
+		return []ParallelStep{
+			{
+				ID:            "full_plan_execution",
+				Description:   originalPlan,
+				Dependencies:  []string{},
+				IsIndependent: true,
+			},
+		}, nil
+	}
 
 	// Try to parse as JSON first (structured output)
-	if strings.TrimSpace(breakdownResult)[0] == '{' {
-		return po.parseIndependentStepsFromJSON(breakdownResult)
+	if trimmedResult[0] == '{' {
+		return po.parseIndependentStepsFromJSON(breakdownResult, originalPlan)
 	}
 
 	// Fallback to text parsing (legacy format)
-	return po.parseIndependentStepsFromText(breakdownResult)
+	return po.parseIndependentStepsFromText(breakdownResult, originalPlan)
 }
 
 // parseIndependentStepsFromJSON parses JSON breakdown result
-func (po *PlannerOrchestrator) parseIndependentStepsFromJSON(breakdownResult string) ([]ParallelStep, error) {
+func (po *PlannerOrchestrator) parseIndependentStepsFromJSON(breakdownResult string, originalPlan string) ([]ParallelStep, error) {
 	po.AgentTemplate.GetLogger().Infof("📋 Parsing JSON breakdown result")
 
 	// Parse JSON response
@@ -944,7 +963,7 @@ func (po *PlannerOrchestrator) parseIndependentStepsFromJSON(breakdownResult str
 
 	if err := json.Unmarshal([]byte(breakdownResult), &response); err != nil {
 		po.AgentTemplate.GetLogger().Warnf("⚠️ Failed to parse JSON breakdown result, falling back to text parsing: %v", err)
-		return po.parseIndependentStepsFromText(breakdownResult)
+		return po.parseIndependentStepsFromText(breakdownResult, originalPlan)
 	}
 
 	// Convert to ParallelStep format
@@ -963,7 +982,7 @@ func (po *PlannerOrchestrator) parseIndependentStepsFromJSON(breakdownResult str
 }
 
 // parseIndependentStepsFromText parses text breakdown result (legacy format)
-func (po *PlannerOrchestrator) parseIndependentStepsFromText(breakdownResult string) ([]ParallelStep, error) {
+func (po *PlannerOrchestrator) parseIndependentStepsFromText(breakdownResult string, originalPlan string) ([]ParallelStep, error) {
 	po.AgentTemplate.GetLogger().Infof("📋 Parsing text breakdown result")
 
 	// Parse the breakdown result text to extract independent steps
@@ -1014,13 +1033,13 @@ func (po *PlannerOrchestrator) parseIndependentStepsFromText(breakdownResult str
 		steps = append(steps, *currentStep)
 	}
 
-	// If no steps were parsed, create a fallback step
+	// If no steps were parsed, create a full plan step
 	if len(steps) == 0 {
-		po.AgentTemplate.GetLogger().Warnf("⚠️ No steps parsed from breakdown result, creating fallback step")
+		po.AgentTemplate.GetLogger().Warnf("⚠️ No steps parsed from breakdown result, creating full plan step for execution agent")
 		steps = []ParallelStep{
 			{
-				ID:            "fallback_step",
-				Description:   "Fallback step from breakdown analysis",
+				ID:            "full_plan_execution",
+				Description:   originalPlan,
 				Dependencies:  []string{},
 				IsIndependent: true,
 			},

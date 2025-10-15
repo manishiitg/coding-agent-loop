@@ -16,6 +16,8 @@ export interface EventData {
   tool_call_error?: ToolCallErrorEvent;
   llm_generation_start?: LLMGenerationStartEvent;
   llm_generation_end?: LLMGenerationEndEvent;
+  agent_start?: AgentStartEvent;
+  agent_end?: AgentEndEvent;
   agent_error?: AgentErrorEvent;
   conversation_error?: ConversationErrorEvent;
   llm_generation_error?: LLMGenerationErrorEvent;
@@ -50,13 +52,15 @@ export interface EventData {
   llm_generation_with_retry?: LLMGenerationWithRetryEvent;
   smart_routing_start?: SmartRoutingStartEvent;
   smart_routing_end?: SmartRoutingEndEvent;
-  orchestrator_agent_start?: OrchestratorAgentStartEvent;
-  orchestrator_agent_end?: OrchestratorAgentEndEvent;
-  orchestrator_agent_error?: OrchestratorAgentErrorEvent;
   orchestrator_start?: OrchestratorStartEvent;
   orchestrator_end?: OrchestratorEndEvent;
   orchestrator_error?: OrchestratorErrorEvent;
-  request_human_feedback?: RequestHumanFeedbackEvent;
+  orchestrator_agent_start?: OrchestratorAgentStartEvent;
+  orchestrator_agent_end?: OrchestratorAgentEndEvent;
+  orchestrator_agent_error?: OrchestratorAgentErrorEvent;
+  structured_output_start?: StructuredOutputStartEvent;
+  structured_output_end?: StructuredOutputEndEvent;
+  structured_output_error?: StructuredOutputErrorEvent;
 }
 export interface ToolCallStartEvent {
   timestamp?: string;
@@ -66,6 +70,12 @@ export interface ToolCallStartEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   tool_name?: string;
   tool_params?: ToolParams;
@@ -82,6 +92,12 @@ export interface ToolCallEndEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   tool_name?: string;
   result?: string;
@@ -96,6 +112,12 @@ export interface ToolCallErrorEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   tool_name?: string;
   error?: string;
@@ -110,6 +132,12 @@ export interface LLMGenerationStartEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   model_id?: string;
   temperature?: number;
@@ -124,6 +152,12 @@ export interface LLMGenerationEndEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   content?: string;
   tool_calls?: number;
@@ -135,6 +169,42 @@ export interface UsageMetrics {
   completion_tokens?: number;
   total_tokens?: number;
 }
+export interface AgentStartEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  agent_type?: string;
+  model_id?: string;
+  provider?: string;
+}
+export interface AgentEndEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  agent_type?: string;
+  success?: boolean;
+  error?: string;
+}
 export interface AgentErrorEvent {
   timestamp?: string;
   trace_id?: string;
@@ -143,6 +213,12 @@ export interface AgentErrorEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   error?: string;
   turn?: number;
   context?: string;
@@ -156,6 +232,12 @@ export interface ConversationErrorEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   question?: string;
   error?: string;
   turn?: number;
@@ -170,6 +252,12 @@ export interface LLMGenerationErrorEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   model_id?: string;
   error?: string;
@@ -183,6 +271,12 @@ export interface MCPServerConnectionEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   server_name?: string;
   config_path?: string;
   timeout?: string;
@@ -203,6 +297,12 @@ export interface MCPServerDiscoveryEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   server_name?: string;
   operation?: string;
   total_servers?: number;
@@ -220,6 +320,12 @@ export interface MCPServerSelectionEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   selected_servers?: string[];
   total_servers?: number;
@@ -234,6 +340,12 @@ export interface ConversationStartEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   question?: string;
   system_prompt?: string;
   tools_count?: number;
@@ -247,6 +359,12 @@ export interface ConversationEndEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   question?: string;
   result?: string;
   duration?: number;
@@ -262,12 +380,24 @@ export interface ConversationTurnEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   question?: string;
   messages_count?: number;
   has_tool_calls?: boolean;
   tool_calls_count?: number;
+  tools?: ToolInfo[];
   messages?: SerializedMessage[];
+}
+export interface ToolInfo {
+  name?: string;
+  description?: string;
+  server?: string;
 }
 export interface SerializedMessage {
   role?: string;
@@ -285,6 +415,12 @@ export interface SystemPromptEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   content?: string;
   turn?: number;
 }
@@ -296,6 +432,12 @@ export interface UserMessageEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   content?: string;
   role?: string;
@@ -308,6 +450,12 @@ export interface LargeToolOutputDetectedEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   tool_name?: string;
   output_size?: number;
   threshold?: number;
@@ -322,6 +470,12 @@ export interface LargeToolOutputFileWrittenEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   tool_name?: string;
   file_path?: string;
   output_size?: number;
@@ -337,6 +491,12 @@ export interface FallbackModelUsedEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   original_model?: string;
   fallback_model?: string;
@@ -352,6 +512,12 @@ export interface ThrottlingDetectedEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   model_id?: string;
   provider?: string;
@@ -367,6 +533,12 @@ export interface TokenLimitExceededEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   model_id?: string;
   provider?: string;
@@ -383,6 +555,12 @@ export interface TokenUsageEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   operation?: string;
   prompt_tokens?: number;
@@ -393,6 +571,11 @@ export interface TokenUsageEvent {
   cost_estimate?: number;
   duration?: number;
   context?: string;
+  cache_discount?: number;
+  reasoning_tokens?: number;
+  generation_info?: {
+    [k: string]: unknown;
+  };
 }
 export interface ErrorDetailEvent {
   timestamp?: string;
@@ -402,10 +585,15 @@ export interface ErrorDetailEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   error?: string;
   error_type?: string;
-  component?: string;
   operation?: string;
   context?: string;
   stack?: string;
@@ -421,6 +609,12 @@ export interface MaxTurnsReachedEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   max_turns?: number;
   question?: string;
@@ -436,6 +630,12 @@ export interface ContextCancelledEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   reason?: string;
   duration?: number;
@@ -448,6 +648,12 @@ export interface ReActReasoningStartEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   question?: string;
 }
@@ -459,6 +665,12 @@ export interface ReActReasoningStepEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   step_number?: number;
   thought?: string;
@@ -476,6 +688,12 @@ export interface ReActReasoningFinalEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   final_answer?: string;
   content?: string;
@@ -489,6 +707,12 @@ export interface ReActReasoningEndEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   final_answer?: string;
   total_steps?: number;
@@ -502,6 +726,12 @@ export interface ToolOutputEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   tool_name?: string;
   output?: string;
@@ -516,6 +746,12 @@ export interface ToolResponseEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   tool_name?: string;
   response?: string;
@@ -531,6 +767,12 @@ export interface ModelChangeEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   old_model_id?: string;
   new_model_id?: string;
@@ -546,6 +788,12 @@ export interface FallbackAttemptEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   attempt_index?: number;
   total_attempts?: number;
@@ -564,6 +812,12 @@ export interface CacheEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   operation?: string;
   server_name?: string;
   cache_key?: string;
@@ -622,6 +876,12 @@ export interface ToolExecutionEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   tool_name?: string;
   server_name?: string;
@@ -636,9 +896,6 @@ export interface ToolExecutionEvent {
   error?: string;
   error_type?: string;
   status?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
 }
 export interface LLMGenerationWithRetryEvent {
   timestamp?: string;
@@ -648,6 +905,12 @@ export interface LLMGenerationWithRetryEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   turn?: number;
   max_retries?: number;
   primary_model?: string;
@@ -661,9 +924,6 @@ export interface LLMGenerationWithRetryEvent {
     [k: string]: unknown;
   };
   status?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
 }
 export interface SmartRoutingStartEvent {
   timestamp?: string;
@@ -673,6 +933,12 @@ export interface SmartRoutingStartEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   total_tools?: number;
   total_servers?: number;
   thresholds?: {
@@ -695,6 +961,12 @@ export interface SmartRoutingEndEvent {
   parent_id?: string;
   is_end_event?: boolean;
   correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   total_tools?: number;
   filtered_tools?: number;
   total_servers?: number;
@@ -713,58 +985,20 @@ export interface SmartRoutingEndEvent {
   llm_temperature?: number;
   llm_max_tokens?: number;
 }
-export interface OrchestratorAgentStartEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  agent_type?: string;
-  agent_name?: string;
-  agent_mode?: string;
-  objective?: string;
-  model_id?: string;
-  servers_count?: number;
-  max_turns?: number;
-  validation_type?: string;
-  plan_id?: string;
-  step_id?: string;
-}
-export interface OrchestratorAgentEndEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  agent_type?: string;
-  agent_name?: string;
-  objective?: string;
-  result?: string;
-  duration?: number;
-  status?: string;
-  error?: string;
-  turns?: number;
-  validation_type?: string;
-  plan_id?: string;
-  step_id?: string;
-  steps_count?: number;
-}
-export interface OrchestratorAgentErrorEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  agent_type?: string;
-  agent_name?: string;
-  objective?: string;
-  error?: string;
-  duration?: number;
-  validation_type?: string;
-  plan_id?: string;
-  step_id?: string;
-  step_index?: number;
-  iteration?: number;
-  context_info?: string;
-}
 export interface OrchestratorStartEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   objective?: string;
   agents_count?: number;
   servers_count?: number;
@@ -774,6 +1008,16 @@ export interface OrchestratorEndEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   objective?: string;
   result?: string;
   duration?: number;
@@ -784,27 +1028,157 @@ export interface OrchestratorErrorEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
   context?: string;
   error?: string;
   duration?: number;
 }
-
-// Human Verification Events
-
-export interface RequestHumanFeedbackEvent {
+export interface OrchestratorAgentStartEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
-  objective?: string;
-  todo_list_markdown?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
   session_id?: string;
-  workflow_id?: string;
-  request_id?: string;
-  // NEW: Dynamic verification fields
-  verification_type?: string;  // "planning_verification", "refinement_verification", "report_verification"
-  next_phase?: string;         // The phase to transition to after approval
-  title?: string;              // Custom title text
-  action_label?: string;       // Custom button text
-  action_description?: string; // Custom description text
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  agent_type?: string;
+  agent_name?: string;
+  objective?: string;
+  input_data?: {
+    [k: string]: string;
+  };
+  model_id?: string;
+  provider?: string;
+  servers_count?: number;
+  max_turns?: number;
+  plan_id?: string;
+  step_index?: number;
+  iteration?: number;
 }
-
+export interface OrchestratorAgentEndEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  agent_type?: string;
+  agent_name?: string;
+  objective?: string;
+  input_data?: {
+    [k: string]: string;
+  };
+  result?: string;
+  success?: boolean;
+  error?: string;
+  duration?: number;
+  model_id?: string;
+  provider?: string;
+  servers_count?: number;
+  max_turns?: number;
+  plan_id?: string;
+  step_index?: number;
+  iteration?: number;
+}
+export interface OrchestratorAgentErrorEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  agent_type?: string;
+  agent_name?: string;
+  objective?: string;
+  error?: string;
+  duration?: number;
+  model_id?: string;
+  provider?: string;
+  servers_count?: number;
+  max_turns?: number;
+  plan_id?: string;
+  step_index?: number;
+  iteration?: number;
+}
+export interface StructuredOutputStartEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  operation?: string;
+  event_type?: string;
+}
+export interface StructuredOutputEndEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  operation?: string;
+  event_type?: string;
+  duration?: string;
+}
+export interface StructuredOutputErrorEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  operation?: string;
+  event_type?: string;
+  error?: string;
+}

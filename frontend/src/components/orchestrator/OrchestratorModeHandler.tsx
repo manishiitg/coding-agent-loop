@@ -22,7 +22,7 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
   children
 }, ref) => {
   const { agentMode } = useAppStore()
-  const [selectedMode, setSelectedMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.SEQUENTIAL)
+  const [selectedMode, setSelectedMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.PARALLEL)
 
   const handleModeChange = useCallback((mode: OrchestratorExecutionMode) => {
     setSelectedMode(mode)
@@ -34,13 +34,13 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
   }, [selectedMode])
 
   const resetSelection = useCallback(() => {
-    setSelectedMode(EXECUTION_MODES.SEQUENTIAL)
-    onExecutionModeChange?.(EXECUTION_MODES.SEQUENTIAL)
+    setSelectedMode(EXECUTION_MODES.PARALLEL)
+    onExecutionModeChange?.(EXECUTION_MODES.PARALLEL)
   }, [onExecutionModeChange])
 
   // Sync initial mode with parent on mount to prevent state drift
   useEffect(() => {
-    onExecutionModeChange?.(EXECUTION_MODES.SEQUENTIAL)
+    onExecutionModeChange?.(EXECUTION_MODES.PARALLEL)
   }, [onExecutionModeChange])
 
   // Expose methods through ref

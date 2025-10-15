@@ -796,6 +796,15 @@
         },
         "orchestrator_agent_error": {
           "$ref": "#/$defs/OrchestratorAgentErrorEvent"
+        },
+        "structured_output_start": {
+          "$ref": "#/$defs/StructuredOutputStartEvent"
+        },
+        "structured_output_end": {
+          "$ref": "#/$defs/StructuredOutputEndEvent"
+        },
+        "structured_output_error": {
+          "$ref": "#/$defs/StructuredOutputErrorEvent"
         }
       },
       "additionalProperties": false,
@@ -1754,6 +1763,150 @@
         },
         "iteration": {
           "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "StructuredOutputStartEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "StructuredOutputEndEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "duration": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "StructuredOutputErrorEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
         }
       },
       "additionalProperties": false,

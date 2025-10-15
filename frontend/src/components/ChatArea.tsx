@@ -155,7 +155,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   
   
   // Orchestrator execution mode state
-  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.SEQUENTIAL)
+  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.PARALLEL)
   
   // Handle orchestrator execution mode change
   const handleOrchestratorExecutionModeChange = useCallback((mode: OrchestratorExecutionMode) => {
@@ -1085,7 +1085,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setIsStreaming(false)
       setIsCompleted(false)
       // Reset orchestrator mode selection to default on error
-      setOrchestratorExecutionMode(EXECUTION_MODES.SEQUENTIAL)
+      setOrchestratorExecutionMode(EXECUTION_MODES.PARALLEL)
       orchestratorModeHandlerRef.current?.resetSelection?.()
     }
   }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode, setOrchestratorExecutionMode])
@@ -1108,8 +1108,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     // Reset frontend state
     resetChatState()
     
-    // Reset orchestrator mode selection to default
-    setOrchestratorExecutionMode('sequential_execution')
+        // Reset orchestrator mode selection to default
+        setOrchestratorExecutionMode('parallel_execution')
     orchestratorModeHandlerRef.current?.resetSelection?.()
     
     // Clear guidance state

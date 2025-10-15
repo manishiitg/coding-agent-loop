@@ -1072,6 +1072,7 @@ export interface OrchestratorAgentStartEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentEndEvent {
   timestamp?: string;
@@ -1104,6 +1105,7 @@ export interface OrchestratorAgentEndEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentErrorEvent {
   timestamp?: string;
@@ -1131,6 +1133,7 @@ export interface OrchestratorAgentErrorEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }
 export interface StructuredOutputStartEvent {
   timestamp?: string;

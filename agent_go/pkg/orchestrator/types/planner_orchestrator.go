@@ -2,8 +2,10 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"mcp-agent/agent_go/internal/observability"
@@ -12,6 +14,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent/agent_go/pkg/orchestrator/conditional"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -55,6 +58,55 @@ type LLMConfig struct {
 	CrossProviderFallback *agents.CrossProviderFallback `json:"cross_provider_fallback,omitempty"`
 }
 
+// PlannerSelectedOption represents a selected option for planner execution
+type PlannerSelectedOption struct {
+	OptionID    string `json:"option_id"`
+	OptionLabel string `json:"option_label"`
+	OptionValue string `json:"option_value"`
+	Group       string `json:"group"`
+}
+
+// PlannerSelectedOptions represents selected options for planner execution
+type PlannerSelectedOptions struct {
+	Selections []PlannerSelectedOption `json:"selections"`
+}
+
+// IndependentStepsResponse represents the structured response for independent steps parsing
+type IndependentStepsResponse struct {
+	Steps []IndependentStep `json:"steps"`
+}
+
+// IndependentStep represents a single independent step
+type IndependentStep struct {
+	ID            string   `json:"id"`
+	Description   string   `json:"description"`
+	Dependencies  []string `json:"dependencies"`
+	IsIndependent bool     `json:"is_independent"`
+	Reasoning     string   `json:"reasoning"`
+}
+
+// GetSteps returns the steps from the response
+func (r *IndependentStepsResponse) GetSteps() []IndependentStep {
+	return r.Steps
+}
+
+// ParallelStep represents a step that can be executed in parallel
+type ParallelStep struct {
+	ID            string   `json:"id"`
+	Description   string   `json:"description"`
+	Dependencies  []string `json:"dependencies"`
+	IsIndependent bool     `json:"is_independent"`
+}
+
+// ParallelResult represents the result of a parallel step execution
+type ParallelResult struct {
+	StepID           string `json:"step_id"`
+	ExecutionResult  string `json:"execution_result"`
+	ValidationResult string `json:"validation_result"`
+	Success          bool   `json:"success"`
+	Error            string `json:"error,omitempty"`
+}
+
 // PlannerOrchestrator handles the flow from planning agent to execution agent
 type PlannerOrchestrator struct {
 	// Base orchestrator for common functionality
@@ -67,12 +119,22 @@ type PlannerOrchestrator struct {
 	organizerAgent  agents.OrchestratorAgent
 	reportAgent     agents.OrchestratorAgent
 
+	// Parallel-specific agents
+	planBreakdownAgent agents.OrchestratorAgent
+
+	// Structured output LLM for parallel step extraction
+	structuredOutputLLM *conditional.StructuredOutputLLM
+
 	// Configuration
 	provider      string
 	model         string
 	mcpConfigPath string
 	temperature   float64
 	agentMode     string
+
+	// Execution mode configuration
+	executionMode   string                  // "sequential" or "parallel"
+	selectedOptions *PlannerSelectedOptions // Selected execution options
 
 	// Structured Output LLM Configuration
 	structuredOutputProvider string
@@ -108,15 +170,20 @@ type PlannerOrchestrator struct {
 	validationResults   []string
 	organizationResults []string
 	reportResults       []string
+
+	// Parallel execution state
+	parallelSteps   []ParallelStep
+	parallelResults []ParallelResult
 }
 
 // NewPlannerOrchestrator creates a new planner orchestrator with default configurations
-func NewPlannerOrchestrator(logger utils.ExtendedLogger, agentMode string, structuredOutputProvider, structuredOutputModel string, structuredOutputTemp float64) *PlannerOrchestrator {
+func NewPlannerOrchestrator(logger utils.ExtendedLogger, agentMode string, structuredOutputProvider, structuredOutputModel string, structuredOutputTemp float64, selectedOptions *PlannerSelectedOptions) *PlannerOrchestrator {
 	return &PlannerOrchestrator{
 		agentMode:                agentMode,
 		structuredOutputProvider: structuredOutputProvider,
 		structuredOutputModel:    structuredOutputModel,
 		structuredOutputTemp:     structuredOutputTemp,
+		selectedOptions:          selectedOptions,
 		// Initialize planner-specific state
 		currentIteration:    0,
 		currentStepIndex:    0,
@@ -126,6 +193,9 @@ func NewPlannerOrchestrator(logger utils.ExtendedLogger, agentMode string, struc
 		validationResults:   make([]string, 0),
 		organizationResults: make([]string, 0),
 		reportResults:       make([]string, 0),
+		// Initialize parallel execution state
+		parallelSteps:   make([]ParallelStep, 0),
+		parallelResults: make([]ParallelResult, 0),
 	}
 }
 
@@ -173,6 +243,19 @@ func (po *PlannerOrchestrator) InitializeAgents(ctx context.Context, provider, m
 
 	po.planningAgent = planningAgent
 	po.AgentTemplate.GetLogger().Infof("✅ Planning Agent created and initialized successfully")
+
+	// Create Plan Breakdown Agent (for parallel execution mode)
+	po.AgentTemplate.GetLogger().Infof("🔍 Creating Plan Breakdown Agent...")
+	breakdownConfig := po.createAgentConfig("plan_breakdown", "plan-breakdown-agent", 100, logger)
+	breakdownAgent := agents.NewPlanBreakdownAgent(breakdownConfig, po.AgentTemplate.GetLogger(), po.tracer, agentEventBridge)
+
+	// Use shared setup function
+	if err := po.setupAgent(breakdownAgent, "plan_breakdown", "plan breakdown agent", agentEventBridge); err != nil {
+		return fmt.Errorf("failed to setup plan breakdown agent: %w", err)
+	}
+
+	po.planBreakdownAgent = breakdownAgent
+	po.AgentTemplate.GetLogger().Infof("✅ Plan Breakdown Agent created and initialized successfully")
 
 	// Create Validation Agent
 	po.AgentTemplate.GetLogger().Infof("🔍 Creating Validation Agent...")
@@ -229,6 +312,21 @@ func (po *PlannerOrchestrator) InitializeAgents(ctx context.Context, provider, m
 
 	po.executionAgent = executionAgent
 	po.AgentTemplate.GetLogger().Infof("✅ Execution Agent created successfully")
+
+	// Create Structured Output LLM for parallel step extraction
+	po.AgentTemplate.GetLogger().Infof("🔧 Creating Structured Output LLM for parallel step extraction...")
+
+	// Create config for structured output LLM
+	structuredOutputConfig := po.createAgentConfig("structured_output", "structured-output-llm", 100, logger)
+
+	// Create structured output LLM with event bridge using the new factory function
+	structuredOutputLLM, err := conditional.CreateStructuredOutputLLMWithEventBridge(structuredOutputConfig, agentEventBridge, logger, tracer)
+	if err != nil {
+		return fmt.Errorf("failed to create structured output LLM: %w", err)
+	}
+
+	po.structuredOutputLLM = structuredOutputLLM
+	po.AgentTemplate.GetLogger().Infof("✅ Structured Output LLM created successfully")
 
 	return nil
 }
@@ -316,6 +414,30 @@ func (po *PlannerOrchestrator) ExecuteFlow(ctx context.Context, objective string
 
 	// Orchestrator start event is now automatically emitted by BasePlannerOrchestrator.Execute()
 
+	// Initialize variables for routing
+	maxIterations := po.GetMaxIterations()
+	startIteration := po.GetCurrentIteration()
+
+	po.AgentTemplate.GetLogger().Infof("🔄 Starting iterative execution (max %d iterations) from iteration %d", maxIterations, startIteration)
+
+	// Determine execution mode and route accordingly
+	executionMode := po.GetExecutionMode()
+	po.AgentTemplate.GetLogger().Infof("🎯 Execution mode: %s", executionMode)
+
+	switch executionMode {
+	case "parallel_execution":
+		return po.executeParallel(ctx, objective, maxIterations, startIteration)
+	case "sequential_execution":
+		fallthrough
+	default:
+		return po.executeSequential(ctx, objective, maxIterations, startIteration)
+	}
+}
+
+// executeSequential executes the original sequential flow
+func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective string, maxIterations, startIteration int) (string, error) {
+	po.AgentTemplate.GetLogger().Infof("🔄 Starting sequential execution mode")
+
 	// Helper function to emit orchestrator error event
 	emitOrchestratorError := func(err error, context string) {
 		if po.GetEventBridge() != nil {
@@ -345,13 +467,9 @@ func (po *PlannerOrchestrator) ExecuteFlow(ctx context.Context, objective string
 	}
 
 	// Initialize variables for the iterative loop
-	maxIterations := po.GetMaxIterations()
 	currentStepIndex := po.GetCurrentStepIndex()
 	executionResults := po.GetExecutionResults()
 	validationResults := po.GetValidationResults()
-	startIteration := po.GetCurrentIteration()
-
-	po.AgentTemplate.GetLogger().Infof("🔄 Starting iterative execution (max %d iterations) from iteration %d", maxIterations, startIteration)
 
 	// Main iterative loop - continue from current state
 	for iteration := startIteration; iteration < maxIterations; iteration++ {
@@ -489,7 +607,6 @@ func (po *PlannerOrchestrator) ExecuteFlow(ctx context.Context, objective string
 			po.AgentTemplate.GetLogger().Warnf("⚠️ Continuing with execution result despite validation failure")
 			// Set empty validation result when validation fails
 			stepValidationResult = "Validation failed: " + err.Error()
-		} else {
 		}
 
 		// Store validation results for this step
@@ -577,7 +694,7 @@ func (po *PlannerOrchestrator) ExecuteFlow(ctx context.Context, objective string
 	}
 
 	// Prepare final result with iteration-by-iteration breakdown
-	finalResult := fmt.Sprintf("Orchestrator completed after %d iterations with %d steps executed.\n\n", startIteration+1, len(po.GetExecutionResults()))
+	finalResult := fmt.Sprintf("Sequential orchestrator completed after %d iterations with %d steps executed.\n\n", startIteration+1, len(po.GetExecutionResults()))
 
 	// Add iteration-by-iteration results
 	finalResult += "ITERATION RESULTS:\n"
@@ -638,11 +755,453 @@ func (po *PlannerOrchestrator) ExecuteFlow(ctx context.Context, objective string
 		finalResult += fmt.Sprintf("Raw Response: %s\n", lastPlanningResult)
 	}
 
-	po.AgentTemplate.GetLogger().Infof("🎉 Planner Orchestrator Flow completed successfully after %d iterations!", startIteration+1)
-
-	// Orchestrator end event is now automatically emitted by BasePlannerOrchestrator.Execute()
+	po.AgentTemplate.GetLogger().Infof("🎉 Sequential Planner Orchestrator Flow completed successfully after %d iterations!", startIteration+1)
 
 	return finalResult, nil
+}
+
+// executeParallel executes the parallel flow with dependency analysis and goroutines
+func (po *PlannerOrchestrator) executeParallel(ctx context.Context, objective string, maxIterations, startIteration int) (string, error) {
+	po.AgentTemplate.GetLogger().Infof("🚀 Starting parallel execution mode")
+
+	// Helper function to emit orchestrator error event
+	emitOrchestratorError := func(err error, context string) {
+		if po.GetEventBridge() != nil {
+			duration := time.Since(po.GetStartTime())
+			orchestratorErrorEvent := &events.OrchestratorErrorEvent{
+				BaseEventData: events.BaseEventData{
+					Timestamp: time.Now(),
+				},
+				Context:  context,
+				Error:    err.Error(),
+				Duration: duration,
+			}
+
+			// Create unified event wrapper
+			unifiedEvent := &events.AgentEvent{
+				Type:      events.OrchestratorError,
+				Timestamp: time.Now(),
+				Data:      orchestratorErrorEvent,
+			}
+
+			// Emit through the bridge
+			if bridge, ok := po.GetEventBridge().(mcpagent.AgentEventListener); ok {
+				bridge.HandleEvent(ctx, unifiedEvent)
+				po.AgentTemplate.GetLogger().Infof("✅ Emitted orchestrator error event: %s", context)
+			}
+		}
+	}
+
+	// Step 1: Get initial plan from planning agent
+	planningResult, err := po.getInitialPlan(ctx, objective)
+	if err != nil {
+		emitOrchestratorError(err, "initial planning phase")
+		return "", fmt.Errorf("failed to get initial plan: %w", err)
+	}
+
+	// Step 2: Use plan breakdown agent to analyze dependencies
+	independentSteps, err := po.analyzeDependencies(ctx, planningResult)
+	if err != nil {
+		emitOrchestratorError(err, "dependency analysis phase")
+		return "", fmt.Errorf("failed to analyze dependencies: %w", err)
+	}
+
+	// Step 3: Extract exactly 3 parallel steps using structured output LLM
+	parallelSteps, err := po.extractParallelSteps(ctx, independentSteps)
+	if err != nil {
+		emitOrchestratorError(err, "parallel steps extraction")
+		return "", fmt.Errorf("failed to extract parallel steps: %w", err)
+	}
+
+	// Step 4: Execute 3 steps in parallel with goroutines
+	parallelResults, err := po.executeStepsInParallel(ctx, parallelSteps)
+	if err != nil {
+		emitOrchestratorError(err, "parallel execution phase")
+		return "", fmt.Errorf("failed to execute steps in parallel: %w", err)
+	}
+
+	// Step 5: Organize results from parallel execution
+	organizedResult, err := po.organizeParallelResults(ctx, parallelResults)
+	if err != nil {
+		emitOrchestratorError(err, "parallel organization phase")
+		return "", fmt.Errorf("failed to organize parallel results: %w", err)
+	}
+
+	// Step 6: Generate final report using existing report agent
+	finalReport, err := po.generateParallelReport(ctx, organizedResult, parallelResults)
+	if err != nil {
+		emitOrchestratorError(err, "parallel report generation")
+		return "", fmt.Errorf("failed to generate parallel report: %w", err)
+	}
+
+	po.AgentTemplate.GetLogger().Infof("🎉 Parallel execution completed successfully!")
+	return finalReport, nil
+}
+
+// Helper methods for parallel execution
+
+// getInitialPlan gets the initial plan from the planning agent
+func (po *PlannerOrchestrator) getInitialPlan(ctx context.Context, objective string) (string, error) {
+	po.AgentTemplate.GetLogger().Infof("📋 Getting initial plan from planning agent")
+
+	// Set orchestrator context for planning agent
+	po.planningAgent.SetOrchestratorContext(0, 0, objective, "planning-agent")
+	if po.orchestratorUtils != nil {
+		po.orchestratorUtils.UpdateAgentContext("planning agent", "planning", 0, 0)
+	}
+
+	// Prepare planning template variables
+	planningTemplateVars := map[string]string{
+		"Objective":     objective,
+		"WorkspacePath": po.workspacePath,
+	}
+
+	// Execute planning agent
+	planningResult, err := po.planningAgent.Execute(ctx, planningTemplateVars, po.conversationHistory)
+	if err != nil {
+		return "", fmt.Errorf("planning agent failed: %w", err)
+	}
+
+	po.AgentTemplate.GetLogger().Infof("✅ Initial plan generated successfully")
+	return planningResult, nil
+}
+
+// analyzeDependencies analyzes dependencies and creates independent steps
+func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planningResult string) ([]ParallelStep, error) {
+	po.AgentTemplate.GetLogger().Infof("🔍 Analyzing dependencies for parallel execution")
+
+	// Check if plan breakdown agent is initialized
+	if po.planBreakdownAgent == nil {
+		return nil, fmt.Errorf("plan breakdown agent not initialized")
+	}
+
+	// Set orchestrator context for breakdown agent
+	po.planBreakdownAgent.SetOrchestratorContext(0, 0, "Analyze plan dependencies", "plan-breakdown-agent")
+
+	// Execute breakdown agent using its specific AnalyzeDependencies method
+	breakdownResult, err := po.planBreakdownAgent.(*agents.PlanBreakdownAgent).AnalyzeDependencies(ctx, planningResult, po.GetObjective(), po.workspacePath)
+	if err != nil {
+		return nil, fmt.Errorf("plan breakdown failed: %w", err)
+	}
+
+	// Parse breakdown result to extract independent steps
+	independentSteps, err := po.parseIndependentSteps(breakdownResult)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse independent steps: %w", err)
+	}
+
+	po.AgentTemplate.GetLogger().Infof("✅ Found %d independent steps for parallel execution", len(independentSteps))
+	return independentSteps, nil
+}
+
+// parseIndependentSteps parses the breakdown result to extract ALL independent steps
+func (po *PlannerOrchestrator) parseIndependentSteps(breakdownResult string) ([]ParallelStep, error) {
+	po.AgentTemplate.GetLogger().Infof("📋 Parsing breakdown result to extract independent steps")
+
+	// Parse the breakdown result text to extract independent steps
+	// The breakdown result should contain step information in the format:
+	// Step 1: [Description]
+	// - Dependencies: [List of dependencies or "None"]
+	// - Independent: [true/false]
+	// - Reasoning: [Explanation]
+
+	lines := strings.Split(breakdownResult, "\n")
+	var steps []ParallelStep
+	var currentStep *ParallelStep
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Check if this is a new step
+		if strings.HasPrefix(line, "Step ") && strings.Contains(line, ":") {
+			// Save previous step if exists
+			if currentStep != nil {
+				steps = append(steps, *currentStep)
+			}
+
+			// Create new step
+			currentStep = &ParallelStep{
+				ID:            fmt.Sprintf("step_%d", len(steps)+1),
+				Description:   strings.TrimSpace(strings.Split(line, ":")[1]),
+				Dependencies:  []string{},
+				IsIndependent: false, // Default to false, will be updated
+			}
+		} else if currentStep != nil {
+			// Parse step details
+			if strings.HasPrefix(line, "- Dependencies:") {
+				depsStr := strings.TrimSpace(strings.TrimPrefix(line, "- Dependencies:"))
+				if depsStr != "None" && depsStr != "" {
+					// Simple parsing - in real implementation, you'd parse more complex dependencies
+					currentStep.Dependencies = []string{depsStr}
+				}
+			} else if strings.HasPrefix(line, "- Independent:") {
+				indepStr := strings.TrimSpace(strings.TrimPrefix(line, "- Independent:"))
+				currentStep.IsIndependent = (indepStr == "true")
+			}
+		}
+	}
+
+	// Add the last step
+	if currentStep != nil {
+		steps = append(steps, *currentStep)
+	}
+
+	// If no steps were parsed, create a fallback step
+	if len(steps) == 0 {
+		po.AgentTemplate.GetLogger().Warnf("⚠️ No steps parsed from breakdown result, creating fallback step")
+		steps = []ParallelStep{
+			{
+				ID:            "fallback_step",
+				Description:   "Fallback step from breakdown analysis",
+				Dependencies:  []string{},
+				IsIndependent: true,
+			},
+		}
+	}
+
+	po.AgentTemplate.GetLogger().Infof("📋 Parsed %d independent steps from breakdown analysis", len(steps))
+	return steps, nil
+}
+
+// extractParallelSteps uses structured output LLM to intelligently select exactly 3 parallel steps
+func (po *PlannerOrchestrator) extractParallelSteps(ctx context.Context, independentSteps []ParallelStep) ([]ParallelStep, error) {
+	po.AgentTemplate.GetLogger().Infof("🎯 Using structured output LLM to select exactly 3 parallel steps from %d independent steps", len(independentSteps))
+
+	// Check if structured output LLM is initialized
+	if po.structuredOutputLLM == nil {
+		return nil, fmt.Errorf("structured output LLM not initialized")
+	}
+
+	// Format the independent steps for structured output processing
+	breakdownResult := po.formatIndependentStepsForStructuredOutput(independentSteps)
+
+	// Get prompt and schema for independent steps extraction
+	prompt := po.GetIndependentStepsPrompt(breakdownResult)
+	schema := po.GetIndependentStepsSchema()
+
+	// Use structured output LLM to extract exactly 3 parallel steps
+	result, err := po.structuredOutputLLM.GenerateStructuredOutput(ctx, prompt, schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract parallel steps using structured output LLM: %w", err)
+	}
+
+	// Parse the response using orchestrator-specific parsing
+	response, err := po.ParseIndependentStepsResponse(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse independent steps response: %w", err)
+	}
+
+	// Convert IndependentStep to ParallelStep
+	var selectedSteps []ParallelStep
+	for _, step := range response.Steps {
+		selectedSteps = append(selectedSteps, ParallelStep{
+			ID:            step.ID,
+			Description:   step.Description,
+			Dependencies:  step.Dependencies,
+			IsIndependent: step.IsIndependent,
+		})
+	}
+
+	po.AgentTemplate.GetLogger().Infof("✅ Successfully selected %d parallel steps using structured output LLM", len(selectedSteps))
+	return selectedSteps, nil
+}
+
+// formatIndependentStepsForStructuredOutput formats independent steps for structured output processing
+func (po *PlannerOrchestrator) formatIndependentStepsForStructuredOutput(independentSteps []ParallelStep) string {
+	formatted := "Independent Steps Analysis:\n\n"
+
+	for i, step := range independentSteps {
+		formatted += fmt.Sprintf("Step %d: %s\n", i+1, step.Description)
+		formatted += fmt.Sprintf("- Dependencies: %v\n", step.Dependencies)
+		formatted += fmt.Sprintf("- Independent: %t\n", step.IsIndependent)
+		formatted += fmt.Sprintf("- Reasoning: Step %d analysis\n", i+1)
+		formatted += "\n"
+	}
+
+	return formatted
+}
+
+// executeStepsInParallel executes steps in parallel with goroutines
+func (po *PlannerOrchestrator) executeStepsInParallel(ctx context.Context, steps []ParallelStep) ([]ParallelResult, error) {
+	po.AgentTemplate.GetLogger().Infof("🚀 Executing %d steps in parallel", len(steps))
+
+	results := make([]ParallelResult, len(steps))
+	errors := make([]error, len(steps))
+
+	var wg sync.WaitGroup
+
+	// Execute each step in a separate goroutine
+	for i, step := range steps {
+		wg.Add(1)
+		go func(index int, parallelStep ParallelStep) {
+			defer wg.Done()
+
+			po.AgentTemplate.GetLogger().Infof("🔄 Starting parallel execution of step %d: %s", index+1, parallelStep.Description)
+
+			// Execute step
+			executionResult, err := po.executeSingleStep(ctx, parallelStep, index)
+			if err != nil {
+				errors[index] = err
+				results[index] = ParallelResult{
+					StepID:  parallelStep.ID,
+					Success: false,
+					Error:   err.Error(),
+				}
+				return
+			}
+
+			// Validate step
+			validationResult, err := po.validateSingleStep(ctx, parallelStep, executionResult, index)
+			if err != nil {
+				po.AgentTemplate.GetLogger().Warnf("⚠️ Validation failed for step %d: %v", index+1, err)
+				validationResult = "Validation failed: " + err.Error()
+			}
+
+			results[index] = ParallelResult{
+				StepID:           parallelStep.ID,
+				ExecutionResult:  executionResult,
+				ValidationResult: validationResult,
+				Success:          true,
+			}
+
+			po.AgentTemplate.GetLogger().Infof("✅ Completed parallel execution of step %d", index+1)
+		}(i, step)
+	}
+
+	wg.Wait()
+
+	// Check for errors
+	for i, err := range errors {
+		if err != nil {
+			po.AgentTemplate.GetLogger().Errorf("❌ Step %d failed: %v", i+1, err)
+		}
+	}
+
+	po.AgentTemplate.GetLogger().Infof("✅ All parallel executions completed")
+	return results, nil
+}
+
+// executeSingleStep executes a single step
+func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step ParallelStep, stepIndex int) (string, error) {
+	// Set orchestrator context for execution agent
+	executionObjective := fmt.Sprintf("Execute parallel step %d: %s", stepIndex+1, step.Description)
+	po.executionAgent.SetOrchestratorContext(stepIndex, 0, executionObjective, "parallel-execution-agent")
+
+	// Prepare execution template variables
+	executionTemplateVars := map[string]string{
+		"Objective":     step.Description,
+		"StepID":        step.ID,
+		"WorkspacePath": po.workspacePath,
+	}
+
+	// Execute the step
+	executionResult, err := po.executionAgent.Execute(ctx, executionTemplateVars, po.conversationHistory)
+	if err != nil {
+		return "", fmt.Errorf("execution failed: %w", err)
+	}
+
+	return executionResult, nil
+}
+
+// validateSingleStep validates a single step
+func (po *PlannerOrchestrator) validateSingleStep(ctx context.Context, step ParallelStep, executionResult string, stepIndex int) (string, error) {
+	// Set orchestrator context for validation agent
+	validationObjective := fmt.Sprintf("Validate parallel step %d execution result", stepIndex+1)
+	po.validationAgent.SetOrchestratorContext(stepIndex, 0, validationObjective, "parallel-validation-agent")
+
+	// Prepare validation template variables
+	validationTemplateVars := map[string]string{
+		"Objective":        po.GetObjective(),
+		"StepDescription":  step.Description,
+		"ExecutionResults": executionResult,
+		"WorkspacePath":    po.workspacePath,
+	}
+
+	// Validate the step
+	validationResult, err := po.validationAgent.Execute(ctx, validationTemplateVars, po.conversationHistory)
+	if err != nil {
+		return "", fmt.Errorf("validation failed: %w", err)
+	}
+
+	return validationResult, nil
+}
+
+// organizeParallelResults organizes results from parallel execution using existing organizer agent
+func (po *PlannerOrchestrator) organizeParallelResults(ctx context.Context, results []ParallelResult) (string, error) {
+	po.AgentTemplate.GetLogger().Infof("📊 Organizing parallel execution results using existing organizer agent")
+
+	// Check if organizer agent is initialized
+	if po.organizerAgent == nil {
+		return "", fmt.Errorf("organizer agent not initialized")
+	}
+
+	// Set orchestrator context for organizer agent
+	organizerObjective := fmt.Sprintf("Organize and consolidate results from parallel execution for objective: %s", po.GetObjective())
+	po.organizerAgent.SetOrchestratorContext(0, 0, organizerObjective, "organizer-agent")
+
+	// Prepare organizer template variables
+	organizerTemplateVars := map[string]string{
+		"Objective":       po.GetObjective(),
+		"ParallelResults": po.formatParallelResults(results),
+		"WorkspacePath":   po.workspacePath,
+	}
+
+	// Organize the results using existing organizer agent
+	organizedResult, err := po.organizerAgent.Execute(ctx, organizerTemplateVars, po.conversationHistory)
+	if err != nil {
+		return "", fmt.Errorf("parallel organization failed: %w", err)
+	}
+
+	po.AgentTemplate.GetLogger().Infof("✅ Parallel results organized successfully")
+	return organizedResult, nil
+}
+
+// formatParallelResults formats parallel results for display
+func (po *PlannerOrchestrator) formatParallelResults(results []ParallelResult) string {
+	formatted := "Parallel Execution Results:\n\n"
+	for i, result := range results {
+		formatted += fmt.Sprintf("Step %d (%s):\n", i+1, result.StepID)
+		formatted += fmt.Sprintf("- Success: %t\n", result.Success)
+		if result.Success {
+			formatted += fmt.Sprintf("- Execution: %s\n", result.ExecutionResult)
+			formatted += fmt.Sprintf("- Validation: %s\n", result.ValidationResult)
+		} else {
+			formatted += fmt.Sprintf("- Error: %s\n", result.Error)
+		}
+		formatted += "\n"
+	}
+	return formatted
+}
+
+// generateParallelReport generates the final report from parallel execution using existing report agent
+func (po *PlannerOrchestrator) generateParallelReport(ctx context.Context, organizedResult string, results []ParallelResult) (string, error) {
+	po.AgentTemplate.GetLogger().Infof("📋 Generating parallel execution report using existing report agent")
+
+	// Check if report agent is initialized
+	if po.reportAgent == nil {
+		return "", fmt.Errorf("report agent not initialized")
+	}
+
+	// Set orchestrator context for report agent
+	reportObjective := fmt.Sprintf("Generate comprehensive report from parallel execution of objective: %s", po.GetObjective())
+	po.reportAgent.SetOrchestratorContext(0, 0, reportObjective, "report-agent")
+
+	// Prepare report template variables
+	reportTemplateVars := map[string]string{
+		"Objective":        po.GetObjective(),
+		"OrganizedResults": organizedResult,
+		"ParallelResults":  po.formatParallelResults(results),
+		"WorkspacePath":    po.workspacePath,
+	}
+
+	// Generate the report using existing report agent
+	finalReport, err := po.reportAgent.Execute(ctx, reportTemplateVars, po.conversationHistory)
+	if err != nil {
+		return "", fmt.Errorf("parallel report generation failed: %w", err)
+	}
+
+	po.AgentTemplate.GetLogger().Infof("✅ Parallel execution report generated successfully")
+	return finalReport, nil
 }
 
 // GetState returns the current orchestrator state
@@ -734,12 +1293,94 @@ func (po *PlannerOrchestrator) extractShouldContinueWithContext(ctx context.Cont
 	return result.GetResult()
 }
 
-// GetWorkspacePath returns the current workspace path
-func (po *PlannerOrchestrator) GetWorkspacePath() string {
-	return po.workspacePath
+// Orchestrator-specific structured output functions
+
+// GetIndependentStepsPrompt returns a prompt for parsing independent steps from plan breakdown
+func (po *PlannerOrchestrator) GetIndependentStepsPrompt(breakdownResult string) string {
+	return `You are a structured output parser specialized in extracting independent steps from plan breakdown analysis.
+
+Breakdown Analysis Result:
+` + breakdownResult + `
+
+Your task is to parse the above breakdown analysis and extract exactly 3 independent steps that can be executed in parallel.
+
+Instructions:
+1. Look for steps that are marked as independent (is_independent: true)
+2. Select exactly 3 steps that have no dependencies on each other
+3. Ensure the steps are truly independent and can run concurrently
+4. Provide clear reasoning for each step's independence
+5. If fewer than 3 independent steps are available, select the most independent ones
+
+Return ONLY valid JSON with exactly 3 steps:
+{
+  "steps": [
+    {
+      "id": "step_1",
+      "description": "Clear description of what this step does",
+      "dependencies": [],
+      "is_independent": true,
+      "reasoning": "Why this step is independent"
+    },
+    {
+      "id": "step_2", 
+      "description": "Clear description of what this step does",
+      "dependencies": [],
+      "is_independent": true,
+      "reasoning": "Why this step is independent"
+    },
+    {
+      "id": "step_3",
+      "description": "Clear description of what this step does", 
+      "dependencies": [],
+      "is_independent": true,
+      "reasoning": "Why this step is independent"
+    }
+  ]
+}`
 }
 
-// Planner-specific state management methods
+// GetIndependentStepsSchema returns the JSON schema for independent steps parsing
+func (po *PlannerOrchestrator) GetIndependentStepsSchema() string {
+	return `{
+  "type": "object",
+  "properties": {
+    "steps": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "description": {"type": "string"},
+          "dependencies": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "is_independent": {"type": "boolean"},
+          "reasoning": {"type": "string"}
+        },
+        "required": ["id", "description", "dependencies", "is_independent", "reasoning"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["steps"],
+  "additionalProperties": false
+}`
+}
+
+// ParseIndependentStepsResponse parses the JSON output into IndependentStepsResponse
+func (po *PlannerOrchestrator) ParseIndependentStepsResponse(jsonOutput string) (*IndependentStepsResponse, error) {
+	var response IndependentStepsResponse
+	if err := json.Unmarshal([]byte(jsonOutput), &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal independent steps JSON: %w", err)
+	}
+	if len(response.Steps) != 3 {
+		return nil, fmt.Errorf("expected exactly 3 independent steps, but got %d", len(response.Steps))
+	}
+	return &response, nil
+}
 
 // GetCurrentIteration returns the current iteration
 func (po *PlannerOrchestrator) GetCurrentIteration() int {
@@ -876,4 +1517,67 @@ func (po *PlannerOrchestrator) SetOrganizationResults(results []string) {
 func (po *PlannerOrchestrator) SetReportResults(results []string) {
 	po.reportResults = make([]string, len(results))
 	copy(po.reportResults, results)
+}
+
+// Execution mode management methods
+
+// GetExecutionMode returns the current execution mode
+func (po *PlannerOrchestrator) GetExecutionMode() string {
+	if po.selectedOptions != nil {
+		for _, selection := range po.selectedOptions.Selections {
+			if selection.Group == "execution_strategy" {
+				return selection.OptionID
+			}
+		}
+	}
+	return "sequential_execution" // default
+}
+
+// SetExecutionMode sets the execution mode
+func (po *PlannerOrchestrator) SetExecutionMode(mode string) {
+	po.executionMode = mode
+}
+
+// IsParallelMode returns true if the orchestrator is in parallel mode
+func (po *PlannerOrchestrator) IsParallelMode() bool {
+	return po.GetExecutionMode() == "parallel_execution"
+}
+
+// Parallel execution state management methods
+
+// GetParallelSteps returns the current parallel steps
+func (po *PlannerOrchestrator) GetParallelSteps() []ParallelStep {
+	return po.parallelSteps
+}
+
+// SetParallelSteps sets the parallel steps
+func (po *PlannerOrchestrator) SetParallelSteps(steps []ParallelStep) {
+	po.parallelSteps = make([]ParallelStep, len(steps))
+	copy(po.parallelSteps, steps)
+}
+
+// GetParallelResults returns the current parallel results
+func (po *PlannerOrchestrator) GetParallelResults() []ParallelResult {
+	return po.parallelResults
+}
+
+// SetParallelResults sets the parallel results
+func (po *PlannerOrchestrator) SetParallelResults(results []ParallelResult) {
+	po.parallelResults = make([]ParallelResult, len(results))
+	copy(po.parallelResults, results)
+}
+
+// AddParallelResult adds a parallel result
+func (po *PlannerOrchestrator) AddParallelResult(result ParallelResult) {
+	po.parallelResults = append(po.parallelResults, result)
+}
+
+// ClearParallelSteps clears all parallel steps
+func (po *PlannerOrchestrator) ClearParallelSteps() {
+	po.parallelSteps = make([]ParallelStep, 0)
+}
+
+// ClearParallelResults clears all parallel results
+func (po *PlannerOrchestrator) ClearParallelResults() {
+	po.parallelResults = make([]ParallelResult, 0)
 }

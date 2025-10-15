@@ -1,10 +1,11 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo } from 'react'
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import { agentApi, type AgentQueryRequest } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import { EventModeProvider, EventModeToggle } from './events'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
+import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
 import { getAgentModeDescription } from '../utils/agentModeDescriptions'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -147,6 +148,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   
   // Add ref for workflow mode handler
   const workflowModeHandlerRef = useRef<WorkflowModeHandlerRef>(null)
+  
+  // Add ref for orchestrator mode handler
+  const orchestratorModeHandlerRef = useRef<OrchestratorModeHandlerRef>(null)
+  
+  // Orchestrator execution mode state
+  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<string>('sequential_execution')
+  
+  // Handle orchestrator execution mode change
+  const handleOrchestratorExecutionModeChange = useCallback((mode: string) => {
+    setOrchestratorExecutionMode(mode)
+  }, [])
   
   // Selected preset folder state
   const lastEventIndexRef = useRef<number>(0)
@@ -1019,6 +1031,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         model_id: llmConfigToUse.model_id,
         llm_config: llmConfigToUse,
         preset_query_id: selectedWorkflowPreset || undefined,
+        // Add orchestrator execution mode for orchestrator mode
+        orchestrator_execution_mode: agentMode === 'orchestrator' ? (orchestratorExecutionMode as 'sequential_execution' | 'parallel_execution') : undefined,
       }
 
 
@@ -1062,7 +1076,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setIsStreaming(false)
       setIsCompleted(false)
     }
-  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setObserverId, setPollingInterval, setSessionId, setShowUserMessage])
+  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode])
 
 
   // Handle new chat - clear backend session and reset all chat state
@@ -1233,11 +1247,21 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onPresetCleared={handleWorkflowPresetCleared}
           onWorkflowPhaseChange={setWorkflowPhase}
         >
-            <EventDisplay 
-              onDismissUserMessage={() => setShowUserMessage(false)}
-              onApproveWorkflow={handleApproveWorkflow}
-            />
-          </WorkflowModeHandler>
+          <EventDisplay 
+            onDismissUserMessage={() => setShowUserMessage(false)}
+            onApproveWorkflow={handleApproveWorkflow}
+          />
+        </WorkflowModeHandler>
+
+        <OrchestratorModeHandler
+          ref={orchestratorModeHandlerRef}
+          onExecutionModeChange={handleOrchestratorExecutionModeChange}
+        >
+          <EventDisplay 
+            onDismissUserMessage={() => setShowUserMessage(false)}
+            onApproveWorkflow={handleApproveWorkflow}
+          />
+        </OrchestratorModeHandler>
         </div>
       </div>
 

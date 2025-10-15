@@ -30,6 +30,7 @@ const (
 	ExecutionAgentType     AgentType = "execution"
 	ValidationAgentType    AgentType = "validation"
 	PlanOrganizerAgentType AgentType = "plan_organizer"
+	PlanBreakdownAgentType AgentType = "plan_breakdown" // Analyzes dependencies and creates independent steps
 
 	// Orchestrator types
 	PlannerOrchestratorAgentType  AgentType = "planner_orchestrator"  // AI-controlled planner orchestrator

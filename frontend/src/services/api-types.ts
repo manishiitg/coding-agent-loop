@@ -25,6 +25,8 @@ export interface AgentQueryRequest {
   agent_mode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
   llm_config?: LLMConfiguration
   preset_query_id?: string
+  // Orchestrator execution mode selection
+  orchestrator_execution_mode?: 'sequential_execution' | 'parallel_execution'
 }
 
 export interface AgentQueryResponse {

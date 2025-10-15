@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
-import LLMConfigurationSection from './sidebar/LLMConfigurationSection'
+import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import MCPServersSection from './sidebar/MCPServersSection'
 import PresetQueriesSection from './sidebar/PresetQueriesSection'
 import ChatHistorySection from './sidebar/ChatHistorySection'
+import LLMConfigurationModal from './LLMConfigurationModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { useAppStore, useMCPStore, useChatStore } from '../stores'
+import { useAppStore, useMCPStore, useChatStore, useLLMStore } from '../stores'
 
 interface WorkspaceSidebarProps {
   // Presets (callbacks only)
@@ -37,6 +38,7 @@ export default function WorkspaceSidebar({
   const { agentMode, setAgentMode, setCurrentQuery, selectedPresetId } = useAppStore()
   const { getAvailableServers, showMCPDetails, setShowMCPDetails } = useMCPStore()
   const { isStreaming } = useChatStore()
+  const { showLLMModal, setShowLLMModal } = useLLMStore()
 
   // Computed values
   const availableServers = getAvailableServers()
@@ -108,7 +110,7 @@ export default function WorkspaceSidebar({
           <div className="p-3 space-y-3">
 
             {/* LLM Configuration */}
-            <LLMConfigurationSection
+            <LLMConfigurationSummary
               minimized={minimized}
             />
 
@@ -160,7 +162,7 @@ export default function WorkspaceSidebar({
           </Tooltip>
 
           {/* LLM Configuration Icon */}
-          <LLMConfigurationSection
+          <LLMConfigurationSummary
             minimized={true}
           />
 
@@ -264,6 +266,12 @@ export default function WorkspaceSidebar({
         </div>
       )}
       </div>
+      
+      {/* LLM Configuration Modal */}
+      <LLMConfigurationModal
+        isOpen={showLLMModal}
+        onClose={() => setShowLLMModal(false)}
+      />
     </TooltipProvider>
   )
 }

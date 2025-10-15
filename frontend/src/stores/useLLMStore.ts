@@ -1,13 +1,32 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
-import type { LLMConfiguration } from '../services/api-types'
+import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest } from '../services/api-types'
 import type { LLMOption, StoreActions } from './types'
 import { getAllAvailableLLMs, getAvailableModels } from '../utils/llmConfig'
+import { llmConfigService } from '../services/llm-config-api'
 
 interface LLMState extends StoreActions {
   // Primary LLM configuration (unified from sidebar and chat input)
   primaryConfig: LLMConfiguration
+  
+  // Provider-specific configurations with API keys
+  openrouterConfig: ExtendedLLMConfiguration
+  bedrockConfig: ExtendedLLMConfiguration
+  openaiConfig: ExtendedLLMConfiguration
+  
+  // Custom models for each provider
+  customBedrockModels: string[]
+  customOpenRouterModels: string[]
+  customOpenAIModels: string[]
+  
+  // Available models from backend
+  availableBedrockModels: string[]
+  availableOpenRouterModels: string[]
+  availableOpenAIModels: string[]
+  
+  // Modal state
+  showLLMModal: boolean
   
   // Available LLMs for selection
   availableLLMs: LLMOption[]
@@ -15,14 +34,33 @@ interface LLMState extends StoreActions {
   // Loading and error states
   isLoadingLLMs: boolean
   error: string | null
+  defaultsLoaded: boolean
   
   // Actions
   setPrimaryConfig: (config: LLMConfiguration) => void
+  setOpenrouterConfig: (config: ExtendedLLMConfiguration) => void
+  setBedrockConfig: (config: ExtendedLLMConfiguration) => void
+  setOpenaiConfig: (config: ExtendedLLMConfiguration) => void
+  setShowLLMModal: (show: boolean) => void
+  loadDefaultsFromBackend: () => Promise<void>
+  
+  // Custom model management
+  addCustomBedrockModel: (model: string) => void
+  removeCustomBedrockModel: (model: string) => void
+  addCustomOpenRouterModel: (model: string) => void
+  removeCustomOpenRouterModel: (model: string) => void
+  addCustomOpenAIModel: (model: string) => void
+  removeCustomOpenAIModel: (model: string) => void
+  
+  // Legacy actions (for backward compatibility)
   updateProvider: (provider: 'openrouter' | 'bedrock') => void
   updateModel: (modelId: string) => void
   updateFallbacks: (fallbacks: string[]) => void
   updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
   refreshAvailableLLMs: () => Promise<void>
+  
+  // API key management
+  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock', apiKey: string, modelId?: string) => Promise<{valid: boolean, error: string | null}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -33,23 +71,176 @@ export const useLLMStore = create<LLMState>()(
   devtools(
     persist(
       (set, get) => ({
-        // Initial state
+        // Initial state - will be loaded from backend
         primaryConfig: {
           provider: 'openrouter',
-          model_id: 'x-ai/grok-code-fast-1',
-          fallback_models: ['z-ai/glm-4.5', 'openai/gpt-4o-mini'],
-          cross_provider_fallback: {
-            provider: 'openai',
-            models: ['gpt-4o-mini']
-          }
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined
         },
+        
+        // Provider-specific configurations - will be loaded from backend
+        openrouterConfig: {
+          provider: 'openrouter',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: ''
+        },
+        bedrockConfig: {
+          provider: 'bedrock',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          region: 'us-east-1'
+        },
+        openaiConfig: {
+          provider: 'openai',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: ''
+        },
+        
+        // Custom models for each provider
+        customBedrockModels: [],
+        customOpenRouterModels: [],
+        customOpenAIModels: [],
+        
+        // Available models from backend
+        availableBedrockModels: [],
+        availableOpenRouterModels: [],
+        availableOpenAIModels: [],
+        
+        // Modal state
+        showLLMModal: false,
+        
         availableLLMs: [],
         isLoadingLLMs: false,
         error: null,
+        defaultsLoaded: false,
 
         // Actions
         setPrimaryConfig: (config) => {
           set({ primaryConfig: config, error: null })
+        },
+
+        setOpenrouterConfig: (config) => {
+          set({ openrouterConfig: config, error: null })
+        },
+
+        setBedrockConfig: (config) => {
+          set({ bedrockConfig: config, error: null })
+        },
+
+        setOpenaiConfig: (config) => {
+          set({ openaiConfig: config, error: null })
+        },
+
+        setShowLLMModal: (show) => {
+          set({ showLLMModal: show })
+        },
+
+        // Custom model management
+        addCustomBedrockModel: (model) => {
+          const { customBedrockModels } = get()
+          if (!customBedrockModels.includes(model)) {
+            set({ customBedrockModels: [...customBedrockModels, model] })
+          }
+        }, 
+        
+        removeCustomBedrockModel: (model) => {
+          const { customBedrockModels } = get()
+          set({ customBedrockModels: customBedrockModels.filter(m => m !== model) })
+        },
+        
+        addCustomOpenRouterModel: (model) => {
+          const { customOpenRouterModels } = get()
+          if (!customOpenRouterModels.includes(model)) {
+            set({ customOpenRouterModels: [...customOpenRouterModels, model] })
+          }
+        },
+        
+        removeCustomOpenRouterModel: (model) => {
+          const { customOpenRouterModels } = get()
+          set({ customOpenRouterModels: customOpenRouterModels.filter(m => m !== model) })
+        },
+        
+        addCustomOpenAIModel: (model) => {
+          const { customOpenAIModels } = get()
+          if (!customOpenAIModels.includes(model)) {
+            set({ customOpenAIModels: [...customOpenAIModels, model] })
+          }
+        },
+        
+        removeCustomOpenAIModel: (model) => {
+          const { customOpenAIModels } = get()
+          set({ customOpenAIModels: customOpenAIModels.filter(m => m !== model) })
+        },
+
+        // Load defaults from backend
+        loadDefaultsFromBackend: async () => {
+          try {
+            set({ isLoadingLLMs: true })
+            const defaults = await llmConfigService.getLLMDefaults()
+            
+            set({
+              primaryConfig: defaults.primary_config,
+              openrouterConfig: defaults.openrouter_config,
+              bedrockConfig: defaults.bedrock_config,
+              openaiConfig: defaults.openai_config,
+              availableBedrockModels: defaults.available_models.bedrock,
+              availableOpenRouterModels: defaults.available_models.openrouter,
+              availableOpenAIModels: defaults.available_models.openai,
+              defaultsLoaded: true,
+              error: null,
+              isLoadingLLMs: false
+            })
+          } catch (error) {
+            console.error('Failed to load LLM defaults from backend:', error)
+            set({ 
+              error: 'Failed to load LLM defaults from backend',
+              defaultsLoaded: false,
+              isLoadingLLMs: false
+            })
+          }
+        },
+
+        // API key testing
+        testAPIKey: async (provider, apiKey, modelId?: string) => {
+          try {
+            // Only check for empty API key for non-Bedrock providers
+            if (provider !== 'bedrock' && !apiKey.trim()) {
+              return { valid: false, error: 'API key is empty' }
+            }
+            
+            const request: APIKeyValidationRequest = {
+              provider
+            }
+            
+            // Only include api_key for non-Bedrock providers
+            if (provider !== 'bedrock') {
+              request.api_key = apiKey
+            }
+            
+            // Add model ID for Bedrock validation
+            if (provider === 'bedrock' && modelId) {
+              request.model_id = modelId
+            }
+            
+            const response = await llmConfigService.validateAPIKey(request)
+            
+            return { 
+              valid: response.valid, 
+              error: response.valid ? null : (response.message || response.error || 'Validation failed')
+            }
+          } catch (error) {
+            console.error('API key validation failed:', error)
+            return { 
+              valid: false, 
+              error: error instanceof Error ? error.message : 'Unknown error occurred'
+            }
+          }
         },
 
         updateProvider: (provider) => {
@@ -155,13 +346,32 @@ export const useLLMStore = create<LLMState>()(
           set({
             primaryConfig: {
               provider: 'openrouter',
-              model_id: 'x-ai/grok-code-fast-1',
-              fallback_models: ['z-ai/glm-4.5', 'openai/gpt-4o-mini'],
-              cross_provider_fallback: {
-                provider: 'openai',
-                models: ['gpt-4o-mini']
-              }
+              model_id: '',
+              fallback_models: [],
+              cross_provider_fallback: undefined
             },
+            openrouterConfig: {
+              provider: 'openrouter',
+              model_id: '',
+              fallback_models: [],
+              cross_provider_fallback: undefined,
+              api_key: ''
+            },
+            bedrockConfig: {
+              provider: 'bedrock',
+              model_id: '',
+              fallback_models: [],
+              cross_provider_fallback: undefined,
+              region: 'us-east-1'
+            },
+            openaiConfig: {
+              provider: 'openai',
+              model_id: '',
+              fallback_models: [],
+              cross_provider_fallback: undefined,
+              api_key: ''
+            },
+            showLLMModal: false,
             availableLLMs: [],
             isLoadingLLMs: false,
             error: null
@@ -179,8 +389,18 @@ export const useLLMStore = create<LLMState>()(
       {
         name: 'llm-store',
         partialize: (state) => ({
-          // Only persist the primary config, not loading states
-          primaryConfig: state.primaryConfig
+          // Persist user configurations and custom models, but NOT default models from backend
+          primaryConfig: state.primaryConfig,
+          openrouterConfig: state.openrouterConfig,
+          bedrockConfig: state.bedrockConfig,
+          openaiConfig: state.openaiConfig,
+          customBedrockModels: state.customBedrockModels,
+          customOpenRouterModels: state.customOpenRouterModels,
+          customOpenAIModels: state.customOpenAIModels,
+          showLLMModal: state.showLLMModal,
+          // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
+          // These should always be loaded fresh from backend
+          // DO NOT persist defaultsLoaded - this should be reset on each app load
         })
       }
     ),

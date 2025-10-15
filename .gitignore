@@ -1,6 +1,12 @@
+# Environment files - NEVER commit these!
 .env
-
+.env.*
+!.env.example
 .env.local
+.env.development
+.env.production
+.env.test
+.env.staging
 
 agent_go/configs/mcp_server_actual.json
 
@@ -19,6 +25,7 @@ bin/*
 *secret*
 *credential*
 *password*
+!scripts/*secret*.sh
 
 # Binary files
 *.exe
@@ -68,6 +75,9 @@ agent_go/service-account.json
 
 # Gitleaks reports and cache
 gitleaks-report.json
+gitleaks-report.sarif
+gitleaks-current-only.json
+gitleaks-maintenance.json
 .gitleaks-cache/
 
 .cursor/mcp.json

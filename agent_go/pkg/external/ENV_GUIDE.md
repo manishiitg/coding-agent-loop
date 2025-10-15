@@ -30,8 +30,8 @@ export OPENAI_API_KEY=your_openai_api_key_here
 | Variable | Required | Description | Example |
 |----------|----------|-------------|---------|
 | `AWS_REGION` | ✅ | AWS region for Bedrock service | `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | ✅ | AWS access key ID | `AKIAIOSFODNN7EXAMPLE` |
-| `AWS_SECRET_ACCESS_KEY` | ✅ | AWS secret access key | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+| `AWS_ACCESS_KEY_ID` | ✅ | AWS access key ID | `AKIAXXXXXXXXXXXXXXXX` |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | AWS secret access key | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
 | `BEDROCK_PRIMARY_MODEL` | ❌ | Default Bedrock model ID | `anthropic.claude-3-sonnet-20240229-v1:0` |
 
 **Available Bedrock Models:**

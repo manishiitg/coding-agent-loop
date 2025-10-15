@@ -1,0 +1,115 @@
+name: Dependency Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run weekly to check for new vulnerabilities
+    - cron: '0 3 * * 1'
+
+jobs:
+  dependency-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        cache-dependency-path: |
+          agent_go/go.sum
+          planner/go.sum
+    
+    - name: Run npm audit (Frontend)
+      if: hashFiles('frontend/package-lock.json') != ''
+      working-directory: frontend
+      run: |
+        npm audit --audit-level=moderate --json > ../npm-audit-results.json || true
+        npm audit --audit-level=moderate
+    
+    - name: Run go mod audit (Go modules)
+      run: |
+        # Install govulncheck
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        
+        # Scan Go modules
+        cd agent_go && govulncheck ./... > ../go-vuln-agent.txt || true
+        cd ..
+        if [ -d "planner" ]; then
+          cd planner && govulncheck ./... > ../go-vuln-planner.txt || true
+          cd ..
+        else
+          echo "No vulnerabilities found" > go-vuln-planner.txt
+        fi
+    
+    - name: Upload npm audit results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: npm-audit-results
+        path: npm-audit-results.json
+    
+    - name: Upload Go vulnerability results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: go-vulnerability-results
+        path: |
+          go-vuln-agent.txt
+          go-vuln-planner.txt
+    
+    - name: Comment PR with dependency scan results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          let comment = '## 📦 Dependency Security Scan Results\n\n';
+          
+          try {
+            const npmAudit = JSON.parse(fs.readFileSync('npm-audit-results.json', 'utf8'));
+            const vulnerabilities = npmAudit.vulnerabilities || {};
+            const vulnCount = Object.keys(vulnerabilities).length;
+            
+            if (vulnCount > 0) {
+              comment += `⚠️ **NPM Dependencies**: ${vulnCount} vulnerabilities found\n`;
+            } else {
+              comment += `✅ **NPM Dependencies**: No vulnerabilities found\n`;
+            }
+          } catch (error) {
+            comment += `ℹ️ **NPM Dependencies**: No package-lock.json found\n`;
+          }
+          
+          try {
+            const goVulnAgent = fs.readFileSync('go-vuln-agent.txt', 'utf8');
+            const goVulnPlanner = fs.readFileSync('go-vuln-planner.txt', 'utf8');
+            
+            if (goVulnAgent.includes('No vulnerabilities found') && goVulnPlanner.includes('No vulnerabilities found')) {
+              comment += `✅ **Go Dependencies**: No vulnerabilities found\n`;
+            } else {
+              comment += `⚠️ **Go Dependencies**: Some vulnerabilities detected\n`;
+            }
+          } catch (error) {
+            comment += `ℹ️ **Go Dependencies**: Scan completed\n`;
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });

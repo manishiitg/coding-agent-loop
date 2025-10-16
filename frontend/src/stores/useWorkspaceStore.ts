@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import { agentApi } from '../services/api'
-import { findFileInTree } from '../utils/fileUtils'
+import { findFileInTree, extractFolderPaths } from '../utils/fileUtils'
 
 // Helper functions
 const processHierarchicalFiles = (files: PlannerFile[]): PlannerFile[] => {
@@ -85,6 +85,12 @@ interface WorkspaceState {
   highlightFile: (filepath: string) => Promise<void>
   clearHighlight: () => void
   
+  // Folder expansion
+  expandedFolders: Set<string>
+  expandFoldersForFile: (filepath: string) => void
+  toggleFolder: (folderPath: string) => void
+  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number) => void
+  
   // Auto-scroll functionality
   scrollToFile: (filepath: string) => Promise<void>
   
@@ -122,7 +128,8 @@ const initialState = {
   },
   showActionsDropdown: false,
   highlightedFile: null,
-  highlightTimeout: null
+  highlightTimeout: null,
+  expandedFolders: new Set<string>()
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()(
@@ -404,6 +411,49 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         } catch (error) {
           console.error('[WorkspaceStore] Error scrolling to file:', error)
         }
+      },
+      
+      // Folder expansion methods
+      expandFoldersForFile: (filepath: string) => {
+        const foldersToExpand = extractFolderPaths(filepath)
+        console.log('[WorkspaceStore] Expanding folders for file:', filepath)
+        console.log('[WorkspaceStore] Folders to expand:', foldersToExpand)
+        
+        set(state => ({
+          expandedFolders: new Set([...state.expandedFolders, ...foldersToExpand])
+        }))
+        
+        console.log('[WorkspaceStore] Updated expandedFolders:', [...foldersToExpand])
+      },
+      
+      toggleFolder: (folderPath: string) => {
+        set(state => {
+          const newExpanded = new Set(state.expandedFolders)
+          if (newExpanded.has(folderPath)) {
+            newExpanded.delete(folderPath)
+          } else {
+            newExpanded.add(folderPath)
+          }
+          return { expandedFolders: newExpanded }
+        })
+      },
+      
+      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2) => {
+        const foldersToExpand = new Set<string>()
+        
+        const collectFoldersAtLevel = (fileList: PlannerFile[], currentLevel: number) => {
+          fileList.forEach(file => {
+            if (file.type === 'folder' && currentLevel < maxLevel) {
+              foldersToExpand.add(file.filepath)
+              if (file.children) {
+                collectFoldersAtLevel(file.children, currentLevel + 1)
+              }
+            }
+          })
+        }
+        
+        collectFoldersAtLevel(files, 0)
+        set({ expandedFolders: foldersToExpand })
       },
       
       // Reset all state

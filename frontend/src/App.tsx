@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
@@ -9,7 +9,7 @@ import { resetSessionId } from "./services/api";
 import type { ActiveSessionInfo } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
-import { useAppStore, useLLMStore, useMCPStore } from "./stores";
+import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
@@ -35,10 +35,6 @@ function App() {
   // Load LLM defaults from backend
   useLLMDefaults()
   
-  // Legacy state for backward compatibility (will be removed)
-  const [currentPresetServers, setCurrentPresetServers] = useState<string[]>([]) // Used in onPresetSelect
-  const [selectedPresetFolder, setSelectedPresetFolder] = useState<string | null>(null)
-  
   // App Store subscriptions for workspace and chat
   const {
     selectedFile,
@@ -56,6 +52,8 @@ function App() {
     workspaceMinimized,
     setWorkspaceMinimized
   } = useAppStore()
+  
+  const { setActivePresetId } = useGlobalPresetStore()
 
   const hasInitializedRef = useRef(false)
 
@@ -72,6 +70,9 @@ function App() {
     
     // Initialize LLM store
     useLLMStore.getState().refreshAvailableLLMs()
+    
+    // Initialize global preset store
+    useGlobalPresetStore.getState().refreshPresets()
   }, [])
 
   // Auto-minimize sidebar when mode is selected or preset is selected
@@ -79,7 +80,10 @@ function App() {
     if (selectedModeCategory && !sidebarMinimized) {
       setSidebarMinimized(true)
     }
-  }, [selectedModeCategory, sidebarMinimized, setSidebarMinimized])
+    // NOTE: Only include selectedModeCategory and setSidebarMinimized in dependencies
+    // Do NOT include sidebarMinimized as it would cause the effect to re-run every time
+    // the sidebar state changes, preventing manual toggle functionality after auto-minimize
+  }, [selectedModeCategory, setSidebarMinimized])
 
   // Show mode selection modal if initial setup not completed
   const showModeSelection = !hasCompletedInitialSetup
@@ -97,21 +101,16 @@ function App() {
     setChatSessionId(''); // Clear chat session ID to exit historical mode
     setChatSessionTitle('');
     setSelectedPresetId(null); // Clear selected preset filter
-    setSelectedPresetFolder(null); // Clear selected preset folder
+    if (selectedModeCategory) {
+      setActivePresetId(selectedModeCategory, null); // Also clear in global store
+    }
     
     // Reset the global session ID to force generation of a new one
     resetSessionId();
     
     // Clear the requiresNewChat flag after successful new chat initialization
     useAppStore.getState().clearRequiresNewChat();
-  }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId]);
-
-  // Deduplicated preset selection handler
-  const applyPresetSelection = useCallback((servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => {
-    clearFileContext()
-    setCurrentPresetServers(servers)
-    if (agentMode) setAgentMode(agentMode)
-  }, [clearFileContext, setAgentMode])
+  }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId, setActivePresetId, selectedModeCategory]);
 
   // Handle chat session selection
   const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => {
@@ -207,11 +206,6 @@ function App() {
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
             <WorkspaceSidebar
-              onPresetSelect={applyPresetSelection}
-              onPresetFolderSelect={(folderPath) => {
-                // Store the selected preset folder path
-                setSelectedPresetFolder(folderPath || null);
-              }}
               onPresetAdded={() => {
                 // Refresh workflow presets when a new preset is added
                 if (chatAreaRef.current) {
@@ -219,7 +213,12 @@ function App() {
                 }
               }}
               onChatSessionSelect={handleChatSessionSelect}
-              onClearPresetFilter={() => setSelectedPresetId(null)}
+              onClearPresetFilter={() => {
+                setSelectedPresetId(null)
+                if (selectedModeCategory) {
+                  setActivePresetId(selectedModeCategory, null)
+                }
+              }}
               minimized={sidebarMinimized}
               onToggleMinimize={toggleSidebarMinimize}
             />
@@ -232,13 +231,6 @@ function App() {
               <ChatArea
                 ref={chatAreaRef}
                 onNewChat={startNewChat}
-                selectedPresetFolder={selectedPresetFolder}
-                currentPresetServers={currentPresetServers}
-                onPresetSelect={applyPresetSelection}
-                onPresetFolderSelect={(folderPath) => {
-                  // Store the selected preset folder path
-                  setSelectedPresetFolder(folderPath || null);
-                }}
               />
             </div>
             

@@ -14,7 +14,7 @@ export interface ModeInfo {
 export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
   'chat': {
     icon: <MessageCircle className="w-16 h-16 text-blue-500" />,
-    title: 'Start a Conversation',
+    title: 'Chat Mode',
     description: 'Ask questions, brainstorm ideas, or have a natural dialogue with AI',
     features: [
       'Instant responses to questions',
@@ -22,63 +22,34 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
       'Memory across the chat session',
       'Choose between Simple or ReAct reasoning'
     ],
-    examples: [
-      'Explain quantum computing in simple terms',
-      'Help me write a professional email',
-      'What are the latest trends in AI?',
-      'Debug this code snippet'
-    ],
-    tips: [
-      'Be specific about what you need help with',
-      'Ask follow-up questions to dive deeper',
-      'Try both Simple and ReAct modes for different needs'
-    ]
+    examples: [],
+    tips: []
   },
   'deep-research': {
     icon: <Search className="w-16 h-16 text-blue-500" />,
-    title: 'Select a Research Preset',
-    description: 'Choose a research preset to organize your analysis projects, or create a new one',
+    title: 'Deep Research Mode',
+    description: 'Multi-step planning and execution for comprehensive analysis',
     features: [
       'Multi-step planning and execution',
       'Long-term memory and context retention',
       'Comprehensive analysis and reporting',
       'Requires Tasks/ folder for organization'
     ],
-    examples: [
-      'Research the impact of AI on healthcare',
-      'Analyze market trends for renewable energy',
-      'Create a comprehensive business plan',
-      'Investigate security vulnerabilities'
-    ],
-    tips: [
-      'Ensure Tasks/ folder is available',
-      'Be specific about your research goals',
-      'Allow time for comprehensive analysis',
-      'Review generated reports carefully'
-    ]
+    examples: [],
+    tips: []
   },
   'workflow': {
     icon: <Workflow className="w-16 h-16 text-blue-500" />,
-    title: 'Select a Workflow Preset',
-    description: 'Choose a workflow preset to organize your task execution, or create a new one',
+    title: 'Workflow Mode',
+    description: 'Sequential task execution with human verification at each step',
     features: [
       'Sequential task execution',
       'Human verification at each step',
       'Progress tracking and reporting',
       'Requires Workflow/ folder for organization'
     ],
-    examples: [
-      'Set up a new development environment',
-      'Plan and execute a marketing campaign',
-      'Create a data migration strategy',
-      'Implement a new feature from scratch'
-    ],
-    tips: [
-      'Ensure Workflow/ folder is available',
-      'Review and approve each step carefully',
-      'Break complex tasks into smaller steps',
-      'Monitor progress throughout execution'
-    ]
+    examples: [],
+    tips: []
   }
 }
 

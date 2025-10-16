@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { MessageCircle, Search, Workflow, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
-import { usePresetStore } from '../stores/usePresetStore'
+import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { getModeInfoForModal } from '../constants/modeInfo'
@@ -146,7 +146,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 }) => {
   const { setModeCategory, completeInitialSetup, getAgentModeFromCategory } = useModeStore()
   const { setAgentMode } = useAppStore()
-  const { getActivePreset } = usePresetStore()
+  const { getActivePreset, setActivePresetId } = usePresetApplication()
   
   // State for preset selection
   const [showPresetSelection, setShowPresetSelection] = useState(false)
@@ -184,8 +184,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
   // Handle preset selection from overlay
   const handlePresetSelected = (presetId: string) => {
     if (pendingModeCategory) {
-      const { setActivePreset } = usePresetStore.getState()
-      setActivePreset(pendingModeCategory, presetId)
+      setActivePresetId(pendingModeCategory, presetId)
       
       // Now proceed with mode selection
       setModeCategory(pendingModeCategory)

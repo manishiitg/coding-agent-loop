@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from './ui/Button';
-import { usePresetsDatabase } from '../hooks/usePresetsDatabase';
+import { usePresetManagement, usePresetApplication } from '../stores/useGlobalPresetStore';
 import PresetModal from './PresetModal';
-import type { CustomPreset } from '../hooks/usePresetsDatabase';
+import type { CustomPreset } from '../types/preset';
 import type { PlannerFile } from '../services/api-types';
-// Note: Predefined presets are now loaded from database via usePresetsDatabase hook
 import { Checkbox } from './ui/checkbox';
 import { Card } from './ui/Card';
-import { useAppStore } from '../stores';
+import { useModeStore } from '../stores/useModeStore';
 
 interface PresetQueriesProps {
   setCurrentQuery: (query: string) => void;
@@ -30,8 +29,7 @@ interface PresetQueriesProps {
     onAddPresetTriggered,
     onPresetAdded,
   }) => {
-  // Use Zustand store for preset selection
-  const { setSelectedPresetId } = useAppStore();
+  const { selectedModeCategory } = useModeStore();
   
   const {
     customPresets,
@@ -44,7 +42,9 @@ interface PresetQueriesProps {
     deletePreset,
     updatePredefinedServerSelection,
     refreshPresets,
-  } = usePresetsDatabase();
+  } = usePresetManagement();
+  
+  const { getPresetsForMode, applyPreset } = usePresetApplication();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null);
@@ -53,18 +53,28 @@ interface PresetQueriesProps {
   const [tempSelectedServers, setTempSelectedServers] = useState<string[]>([]);
 
   const handlePresetClick = (query: string, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => {
-    setCurrentQuery(query);
-    // Call the callback to set the preset server selection and agent mode
-    if (selectedServers && selectedServers.length > 0) {
-      onPresetSelect?.(selectedServers, agentMode);
+    // Find the preset object to pass to applyPreset
+    const preset = [...customPresets, ...predefinedPresets].find(p => p.id === presetQueryId)
+    
+    if (preset) {
+      // Use the global store's applyPreset method for consistency
+      const result = applyPreset(preset, selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+      
+      if (result.success) {
+        // Also call the legacy callbacks for backward compatibility
+        setCurrentQuery(query);
+        if (selectedServers && selectedServers.length > 0) {
+          onPresetSelect?.(selectedServers, agentMode);
+        } else {
+          onPresetSelect?.([], agentMode);
+        }
+        onPresetFolderSelect?.(selectedFolder?.filepath);
+      } else {
+        console.error('Failed to apply preset:', result.error)
+      }
     } else {
-      // Clear preset server selection if no servers selected, but still pass agent mode
-      onPresetSelect?.([], agentMode);
+      console.error('Preset not found:', presetQueryId)
     }
-    // Call the callback to handle folder selection
-    onPresetFolderSelect?.(selectedFolder?.filepath);
-    // Use Zustand store to set selected preset ID
-    setSelectedPresetId(presetQueryId || null);
   };
 
   const handleAddPreset = () => {
@@ -157,8 +167,10 @@ interface PresetQueriesProps {
       )}
 
       <div className="flex flex-wrap gap-3">
-        {/* Predefined Presets */}
-        {predefinedPresets.map((preset) => {
+        {/* Predefined Presets - Filtered by current mode */}
+        {getPresetsForMode(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+          .filter(preset => predefinedPresets.some(pp => pp.id === preset.id))
+          .map((preset) => {
           const selectedServers = predefinedServerSelections[preset.label] || [];
           return (
             <div key={preset.id} className="relative group">
@@ -204,8 +216,10 @@ interface PresetQueriesProps {
           );
         })}
 
-        {/* Custom Presets */}
-        {customPresets.map((preset) => (
+        {/* Custom Presets - Filtered by current mode */}
+        {getPresetsForMode(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+          .filter(preset => customPresets.some(cp => cp.id === preset.id))
+          .map((preset) => (
           <div key={preset.id} className="relative group">
             <Button
               type="button"
@@ -235,7 +249,7 @@ interface PresetQueriesProps {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleEditPreset(preset);
+                    handleEditPreset(preset as CustomPreset);
                   }}
                   className="w-4 h-4 flex items-center justify-center text-xs hover:bg-gray-200 rounded"
                   title="Edit preset"

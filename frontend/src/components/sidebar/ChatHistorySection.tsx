@@ -3,21 +3,16 @@ import { agentApi } from '../../services/api'
 import type { ChatSession, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { useModeStore } from '../../stores/useModeStore'
-import { useActivePresetStore } from '../../stores/useActivePresetStore'
-import { ChevronDown, Plus } from 'lucide-react'
+import { usePresetApplication } from '../../stores/useGlobalPresetStore'
 
 interface ChatHistorySectionProps {
   onSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
   minimized?: boolean
-  selectedPresetId?: string | null
-  onClearFilter?: () => void
 }
 
 export default function ChatHistorySection({ 
   onSessionSelect, 
-  minimized = false,
-  selectedPresetId,
-  onClearFilter
+  minimized = false
 }: ChatHistorySectionProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [loading, setLoading] = useState(false)
@@ -32,10 +27,7 @@ export default function ChatHistorySection({
   const { selectedModeCategory } = useModeStore()
   
   // Active preset query store
-  const { getActivePresetQueryId } = useActivePresetStore()
-  
-  // Preset selector state
-  const [showPresetSelector, setShowPresetSelector] = useState(false)
+  const { getActivePresetId } = usePresetApplication()
 
   // Fetch preset query details
   const fetchPresetQuery = useCallback(async (presetQueryId: string) => {
@@ -77,8 +69,8 @@ export default function ChatHistorySection({
 
   // Helper function to get the active preset query ID for a category
   const getBackendPresetQueryId = useCallback((category: 'deep-research' | 'workflow') => {
-    return getActivePresetQueryId(category)
-  }, [getActivePresetQueryId])
+    return getActivePresetId(category)
+  }, [getActivePresetId])
 
   // Filter sessions based on mode and active preset
   const filterSessionsByMode = useCallback((sessions: ChatSession[]) => {
@@ -128,7 +120,7 @@ export default function ChatHistorySection({
       // Use server-side filtering when an active preset is selected
       let response
       if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
-        const activePresetQueryId = getActivePresetQueryId(selectedModeCategory)
+        const activePresetQueryId = getActivePresetId(selectedModeCategory)
         response = await agentApi.getChatSessions(100, 0, activePresetQueryId || undefined) // server filters by preset
       } else {
         response = await agentApi.getChatSessions(100, 0)
@@ -153,7 +145,7 @@ export default function ChatHistorySection({
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, getActivePresetQueryId])
+  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, getActivePresetId])
 
   // Load sessions and active sessions on mount
   useEffect(() => {
@@ -275,23 +267,9 @@ export default function ChatHistorySection({
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
-          {selectedPresetId ? 'Filtered Chats' : 'Previous Chats'}
+          Previous Chats
         </h3>
         <div className="flex items-center gap-1">
-          {selectedPresetId && (
-            <button
-              onClick={() => {
-                // Clear the filter by calling the parent callback
-                onClearFilter?.()
-              }}
-              className="p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
-              title="Clear filter"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
           <button
             onClick={loadSessions}
             disabled={loading}
@@ -314,105 +292,6 @@ export default function ChatHistorySection({
         </div>
       </div>
 
-      {/* Preset Selector for Deep Research and Workflow modes */}
-      {(selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') && (
-        <div className="space-y-2">
-          {/* Current Active Preset Display */}
-          {(() => {
-            const activePresetQueryId = getActivePresetQueryId(selectedModeCategory as 'deep-research' | 'workflow')
-            // Note: We would need to fetch presets from usePresetsDatabase if we want to show them here
-            const presets: Array<{id: string, name: string, description?: string}> = [] // Placeholder - would need to implement preset fetching
-            
-            return (
-              <div className="space-y-2">
-                {/* Active Preset */}
-                {activePresetQueryId ? (
-                  <div className="flex items-center justify-between p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                      <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                        Preset Selected
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setShowPresetSelector(!showPresetSelector)}
-                      className="p-1 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 transition-colors"
-                    >
-                      <ChevronDown className={`w-3 h-3 transition-transform ${showPresetSelector ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
-                    <span className="text-sm text-gray-600 dark:text-gray-400">
-                      No preset selected
-                    </span>
-                    <button
-                      onClick={() => setShowPresetSelector(!showPresetSelector)}
-                      className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-                    >
-                      <ChevronDown className={`w-3 h-3 transition-transform ${showPresetSelector ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-                )}
-
-                {/* Preset Selector Dropdown */}
-                {showPresetSelector && (
-                  <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-slate-800 shadow-lg">
-                    <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
-                      {presets.length === 0 ? (
-                        <div className="p-3 text-center text-sm text-gray-500 dark:text-gray-400">
-                          No presets available
-                        </div>
-                      ) : (
-                        presets.map((preset) => (
-                          <button
-                            key={preset.id}
-                            onClick={() => {
-                              // Note: This would need to be implemented with the new store
-                              console.log('Preset selection needs to be implemented with new store')
-                              setShowPresetSelector(false)
-                              loadSessions() // Reload sessions with new preset filter
-                            }}
-                            className={`w-full text-left p-2 rounded-md text-sm transition-colors ${
-                              activePresetQueryId === preset.id
-                                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                            }`}
-                          >
-                            <div className="font-medium">{preset.name}</div>
-                            {preset.description && (
-                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                {preset.description}
-                              </div>
-                            )}
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              Preset details
-                            </div>
-                          </button>
-                        ))
-                      )}
-                      
-                      {/* Create New Preset Button */}
-                      <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
-                        <button
-                          onClick={() => {
-                            // TODO: Open preset creation modal
-                            setShowPresetSelector(false)
-                          }}
-                          className="w-full flex items-center gap-2 p-2 text-sm text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 rounded-md transition-colors"
-                        >
-                          <Plus className="w-3 h-3" />
-                          Create New Preset
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          })()}
-        </div>
-      )}
 
       {/* Content */}
       {expanded && (

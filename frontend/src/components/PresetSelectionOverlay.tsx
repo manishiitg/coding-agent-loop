@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { Search, Workflow, Plus, Folder, Check } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 import PresetModal from './PresetModal'
-import { usePresetsDatabase } from '../hooks/usePresetsDatabase'
-import { useActivePresetStore } from '../stores/useActivePresetStore'
+import { usePresetManagement } from '../stores/useGlobalPresetStore'
+import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import type { PlannerFile } from '../services/api-types'
 
 interface PresetSelectionOverlayProps {
@@ -12,7 +12,6 @@ interface PresetSelectionOverlayProps {
   onPresetSelected: (presetId: string) => void
   modeCategory: ModeCategory
   onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void
-  onPresetFolderSelect?: (folderPath?: string) => void
   setCurrentQuery?: (query: string) => void
 }
 
@@ -22,11 +21,10 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   onPresetSelected,
   modeCategory,
   onPresetSelect,
-  onPresetFolderSelect,
   setCurrentQuery
 }) => {
-  const { customPresets, addPreset } = usePresetsDatabase()
-  const { setActivePresetQueryId } = useActivePresetStore()
+  const { customPresets, addPreset } = usePresetManagement()
+  const { setActivePresetId } = usePresetApplication()
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
 
@@ -65,13 +63,8 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
           }
         }
         
-        // Call the folder select callback (same as PresetQueries)
-        if (onPresetFolderSelect) {
-          onPresetFolderSelect(selectedPreset.selectedFolder?.filepath)
-        }
-        
         // Set active preset query ID in the dedicated store
-        setActivePresetQueryId(modeCategory, selectedPresetId)
+        setActivePresetId(modeCategory, selectedPresetId)
         
         // Call the original callback
         onPresetSelected(selectedPresetId)
@@ -102,6 +95,11 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       // Create the preset and get the returned preset object directly
       const newPreset = await addPreset(label, query, selectedServers, presetAgentMode, selectedFolder)
       
+      if (!newPreset) {
+        console.error('Failed to create preset')
+        return
+      }
+      
       // Close the modal
       setIsPresetModalOpen(false)
       
@@ -122,15 +120,10 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         }
       }
       
-      // Call the folder select callback (same as PresetQueries)
-      if (onPresetFolderSelect) {
-        onPresetFolderSelect(newPreset.selectedFolder?.filepath)
-      }
-      
           // Automatically confirm the selection
           if (modeCategory === 'deep-research' || modeCategory === 'workflow') {
             // Set active preset query ID in the dedicated store
-            setActivePresetQueryId(modeCategory, newPreset.id)
+            setActivePresetId(modeCategory, newPreset.id)
             onPresetSelected(newPreset.id)
             onClose()
           }

@@ -8,11 +8,8 @@ import SemanticSearchSync from './workspace/SemanticSearchSync'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { useFolderExpansion } from '../hooks/useFolderExpansion'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores'
-import { useModeStore } from '../stores/useModeStore'
-import { usePresetStore } from '../stores/usePresetStore'
 
 interface WorkspaceProps {
   minimized: boolean
@@ -32,14 +29,7 @@ export default function Workspace({
     setLoadingFileContent,
     setShowFileContent
   } = useAppStore()
-  
-  const { selectedModeCategory } = useModeStore()
-  const { getActivePreset } = usePresetStore()
-  
-  // Helper function to safely get preset display name
-  const getPresetDisplayName = (preset: { name?: string; label?: string } | null) => {
-    return preset?.label ?? preset?.name ?? ''
-  }
+
   
   const {
     files,
@@ -67,11 +57,12 @@ export default function Workspace({
     closeDeleteAllFilesDialog,
     showActionsDropdown,
     setShowActionsDropdown,
-    removeFile
+    removeFile,
+    expandedFolders,
+    expandFoldersForFile,
+    toggleFolder,
+    expandFoldersToLevel
   } = useWorkspaceStore()
-  
-  // Custom hooks for file highlighting and folder expansion
-  const { expandedFolders, expandFoldersForFile, toggleFolder, expandFoldersToLevel } = useFolderExpansion()
   
   // Ref for the workspace scrollable container
   const workspaceScrollRef = useRef<HTMLDivElement>(null)
@@ -443,31 +434,6 @@ export default function Workspace({
                 Workspace
               </h2>
               {/* Mode-specific workspace info */}
-              {selectedModeCategory && (
-                <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                  {selectedModeCategory === 'chat' && (
-                    <span>File context for chat conversations</span>
-                  )}
-                  {selectedModeCategory === 'deep-research' && (
-                    <span>
-                      Tasks/ folder for research projects
-                      {(() => {
-                        const activePreset = getActivePreset('deep-research')
-                        return activePreset ? ` • ${getPresetDisplayName(activePreset)}` : ''
-                      })()}
-                    </span>
-                  )}
-                  {selectedModeCategory === 'workflow' && (
-                    <span>
-                      Workflow/ folder for task execution
-                      {(() => {
-                        const activePreset = getActivePreset('workflow')
-                        return activePreset ? ` • ${getPresetDisplayName(activePreset)}` : ''
-                      })()}
-                    </span>
-                  )}
-                </div>
-              )}
             </div>
             <div className="flex items-center gap-2">
               <Tooltip>

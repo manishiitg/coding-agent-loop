@@ -1,11 +1,10 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import { agentApi, type AgentQueryRequest } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
-import { EventModeProvider, EventModeToggle } from './events'
+import { EventModeProvider } from './events'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
-import { getAgentModeDescription } from '../utils/agentModeDescriptions'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { WORKFLOW_PHASES, type WorkflowPhase } from '../constants/workflow'
@@ -15,26 +14,18 @@ import { ReActExplanation } from './ReActExplanation'
 import GuidanceFloatingIcon from './GuidanceFloatingIcon'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
-import { useActivePresetStore } from '../stores/useActivePresetStore'
-import { usePresetsDatabase } from '../hooks/usePresetsDatabase'
-import { MessageCircle, Search, Workflow, Settings } from 'lucide-react'
 import { ModeEmptyState } from './ModeEmptyState'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
+import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
+import { ChatHeader } from './ChatHeader'
 
 interface ChatAreaProps {
   // New chat handler
   onNewChat: () => void
   
-  // Selected preset folder path
-  selectedPresetFolder?: string | null
-  
-  // Current preset servers (from preset selection)
-  currentPresetServers?: string[]
-  
   // Preset selection callbacks
   onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void
-  onPresetFolderSelect?: (folderPath?: string) => void
 }
 
 // Ref interface for ChatArea component
@@ -48,10 +39,7 @@ export interface ChatAreaRef {
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   onNewChat,
-  selectedPresetFolder,
-  currentPresetServers = [],
-  onPresetSelect,
-  onPresetFolderSelect
+  onPresetSelect
 }, ref) => {
   // Store subscriptions
   const { 
@@ -65,8 +53,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   } = useAppStore()
   
   const { selectedModeCategory } = useModeStore()
-  const { getActivePresetQueryId } = useActivePresetStore()
-  const { customPresets, predefinedPresets } = usePresetsDatabase()
+  const { getActivePresetId, setActivePresetId, currentPresetServers } = usePresetApplication()
   
   const { 
     primaryConfig: llmConfig,
@@ -151,37 +138,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Use currentPresetServers from props (passed from App.tsx when preset is selected)
   const primaryLLM = getCurrentLLMOption()
-  
-  // Mode indicator helpers
-  const getModeIcon = (category: typeof selectedModeCategory) => {
-    switch (category) {
-      case 'chat':
-        return <MessageCircle className="w-4 h-4 text-blue-600" />
-      case 'deep-research':
-        return <Search className="w-4 h-4 text-green-600" />
-      case 'workflow':
-        return <Workflow className="w-4 h-4 text-purple-600" />
-      default:
-        return <MessageCircle className="w-4 h-4 text-gray-400" />
-    }
-  }
 
-  const getModeName = (category: typeof selectedModeCategory) => {
-    switch (category) {
-      case 'chat':
-        return 'Chat Mode'
-      case 'deep-research':
-        return 'Deep Research Mode'
-      case 'workflow':
-        return 'Workflow Mode'
-      default:
-        return 'Unknown Mode'
-    }
-  }
-
-  // State for mode switching
-  const [showModeSwitch, setShowModeSwitch] = useState(false)
-  
   // State for preset selection overlay
   const [showPresetSelection, setShowPresetSelection] = useState(false)
   const [pendingModeCategory, setPendingModeCategory] = useState<'deep-research' | 'workflow' | null>(null)
@@ -190,33 +147,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
   const [pendingModeSwitch, setPendingModeSwitch] = useState<'chat' | 'deep-research' | 'workflow' | null>(null)
   
-  // Close dropdown when clicking outside or pressing Escape
-  useEffect(() => {
-    if (!showModeSwitch) return
-    
-    const onMouseDown = (event: MouseEvent) => {
-      const target = event.target as Element
-      if (!target.closest('.mode-switch-dropdown')) {
-        setShowModeSwitch(false)
-      }
-    }
-    
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowModeSwitch(false)
-    }
-    
-    document.addEventListener('mousedown', onMouseDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onMouseDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [showModeSwitch])
 
   // Handle mode selection from dropdown
   const handleModeSelect = (category: 'chat' | 'deep-research' | 'workflow') => {
     if (category === selectedModeCategory) {
-      setShowModeSwitch(false)
       return
     }
 
@@ -233,8 +167,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       // Clear backend session and reset UI after mode switch
       handleNewChat()
     }
-    
-    setShowModeSwitch(false)
   }
 
   // Handle mode switching with preset selection for Deep Research/Workflow
@@ -244,8 +176,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       switchMode(category)
     } else {
       // Deep Research or Workflow mode - check if preset is needed
-      const { getActivePresetQueryId } = useActivePresetStore.getState()
-      const activePresetQueryId = getActivePresetQueryId(category)
+      const activePresetQueryId = getActivePresetId(category)
       
       if (activePresetQueryId) {
         // Preset already selected, switch mode directly
@@ -276,8 +207,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Handle preset selection from overlay
   const handlePresetSelected = (presetId: string) => {
     if (pendingModeCategory) {
-      const { setActivePresetQueryId } = useActivePresetStore.getState()
-      setActivePresetQueryId(pendingModeCategory, presetId)
+      setActivePresetId(pendingModeCategory, presetId)
       
       // Now switch to the mode
       switchMode(pendingModeCategory)
@@ -294,18 +224,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setPendingModeCategory(null)
   }
 
-  const getActivePresetName = () => {
-    if (!selectedModeCategory || (selectedModeCategory !== 'deep-research' && selectedModeCategory !== 'workflow')) {
-      return null
-    }
-    const presetQueryId = getActivePresetQueryId(selectedModeCategory)
-    if (!presetQueryId) return null
-    
-    // Search through all backend presets to find the matching one
-    const allBackendPresets = [...customPresets, ...predefinedPresets]
-    const preset = allBackendPresets.find(p => p.id === presetQueryId)
-    return preset?.label || null
-  }
   
   // Filter toasts to only include types supported by ToastContainer
   const filteredToasts = toasts.filter((toast: { type: string }) => toast.type === 'success' || toast.type === 'info') as Array<{id: string, message: string, type: 'success' | 'info'}>
@@ -1321,7 +1239,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onPresetSelected={handlePresetSelected}
           modeCategory={pendingModeCategory}
           onPresetSelect={onPresetSelect}
-          onPresetFolderSelect={onPresetFolderSelect}
           setCurrentQuery={setCurrentQuery}
         />
       )}
@@ -1338,149 +1255,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       )}
 
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-16">
-        <div className="flex items-center justify-between h-full">
-          <div className="min-w-0 flex-1">
-            {/* Mode Indicator and Title */}
-            <div className="flex items-center gap-2 mb-1">
-              {selectedModeCategory && (
-                <div className="relative">
-                  <button
-                    onClick={() => setShowModeSwitch(!showModeSwitch)}
-                    className="flex items-center gap-1 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors cursor-pointer"
-                    title="Click to change mode"
-                    type="button"
-                    aria-haspopup="menu"
-                    aria-expanded={showModeSwitch}
-                    aria-controls="mode-switch-menu"
-                  >
-                    {getModeIcon(selectedModeCategory)}
-                    <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
-                      {getModeName(selectedModeCategory)}
-                    </span>
-                    <Settings className="w-3 h-3 text-blue-600" />
-                  </button>
-                  
-                  {/* Direct Mode Selection Dropdown */}
-                  {showModeSwitch && (
-                    <div
-                      id="mode-switch-menu"
-                      role="menu"
-                      aria-label="Select mode"
-                      className="mode-switch-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50"
-                    >
-                      <div className="p-2 space-y-1">
-                        {/* Chat Mode */}
-                        <button
-                          onClick={() => handleModeSelect('chat')}
-                          className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                            selectedModeCategory === 'chat'
-                              ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <MessageCircle className="w-4 h-4 text-blue-600" />
-                            <div>
-                              <div className="font-medium">Chat Mode</div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                Quick conversations and questions
-                              </div>
-                            </div>
-                          </div>
-                        </button>
-                        
-                        {/* Deep Research Mode */}
-                        <button
-                          onClick={() => handleModeSelect('deep-research')}
-                          className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                            selectedModeCategory === 'deep-research'
-                              ? 'bg-green-100 dark:bg-green-900/30 text-green-900 dark:text-green-100'
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <Search className="w-4 h-4 text-green-600" />
-                            <div>
-                              <div className="font-medium">Deep Research Mode</div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                Multi-step analysis and research
-                              </div>
-                            </div>
-                          </div>
-                        </button>
-                        
-                        {/* Workflow Mode */}
-                        <button
-                          onClick={() => handleModeSelect('workflow')}
-                          className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                            selectedModeCategory === 'workflow'
-                              ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-900 dark:text-purple-100'
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <Workflow className="w-4 h-4 text-purple-600" />
-                            <div>
-                              <div className="font-medium">Workflow Mode</div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                Todo-based task execution
-                              </div>
-                            </div>
-                          </div>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">
-                {chatSessionTitle ? `Chat: ${chatSessionTitle}` : 'Chat'}
-              </h2>
-            </div>
-            
-            {/* Preset Name (for Deep Research/Workflow modes) */}
-            {(() => {
-              const activePresetName = getActivePresetName()
-              if (activePresetName) {
-                return (
-                  <div className="flex items-center gap-1 mb-1">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
-                    <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-                      {activePresetName}
-                    </span>
-                  </div>
-                )
-              }
-              return null
-            })()}
-            
-            {/* Session Status or Mode Description */}
-            <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
-              {chatSessionId ? (
-                sessionState === 'active' ? 'Live Session' : 
-                sessionState === 'completed' ? 'Historical Session' :
-                sessionState === 'loading' ? 'Checking session...' :
-                sessionState === 'error' ? 'Session Error' :
-                'Session Not Found'
-              ) : getAgentModeDescription(agentMode)}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <EventModeToggle />
-            {isStreaming && (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                <span>
-                  Streaming... 
-                  <span className="ml-2">
-                    📊 Events: {totalEvents} (Last: {lastEventCount})
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <ChatHeader
+        chatSessionTitle={chatSessionTitle}
+        chatSessionId={chatSessionId}
+        sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
+        isStreaming={isStreaming}
+        totalEvents={totalEvents}
+        lastEventCount={lastEventCount}
+        onModeSelect={handleModeSelect}
+      />
 
       {/* Chat Content - Separated to prevent input re-renders */}
       <div ref={chatContentRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative">
@@ -1596,7 +1379,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onSubmit={submitQuery}
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}
-          selectedPresetFolder={selectedPresetFolder}
         />
       )}
       

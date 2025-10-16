@@ -5,21 +5,17 @@ import MCPServersSection from './sidebar/MCPServersSection'
 import PresetQueriesSection from './sidebar/PresetQueriesSection'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
-import { ModeInfoPanel } from './ModeInfoPanel'
-import { ModeSwitchSection } from './ModeSwitchSection'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useAppStore, useMCPStore, useChatStore, useLLMStore } from '../stores'
 
 interface WorkspaceSidebarProps {
   // Presets (callbacks only)
-  onPresetSelect: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void
   onPresetFolderSelect?: (folderPath?: string) => void
   onPresetAdded?: () => void
   
   // Chat session selection
   onChatSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
-  onClearPresetFilter?: () => void
   
   // Minimize functionality
   minimized: boolean
@@ -27,17 +23,15 @@ interface WorkspaceSidebarProps {
 }
 
 export default function WorkspaceSidebar({
-  onPresetSelect,
   onPresetFolderSelect,
   onPresetAdded,
   onChatSessionSelect,
-  onClearPresetFilter,
   minimized,
   onToggleMinimize
 }: WorkspaceSidebarProps) {
   
   // Store subscriptions
-  const { agentMode, setAgentMode, setCurrentQuery, selectedPresetId } = useAppStore()
+  const { agentMode, setAgentMode, setCurrentQuery } = useAppStore()
   const { getAvailableServers, showMCPDetails, setShowMCPDetails } = useMCPStore()
   const { isStreaming } = useChatStore()
   const { showLLMModal, setShowLLMModal } = useLLMStore()
@@ -122,18 +116,13 @@ export default function WorkspaceSidebar({
             {/* Preset Queries */}
             <PresetQueriesSection
               availableServers={availableServers}
-              onPresetSelect={onPresetSelect}
               onPresetFolderSelect={onPresetFolderSelect}
               setCurrentQuery={setCurrentQuery}
               isStreaming={isStreaming}
               onPresetAdded={onPresetAdded}
             />
 
-            {/* Mode Information Panel */}
-            <ModeInfoPanel minimized={minimized} />
 
-            {/* Mode Switch Section */}
-            <ModeSwitchSection minimized={minimized} />
 
             {/* Chat History */}
             <ChatHistorySection
@@ -142,8 +131,6 @@ export default function WorkspaceSidebar({
                   onChatSessionSelect(sessionId, sessionTitle, sessionType, activeSessionInfo)
                 }
               }}
-              selectedPresetId={selectedPresetId}
-              onClearFilter={onClearPresetFilter}
             />
           </div>
         </div>

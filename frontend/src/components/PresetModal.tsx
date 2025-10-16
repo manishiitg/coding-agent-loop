@@ -6,7 +6,7 @@ import { Card } from './ui/Card';
 import { Checkbox } from './ui/checkbox';
 import { Folder, Plus, X } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
-import type { CustomPreset } from '../hooks/usePresetsDatabase';
+import type { CustomPreset } from '../types/preset';
 import type { PlannerFile } from '../services/api-types';
 
 interface PresetModalProps {

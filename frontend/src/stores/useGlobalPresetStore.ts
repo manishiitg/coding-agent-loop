@@ -5,6 +5,7 @@ import type { PlannerFile, PresetQuery } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
 import { useWorkspaceStore } from './useWorkspaceStore'
+import { useChatStore } from './useChatStore'
 
 export interface PresetApplicationResult {
   success: boolean
@@ -246,6 +247,18 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       applyPreset: (preset, modeCategory) => {
         console.log('[GlobalPresetStore] applyPreset called with:', { preset, modeCategory })
         try {
+          // Clear chatSessionId to allow fresh observer initialization
+          useAppStore.getState().setChatSessionId('')
+          console.log('[GlobalPresetStore] Cleared chatSessionId for fresh observer initialization')
+          
+          // Clear only the observer ID, not the entire chat state
+          const { setObserverId } = useChatStore.getState()
+          setObserverId('')
+          console.log('[GlobalPresetStore] Cleared observerId for fresh observer')
+          
+          // The ChatArea component will detect the empty observerId and initialize a new one
+          console.log('[GlobalPresetStore] Observer will be re-initialized by ChatArea component')
+          
           // Set the current query in both stores
           set({ currentQuery: preset.query })
           

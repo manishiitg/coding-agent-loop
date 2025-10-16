@@ -438,6 +438,12 @@ export interface UpdateChatSessionRequest {
   completed_at?: string;
 }
 
+// Preset LLM Configuration types
+export interface PresetLLMConfig {
+  provider: 'openrouter' | 'bedrock' | 'openai'
+  model_id: string
+}
+
 // Preset Query API types
 export interface PresetQuery {
   id: string;
@@ -446,6 +452,7 @@ export interface PresetQuery {
   selected_servers: string; // JSON string
   selected_folder: string; // Single folder path
   agent_mode: string;
+  llm_config: string; // JSON string of PresetLLMConfig
   is_predefined: boolean;
   created_at: string;
   updated_at: string;
@@ -458,6 +465,7 @@ export interface CreatePresetQueryRequest {
   selected_servers?: string[];
   selected_folder?: string; // Single folder path
   agent_mode?: string;
+  llm_config?: PresetLLMConfig; // LLM configuration for this preset
   is_predefined?: boolean;
 }
 
@@ -467,6 +475,7 @@ export interface UpdatePresetQueryRequest {
   selected_servers?: string[];
   selected_folder?: string; // Single folder path
   agent_mode?: string;
+  llm_config?: PresetLLMConfig; // LLM configuration for this preset
 }
 
 export interface ListPresetQueriesResponse {

@@ -431,6 +431,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
                       onLLMSelect={onPrimaryLLMSelect}
                       onRefresh={onRefreshAvailableLLMs}
                       disabled={isStreaming}
+                      openDirection="up"
                     />
                   </div>
                 )}
@@ -440,7 +441,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
                   {!observerId ? (
                     <span>
                       <Loader2 className="w-3 h-3 inline animate-spin mr-1" />
-                      Initializing observer...
+                      Initializing observer... (retrying if needed)
                     </span>
                   ) : (
                     ''

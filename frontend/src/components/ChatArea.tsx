@@ -49,7 +49,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     chatFileContext,
     clearFileContext,
     chatSessionId,
-    chatSessionTitle
+    chatSessionTitle,
+    requiresNewChat
   } = useAppStore()
   
   const { selectedModeCategory } = useModeStore()
@@ -480,24 +481,59 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Initialize observer on mount (only if not loading from chat session)
   useEffect(() => {
-    if (chatSessionId) {
+    // If we have a chatSessionId and don't require a new chat, don't initialize observer
+    if (chatSessionId && !requiresNewChat) {
+      console.log('[INIT] Skipping observer initialization - chatSessionId exists and requiresNewChat is false')
       return
     }
+    
+    // If requiresNewChat is true, clear the chatSessionId to force fresh initialization
+    if (requiresNewChat) {
+      console.log('[INIT] requiresNewChat is true - clearing chatSessionId for fresh initialization')
+      useAppStore.getState().setChatSessionId('')
+    }
+    
+    // Check if we need to initialize observer (no observerId or requiresNewChat)
+    if (observerId && !requiresNewChat) {
+      console.log('[INIT] Skipping observer initialization - already have working observer:', observerId)
+      return
+    }
+    
+    console.log('[INIT] Starting observer initialization...')
     
     // Clear any existing observer ID to ensure fresh start
     setObserverId('')
     
+    let retryCount = 0
+    const maxRetries = 3
+    const retryDelay = 1000 // 1 second
+    let retryTimeout: NodeJS.Timeout | null = null
+    
     const initializeObserver = async () => {
       try {
+        console.log(`[INIT] Attempting to register observer (attempt ${retryCount + 1}/${maxRetries + 1})`)
         const response = await agentApi.registerObserver()
         
         if (response.observer_id) {
+          console.log(`[INIT] Observer registered successfully: ${response.observer_id}`)
           setObserverId(response.observer_id)
+          
+          // Clear the requiresNewChat flag after successful initialization
+          useAppStore.getState().clearRequiresNewChat()
+          console.log('[INIT] Cleared requiresNewChat flag after successful observer registration')
         } else {
           console.error('[INIT] No observer_id received from server')
+          // Retry if we haven't exceeded max retries
+          if (retryCount < maxRetries) {
+            retryCount++
+            console.log(`[INIT] Retrying observer registration in ${retryDelay}ms...`)
+            retryTimeout = setTimeout(() => initializeObserver(), retryDelay)
+          } else {
+            console.error('[INIT] Max retries exceeded, giving up on observer registration')
+          }
         }
       } catch (error) {
-        console.error('[INIT] Failed to register observer:', error)
+        console.error(`[INIT] Failed to register observer (attempt ${retryCount + 1}):`, error)
         if (error instanceof Error) {
           console.error('[INIT] Error details:', {
             name: error.name,
@@ -507,11 +543,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         } else {
           console.error('[INIT] Unknown error type:', typeof error, error)
         }
+        
+        // Retry if we haven't exceeded max retries
+        if (retryCount < maxRetries) {
+          retryCount++
+          console.log(`[INIT] Retrying observer registration in ${retryDelay}ms...`)
+          retryTimeout = setTimeout(() => initializeObserver(), retryDelay)
+        } else {
+          console.error('[INIT] Max retries exceeded, giving up on observer registration')
+        }
       }
     }
 
     initializeObserver()
-  }, [chatSessionId, setObserverId])
+    
+    // Cleanup function to clear any pending retry timeout
+    return () => {
+      if (retryTimeout) {
+        clearTimeout(retryTimeout)
+        console.log('[INIT] Cleaned up observer registration retry timeout')
+      }
+    }
+  }, [chatSessionId, setObserverId, requiresNewChat, observerId])
 
   // Cleanup polling on unmount
   useEffect(() => {

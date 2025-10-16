@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Brain, ChevronDown, Check, RefreshCw } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
@@ -11,6 +11,8 @@ interface LLMSelectionDropdownProps {
   onLLMSelect: (llm: LLMOption) => void;
   onRefresh?: () => void;
   disabled?: boolean;
+  inModal?: boolean; // Add prop to indicate if used inside a modal
+  openDirection?: 'up' | 'down'; // Add prop to control dropdown direction
 }
 
 export default function LLMSelectionDropdown({
@@ -18,9 +20,28 @@ export default function LLMSelectionDropdown({
   selectedLLM,
   onLLMSelect,
   onRefresh,
-  disabled = false
+  disabled = false,
+  inModal = false,
+  openDirection = 'down' // Default to downward
 }: LLMSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  // Handle clicks outside when in modal
+  useEffect(() => {
+    if (isOpen && inModal) {
+      const handleClickOutside = (event: MouseEvent) => {
+        const target = event.target as Element;
+        if (!target.closest('[data-llm-dropdown]')) {
+          setIsOpen(false);
+        }
+      };
+
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isOpen, inModal]);
 
   const handleLLMSelect = (llm: LLMOption) => {
     onLLMSelect(llm);
@@ -35,10 +56,11 @@ export default function LLMSelectionDropdown({
 
   return (
     <TooltipProvider>
-      <div className="relative">
+      <div className="relative" data-llm-dropdown>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              type="button"
               variant="outline"
               size="sm"
                   onClick={() => {
@@ -59,15 +81,24 @@ export default function LLMSelectionDropdown({
 
         {isOpen && (
           <>
-            {/* Backdrop */}
-            <div 
-              className="fixed inset-0 z-40" 
-              onClick={() => setIsOpen(false)}
-            />
+            {/* Backdrop - only show when not in modal */}
+            {!inModal && (
+              <div 
+                className="fixed inset-0 z-40"
+                onClick={() => setIsOpen(false)}
+              />
+            )}
             
             {/* Dropdown */}
-            <div className="absolute bottom-full left-0 mb-1 z-50 min-w-[300px]">
-              <Card className="p-4 shadow-lg border-border bg-card">
+            <div 
+              className={`absolute left-0 ${inModal ? 'z-[9999]' : 'z-50'} min-w-[300px] ${
+                openDirection === 'up' 
+                  ? 'bottom-full mb-1' 
+                  : 'top-full mt-1'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Card className="p-4 shadow-lg border-border bg-card" onClick={(e) => e.stopPropagation()}>
                 <div className="space-y-3">
                   {/* Header */}
                   <div className="flex items-center justify-between">
@@ -79,6 +110,7 @@ export default function LLMSelectionDropdown({
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
+                              type="button"
                               variant="ghost"
                               size="sm"
                               onClick={(e) => {
@@ -96,9 +128,13 @@ export default function LLMSelectionDropdown({
                         </Tooltip>
                       )}
                       <Button
+                        type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => setIsOpen(false)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsOpen(false);
+                        }}
                         className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
                       >
                         ✕
@@ -131,7 +167,8 @@ export default function LLMSelectionDropdown({
                               <div 
                                 key={`${llm.provider}-${llm.model}`}
                                 className="flex items-center space-x-2 p-2 rounded-md hover:bg-secondary cursor-pointer ml-2"
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   handleLLMSelect(llm);
                                   setIsOpen(false);
                                 }}

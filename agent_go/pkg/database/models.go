@@ -97,6 +97,12 @@ type GetEventsResponse struct {
 	Offset int     `json:"offset"`
 }
 
+// PresetLLMConfig represents LLM configuration stored with presets
+type PresetLLMConfig struct {
+	Provider string `json:"provider"` // openrouter, bedrock, openai
+	ModelID  string `json:"model_id"`
+}
+
 // PresetQuery represents a preset query in the database
 type PresetQuery struct {
 	ID              string    `json:"id" db:"id"`
@@ -105,6 +111,7 @@ type PresetQuery struct {
 	SelectedServers string    `json:"selected_servers" db:"selected_servers"` // JSON array
 	SelectedFolder  string    `json:"selected_folder" db:"selected_folder"`   // Single folder path
 	AgentMode       string    `json:"agent_mode" db:"agent_mode"`             // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig       string    `json:"llm_config" db:"llm_config"`             // JSON configuration for LLM settings
 	IsPredefined    bool      `json:"is_predefined" db:"is_predefined"`
 	CreatedAt       time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
@@ -113,21 +120,23 @@ type PresetQuery struct {
 
 // CreatePresetQueryRequest represents a request to create a new preset query
 type CreatePresetQueryRequest struct {
-	Label           string   `json:"label"`
-	Query           string   `json:"query"`
-	SelectedServers []string `json:"selected_servers,omitempty"`
-	SelectedFolder  string   `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
-	AgentMode       string   `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
-	IsPredefined    bool     `json:"is_predefined,omitempty"`
+	Label           string           `json:"label"`
+	Query           string           `json:"query"`
+	SelectedServers []string         `json:"selected_servers,omitempty"`
+	SelectedFolder  string           `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
+	AgentMode       string           `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig       *PresetLLMConfig `json:"llm_config,omitempty"`      // LLM configuration for this preset
+	IsPredefined    bool             `json:"is_predefined,omitempty"`
 }
 
 // UpdatePresetQueryRequest represents a request to update a preset query
 type UpdatePresetQueryRequest struct {
-	Label           string   `json:"label,omitempty"`
-	Query           string   `json:"query,omitempty"`
-	SelectedServers []string `json:"selected_servers,omitempty"`
-	SelectedFolder  string   `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
-	AgentMode       string   `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
+	Label           string           `json:"label,omitempty"`
+	Query           string           `json:"query,omitempty"`
+	SelectedServers []string         `json:"selected_servers,omitempty"`
+	SelectedFolder  string           `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
+	AgentMode       string           `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig       *PresetLLMConfig `json:"llm_config,omitempty"`      // LLM configuration for this preset
 }
 
 // ListPresetQueriesResponse represents the response for listing preset queries

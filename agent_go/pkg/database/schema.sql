@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS preset_queries (
     selected_servers TEXT, -- JSON array of server names (e.g., ["aws", "github"])
     selected_folder TEXT DEFAULT NULL, -- Single folder path for orchestrator/workflow modes
     agent_mode TEXT DEFAULT 'ReAct', -- Agent mode: simple, ReAct, orchestrator, workflow
+    llm_config TEXT DEFAULT NULL, -- JSON configuration for LLM settings (provider, model, temperature, etc.)
     is_predefined BOOLEAN DEFAULT FALSE, -- Whether this is a built-in preset
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

@@ -1,4 +1,5 @@
 import type { PlannerFile } from '../services/api-types';
+import type { PresetLLMConfig } from '../services/api-types';
 
 export interface CustomPreset {
   id: string;
@@ -8,6 +9,7 @@ export interface CustomPreset {
   selectedServers?: string[];
   agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow';
   selectedFolder?: PlannerFile; // Single folder
+  llmConfig?: PresetLLMConfig; // LLM configuration for this preset
 }
 
 export interface PredefinedPreset {
@@ -17,4 +19,5 @@ export interface PredefinedPreset {
   selectedServers?: string[]
   agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
   selectedFolder?: PlannerFile
+  llmConfig?: PresetLLMConfig // LLM configuration for this preset
 }

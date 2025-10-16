@@ -24,7 +24,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   setCurrentQuery
 }) => {
   const { customPresets, addPreset } = usePresetManagement()
-  const { setActivePresetId } = usePresetApplication()
+  const { applyPreset } = usePresetApplication()
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
 
@@ -49,26 +49,32 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       const selectedPreset = presets.find(preset => preset.id === selectedPresetId)
       
       if (selectedPreset) {
-        // Set the query in the chat input
-        if (setCurrentQuery) {
-          setCurrentQuery(selectedPreset.query)
-        }
+        // Use applyPreset to properly apply all preset configurations
+        const result = applyPreset(selectedPreset, modeCategory)
         
-        // Call the preset select callback (same as PresetQueries)
-        if (onPresetSelect) {
-          if (selectedPreset.selectedServers && selectedPreset.selectedServers.length > 0) {
-            onPresetSelect(selectedPreset.selectedServers, selectedPreset.agentMode)
-          } else {
-            onPresetSelect([], selectedPreset.agentMode)
+        if (result.success) {
+          // Set the query in the chat input
+          if (setCurrentQuery) {
+            setCurrentQuery(selectedPreset.query)
           }
+          
+          // Call the preset select callback (same as PresetQueries)
+          if (onPresetSelect) {
+            if (selectedPreset.selectedServers && selectedPreset.selectedServers.length > 0) {
+              onPresetSelect(selectedPreset.selectedServers, selectedPreset.agentMode)
+            } else {
+              onPresetSelect([], selectedPreset.agentMode)
+            }
+          }
+          
+          // Call the original callback
+          onPresetSelected(selectedPresetId)
+          onClose()
+        } else {
+          console.error('Failed to apply preset:', result.error)
         }
-        
-        // Set active preset query ID in the dedicated store
-        setActivePresetId(modeCategory, selectedPresetId)
-        
-        // Call the original callback
-        onPresetSelected(selectedPresetId)
-        onClose()
+      } else {
+        console.error('Preset not found:', selectedPresetId)
       }
     }
   }
@@ -122,10 +128,15 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       
           // Automatically confirm the selection
           if (modeCategory === 'deep-research' || modeCategory === 'workflow') {
-            // Set active preset query ID in the dedicated store
-            setActivePresetId(modeCategory, newPreset.id)
-            onPresetSelected(newPreset.id)
-            onClose()
+            // Use applyPreset to properly apply all preset configurations
+            const result = applyPreset(newPreset, modeCategory)
+            
+            if (result.success) {
+              onPresetSelected(newPreset.id)
+              onClose()
+            } else {
+              console.error('Failed to apply preset:', result.error)
+            }
           }
     } catch (error) {
       console.error('Failed to create preset:', error)

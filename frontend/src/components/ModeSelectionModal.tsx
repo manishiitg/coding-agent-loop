@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { MessageCircle, Search, Workflow, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
-import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { getModeInfoForModal } from '../constants/modeInfo'
@@ -146,7 +146,8 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 }) => {
   const { setModeCategory, completeInitialSetup, getAgentModeFromCategory } = useModeStore()
   const { setAgentMode } = useAppStore()
-  const { getActivePreset, setActivePresetId } = usePresetApplication()
+  const { getActivePreset, applyPreset } = usePresetApplication()
+  const { customPresets } = usePresetManagement()
   
   // State for preset selection
   const [showPresetSelection, setShowPresetSelection] = useState(false)
@@ -184,18 +185,30 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
   // Handle preset selection from overlay
   const handlePresetSelected = (presetId: string) => {
     if (pendingModeCategory) {
-      setActivePresetId(pendingModeCategory, presetId)
+      // Find the preset object to apply properly
+      const preset = customPresets.find(p => p.id === presetId)
       
-      // Now proceed with mode selection
-      setModeCategory(pendingModeCategory)
-      const agentMode = getAgentModeFromCategory(pendingModeCategory)
-      setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
-      completeInitialSetup()
-      
-      // Close overlays
-      setShowPresetSelection(false)
-      setPendingModeCategory(null)
-      onClose()
+      if (preset) {
+        // Use applyPreset to properly apply all preset configurations
+        const result = applyPreset(preset, pendingModeCategory)
+        
+        if (result.success) {
+          // Now proceed with mode selection
+          setModeCategory(pendingModeCategory)
+          const agentMode = getAgentModeFromCategory(pendingModeCategory)
+          setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
+          completeInitialSetup()
+          
+          // Close overlays
+          setShowPresetSelection(false)
+          setPendingModeCategory(null)
+          onClose()
+        } else {
+          console.error('Failed to apply preset:', result.error)
+        }
+      } else {
+        console.error('Preset not found:', presetId)
+      }
     }
   }
 

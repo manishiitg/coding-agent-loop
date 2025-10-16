@@ -1,6 +1,7 @@
 import React from 'react'
-import { AlertTriangle, ArrowRight, MessageCircle, Search, Workflow } from 'lucide-react'
+import { AlertTriangle, ArrowRight } from 'lucide-react'
 import { type ModeCategory } from '../../stores/useModeStore'
+import { getModeIcon, getModeName, getModeDescription } from '../../utils/modeHelpers'
 
 interface ModeSwitchDialogProps {
   isOpen: boolean
@@ -8,45 +9,6 @@ interface ModeSwitchDialogProps {
   onCancel: () => void
   newModeCategory: ModeCategory
   currentModeCategory: ModeCategory
-}
-
-const getModeIcon = (category: ModeCategory) => {
-  switch (category) {
-    case 'chat':
-      return <MessageCircle className="w-6 h-6 text-blue-600" />
-    case 'deep-research':
-      return <Search className="w-6 h-6 text-blue-600" />
-    case 'workflow':
-      return <Workflow className="w-6 h-6 text-blue-600" />
-    default:
-      return <MessageCircle className="w-6 h-6 text-gray-400" />
-  }
-}
-
-const getModeName = (category: ModeCategory) => {
-  switch (category) {
-    case 'chat':
-      return 'Chat Mode'
-    case 'deep-research':
-      return 'Deep Research Mode'
-    case 'workflow':
-      return 'Workflow Mode'
-    default:
-      return 'Unknown Mode'
-  }
-}
-
-const getModeDescription = (category: ModeCategory) => {
-  switch (category) {
-    case 'chat':
-      return 'Quick conversations with AI'
-    case 'deep-research':
-      return 'Multi-step analysis with long-term memory'
-    case 'workflow':
-      return 'Todo-based execution with human verification'
-    default:
-      return 'Unknown mode'
-  }
 }
 
 export const ModeSwitchDialog: React.FC<ModeSwitchDialogProps> = ({
@@ -81,7 +43,7 @@ export const ModeSwitchDialog: React.FC<ModeSwitchDialogProps> = ({
           <div className="flex items-center justify-between">
             {/* From Mode */}
             <div className="flex items-center gap-3">
-              {getModeIcon(currentModeCategory)}
+              {getModeIcon(currentModeCategory, "w-6 h-6 text-blue-600")}
               <div>
                 <div className="font-medium text-gray-900 dark:text-white">
                   {getModeName(currentModeCategory)}
@@ -97,7 +59,7 @@ export const ModeSwitchDialog: React.FC<ModeSwitchDialogProps> = ({
 
             {/* To Mode */}
             <div className="flex items-center gap-3">
-              {getModeIcon(newModeCategory)}
+              {getModeIcon(newModeCategory, "w-6 h-6 text-blue-600")}
               <div>
                 <div className="font-medium text-gray-900 dark:text-white">
                   {getModeName(newModeCategory)}

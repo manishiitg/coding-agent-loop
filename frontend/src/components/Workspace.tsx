@@ -36,6 +36,11 @@ export default function Workspace({
   const { selectedModeCategory } = useModeStore()
   const { getActivePreset } = usePresetStore()
   
+  // Helper function to safely get preset display name
+  const getPresetDisplayName = (preset: { name?: string; label?: string } | null) => {
+    return preset?.label ?? preset?.name ?? ''
+  }
+  
   const {
     files,
     setFiles,
@@ -448,7 +453,7 @@ export default function Workspace({
                       Tasks/ folder for research projects
                       {(() => {
                         const activePreset = getActivePreset('deep-research')
-                        return activePreset ? ` • ${activePreset.name}` : ''
+                        return activePreset ? ` • ${getPresetDisplayName(activePreset)}` : ''
                       })()}
                     </span>
                   )}
@@ -457,7 +462,7 @@ export default function Workspace({
                       Workflow/ folder for task execution
                       {(() => {
                         const activePreset = getActivePreset('workflow')
-                        return activePreset ? ` • ${activePreset.name}` : ''
+                        return activePreset ? ` • ${getPresetDisplayName(activePreset)}` : ''
                       })()}
                     </span>
                   )}

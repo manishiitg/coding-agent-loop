@@ -101,7 +101,17 @@ function App() {
     
     // Reset the global session ID to force generation of a new one
     resetSessionId();
+    
+    // Clear the requiresNewChat flag after successful new chat initialization
+    useAppStore.getState().clearRequiresNewChat();
   }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId]);
+
+  // Deduplicated preset selection handler
+  const applyPresetSelection = useCallback((servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => {
+    clearFileContext()
+    setCurrentPresetServers(servers)
+    if (agentMode) setAgentMode(agentMode)
+  }, [clearFileContext, setAgentMode])
 
   // Handle chat session selection
   const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => {
@@ -197,14 +207,7 @@ function App() {
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
             <WorkspaceSidebar
-              onPresetSelect={(servers, agentMode) => {
-                // Clear previous file context when switching presets
-                clearFileContext();
-                setCurrentPresetServers(servers);
-                if (agentMode) {
-                  setAgentMode(agentMode);
-                }
-              }}
+              onPresetSelect={applyPresetSelection}
               onPresetFolderSelect={(folderPath) => {
                 // Store the selected preset folder path
                 setSelectedPresetFolder(folderPath || null);
@@ -231,14 +234,7 @@ function App() {
                 onNewChat={startNewChat}
                 selectedPresetFolder={selectedPresetFolder}
                 currentPresetServers={currentPresetServers}
-                onPresetSelect={(servers, agentMode) => {
-                  // Clear previous file context when switching presets
-                  clearFileContext();
-                  setCurrentPresetServers(servers);
-                  if (agentMode) {
-                    setAgentMode(agentMode);
-                  }
-                }}
+                onPresetSelect={applyPresetSelection}
                 onPresetFolderSelect={(folderPath) => {
                   // Store the selected preset folder path
                   setSelectedPresetFolder(folderPath || null);

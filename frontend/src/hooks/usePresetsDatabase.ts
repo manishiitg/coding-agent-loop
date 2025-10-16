@@ -127,7 +127,7 @@ export const usePresetsDatabase = () => {
     localStorage.setItem('mcp-agent-predefined-servers', JSON.stringify(predefinedServerSelections));
   }, [predefinedServerSelections]);
 
-  const addPreset = async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => {
+  const addPreset = async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile): Promise<CustomPreset> => {
     // Adding preset
     setLoading(true);
     setError(null);
@@ -149,9 +149,11 @@ export const usePresetsDatabase = () => {
       const customPreset = convertToCustomPreset(newPreset);
       
       setCustomPresets(prev => [...prev, customPreset]);
+      return customPreset;
     } catch (err) {
       console.error('[USE_PRESETS_DATABASE] Error adding preset:', err);
       setError(err instanceof Error ? err.message : 'Failed to add preset');
+      throw err;
     } finally {
       setLoading(false);
     }

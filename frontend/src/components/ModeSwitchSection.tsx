@@ -1,46 +1,23 @@
 import React, { useState } from 'react'
 import { Card } from './ui/Card'
-import { MessageCircle, Search, Workflow, Settings, ChevronDown } from 'lucide-react'
+import { ChevronDown, Settings } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
+import { useChatStore } from '../stores/useChatStore'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
+import { getModeIcon, getModeName } from '../utils/modeHelpers'
 
 interface ModeSwitchSectionProps {
   minimized?: boolean
 }
 
 export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized = false }) => {
-  const { selectedModeCategory, setModeCategory } = useModeStore()
-  const { agentMode, setAgentMode } = useAppStore()
+  const { selectedModeCategory } = useModeStore()
+  const { agentMode, setModeCategory } = useAppStore()
+  const { hasActiveChat } = useChatStore()
   const [showModeSelector, setShowModeSelector] = useState(false)
   const [showSwitchDialog, setShowSwitchDialog] = useState(false)
   const [pendingModeCategory, setPendingModeCategory] = useState<ModeCategory | null>(null)
-
-  const getModeIcon = (category: ModeCategory) => {
-    switch (category) {
-      case 'chat':
-        return <MessageCircle className="w-4 h-4 text-blue-600" />
-      case 'deep-research':
-        return <Search className="w-4 h-4 text-green-600" />
-      case 'workflow':
-        return <Workflow className="w-4 h-4 text-purple-600" />
-      default:
-        return <Settings className="w-4 h-4 text-gray-400" />
-    }
-  }
-
-  const getModeName = (category: ModeCategory) => {
-    switch (category) {
-      case 'chat':
-        return 'Chat Mode'
-      case 'deep-research':
-        return 'Deep Research Mode'
-      case 'workflow':
-        return 'Workflow Mode'
-      default:
-        return 'Unknown Mode'
-    }
-  }
 
   const handleModeSelect = (category: ModeCategory) => {
     if (category === selectedModeCategory) {
@@ -48,9 +25,7 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
       return
     }
 
-    // Check if there's an active chat session
-    const hasActiveChat = document.querySelector('[data-chat-active="true"]') !== null
-    
+    // Check if there's an active chat session using store state
     if (hasActiveChat) {
       // Show confirmation dialog
       setPendingModeCategory(category)
@@ -63,25 +38,8 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
   }
 
   const switchMode = (category: ModeCategory) => {
+    // Use the centralized setModeCategory which handles agent mode mapping
     setModeCategory(category)
-    
-    // Set the corresponding agent mode
-    let agentModeToSet: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
-    switch (category) {
-      case 'chat':
-        agentModeToSet = 'ReAct' // Default to ReAct for chat
-        break
-      case 'deep-research':
-        agentModeToSet = 'orchestrator'
-        break
-      case 'workflow':
-        agentModeToSet = 'workflow'
-        break
-      default:
-        agentModeToSet = 'ReAct'
-    }
-    
-    setAgentMode(agentModeToSet)
     
     // Note: Starting a new chat when switching modes would need to be handled by the parent component
   }
@@ -103,7 +61,7 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
     return (
       <div className="flex justify-center">
         <div className="w-8 h-8 flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg">
-          {selectedModeCategory ? getModeIcon(selectedModeCategory) : <Settings className="w-4 h-4 text-gray-400" />}
+          {selectedModeCategory ? getModeIcon(selectedModeCategory, "w-4 h-4 text-blue-600") : <Settings className="w-4 h-4 text-gray-400" />}
         </div>
       </div>
     )
@@ -113,19 +71,19 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
     {
       category: 'chat',
       name: 'Chat Mode',
-      icon: <MessageCircle className="w-4 h-4 text-blue-600" />,
+      icon: getModeIcon('chat', 'w-4 h-4 text-blue-600'),
       description: 'Quick conversations and questions'
     },
     {
       category: 'deep-research',
       name: 'Deep Research Mode',
-      icon: <Search className="w-4 h-4 text-green-600" />,
+      icon: getModeIcon('deep-research', 'w-4 h-4 text-green-600'),
       description: 'Multi-step analysis and research'
     },
     {
       category: 'workflow',
       name: 'Workflow Mode',
-      icon: <Workflow className="w-4 h-4 text-purple-600" />,
+      icon: getModeIcon('workflow', 'w-4 h-4 text-purple-600'),
       description: 'Todo-based task execution'
     }
   ]
@@ -151,7 +109,7 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
           {/* Current Mode */}
           {selectedModeCategory && (
             <div className="flex items-center gap-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-              {getModeIcon(selectedModeCategory)}
+              {getModeIcon(selectedModeCategory, "w-4 h-4 text-blue-600")}
               <div className="flex-1">
                 <div className="text-sm font-medium text-blue-900 dark:text-blue-100">
                   {getModeName(selectedModeCategory)}

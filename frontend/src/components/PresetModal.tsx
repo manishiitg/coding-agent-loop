@@ -36,6 +36,9 @@ const PresetModal: React.FC<PresetModalProps> = ({
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
 
+  // Calculate effective agent mode that always honors fixedAgentMode when provided
+  const effectiveAgentMode = fixedAgentMode || agentMode;
+
   useEffect(() => {
     if (editingPreset) {
       setLabel(editingPreset.label);
@@ -87,13 +90,13 @@ const PresetModal: React.FC<PresetModalProps> = ({
     e.preventDefault();
     if (label.trim() && query.trim()) {
       // For Deep Search and workflow modes, folder selection is mandatory
-      if ((agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder) {
+      if ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder) {
         alert('Folder selection is required for Deep Search and workflow presets');
         return;
       }
       
       // Saving preset
-      onSave(label.trim(), query.trim(), selectedServers, agentMode, selectedFolder || undefined);
+      onSave(label.trim(), query.trim(), selectedServers, effectiveAgentMode, selectedFolder || undefined);
       onClose();
     }
   };
@@ -307,7 +310,7 @@ const PresetModal: React.FC<PresetModalProps> = ({
             </Button>
             <Button
               type="submit"
-              disabled={!label.trim() || !query.trim() || ((agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder)}
+              disabled={!label.trim() || !query.trim() || ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder)}
             >
               {editingPreset ? 'Update' : 'Save'} Preset
             </Button>
@@ -322,7 +325,7 @@ const PresetModal: React.FC<PresetModalProps> = ({
         onSelectFolder={handleFolderSelect}
         searchQuery=""
         position={folderDialogPosition}
-        agentMode={agentMode}
+        agentMode={effectiveAgentMode}
       />
     </div>
   );

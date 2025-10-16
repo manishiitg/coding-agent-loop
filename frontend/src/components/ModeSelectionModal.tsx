@@ -5,6 +5,7 @@ import { useAppStore } from '../stores/useAppStore'
 import { usePresetStore } from '../stores/usePresetStore'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
+import { getModeInfoForModal } from '../constants/modeInfo'
 
 interface ModeSelectionModalProps {
   isOpen: boolean
@@ -158,7 +159,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
       // Chat mode doesn't need preset selection
       setModeCategory(category)
       const agentMode = getAgentModeFromCategory(category)
-      setAgentMode(agentMode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
+      setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
       completeInitialSetup()
       onClose()
     } else {
@@ -169,7 +170,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
         // Preset already selected, proceed with mode selection
         setModeCategory(category)
         const agentMode = getAgentModeFromCategory(category)
-        setAgentMode(agentMode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
+        setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
         completeInitialSetup()
         onClose()
       } else {
@@ -189,7 +190,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
       // Now proceed with mode selection
       setModeCategory(pendingModeCategory)
       const agentMode = getAgentModeFromCategory(pendingModeCategory)
-      setAgentMode(agentMode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
+      setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
       completeInitialSetup()
       
       // Close overlays
@@ -240,17 +241,8 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               title="Chat Mode"
               description="Quick conversations with AI. Perfect for answering questions, brainstorming ideas, and having natural dialogues."
               icon={<MessageCircle className="w-5 h-5 text-blue-600" />}
-              features={[
-                "Instant responses",
-                "Natural conversation flow",
-                "Memory across chat",
-                "Simple & ReAct reasoning"
-              ]}
-              exampleQueries={[
-                "Explain quantum computing in simple terms",
-                "Help me write a professional email",
-                "What are the latest trends in AI?"
-              ]}
+              features={getModeInfoForModal('chat').features}
+              exampleQueries={getModeInfoForModal('chat').examples}
               onSelect={() => handleModeSelect('chat')}
             />
 
@@ -260,17 +252,8 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               title="Deep Research Mode"
               description="Multi-step analysis with long-term memory. Ideal for complex research, detailed analysis, and comprehensive reports."
               icon={<Search className="w-5 h-5 text-blue-600" />}
-              features={[
-                "Multi-step planning",
-                "Long-term memory",
-                "Comprehensive analysis",
-                "Detailed reporting"
-              ]}
-              exampleQueries={[
-                "Research the impact of AI on healthcare",
-                "Analyze market trends for renewable energy",
-                "Create a comprehensive business plan"
-              ]}
+              features={getModeInfoForModal('deep-research').features}
+              exampleQueries={getModeInfoForModal('deep-research').examples}
               onSelect={() => handleModeSelect('deep-research')}
             />
 
@@ -280,17 +263,8 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               title="Workflow Mode"
               description="Todo-based execution with human verification. Perfect for structured tasks, project management, and step-by-step processes."
               icon={<Workflow className="w-5 h-5 text-blue-600" />}
-              features={[
-                "Sequential task execution",
-                "Human verification steps",
-                "Progress tracking",
-                "Project management"
-              ]}
-              exampleQueries={[
-                "Set up a new development environment",
-                "Plan and execute a marketing campaign",
-                "Create a data migration strategy"
-              ]}
+              features={getModeInfoForModal('workflow').features}
+              exampleQueries={getModeInfoForModal('workflow').examples}
               onSelect={() => handleModeSelect('workflow')}
             />
           </div>

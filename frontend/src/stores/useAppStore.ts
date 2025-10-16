@@ -43,6 +43,7 @@ interface AppState {
   getModeCategory: () => ModeCategory
   setModeCategory: (category: ModeCategory) => void
   requiresNewChat: boolean
+  clearRequiresNewChat: () => void
   
   // Workspace actions
   setFiles: (files: PlannerFile[]) => void
@@ -106,6 +107,10 @@ export const useAppStore = create<AppState>()(
         // Actions
         setAgentMode: (mode) => {
           const currentMode = get().agentMode
+          // Keep ModeStore category in sync
+          const { getModeCategoryFromAgentMode, setModeCategory } = useModeStore.getState()
+          const category = getModeCategoryFromAgentMode(mode)
+          if (category) setModeCategory(category)
           set({ 
             agentMode: mode,
             requiresNewChat: currentMode !== mode
@@ -122,6 +127,10 @@ export const useAppStore = create<AppState>()(
           const { getAgentModeFromCategory } = useModeStore.getState()
           const agentMode = getAgentModeFromCategory(category)
           get().setAgentMode(agentMode as AgentMode)
+        },
+
+        clearRequiresNewChat: () => {
+          set({ requiresNewChat: false })
         },
 
         // Workspace actions

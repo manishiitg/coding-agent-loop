@@ -152,10 +152,7 @@ export default function WorkspaceSidebar({
       {/* Minimized Icons */}
       {minimized && (
         <div 
-          onClick={(e) => {
-            console.log('Minimized sidebar clicked!', e.target)
-            onToggleMinimize()
-          }}
+          onClick={onToggleMinimize}
           className="flex-1 flex flex-col items-center py-4 space-y-4 cursor-pointer"
           title="Click to expand sidebar"
         >
@@ -182,7 +179,6 @@ export default function WorkspaceSidebar({
             <TooltipTrigger asChild>
               <button
                 onClick={(e) => {
-                  console.log('Agent mode button clicked, stopping propagation')
                   e.stopPropagation()
                   setAgentMode(agentMode === 'ReAct' ? 'simple' : 'ReAct')
                 }}
@@ -206,7 +202,6 @@ export default function WorkspaceSidebar({
           {/* MCP Servers Icon */}
           <button
             onClick={(e) => {
-              console.log('MCP servers button clicked, stopping propagation')
               e.stopPropagation()
               setShowMCPDetails(!showMCPDetails)
             }}

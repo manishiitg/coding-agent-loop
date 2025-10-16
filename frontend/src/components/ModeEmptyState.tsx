@@ -1,75 +1,10 @@
 import React from 'react'
-import { MessageCircle, Search, Workflow, ArrowRight, Lightbulb } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
+import { getModeInfo } from '../constants/modeInfo'
 
 interface ModeEmptyStateProps {
   modeCategory: ModeCategory | null
-}
-
-const getModeInfo = (category: ModeCategory | null) => {
-  switch (category) {
-    case 'chat':
-      return {
-        icon: <MessageCircle className="w-16 h-16 text-blue-500" />,
-        title: 'Start a Conversation',
-        description: 'Ask questions, brainstorm ideas, or have a natural dialogue with AI',
-        examples: [
-          'Explain quantum computing in simple terms',
-          'Help me write a professional email',
-          'What are the latest trends in AI?',
-          'Debug this code snippet'
-        ],
-        tips: [
-          'Be specific about what you need help with',
-          'Ask follow-up questions to dive deeper',
-          'Try both Simple and ReAct modes for different needs'
-        ]
-      }
-    case 'deep-research':
-      return {
-        icon: <Search className="w-16 h-16 text-blue-500" />,
-        title: 'Select a Research Preset',
-        description: 'Choose a research preset to organize your analysis projects, or create a new one',
-        examples: [
-          'Research the impact of AI on healthcare',
-          'Analyze market trends for renewable energy',
-          'Create a comprehensive business plan',
-          'Investigate security vulnerabilities'
-        ],
-        tips: [
-          'Ensure Tasks/ folder is available',
-          'Be specific about your research goals',
-          'Allow time for comprehensive analysis',
-          'Review generated reports carefully'
-        ]
-      }
-    case 'workflow':
-      return {
-        icon: <Workflow className="w-16 h-16 text-blue-500" />,
-        title: 'Select a Workflow Preset',
-        description: 'Choose a workflow preset to organize your task execution, or create a new one',
-        examples: [
-          'Set up a new development environment',
-          'Plan and execute a marketing campaign',
-          'Create a data migration strategy',
-          'Implement a new feature from scratch'
-        ],
-        tips: [
-          'Ensure Workflow/ folder is available',
-          'Review and approve each step carefully',
-          'Break complex tasks into smaller steps',
-          'Monitor progress throughout execution'
-        ]
-      }
-    default:
-      return {
-        icon: <Lightbulb className="w-16 h-16 text-gray-400" />,
-        title: 'Welcome to AI Assistant',
-        description: 'Select a mode to get started with your AI-powered workflow',
-        examples: [],
-        tips: []
-      }
-  }
 }
 
 export const ModeEmptyState: React.FC<ModeEmptyStateProps> = ({ modeCategory }) => {

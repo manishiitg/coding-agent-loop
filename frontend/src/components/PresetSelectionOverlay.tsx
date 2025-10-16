@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { Search, Workflow, Plus, Folder, Check } from 'lucide-react'
-import { usePresetStore } from '../stores/usePresetStore'
 import { type ModeCategory } from '../stores/useModeStore'
 import PresetModal from './PresetModal'
 import { usePresetsDatabase } from '../hooks/usePresetsDatabase'
+import { useActivePresetStore } from '../stores/useActivePresetStore'
 import type { PlannerFile } from '../services/api-types'
 
 interface PresetSelectionOverlayProps {
@@ -25,8 +25,8 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   onPresetFolderSelect,
   setCurrentQuery
 }) => {
-  const { setActivePreset } = usePresetStore()
-  const { customPresets, addPreset, refreshPresets } = usePresetsDatabase()
+  const { customPresets, addPreset } = usePresetsDatabase()
+  const { setActivePresetQueryId } = useActivePresetStore()
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
 
@@ -70,8 +70,8 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
           onPresetFolderSelect(selectedPreset.selectedFolder?.filepath)
         }
         
-        // Set active preset in the mode store
-        setActivePreset(modeCategory, selectedPresetId)
+        // Set active preset query ID in the dedicated store
+        setActivePresetQueryId(modeCategory, selectedPresetId)
         
         // Call the original callback
         onPresetSelected(selectedPresetId)
@@ -99,52 +99,41 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     const presetAgentMode = modeCategory === 'deep-research' ? 'orchestrator' : 'workflow'
     
     try {
-      await addPreset(label, query, selectedServers, presetAgentMode, selectedFolder)
-      
-      // Refresh presets to get the new one
-      await refreshPresets()
+      // Create the preset and get the returned preset object directly
+      const newPreset = await addPreset(label, query, selectedServers, presetAgentMode, selectedFolder)
       
       // Close the modal
       setIsPresetModalOpen(false)
       
-      // Wait a bit for the state to update, then find and select the new preset
-      setTimeout(() => {
-        const updatedPresets = customPresets.filter(preset => preset.agentMode === presetAgentMode)
-        const newPreset = updatedPresets.find(preset => 
-          preset.label === label && 
-          preset.query === query
-        )
-        
-        if (newPreset) {
-          setSelectedPresetId(newPreset.id)
-          
-          // Set the query in the chat input
-          if (setCurrentQuery) {
-            setCurrentQuery(newPreset.query)
-          }
-          
-          // Call the preset select callback (same as PresetQueries)
-          if (onPresetSelect) {
-            if (newPreset.selectedServers && newPreset.selectedServers.length > 0) {
-              onPresetSelect(newPreset.selectedServers, newPreset.agentMode)
-            } else {
-              onPresetSelect([], newPreset.agentMode)
-            }
-          }
-          
-          // Call the folder select callback (same as PresetQueries)
-          if (onPresetFolderSelect) {
-            onPresetFolderSelect(newPreset.selectedFolder?.filepath)
-          }
-          
+      // Use the returned preset directly instead of searching for it
+      setSelectedPresetId(newPreset.id)
+      
+      // Set the query in the chat input
+      if (setCurrentQuery) {
+        setCurrentQuery(newPreset.query)
+      }
+      
+      // Call the preset select callback (same as PresetQueries)
+      if (onPresetSelect) {
+        if (newPreset.selectedServers && newPreset.selectedServers.length > 0) {
+          onPresetSelect(newPreset.selectedServers, newPreset.agentMode)
+        } else {
+          onPresetSelect([], newPreset.agentMode)
+        }
+      }
+      
+      // Call the folder select callback (same as PresetQueries)
+      if (onPresetFolderSelect) {
+        onPresetFolderSelect(newPreset.selectedFolder?.filepath)
+      }
+      
           // Automatically confirm the selection
           if (modeCategory === 'deep-research' || modeCategory === 'workflow') {
-            setActivePreset(modeCategory, newPreset.id)
+            // Set active preset query ID in the dedicated store
+            setActivePresetQueryId(modeCategory, newPreset.id)
             onPresetSelected(newPreset.id)
             onClose()
           }
-        }
-      }, 100)
     } catch (error) {
       console.error('Failed to create preset:', error)
       // You might want to show an error message to the user here

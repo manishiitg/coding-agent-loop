@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // Migration represents a database migration
@@ -158,6 +157,17 @@ func (mr *MigrationRunner) isMigrationApplied(version int, appliedMigrations []i
 	return false
 }
 
+// columnExists checks if a column exists in a table using SQLite's pragma_table_info
+func (mr *MigrationRunner) columnExists(tx *sql.Tx, tableName, columnName string) (bool, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`
+	err := tx.QueryRow(query, tableName, columnName).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check column existence: %w", err)
+	}
+	return count > 0, nil
+}
+
 // runMigration runs a single migration
 func (mr *MigrationRunner) runMigration(migration Migration) error {
 	// Start transaction
@@ -170,20 +180,23 @@ func (mr *MigrationRunner) runMigration(migration Migration) error {
 	// Execute migration SQL
 	_, err = tx.Exec(migration.SQL)
 	if err != nil {
-		// Check if this is a duplicate column error for migration 006
+		// Check if this is a duplicate column error for migration 006 by verifying schema
 		if migration.Version == 6 && migration.Name == "add_selected_folders_to_presets" {
-			errorStr := err.Error()
-			if strings.Contains(errorStr, "duplicate column name") && strings.Contains(errorStr, "selected_folder") {
-				// This is expected - the column already exists, so we can safely ignore this error
+			// Check if column actually exists before skipping
+			exists, checkErr := mr.columnExists(tx, "preset_queries", "selected_folder")
+			if checkErr != nil {
+				return fmt.Errorf("failed to check column existence: %w", checkErr)
+			}
+
+			if exists {
 				fmt.Printf("⚠️  Migration %d: %s - Column 'selected_folder' already exists, skipping\n", migration.Version, migration.Name)
 
-				// Record migration as applied even though we skipped the SQL
+				// Record migration as applied
 				_, recordErr := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, migration.Version)
 				if recordErr != nil {
 					return fmt.Errorf("failed to record migration: %w", recordErr)
 				}
 
-				// Commit transaction
 				if err := tx.Commit(); err != nil {
 					return fmt.Errorf("failed to commit migration: %w", err)
 				}

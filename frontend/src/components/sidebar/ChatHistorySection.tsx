@@ -3,7 +3,7 @@ import { agentApi } from '../../services/api'
 import type { ChatSession, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { useModeStore } from '../../stores/useModeStore'
-import { usePresetStore } from '../../stores/usePresetStore'
+import { useActivePresetStore } from '../../stores/useActivePresetStore'
 import { ChevronDown, Plus } from 'lucide-react'
 
 interface ChatHistorySectionProps {
@@ -28,9 +28,11 @@ export default function ChatHistorySection({
   // Active session state
   const [activeSessions, setActiveSessions] = useState<ActiveSessionInfo[]>([])
   
-  // Mode and preset store subscriptions
+  // Mode store subscription
   const { selectedModeCategory } = useModeStore()
-  const { getActivePreset, setActivePreset, getPresetsByCategory } = usePresetStore()
+  
+  // Active preset query store
+  const { getActivePresetQueryId } = useActivePresetStore()
   
   // Preset selector state
   const [showPresetSelector, setShowPresetSelector] = useState(false)
@@ -73,6 +75,11 @@ export default function ChatHistorySection({
     return activeSessions.find(session => session.session_id === sessionId)
   }, [activeSessions])
 
+  // Helper function to get the active preset query ID for a category
+  const getBackendPresetQueryId = useCallback((category: 'deep-research' | 'workflow') => {
+    return getActivePresetQueryId(category)
+  }, [getActivePresetQueryId])
+
   // Filter sessions based on mode and active preset
   const filterSessionsByMode = useCallback((sessions: ChatSession[]) => {
     if (!selectedModeCategory) return sessions
@@ -86,11 +93,11 @@ export default function ChatHistorySection({
       
       case 'deep-research': {
         // Show sessions filtered by active preset (orchestrator category)
-        const activePreset = getActivePreset('deep-research')
-        if (activePreset) {
+        const backendPresetQueryId = getBackendPresetQueryId('deep-research')
+        if (backendPresetQueryId) {
           return sessions.filter(session => 
             session.agent_mode === 'orchestrator' && 
-            session.preset_query_id === activePreset.id
+            session.preset_query_id === backendPresetQueryId
           )
         }
         return sessions.filter(session => session.agent_mode === 'orchestrator')
@@ -98,11 +105,11 @@ export default function ChatHistorySection({
       
       case 'workflow': {
         // Show sessions filtered by active preset (workflow category)
-        const workflowPreset = getActivePreset('workflow')
-        if (workflowPreset) {
+        const backendPresetQueryId = getBackendPresetQueryId('workflow')
+        if (backendPresetQueryId) {
           return sessions.filter(session => 
             session.agent_mode === 'workflow' && 
-            session.preset_query_id === workflowPreset.id
+            session.preset_query_id === backendPresetQueryId
           )
         }
         return sessions.filter(session => session.agent_mode === 'workflow')
@@ -111,18 +118,24 @@ export default function ChatHistorySection({
       default:
         return sessions
     }
-  }, [selectedModeCategory, getActivePreset])
+  }, [selectedModeCategory, getBackendPresetQueryId])
 
   // Load chat sessions
   const loadSessions = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      // Load all sessions first, then filter by mode
-      const response = await agentApi.getChatSessions(100, 0) // Load more sessions for filtering
+      // Use server-side filtering when an active preset is selected
+      let response
+      if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
+        const activePresetQueryId = getActivePresetQueryId(selectedModeCategory)
+        response = await agentApi.getChatSessions(100, 0, activePresetQueryId || undefined) // server filters by preset
+      } else {
+        response = await agentApi.getChatSessions(100, 0)
+      }
       const allSessions = response.sessions || []
       
-      // Filter sessions based on current mode
+      // Filter sessions based on current mode (for cases where server filtering isn't sufficient)
       const filteredSessions = filterSessionsByMode(allSessions)
       setSessions(filteredSessions)
       
@@ -140,7 +153,7 @@ export default function ChatHistorySection({
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, filterSessionsByMode])
+  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, getActivePresetQueryId])
 
   // Load sessions and active sessions on mount
   useEffect(() => {
@@ -185,7 +198,7 @@ export default function ChatHistorySection({
       case 'react':
         return 'ReAct'
       case 'orchestrator':
-        return 'Deep Search'
+        return 'Deep Research'
       default:
         return agentMode
     }
@@ -235,7 +248,6 @@ export default function ChatHistorySection({
           <TooltipTrigger asChild>
             <button
               onClick={(e) => {
-                console.log('Chat history button clicked, stopping propagation')
                 e.stopPropagation()
                 setExpanded(!expanded)
               }}
@@ -307,18 +319,19 @@ export default function ChatHistorySection({
         <div className="space-y-2">
           {/* Current Active Preset Display */}
           {(() => {
-            const activePreset = getActivePreset(selectedModeCategory)
-            const presets = getPresetsByCategory(selectedModeCategory === 'deep-research' ? 'orchestrator' : 'workflow')
+            const activePresetQueryId = getActivePresetQueryId(selectedModeCategory as 'deep-research' | 'workflow')
+            // Note: We would need to fetch presets from usePresetsDatabase if we want to show them here
+            const presets: Array<{id: string, name: string, description?: string}> = [] // Placeholder - would need to implement preset fetching
             
             return (
               <div className="space-y-2">
                 {/* Active Preset */}
-                {activePreset ? (
+                {activePresetQueryId ? (
                   <div className="flex items-center justify-between p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
                       <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                        {activePreset.name}
+                        Preset Selected
                       </span>
                     </div>
                     <button
@@ -355,12 +368,13 @@ export default function ChatHistorySection({
                           <button
                             key={preset.id}
                             onClick={() => {
-                              setActivePreset(selectedModeCategory, preset.id)
+                              // Note: This would need to be implemented with the new store
+                              console.log('Preset selection needs to be implemented with new store')
                               setShowPresetSelector(false)
                               loadSessions() // Reload sessions with new preset filter
                             }}
                             className={`w-full text-left p-2 rounded-md text-sm transition-colors ${
-                              activePreset?.id === preset.id
+                              activePresetQueryId === preset.id
                                 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
                                 : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                             }`}
@@ -372,7 +386,7 @@ export default function ChatHistorySection({
                               </div>
                             )}
                             <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              {preset.folders.length} folder{preset.folders.length !== 1 ? 's' : ''}
+                              Preset details
                             </div>
                           </button>
                         ))

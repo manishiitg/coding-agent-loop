@@ -15,10 +15,12 @@ import { ReActExplanation } from './ReActExplanation'
 import GuidanceFloatingIcon from './GuidanceFloatingIcon'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
-import { usePresetStore } from '../stores/usePresetStore'
+import { useActivePresetStore } from '../stores/useActivePresetStore'
+import { usePresetsDatabase } from '../hooks/usePresetsDatabase'
 import { MessageCircle, Search, Workflow, Settings } from 'lucide-react'
 import { ModeEmptyState } from './ModeEmptyState'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
+import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 
 interface ChatAreaProps {
   // New chat handler
@@ -63,7 +65,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   } = useAppStore()
   
   const { selectedModeCategory } = useModeStore()
-  const { getActivePreset } = usePresetStore()
+  const { getActivePresetQueryId } = useActivePresetStore()
+  const { customPresets, predefinedPresets } = usePresetsDatabase()
   
   const { 
     primaryConfig: llmConfig,
@@ -97,6 +100,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setShowUserMessage,
     sessionId,
     setSessionId,
+    setHasActiveChat,
     autoScroll,
     setAutoScroll,
     lastScrollTop,
@@ -154,9 +158,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       case 'chat':
         return <MessageCircle className="w-4 h-4 text-blue-600" />
       case 'deep-research':
-        return <Search className="w-4 h-4 text-blue-600" />
+        return <Search className="w-4 h-4 text-green-600" />
       case 'workflow':
-        return <Workflow className="w-4 h-4 text-blue-600" />
+        return <Workflow className="w-4 h-4 text-purple-600" />
       default:
         return <MessageCircle className="w-4 h-4 text-gray-400" />
     }
@@ -182,19 +186,31 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   const [showPresetSelection, setShowPresetSelection] = useState(false)
   const [pendingModeCategory, setPendingModeCategory] = useState<'deep-research' | 'workflow' | null>(null)
   
-  // Close dropdown when clicking outside
+  // State for mode switch dialog
+  const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
+  const [pendingModeSwitch, setPendingModeSwitch] = useState<'chat' | 'deep-research' | 'workflow' | null>(null)
+  
+  // Close dropdown when clicking outside or pressing Escape
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showModeSwitch) {
-        const target = event.target as Element
-        if (!target.closest('.mode-switch-dropdown')) {
-          setShowModeSwitch(false)
-        }
+    if (!showModeSwitch) return
+    
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Element
+      if (!target.closest('.mode-switch-dropdown')) {
+        setShowModeSwitch(false)
       }
     }
     
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowModeSwitch(false)
+    }
+    
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
   }, [showModeSwitch])
 
   // Handle mode selection from dropdown
@@ -208,18 +224,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     const hasActiveChat = events.length > 0 || isStreaming
     
     if (hasActiveChat) {
-      // Show confirmation dialog
-      // For now, we'll use a simple confirm dialog
-      const confirmed = window.confirm(
-        `Switching to ${category === 'chat' ? 'Chat Mode' : category === 'deep-research' ? 'Deep Research Mode' : 'Workflow Mode'} will start a new chat session and clear your current conversation. Continue?`
-      )
-      
-      if (confirmed) {
-        handleModeSwitchWithPreset(category)
-      }
+      // Show mode switch dialog for confirmation
+      setPendingModeSwitch(category)
+      setShowModeSwitchDialog(true)
     } else {
       // Switch mode directly
       handleModeSwitchWithPreset(category)
+      // Clear backend session and reset UI after mode switch
+      handleNewChat()
     }
     
     setShowModeSwitch(false)
@@ -232,10 +244,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       switchMode(category)
     } else {
       // Deep Research or Workflow mode - check if preset is needed
-      const { getActivePreset } = usePresetStore.getState()
-      const activePreset = getActivePreset(category)
+      const { getActivePresetQueryId } = useActivePresetStore.getState()
+      const activePresetQueryId = getActivePresetQueryId(category)
       
-      if (activePreset) {
+      if (activePresetQueryId) {
         // Preset already selected, switch mode directly
         switchMode(category)
       } else {
@@ -248,27 +260,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Switch mode function
   const switchMode = (category: 'chat' | 'deep-research' | 'workflow') => {
-    const { setModeCategory } = useModeStore.getState()
+    const { setModeCategory, getAgentModeFromCategory } = useModeStore.getState()
     const { setAgentMode } = useAppStore.getState()
     
     setModeCategory(category)
     
-    // Set the corresponding agent mode
-    let agentModeToSet: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
-    switch (category) {
-      case 'chat':
-        agentModeToSet = 'ReAct' // Default to ReAct for chat
-        break
-      case 'deep-research':
-        agentModeToSet = 'orchestrator'
-        break
-      case 'workflow':
-        agentModeToSet = 'workflow'
-        break
-      default:
-        agentModeToSet = 'ReAct'
-    }
-    
+    // Set the corresponding agent mode using centralized mapping
+    const agentModeToSet = getAgentModeFromCategory(category) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
     setAgentMode(agentModeToSet)
     
     // Start a new chat when switching modes
@@ -278,8 +276,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Handle preset selection from overlay
   const handlePresetSelected = (presetId: string) => {
     if (pendingModeCategory) {
-      const { setActivePreset } = usePresetStore.getState()
-      setActivePreset(pendingModeCategory, presetId)
+      const { setActivePresetQueryId } = useActivePresetStore.getState()
+      setActivePresetQueryId(pendingModeCategory, presetId)
       
       // Now switch to the mode
       switchMode(pendingModeCategory)
@@ -300,8 +298,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     if (!selectedModeCategory || (selectedModeCategory !== 'deep-research' && selectedModeCategory !== 'workflow')) {
       return null
     }
-    const activePreset = getActivePreset(selectedModeCategory)
-    return activePreset?.name || null
+    const presetQueryId = getActivePresetQueryId(selectedModeCategory)
+    if (!presetQueryId) return null
+    
+    // Search through all backend presets to find the matching one
+    const allBackendPresets = [...customPresets, ...predefinedPresets]
+    const preset = allBackendPresets.find(p => p.id === presetQueryId)
+    return preset?.label || null
   }
   
   // Filter toasts to only include types supported by ToastContainer
@@ -312,6 +315,23 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     // Guidance updated
   }, [])
   
+  // Handle mode switch dialog confirmation
+  const handleModeSwitchConfirm = () => {
+    if (pendingModeSwitch) {
+      handleModeSwitchWithPreset(pendingModeSwitch)
+      // Clear backend session and reset UI after mode switch
+      handleNewChat()
+    }
+    setShowModeSwitchDialog(false)
+    setPendingModeSwitch(null)
+  }
+  
+  // Handle mode switch dialog cancellation
+  const handleModeSwitchCancel = () => {
+    setShowModeSwitchDialog(false)
+    setPendingModeSwitch(null)
+  }
+  
   // Add ref for auto-scrolling
   const chatContentRef = useRef<HTMLDivElement>(null)
   
@@ -320,6 +340,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   
   // Selected preset folder state
   const lastEventIndexRef = useRef<number>(0)
+  const totalEventsRef = useRef<number>(0)
 
   // Toast wrapper for components that only support limited types
   const addToastLimited = useCallback((message: string, type: 'success' | 'info') => {
@@ -430,10 +451,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   }, [finalResponse, autoScroll, scrollToBottom])
 
 
-  // Update ref when lastEventIndex changes
+  // Update refs when values change
   useEffect(() => {
     lastEventIndexRef.current = lastEventIndex
   }, [lastEventIndex])
+  
+  useEffect(() => {
+    totalEventsRef.current = totalEvents
+  }, [totalEvents])
 
   // Workflow preset handlers
   const handleWorkflowPresetSelected = useCallback(async (presetId: string, presetContent: string) => {
@@ -594,7 +619,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         // Process events if we have any events (remove the lastEventIndex condition)
         // The condition was preventing early events from being displayed
         setLastEventIndex(response.last_event_index)
-        setTotalEvents(totalEvents + response.events.length)
+        setTotalEvents(totalEventsRef.current + response.events.length)
         setLastEventCount(response.events.length)
         
         // Add new events to the events array for rich UI display
@@ -686,6 +711,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           }
           setIsStreaming(false)
           setIsCompleted(true)
+          setHasActiveChat(false)
           
           // Check for unified_completion event first - it takes precedence (only for non-Deep Search modes)
           let hasError = false
@@ -854,7 +880,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         console.error('[POLL] HTTP data:', axiosError.response?.data)
       }
     }
-  }, [observerId, pollingInterval, setPollingInterval, setIsStreaming, setIsCompleted, setLastEventIndex, setTotalEvents, setLastEventCount, setEvents, finalResponse, agentMode, setWorkflowPhase, totalEvents, workflowPhase])
+  }, [observerId, pollingInterval, setPollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setLastEventIndex, setTotalEvents, setLastEventCount, setEvents, finalResponse, agentMode, setWorkflowPhase, workflowPhase])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -939,7 +965,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                     
                     // Process events
                     setLastEventIndex(response.last_event_index)
-                    setTotalEvents(totalEvents + response.events.length)
+                    setTotalEvents(totalEventsRef.current + response.events.length)
                     setLastEventCount(response.events.length)
                     
                     // Add new events to the events array
@@ -956,6 +982,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                           }
                         }
                         
+                        // Avoid duplicating user messages we inject on submit
+                        if (event.type === 'user_message') {
+                          return false
+                        }
                         return true
                       })
                       
@@ -1017,6 +1047,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             setTotalEvents(pollingEvents.length)
             setIsCompleted(true)
             setIsStreaming(false)
+            setHasActiveChat(false)
             setIsLoadingHistory(false)
             processingRef.current = null
             return
@@ -1064,7 +1095,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
     // Add validation check for Tasks folder requirement in Deep Search and Workflow modes
     if ((agentMode === 'orchestrator' || agentMode === 'workflow') && !isRequiredFolderSelected) {
-      console.error('[SUBMIT] Validation failed - Tasks folder required for', agentMode, 'mode')
+      console.error(
+        '[SUBMIT] Validation failed -',
+        agentMode === 'workflow' ? 'Workflow' : 'Tasks',
+        'folder required for',
+        agentMode,
+        'mode'
+      )
       return
     }
 
@@ -1214,6 +1251,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         // Set streaming to true immediately when query starts successfully
         setIsStreaming(true)
         setIsCompleted(false)
+        // Mark that there's an active chat session
+        setHasActiveChat(true)
     } else {
         console.error('[SUBMIT] Query failed:', response)
         // Only reset streaming state if query fails to start
@@ -1231,7 +1270,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setIsStreaming(false)
       setIsCompleted(false)
     }
-  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setObserverId, setPollingInterval, setSessionId, setShowUserMessage])
+  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setHasActiveChat, setObserverId, setPollingInterval, setSessionId, setShowUserMessage])
 
 
   // Handle new chat - clear backend session and reset all chat state
@@ -1287,6 +1326,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         />
       )}
 
+      {/* Mode Switch Dialog */}
+      {showModeSwitchDialog && pendingModeSwitch && (
+        <ModeSwitchDialog
+          isOpen={showModeSwitchDialog}
+          onCancel={handleModeSwitchCancel}
+          onConfirm={handleModeSwitchConfirm}
+          currentModeCategory={selectedModeCategory}
+          newModeCategory={pendingModeSwitch}
+        />
+      )}
+
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-16">
         <div className="flex items-center justify-between h-full">
@@ -1299,6 +1349,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                     onClick={() => setShowModeSwitch(!showModeSwitch)}
                     className="flex items-center gap-1 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors cursor-pointer"
                     title="Click to change mode"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={showModeSwitch}
+                    aria-controls="mode-switch-menu"
                   >
                     {getModeIcon(selectedModeCategory)}
                     <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
@@ -1309,7 +1363,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                   
                   {/* Direct Mode Selection Dropdown */}
                   {showModeSwitch && (
-                    <div className="mode-switch-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
+                    <div
+                      id="mode-switch-menu"
+                      role="menu"
+                      aria-label="Select mode"
+                      className="mode-switch-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50"
+                    >
                       <div className="p-2 space-y-1">
                         {/* Chat Mode */}
                         <button

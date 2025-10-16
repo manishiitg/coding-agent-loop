@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { PollingEvent } from '../services/api-types'
 import type { StoreActions, WorkflowPhase } from './types'
+import { useAppStore } from './useAppStore'
 
 interface ChatState extends StoreActions {
   // Chat streaming state
@@ -21,6 +22,7 @@ interface ChatState extends StoreActions {
   
   // Session state
   sessionId: string | null
+  hasActiveChat: boolean
   
   // Chat UI state
   autoScroll: boolean
@@ -65,6 +67,7 @@ interface ChatState extends StoreActions {
   
   // Session actions
   setSessionId: (id: string | null) => void
+  setHasActiveChat: (active: boolean) => void
   
   // UI actions
   setAutoScroll: (autoScroll: boolean) => void
@@ -86,6 +89,9 @@ interface ChatState extends StoreActions {
   setSelectedWorkflowPreset: (preset: string | null) => void
   setWorkflowPhase: (phase: WorkflowPhase) => void
   setWorkflowPresetQueryId: (id: string | null) => void
+  
+  // Deep research actions
+  setDeepResearchPresetQueryId: (id: string | null) => void
   
   // Toast actions
   addToast: (message: string, type: 'success' | 'info' | 'error' | 'warning') => void
@@ -111,6 +117,7 @@ export const useChatStore = create<ChatState>()(
       currentUserMessage: '',
       showUserMessage: true,
       sessionId: null,
+      hasActiveChat: false,
       autoScroll: true,
       lastScrollTop: 0,
       finalResponse: '',
@@ -184,6 +191,10 @@ export const useChatStore = create<ChatState>()(
       // Session actions
       setSessionId: (id) => {
         set({ sessionId: id })
+      },
+
+      setHasActiveChat: (active) => {
+        set({ hasActiveChat: active })
       },
 
       // UI actions
@@ -266,6 +277,7 @@ export const useChatStore = create<ChatState>()(
           currentUserMessage: '',
           showUserMessage: true,
           sessionId: null,
+          hasActiveChat: false,
           autoScroll: true,
           lastScrollTop: 0,
           finalResponse: '',
@@ -279,6 +291,9 @@ export const useChatStore = create<ChatState>()(
           workflowPresetQueryId: null,
           toasts: []
         })
+        
+        // Clear the requiresNewChat flag after successful chat reset
+        useAppStore.getState().clearRequiresNewChat()
       },
 
       isAtBottom: (element) => {

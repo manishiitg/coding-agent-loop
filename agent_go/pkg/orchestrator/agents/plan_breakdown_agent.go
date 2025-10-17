@@ -42,6 +42,57 @@ func (pba *PlanBreakdownAgent) Initialize(ctx context.Context) error {
 	return pba.BaseOrchestratorAgent.Initialize(ctx)
 }
 
+// ExecuteStructured executes the plan breakdown agent and returns structured output
+func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*BreakdownResponse, error) {
+	// Define the JSON schema for breakdown analysis
+	schema := `{
+		"type": "object",
+		"properties": {
+			"steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"description": "Unique identifier for the step"
+						},
+						"description": {
+							"type": "string",
+							"description": "Clear description of what this step does"
+						},
+						"dependencies": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "List of step IDs this step depends on"
+						},
+						"is_independent": {
+							"type": "boolean",
+							"description": "Whether this step can be executed independently"
+						},
+						"reasoning": {
+							"type": "string",
+							"description": "Clear explanation for independence assessment"
+						}
+					},
+					"required": ["id", "description", "dependencies", "is_independent", "reasoning"]
+				}
+			}
+		},
+		"required": ["steps"]
+	}`
+
+	// Use the base orchestrator agent's ExecuteStructured method
+	result, err := ExecuteStructured[BreakdownResponse](pba.BaseOrchestratorAgent, ctx, templateVars, pba.breakdownInputProcessor, conversationHistory, schema)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // Execute executes the plan breakdown agent using the standard agent pattern
 func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)

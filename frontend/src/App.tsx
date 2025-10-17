@@ -56,7 +56,7 @@ function App() {
     setShowRevisionsModal
   } = useWorkspaceStore()
   
-  const { clearActivePreset, applyPreset } = useGlobalPresetStore()
+  const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
 
   const hasInitializedRef = useRef(false)
 
@@ -77,6 +77,31 @@ function App() {
     // Initialize global preset store
     useGlobalPresetStore.getState().refreshPresets()
   }, [])
+
+  // Restore active presets after stores are initialized
+  useEffect(() => {
+    // Only restore presets if initial setup is completed and we have a mode category
+    if (hasCompletedInitialSetup && selectedModeCategory) {
+      // Add a small delay to ensure stores are fully initialized
+      const timer = setTimeout(() => {
+        console.log('[APP] Restoring active preset for mode:', selectedModeCategory)
+        const activePreset = getActivePreset(selectedModeCategory)
+        if (activePreset) {
+          console.log('[APP] Found active preset:', activePreset.label)
+          const result = applyPreset(activePreset.id, selectedModeCategory)
+          if (!result.success) {
+            console.error('[APP] Failed to restore preset:', result.error)
+          } else {
+            console.log('[APP] Successfully restored preset:', activePreset.label)
+          }
+        } else {
+          console.log('[APP] No active preset found for mode:', selectedModeCategory)
+        }
+      }, 500) // 500ms delay to ensure stores are ready
+
+      return () => clearTimeout(timer)
+    }
+  }, [hasCompletedInitialSetup, selectedModeCategory, getActivePreset, applyPreset])
 
   // Auto-minimize sidebar when mode is selected or preset is selected
   useEffect(() => {

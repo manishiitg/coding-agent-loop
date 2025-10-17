@@ -4,7 +4,7 @@ import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { PlannerFile } from '../services/api-types'
+import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import { useMCPStore } from '../stores/useMCPStore'
 
@@ -392,14 +392,14 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           setShowPresetModal(false)
           setEditingPreset(null)
         }}
-        onSave={async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => {
+        onSave={async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
           try {
             if (editingPreset) {
               // Editing existing preset - use the existing agent mode
-              await updatePreset(editingPreset.id, label, query, selectedServers, editingPreset.agentMode, selectedFolder)
+              await updatePreset(editingPreset.id, label, query, selectedServers, editingPreset.agentMode, selectedFolder, llmConfig)
             } else {
               // Creating new preset - allow agent mode selection
-              const newPreset = await addPreset(label, query, selectedServers, agentMode, selectedFolder)
+              const newPreset = await addPreset(label, query, selectedServers, agentMode, selectedFolder, llmConfig)
               // Apply the new preset immediately
               if (newPreset) {
                 handlePresetClick(newPreset)

@@ -1,12 +1,13 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { agentApi } from '../services/api'
-import type { PlannerFile, PresetQuery } from '../services/api-types'
+import type { PlannerFile, PresetQuery, PresetLLMConfig, CreatePresetQueryRequest, UpdatePresetQueryRequest } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
 import { useWorkspaceStore } from './useWorkspaceStore'
 import { useChatStore } from './useChatStore'
 import { useMCPStore } from './useMCPStore'
+import { useLLMStore } from './useLLMStore'
 
 export interface PresetApplicationResult {
   success: boolean
@@ -36,8 +37,8 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => Promise<void>
+  addPreset: (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<void>
   deletePreset: (id: string) => Promise<void>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
@@ -185,15 +186,23 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      addPreset: async (label, query, selectedServers, agentMode, selectedFolder) => {
+      addPreset: async (label, query, selectedServers, agentMode, selectedFolder, llmConfig) => {
         try {
-          const request = {
+          const request: CreatePresetQueryRequest = {
             label,
             query,
             selected_servers: selectedServers,
             agent_mode: agentMode,
             selected_folder: selectedFolder?.filepath
           }
+          
+          // Only include llm_config if it has a value
+          if (llmConfig) {
+            request.llm_config = llmConfig
+          }
+          
+          console.log('[PRESET] Creating preset with request:', request)
+          console.log('[PRESET] LLM Config:', llmConfig)
           
           const response = await agentApi.createPresetQuery(request)
           
@@ -204,7 +213,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             createdAt: new Date(response.created_at).getTime(),
             selectedServers,
             agentMode,
-            selectedFolder
+            selectedFolder,
+            llmConfig
           }
           
           set(state => ({
@@ -218,15 +228,23 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      updatePreset: async (id, label, query, selectedServers, agentMode, selectedFolder) => {
+      updatePreset: async (id, label, query, selectedServers, agentMode, selectedFolder, llmConfig) => {
         try {
-          const request = {
+          const request: UpdatePresetQueryRequest = {
             label,
             query,
             selected_servers: selectedServers,
             agent_mode: agentMode,
             selected_folder: selectedFolder?.filepath
           }
+          
+          // Only include llm_config if it has a value
+          if (llmConfig) {
+            request.llm_config = llmConfig
+          }
+          
+          console.log('[PRESET] Updating preset with request:', request)
+          console.log('[PRESET] LLM Config:', llmConfig)
           
           await agentApi.updatePresetQuery(id, request)
           
@@ -239,7 +257,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     query,
                     selectedServers,
                     agentMode,
-                    selectedFolder
+                    selectedFolder,
+                    llmConfig
                   }
                 : preset
             )
@@ -335,6 +354,24 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           // Set folder selection
           const folderPath = preset.selectedFolder?.filepath || null
           set({ selectedPresetFolder: folderPath })
+          
+          // Debug: Log the entire preset object to see what's available
+          console.log('[PRESET] Full preset object:', preset)
+          console.log('[PRESET] Preset llmConfig:', preset.llmConfig)
+          
+          // Apply LLM configuration if preset has one
+          if (preset.llmConfig) {
+            console.log('[PRESET] Applying LLM config:', preset.llmConfig)
+            const { setPrimaryConfig, primaryConfig } = useLLMStore.getState()
+            setPrimaryConfig({
+              ...primaryConfig, // Preserve existing configuration
+              provider: preset.llmConfig.provider,
+              model_id: preset.llmConfig.model_id
+            })
+            console.log('[PRESET] LLM config applied successfully')
+          } else {
+            console.log('[PRESET] No LLM config found in preset')
+          }
           
           // Handle workspace folder selection
           if (folderPath) {

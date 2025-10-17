@@ -5,7 +5,8 @@ import { useModeStore } from '../stores/useModeStore'
 import PresetModal from './PresetModal'
 import { usePresetManagement } from '../stores/useGlobalPresetStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
-import type { PlannerFile } from '../services/api-types'
+import { useMCPStore } from '../stores/useMCPStore'
+import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 
 interface PresetSelectionOverlayProps {
   isOpen: boolean
@@ -25,6 +26,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   const { addPreset } = usePresetManagement()
   const { getPresetsForMode } = usePresetApplication()
   const { getAgentModeFromCategory } = useModeStore()
+  const { enabledServers } = useMCPStore()
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
 
@@ -75,14 +77,19 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     query: string, 
     selectedServers?: string[], 
     _agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', 
-    selectedFolder?: PlannerFile
+    selectedFolder?: PlannerFile,
+    llmConfig?: PresetLLMConfig
   ) => {
     // Set the agent mode based on the mode category
     const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
     
+    // Debug: Log the server selection
+    console.log('[PRESET_SELECTION] Creating preset with servers:', selectedServers)
+    console.log('[PRESET_SELECTION] Available servers:', enabledServers)
+    
     try {
       // Create the preset and get the returned preset object directly
-      const newPreset = await addPreset(label, query, selectedServers, presetAgentMode, selectedFolder)
+      const newPreset = await addPreset(label, query, selectedServers, presetAgentMode, selectedFolder, llmConfig)
       
       if (!newPreset) {
         console.error('Failed to create preset')
@@ -254,7 +261,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         onClose={handlePresetModalClose}
         onSave={handlePresetSave}
         editingPreset={null}
-        availableServers={[]}
+        availableServers={enabledServers}
         hideAgentModeSelection={true}
         fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'}
       />

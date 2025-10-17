@@ -2,13 +2,11 @@ package types
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -760,148 +758,6 @@ func (po *PlannerOrchestrator) getInitialPlan(ctx context.Context, objective str
 	return planningResult, nil
 }
 
-// generateStructuredBreakdownResponse generates structured output using LLM
-func (po *PlannerOrchestrator) generateStructuredBreakdownResponse(ctx context.Context, agentResponse string) (*agents.BreakdownResponse, error) {
-	po.AgentTemplate.GetLogger().Infof("🔍 Generating structured breakdown response from agent output")
-
-	// Create LLM model for structured output
-	llm, err := po.createStructuredOutputLLM(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create structured output LLM: %w", err)
-	}
-
-	// Get the breakdown schema
-	schema := po.getBreakdownSchema()
-
-	// Create structured output generator
-	config := mcpagent.LangchaingoStructuredOutputConfig{
-		UseJSONMode:    true,
-		ValidateOutput: true,
-		MaxRetries:     2,
-	}
-	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(llm, config, po.AgentTemplate.GetLogger())
-
-	// Generate structured output from the agent response
-	structuredResult, err := generator.GenerateStructuredOutput(ctx, agentResponse, schema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate structured breakdown analysis: %w", err)
-	}
-
-	// Parse the JSON response
-	var response agents.BreakdownResponse
-	if err := json.Unmarshal([]byte(structuredResult), &response); err != nil {
-		return nil, fmt.Errorf("failed to parse breakdown response: %w", err)
-	}
-
-	po.AgentTemplate.GetLogger().Infof("✅ Generated structured breakdown with %d steps", len(response.Steps))
-	return &response, nil
-}
-
-// createStructuredOutputLLM creates an LLM model for structured output
-func (po *PlannerOrchestrator) createStructuredOutputLLM(ctx context.Context) (llms.Model, error) {
-	// Create agent config for structured output
-	config := po.createAgentConfig("plan_breakdown", "structured-output-agent", 100, po.AgentTemplate.GetLogger())
-
-	// Create a temporary agent to get the LLM configuration
-	tempAgent := agents.NewPlanBreakdownAgent(config, po.AgentTemplate.GetLogger(), po.tracer, nil)
-
-	// Initialize the agent to set up the LLM configuration
-	if err := tempAgent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize temp agent: %w", err)
-	}
-
-	// Create LLM directly using the same configuration
-	// We'll use the orchestrator's existing LLM creation logic
-	return po.createLLMForStructuredOutput(ctx, config)
-}
-
-// createLLMForStructuredOutput creates an LLM for structured output using the same pattern as agents
-func (po *PlannerOrchestrator) createLLMForStructuredOutput(ctx context.Context, config *agents.OrchestratorAgentConfig) (llms.Model, error) {
-	// Generate trace ID for this structured output session
-	traceID := observability.TraceID(fmt.Sprintf("structured-output-%d", time.Now().UnixNano()))
-
-	// Build fallback models list
-	var fallbackModels []string
-	if config.FallbackModels != nil {
-		fallbackModels = config.FallbackModels
-	} else {
-		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(config.Provider))...)
-	}
-
-	// Add cross-provider fallback models if configured
-	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.CrossProviderFallback.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-	} else {
-		// Add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-	}
-
-	// Create LLM configuration
-	llmConfig := llm.Config{
-		Provider:       llm.Provider(config.Provider),
-		ModelID:        config.Model,
-		Temperature:    config.Temperature,
-		Tracers:        nil, // Tracers will be set later if needed
-		TraceID:        traceID,
-		FallbackModels: fallbackModels,
-		MaxRetries:     config.MaxRetries,
-		Logger:         po.AgentTemplate.GetLogger(),
-	}
-
-	// Initialize LLM using the existing factory
-	llmInstance, err := llm.InitializeLLM(llmConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize structured output LLM: %w", err)
-	}
-
-	return llmInstance, nil
-}
-
-// getBreakdownSchema returns the JSON schema for breakdown analysis
-func (po *PlannerOrchestrator) getBreakdownSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"id": {
-							"type": "string",
-							"description": "Unique identifier for the step"
-						},
-						"description": {
-							"type": "string",
-							"description": "Clear description of what this step does"
-						},
-						"dependencies": {
-							"type": "array",
-							"items": {
-								"type": "string"
-							},
-							"description": "List of step IDs this step depends on"
-						},
-						"is_independent": {
-							"type": "boolean",
-							"description": "Whether this step can be executed independently"
-						},
-						"reasoning": {
-							"type": "string",
-							"description": "Clear explanation for independence assessment"
-						}
-					},
-					"required": ["id", "description", "dependencies", "is_independent", "reasoning"]
-				}
-			}
-		},
-		"required": ["steps"]
-	}`
-}
-
 // analyzeDependenciesWithStructuredOutput analyzes dependencies using structured output
 func (po *PlannerOrchestrator) analyzeDependenciesWithStructuredOutput(ctx context.Context, planningResult string) ([]ParallelStep, error) {
 	po.AgentTemplate.GetLogger().Infof("🔍 Analyzing dependencies for parallel execution using structured output")
@@ -919,23 +775,23 @@ func (po *PlannerOrchestrator) analyzeDependenciesWithStructuredOutput(ctx conte
 		po.orchestratorUtils.UpdateAgentContext("plan breakdown agent", "plan_breakdown", 0, 0)
 	}
 
-	// Use Execute method to get both agent events and structured output events
+	// Prepare template variables for the breakdown agent
 	templateVars := map[string]string{
 		"PlanningResult": planningResult,
 		"Objective":      po.GetObjective(),
 		"WorkspacePath":  po.workspacePath,
 	}
 
-	// Execute the breakdown agent through normal execution flow
-	breakdownResult, err := breakdownAgent.Execute(ctx, templateVars, po.conversationHistory)
-	if err != nil {
-		return nil, fmt.Errorf("plan breakdown execution failed: %w", err)
+	// Cast to PlanBreakdownAgent to access the ExecuteStructured method
+	breakdownAgentTyped, ok := breakdownAgent.(*agents.PlanBreakdownAgent)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast breakdown agent to PlanBreakdownAgent type")
 	}
 
-	// Generate structured output from the agent response
-	breakdownResponse, err := po.generateStructuredBreakdownResponse(ctx, breakdownResult)
+	// Use the agent's ExecuteStructured method directly
+	breakdownResponse, err := breakdownAgentTyped.ExecuteStructured(ctx, templateVars, po.conversationHistory)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate structured breakdown response: %w", err)
+		return nil, fmt.Errorf("plan breakdown structured execution failed: %w", err)
 	}
 
 	// Convert structured response to ParallelStep format

@@ -110,6 +110,43 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 	return nil
 }
 
+// ExecuteStructured executes the agent with structured output and proper event emission
+func ExecuteStructured[T any](boa *BaseOrchestratorAgent, ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent, schema string) (T, error) {
+	startTime := time.Now()
+
+	// Auto-emit agent start event with agent-specific execution type
+	executionType := fmt.Sprintf("%s_structured_execution", boa.agentType)
+	boa.emitAgentStartEvent(ctx, templateVars, executionType)
+
+	// Process inputs using the provided processor function
+	userMessage := inputProcessor(templateVars)
+
+	// Get the base agent for structured output
+	baseAgent := boa.AgentTemplate.baseAgent
+
+	// Use the agent's built-in structured output capability
+	result, err := AskStructured[T](baseAgent, ctx, userMessage, schema)
+
+	duration := time.Since(startTime)
+
+	// Auto-emit agent end event
+	// Convert structured response to string for event emission
+	var resultStr string
+	if err != nil {
+		resultStr = "Error: " + err.Error()
+	} else {
+		resultStr = fmt.Sprintf("Generated %s structured output", boa.agentType)
+	}
+	boa.emitAgentEndEvent(ctx, templateVars, resultStr, err, duration, executionType)
+
+	if err != nil {
+		var zero T
+		return zero, fmt.Errorf("structured execution failed: %w", err)
+	}
+
+	return result, nil
+}
+
 // ExecuteWithInputProcessor executes the agent with a custom input processor
 func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent) (string, error) {
 	startTime := time.Now()

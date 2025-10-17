@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Search, Workflow, Plus, Folder, Check } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
+import { useModeStore } from '../stores/useModeStore'
 import PresetModal from './PresetModal'
 import { usePresetManagement } from '../stores/useGlobalPresetStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
@@ -10,8 +11,7 @@ interface PresetSelectionOverlayProps {
   isOpen: boolean
   onClose: () => void
   onPresetSelected: (presetId: string) => void
-  modeCategory: ModeCategory
-  onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void
+  modeCategory: Exclude<ModeCategory, 'chat' | null>
   setCurrentQuery?: (query: string) => void
 }
 
@@ -20,17 +20,16 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   onClose,
   onPresetSelected,
   modeCategory,
-  onPresetSelect,
   setCurrentQuery
 }) => {
-  const { customPresets, addPreset } = usePresetManagement()
-  const { applyPreset } = usePresetApplication()
+  const { addPreset } = usePresetManagement()
+  const { getPresetsForMode } = usePresetApplication()
+  const { getAgentModeFromCategory } = useModeStore()
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
 
-  // Get presets for the current mode category
-  const categoryKey = modeCategory === 'deep-research' ? 'orchestrator' : 'workflow'
-  const presets = customPresets.filter(preset => preset.agentMode === categoryKey)
+  // Get presets for the current mode category (includes both custom and predefined)
+  const presets = getPresetsForMode(modeCategory)
 
   // Reset selection when overlay opens
   useEffect(() => {
@@ -49,30 +48,14 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       const selectedPreset = presets.find(preset => preset.id === selectedPresetId)
       
       if (selectedPreset) {
-        // Use applyPreset to properly apply all preset configurations
-        const result = applyPreset(selectedPreset, modeCategory)
-        
-        if (result.success) {
-          // Set the query in the chat input
-          if (setCurrentQuery) {
-            setCurrentQuery(selectedPreset.query)
-          }
-          
-          // Call the preset select callback (same as PresetQueries)
-          if (onPresetSelect) {
-            if (selectedPreset.selectedServers && selectedPreset.selectedServers.length > 0) {
-              onPresetSelect(selectedPreset.selectedServers, selectedPreset.agentMode)
-            } else {
-              onPresetSelect([], selectedPreset.agentMode)
-            }
-          }
-          
-          // Call the original callback
-          onPresetSelected(selectedPresetId)
-          onClose()
-        } else {
-          console.error('Failed to apply preset:', result.error)
+        // Set the query in the chat input for immediate UI feedback
+        if (setCurrentQuery) {
+          setCurrentQuery(selectedPreset.query)
         }
+        
+        // Call the original callback - let parent handle preset application
+        onPresetSelected(selectedPresetId)
+        onClose()
       } else {
         console.error('Preset not found:', selectedPresetId)
       }
@@ -95,7 +78,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     selectedFolder?: PlannerFile
   ) => {
     // Set the agent mode based on the mode category
-    const presetAgentMode = modeCategory === 'deep-research' ? 'orchestrator' : 'workflow'
+    const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
     
     try {
       // Create the preset and get the returned preset object directly
@@ -112,32 +95,16 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       // Use the returned preset directly instead of searching for it
       setSelectedPresetId(newPreset.id)
       
-      // Set the query in the chat input
+      // Set the query in the chat input for immediate UI feedback
       if (setCurrentQuery) {
         setCurrentQuery(newPreset.query)
       }
       
-      // Call the preset select callback (same as PresetQueries)
-      if (onPresetSelect) {
-        if (newPreset.selectedServers && newPreset.selectedServers.length > 0) {
-          onPresetSelect(newPreset.selectedServers, newPreset.agentMode)
-        } else {
-          onPresetSelect([], newPreset.agentMode)
-        }
+      // Automatically confirm the selection - let parent handle preset application
+      if (modeCategory === 'deep-research' || modeCategory === 'workflow') {
+        onPresetSelected(newPreset.id)
+        onClose()
       }
-      
-          // Automatically confirm the selection
-          if (modeCategory === 'deep-research' || modeCategory === 'workflow') {
-            // Use applyPreset to properly apply all preset configurations
-            const result = applyPreset(newPreset, modeCategory)
-            
-            if (result.success) {
-              onPresetSelected(newPreset.id)
-              onClose()
-            } else {
-              console.error('Failed to apply preset:', result.error)
-            }
-          }
     } catch (error) {
       console.error('Failed to create preset:', error)
       // You might want to show an error message to the user here
@@ -289,7 +256,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         editingPreset={null}
         availableServers={[]}
         hideAgentModeSelection={true}
-        fixedAgentMode={modeCategory === 'deep-research' ? 'orchestrator' : 'workflow'}
+        fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'}
       />
     </div>
   )

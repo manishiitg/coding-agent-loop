@@ -6,6 +6,7 @@ import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
 import { useWorkspaceStore } from './useWorkspaceStore'
 import { useChatStore } from './useChatStore'
+import { useMCPStore } from './useMCPStore'
 
 export interface PresetApplicationResult {
   success: boolean
@@ -38,12 +39,11 @@ interface GlobalPresetState {
   addPreset: (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => Promise<CustomPreset | null>
   updatePreset: (id: string, label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => Promise<void>
   deletePreset: (id: string) => Promise<void>
-  updatePredefinedServerSelection: (presetLabel: string, selectedServers: string[]) => void
+  updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
   // Actions for preset application
-  applyPreset: (preset: CustomPreset | PredefinedPreset, modeCategory: 'chat' | 'deep-research' | 'workflow') => PresetApplicationResult
-  setActivePresetId: (modeCategory: 'chat' | 'deep-research' | 'workflow', presetId: string | null) => void
-  getActivePresetId: (modeCategory: 'chat' | 'deep-research' | 'workflow') => string | null
+  applyPreset: (presetOrId: CustomPreset | PredefinedPreset | string, modeCategory: 'chat' | 'deep-research' | 'workflow') => PresetApplicationResult
+  clearActivePreset: (modeCategory: 'chat' | 'deep-research' | 'workflow') => void
   getActivePreset: (modeCategory: 'chat' | 'deep-research' | 'workflow') => CustomPreset | PredefinedPreset | null
   
   // Actions for current state management
@@ -108,6 +108,21 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               }
             }
             
+            // Parse LLM config safely
+            let llmConfig: { provider: 'openrouter' | 'bedrock' | 'openai'; model_id: string } | undefined
+            try {
+              if (preset.llm_config) {
+                if (typeof preset.llm_config === 'string') {
+                  llmConfig = JSON.parse(preset.llm_config)
+                } else {
+                  llmConfig = preset.llm_config
+                }
+              }
+            } catch (error) {
+              console.error('[PRESET] Error parsing LLM config:', error)
+              llmConfig = undefined
+            }
+            
             return {
               id: preset.id,
               label: preset.label,
@@ -115,27 +130,46 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               createdAt: new Date(preset.created_at).getTime(),
               selectedServers,
               agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
-              selectedFolder
+              selectedFolder,
+              llmConfig
             }
           })
           
           // Convert predefined presets
           const predefinedPresets: PredefinedPreset[] = response.presets
             .filter(preset => preset.is_predefined)
-            .map((preset: PresetQuery) => ({
-              id: preset.id,
-              label: preset.label,
-              query: preset.query,
-              selectedServers: [],
-              agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
-              selectedFolder: preset.selected_folder ? {
-                filepath: preset.selected_folder,
-                content: '',
-                last_modified: '',
-                type: 'folder' as const,
-                children: []
-              } : undefined
-            }))
+            .map((preset: PresetQuery) => {
+              // Parse LLM config safely
+              let llmConfig: { provider: 'openrouter' | 'bedrock' | 'openai'; model_id: string } | undefined
+              try {
+                if (preset.llm_config) {
+                  if (typeof preset.llm_config === 'string') {
+                    llmConfig = JSON.parse(preset.llm_config)
+                  } else {
+                    llmConfig = preset.llm_config
+                  }
+                }
+              } catch (error) {
+                console.error('[PRESET] Error parsing LLM config:', error)
+                llmConfig = undefined
+              }
+              
+              return {
+                id: preset.id,
+                label: preset.label,
+                query: preset.query,
+                selectedServers: [],
+                agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
+                selectedFolder: preset.selected_folder ? {
+                  filepath: preset.selected_folder,
+                  content: '',
+                  last_modified: '',
+                  type: 'folder' as const,
+                  children: []
+                } : undefined,
+                llmConfig
+              }
+            })
           
           set({ 
             customPresets, 
@@ -234,71 +268,94 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      updatePredefinedServerSelection: (presetLabel, selectedServers) => {
+      updatePredefinedServerSelection: (presetId, selectedServers) => {
         set(state => ({
           predefinedServerSelections: {
             ...state.predefinedServerSelections,
-            [presetLabel]: selectedServers
+            [presetId]: selectedServers
           }
         }))
       },
       
-      // Preset application actions
-      applyPreset: (preset, modeCategory) => {
-        console.log('[GlobalPresetStore] applyPreset called with:', { preset, modeCategory })
+      // Unified preset application function - handles both preset objects and preset IDs
+      applyPreset: (presetOrId, modeCategory) => {
         try {
+          let preset: CustomPreset | PredefinedPreset | null = null
+          
+          // Handle different input types
+          if (typeof presetOrId === 'string') {
+            // If string, treat as preset ID and find the preset
+            const state = get()
+            const customPreset = state.customPresets.find(p => p.id === presetOrId)
+            const predefinedPreset = state.predefinedPresets.find(p => p.id === presetOrId)
+            preset = customPreset || predefinedPreset || null
+            
+            if (!preset) {
+              return {
+                success: false,
+                error: 'Preset not found'
+              }
+            }
+          } else {
+            // If object, use it directly
+            preset = presetOrId as CustomPreset | PredefinedPreset
+          }
+          
           // Clear chatSessionId to allow fresh observer initialization
           useAppStore.getState().setChatSessionId('')
-          console.log('[GlobalPresetStore] Cleared chatSessionId for fresh observer initialization')
           
           // Clear only the observer ID, not the entire chat state
           const { setObserverId } = useChatStore.getState()
           setObserverId('')
-          console.log('[GlobalPresetStore] Cleared observerId for fresh observer')
-          
-          // The ChatArea component will detect the empty observerId and initialize a new one
-          console.log('[GlobalPresetStore] Observer will be re-initialized by ChatArea component')
           
           // Set the current query in both stores
           set({ currentQuery: preset.query })
           
           // Also update the AppStore's currentQuery for ChatInput/ChatArea components
           useAppStore.getState().setCurrentQuery(preset.query)
-          console.log('[GlobalPresetStore] Set currentQuery in both stores:', preset.query)
           
-          // Set server selection
-          const servers = preset.selectedServers || []
+          // Set server selection (use predefined selection if not present on preset)
+          const state = get()
+          const servers =
+            (preset.selectedServers && preset.selectedServers.length > 0)
+              ? preset.selectedServers
+              : (state.predefinedServerSelections[preset.id] || [])
           set({ currentPresetServers: servers })
-          console.log('[GlobalPresetStore] Set currentPresetServers:', servers)
+
+          // Keep MCP store in sync so UI reflects selection
+          try {
+            const { setSelectedServers } = useMCPStore.getState()
+            if (typeof setSelectedServers === 'function') {
+              setSelectedServers(servers)
+            }
+          } catch (error) {
+            console.warn('[GlobalPresetStore] Failed to sync MCP store:', error)
+          }
           
           // Set folder selection
           const folderPath = preset.selectedFolder?.filepath || null
           set({ selectedPresetFolder: folderPath })
-          console.log('[GlobalPresetStore] Set selectedPresetFolder:', folderPath)
           
           // Handle workspace folder selection
           if (folderPath) {
             // Clear any previously selected file in workspace
-            useAppStore.getState().setSelectedFile(null)
+            useWorkspaceStore.getState().setSelectedFile(null)
             
             // Clear existing file context to avoid duplicates
             useAppStore.getState().clearFileContext()
-            console.log('[GlobalPresetStore] Cleared existing file context')
             
             // Select the preset folder in workspace
-            useAppStore.getState().setSelectedFile({
+            useWorkspaceStore.getState().setSelectedFile({
               name: folderPath.split('/').pop() || folderPath,
               path: folderPath
             })
             
             // Clear file content view to show folder structure
-            useAppStore.getState().setShowFileContent(false)
+            useWorkspaceStore.getState().setShowFileContent(false)
             
             // Expand the folder to show its contents
             const { expandFoldersForFile } = useWorkspaceStore.getState()
-            console.log('[GlobalPresetStore] Expanding folder:', folderPath)
             expandFoldersForFile(folderPath)
-            console.log('[GlobalPresetStore] Folder expansion called for:', folderPath)
             
             // Add the folder to chat context for AI processing
             const folderName = folderPath.split('/').pop() || folderPath
@@ -307,13 +364,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               path: folderPath,
               type: 'folder'
             })
-            
-            console.log('[GlobalPresetStore] Selected, expanded, and added folder to chat context:', folderPath)
           } else {
             // Clear workspace selection and file context if no folder
-            useAppStore.getState().setSelectedFile(null)
+            useWorkspaceStore.getState().setSelectedFile(null)
             useAppStore.getState().clearFileContext()
-            console.log('[GlobalPresetStore] Cleared workspace selection and file context')
           }
           
           // Set active preset ID
@@ -323,7 +377,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               [modeCategory]: preset.id
             }
           }))
-          console.log('[GlobalPresetStore] Set activePresetId for', modeCategory, 'to:', preset.id)
           
           return {
             success: true,
@@ -338,17 +391,14 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      setActivePresetId: (modeCategory, presetId) => {
+      // Clear active preset for a mode category
+      clearActivePreset: (modeCategory) => {
         set(state => ({
           activePresetIds: {
             ...state.activePresetIds,
-            [modeCategory]: presetId
+            [modeCategory]: null
           }
         }))
-      },
-      
-      getActivePresetId: (modeCategory) => {
-        return get().activePresetIds[modeCategory]
       },
       
       getActivePreset: (modeCategory) => {
@@ -436,13 +486,15 @@ export const usePresetApplication = () => {
   const store = useGlobalPresetStore()
   return {
     applyPreset: store.applyPreset,
-    setActivePresetId: store.setActivePresetId,
-    getActivePresetId: store.getActivePresetId,
+    clearActivePreset: store.clearActivePreset,
     getActivePreset: store.getActivePreset,
     clearPresetState: store.clearPresetState,
     isPresetActive: store.isPresetActive,
     getPresetsForMode: store.getPresetsForMode,
-    currentPresetServers: store.currentPresetServers
+    currentPresetServers: store.currentPresetServers,
+    activePresetIds: store.activePresetIds,
+    customPresets: store.customPresets,
+    predefinedPresets: store.predefinedPresets
   }
 }
 

@@ -1,20 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
-import type { PlannerFile, FileContextItem, AgentMode } from './types'
+import type { FileContextItem, AgentMode } from './types'
 import { useModeStore, type ModeCategory } from './useModeStore'
 
 interface AppState {
   // Agent configuration
   agentMode: AgentMode
-  
-  // Workspace state
-  files: PlannerFile[]
-  selectedFile: {name: string, path: string} | null
-  fileContent: string
-  loadingFileContent: boolean
-  showFileContent: boolean
-  showRevisionsModal: boolean
   
   // File context for chat
   chatFileContext: FileContextItem[]
@@ -29,13 +21,6 @@ interface AppState {
   sidebarMinimized: boolean
   workspaceMinimized: boolean
   
-  // File operations
-  searchQuery: string
-  
-  // Loading states
-  loadingFiles: boolean
-  filesError: string | null
-  
   // Actions
   setAgentMode: (mode: AgentMode) => void
   
@@ -44,14 +29,6 @@ interface AppState {
   setModeCategory: (category: ModeCategory) => void
   requiresNewChat: boolean
   clearRequiresNewChat: () => void
-  
-  // Workspace actions
-  setFiles: (files: PlannerFile[]) => void
-  setSelectedFile: (file: {name: string, path: string} | null) => void
-  setFileContent: (content: string) => void
-  setLoadingFileContent: (loading: boolean) => void
-  setShowFileContent: (show: boolean) => void
-  setShowRevisionsModal: (show: boolean) => void
   
   // File context actions
   addFileToContext: (file: FileContextItem) => void
@@ -68,13 +45,6 @@ interface AppState {
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
   
-  // File operations
-  setSearchQuery: (query: string) => void
-  
-  // Loading actions
-  setLoadingFiles: (loading: boolean) => void
-  setFilesError: (error: string | null) => void
-  
   // Helper methods
   isFileInContext: (path: string) => boolean
   getContextFileCount: () => number
@@ -87,12 +57,6 @@ export const useAppStore = create<AppState>()(
         // Initial state
         agentMode: 'ReAct',
         requiresNewChat: false,
-        files: [],
-        selectedFile: null,
-        fileContent: '',
-        loadingFileContent: false,
-        showFileContent: false,
-        showRevisionsModal: false,
         chatFileContext: [],
         currentQuery: '',
         chatSessionId: '',
@@ -100,9 +64,6 @@ export const useAppStore = create<AppState>()(
         selectedPresetId: null,
         sidebarMinimized: false,
         workspaceMinimized: false,
-        searchQuery: '',
-        loadingFiles: true,
-        filesError: null,
 
         // Actions
         setAgentMode: (mode) => {
@@ -131,31 +92,6 @@ export const useAppStore = create<AppState>()(
 
         clearRequiresNewChat: () => {
           set({ requiresNewChat: false })
-        },
-
-        // Workspace actions
-        setFiles: (files) => {
-          set({ files })
-        },
-
-        setSelectedFile: (file) => {
-          set({ selectedFile: file })
-        },
-
-        setFileContent: (content) => {
-          set({ fileContent: content })
-        },
-
-        setLoadingFileContent: (loading) => {
-          set({ loadingFileContent: loading })
-        },
-
-        setShowFileContent: (show) => {
-          set({ showFileContent: show })
-        },
-
-        setShowRevisionsModal: (show) => {
-          set({ showRevisionsModal: show })
         },
 
         // File context actions
@@ -204,20 +140,6 @@ export const useAppStore = create<AppState>()(
 
         setWorkspaceMinimized: (minimized) => {
           set({ workspaceMinimized: minimized })
-        },
-
-        // File operations
-        setSearchQuery: (query) => {
-          set({ searchQuery: query })
-        },
-
-        // Loading actions
-        setLoadingFiles: (loading) => {
-          set({ loadingFiles: loading })
-        },
-
-        setFilesError: (error) => {
-          set({ filesError: error })
         },
 
         // Helper methods

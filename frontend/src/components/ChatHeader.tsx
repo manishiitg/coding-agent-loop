@@ -70,12 +70,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     getPresetsForMode
   } = usePresetApplication()
 
-  // Debug: Log presets for current mode
-  useEffect(() => {
-    const presets = getPresetsForMode(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
-    console.log(`[ChatHeader] Presets for ${selectedModeCategory}:`, presets)
-    console.log(`[ChatHeader] Custom presets:`, customPresets)
-  }, [selectedModeCategory, getPresetsForMode, customPresets])
   
   const [showModeSwitch, setShowModeSwitch] = useState(false)
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
@@ -84,15 +78,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
   // Preset click handler - now uses the global store
   const handlePresetClick = (preset: CustomPreset | PredefinedPreset) => {
-    console.log('[ChatHeader] handlePresetClick called with:', preset)
-    console.log('[ChatHeader] selectedModeCategory:', selectedModeCategory)
-    
     const result = applyPreset(preset, selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
-    console.log('[ChatHeader] applyPreset result:', result)
     
     if (result.success) {
       setShowPresetDropdown(false)
-      console.log('[ChatHeader] Preset applied successfully')
     } else {
       console.error('Failed to apply preset:', result.error)
     }

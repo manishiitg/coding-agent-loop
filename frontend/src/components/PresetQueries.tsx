@@ -49,7 +49,7 @@ interface PresetQueriesProps {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null);
   const [isServerSelectionModalOpen, setIsServerSelectionModalOpen] = useState(false);
-  const [currentPredefinedPreset, setCurrentPredefinedPreset] = useState<string>('');
+  const [currentPredefinedPresetId, setCurrentPredefinedPresetId] = useState<string>('');
   const [tempSelectedServers, setTempSelectedServers] = useState<string[]>([]);
 
   const handlePresetClick = (query: string, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => {
@@ -57,8 +57,14 @@ interface PresetQueriesProps {
     const preset = [...customPresets, ...predefinedPresets].find(p => p.id === presetQueryId)
     
     if (preset) {
+      // Guard against null/undefined selectedModeCategory and provide safe default
+      const safeModeCategory = selectedModeCategory && 
+        ['chat', 'deep-research', 'workflow'].includes(selectedModeCategory) 
+        ? selectedModeCategory as 'chat' | 'deep-research' | 'workflow'
+        : 'chat' // Safe default for initial setup or invalid values
+      
       // Use the global store's applyPreset method for consistency
-      const result = applyPreset(preset, selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+      const result = applyPreset(preset, safeModeCategory)
       
       if (result.success) {
         // Also call the legacy callbacks for backward compatibility
@@ -122,18 +128,18 @@ interface PresetQueriesProps {
     }
   };
 
-  const handlePredefinedServerSelection = (presetLabel: string, selectedServers: string[]) => {
-    updatePredefinedServerSelection(presetLabel, selectedServers);
+  const handlePredefinedServerSelection = (presetId: string, selectedServers: string[]) => {
+    updatePredefinedServerSelection(presetId, selectedServers);
   };
 
-  const handleOpenServerSelection = (presetLabel: string) => {
-    setCurrentPredefinedPreset(presetLabel);
-    setTempSelectedServers(predefinedServerSelections[presetLabel] || []);
+  const handleOpenServerSelection = (presetId: string) => {
+    setCurrentPredefinedPresetId(presetId);
+    setTempSelectedServers(predefinedServerSelections[presetId] || []);
     setIsServerSelectionModalOpen(true);
   };
 
   const handleSaveServerSelection = () => {
-    handlePredefinedServerSelection(currentPredefinedPreset, tempSelectedServers);
+    handlePredefinedServerSelection(currentPredefinedPresetId, tempSelectedServers);
     setIsServerSelectionModalOpen(false);
   };
 
@@ -168,10 +174,12 @@ interface PresetQueriesProps {
 
       <div className="flex flex-wrap gap-3">
         {/* Predefined Presets - Filtered by current mode */}
-        {getPresetsForMode(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+        {(selectedModeCategory
+          ? getPresetsForMode(selectedModeCategory)
+          : [])
           .filter(preset => predefinedPresets.some(pp => pp.id === preset.id))
           .map((preset) => {
-          const selectedServers = predefinedServerSelections[preset.label] || [];
+          const selectedServers = predefinedServerSelections[preset.id] || [];
           return (
             <div key={preset.id} className="relative group">
               <Button
@@ -180,7 +188,7 @@ interface PresetQueriesProps {
                 size="sm"
                 disabled={isStreaming}
                 onClick={() => handlePresetClick(preset.query, selectedServers, preset.id, preset.agentMode, preset.selectedFolder)}
-                className="relative pr-10"
+                className="pr-10"
               >
                 <div className="flex items-center gap-2">
                   <span>{preset.label}</span>
@@ -195,29 +203,30 @@ interface PresetQueriesProps {
                     </span>
                   )}
                 </div>
-                
-                {/* Server Selection Button Inside Preset Button */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenServerSelection(preset.label);
-                  }}
-                  className="absolute right-1 top-1/2 transform -translate-y-1/2 w-4 h-4 flex items-center justify-center text-xs hover:bg-gray-200 rounded"
-                  title={selectedServers.length > 0 
-                    ? `Selected servers: ${selectedServers.join(', ')}` 
-                    : 'Click to select servers'
-                  }
-                >
-                  {selectedServers.length > 0 ? '🔧' : '⚙️'}
-                </button>
               </Button>
+              {/* Server Selection Button as sibling overlay */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenServerSelection(preset.id);
+                }}
+                className="absolute right-1 top-1/2 transform -translate-y-1/2 w-4 h-4 flex items-center justify-center text-xs hover:bg-gray-200 rounded"
+                title={selectedServers.length > 0 
+                  ? `Selected servers: ${selectedServers.join(', ')}` 
+                  : 'Click to select servers'
+                }
+              >
+                {selectedServers.length > 0 ? '🔧' : '⚙️'}
+              </button>
             </div>
           );
         })}
 
         {/* Custom Presets - Filtered by current mode */}
-        {getPresetsForMode(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+        {(selectedModeCategory
+          ? getPresetsForMode(selectedModeCategory)
+          : [])
           .filter(preset => customPresets.some(cp => cp.id === preset.id))
           .map((preset) => (
           <div key={preset.id} className="relative group">
@@ -227,7 +236,7 @@ interface PresetQueriesProps {
               size="sm"
               disabled={isStreaming}
               onClick={() => handlePresetClick(preset.query, preset.selectedServers, preset.id, preset.agentMode, preset.selectedFolder)}
-              className="relative pr-12"
+              className="pr-12"
             >
               <div className="flex items-center gap-2">
                 <span>{preset.label}</span>
@@ -242,33 +251,32 @@ interface PresetQueriesProps {
                   </span>
                 )}
               </div>
-              
-              {/* Edit/Delete Buttons Inside Preset Button */}
-              <div className="absolute right-1 top-1/2 transform -translate-y-1/2 flex gap-1">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleEditPreset(preset as CustomPreset);
-                  }}
-                  className="w-4 h-4 flex items-center justify-center text-xs hover:bg-gray-200 rounded"
-                  title="Edit preset"
-                >
-                  ✏️
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeletePreset(preset.id);
-                  }}
-                  className="w-4 h-4 flex items-center justify-center text-xs text-red-600 hover:text-red-700 hover:bg-red-100 rounded"
-                  title="Delete preset"
-                >
-                  🗑️
-                </button>
-              </div>
             </Button>
+            {/* Edit/Delete Buttons as sibling overlay */}
+            <div className="absolute right-1 top-1/2 transform -translate-y-1/2 flex gap-1">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleEditPreset(preset as CustomPreset);
+                }}
+                className="w-4 h-4 flex items-center justify-center text-xs hover:bg-gray-200 rounded"
+                title="Edit preset"
+              >
+                ✏️
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeletePreset(preset.id);
+                }}
+                className="w-4 h-4 flex items-center justify-center text-xs text-red-600 hover:text-red-700 hover:bg-red-100 rounded"
+                title="Delete preset"
+              >
+                🗑️
+              </button>
+            </div>
           </div>
         ))}
 
@@ -289,7 +297,7 @@ interface PresetQueriesProps {
           <Card className="w-full max-w-md mx-4 p-6">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold">
-                Select Servers for "{currentPredefinedPreset}"
+                Select Servers for "{predefinedPresets.find(p => p.id === currentPredefinedPresetId)?.label || 'Unknown Preset'}"
               </h2>
               <Button
                 type="button"

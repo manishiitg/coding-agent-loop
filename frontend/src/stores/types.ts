@@ -3,14 +3,6 @@
 // Re-export API types for convenience
 export type { PlannerFile, PollingEvent, LLMConfiguration } from '../services/api-types'
 
-// LLM Configuration Types
-export interface LLMOption {
-  provider: string
-  model: string
-  label: string
-  description?: string
-}
-
 // MCP Server Types
 export interface ToolDefinition {
   name: string

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { agentApi } from '../../services/api'
 import type { ChatSession, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -27,7 +27,16 @@ export default function ChatHistorySection({
   const { selectedModeCategory } = useModeStore()
   
   // Active preset query store
-  const { getActivePresetId } = usePresetApplication()
+  const { getActivePreset } = usePresetApplication()
+  
+  // Track active preset for current category to trigger reloads
+  const activePresetForCategory = useMemo(() => {
+    if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
+      const preset = getActivePreset(selectedModeCategory)
+      return preset?.id || null
+    }
+    return null
+  }, [selectedModeCategory, getActivePreset])
 
   // Fetch preset query details
   const fetchPresetQuery = useCallback(async (presetQueryId: string) => {
@@ -69,8 +78,9 @@ export default function ChatHistorySection({
 
   // Helper function to get the active preset query ID for a category
   const getBackendPresetQueryId = useCallback((category: 'deep-research' | 'workflow') => {
-    return getActivePresetId(category)
-  }, [getActivePresetId])
+    const preset = getActivePreset(category)
+    return preset?.id || null
+  }, [getActivePreset])
 
   // Filter sessions based on mode and active preset
   const filterSessionsByMode = useCallback((sessions: ChatSession[]) => {
@@ -120,7 +130,7 @@ export default function ChatHistorySection({
       // Use server-side filtering when an active preset is selected
       let response
       if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
-        const activePresetQueryId = getActivePresetId(selectedModeCategory)
+        const activePresetQueryId = activePresetForCategory
         response = await agentApi.getChatSessions(100, 0, activePresetQueryId || undefined) // server filters by preset
       } else {
         response = await agentApi.getChatSessions(100, 0)
@@ -145,13 +155,13 @@ export default function ChatHistorySection({
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, getActivePresetId])
+  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, activePresetForCategory])
 
   // Load sessions and active sessions on mount
   useEffect(() => {
     loadSessions()
     loadActiveSessions()
-  }, [loadSessions, loadActiveSessions])
+  }, [loadSessions, loadActiveSessions, activePresetForCategory])
 
   // Refresh active sessions periodically
   useEffect(() => {
@@ -191,6 +201,8 @@ export default function ChatHistorySection({
         return 'ReAct'
       case 'orchestrator':
         return 'Deep Research'
+      case 'workflow':
+        return 'Workflow'
       default:
         return agentMode
     }

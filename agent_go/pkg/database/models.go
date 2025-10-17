@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,14 @@ const (
 	WorkflowStatusPostVerification                 = "post-verification"
 	WorkflowStatusPostVerificationTodoRefinement   = "post-verification-todo-refinement"
 	WorkflowStatusPostVerificationReportGeneration = "post-verification-report-generation"
+)
+
+// Agent mode constants
+const (
+	AgentModeSimple       = "simple"
+	AgentModeReAct        = "ReAct"
+	AgentModeOrchestrator = "orchestrator"
+	AgentModeWorkflow     = "workflow"
 )
 
 // ChatSession represents a chat session in the database
@@ -105,17 +114,17 @@ type PresetLLMConfig struct {
 
 // PresetQuery represents a preset query in the database
 type PresetQuery struct {
-	ID              string    `json:"id" db:"id"`
-	Label           string    `json:"label" db:"label"`
-	Query           string    `json:"query" db:"query"`
-	SelectedServers string    `json:"selected_servers" db:"selected_servers"` // JSON array
-	SelectedFolder  string    `json:"selected_folder" db:"selected_folder"`   // Single folder path
-	AgentMode       string    `json:"agent_mode" db:"agent_mode"`             // Agent mode: simple, ReAct, orchestrator, workflow
-	LLMConfig       string    `json:"llm_config" db:"llm_config"`             // JSON configuration for LLM settings
-	IsPredefined    bool      `json:"is_predefined" db:"is_predefined"`
-	CreatedAt       time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
-	CreatedBy       string    `json:"created_by" db:"created_by"`
+	ID              string          `json:"id" db:"id"`
+	Label           string          `json:"label" db:"label"`
+	Query           string          `json:"query" db:"query"`
+	SelectedServers string          `json:"selected_servers" db:"selected_servers"` // JSON array
+	SelectedFolder  string          `json:"selected_folder" db:"selected_folder"`   // Single folder path
+	AgentMode       string          `json:"agent_mode" db:"agent_mode"`             // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig       json.RawMessage `json:"llm_config" db:"llm_config"`             // JSON configuration for LLM settings
+	IsPredefined    bool            `json:"is_predefined" db:"is_predefined"`
+	CreatedAt       time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at" db:"updated_at"`
+	CreatedBy       string          `json:"created_by" db:"created_by"`
 }
 
 // CreatePresetQueryRequest represents a request to create a new preset query
@@ -129,6 +138,59 @@ type CreatePresetQueryRequest struct {
 	IsPredefined    bool             `json:"is_predefined,omitempty"`
 }
 
+// Validate validates the CreatePresetQueryRequest
+func (r *CreatePresetQueryRequest) Validate() error {
+	// Validate required fields
+	if r.Label == "" {
+		return fmt.Errorf("label is required")
+	}
+	if r.Query == "" {
+		return fmt.Errorf("query is required")
+	}
+
+	// Validate agent mode
+	if r.AgentMode != "" {
+		validModes := []string{AgentModeSimple, AgentModeReAct, AgentModeOrchestrator, AgentModeWorkflow}
+		valid := false
+		for _, mode := range validModes {
+			if r.AgentMode == mode {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("invalid agent mode: %s, must be one of: %v", r.AgentMode, validModes)
+		}
+	}
+
+	// Validate selected folder is required for orchestrator/workflow modes
+	if r.AgentMode == AgentModeOrchestrator || r.AgentMode == AgentModeWorkflow {
+		if r.SelectedFolder == "" {
+			return fmt.Errorf("selected_folder is required for agent mode: %s", r.AgentMode)
+		}
+	}
+
+	// Validate LLM config
+	if r.LLMConfig != nil {
+		if r.LLMConfig.ModelID == "" {
+			return fmt.Errorf("model_id is required when llm_config is provided")
+		}
+		validProviders := []string{"openrouter", "bedrock", "openai"}
+		valid := false
+		for _, provider := range validProviders {
+			if r.LLMConfig.Provider == provider {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("invalid provider: %s, must be one of: %v", r.LLMConfig.Provider, validProviders)
+		}
+	}
+
+	return nil
+}
+
 // UpdatePresetQueryRequest represents a request to update a preset query
 type UpdatePresetQueryRequest struct {
 	Label           string           `json:"label,omitempty"`
@@ -137,6 +199,51 @@ type UpdatePresetQueryRequest struct {
 	SelectedFolder  string           `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
 	AgentMode       string           `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig       *PresetLLMConfig `json:"llm_config,omitempty"`      // LLM configuration for this preset
+}
+
+// Validate validates the UpdatePresetQueryRequest
+func (r *UpdatePresetQueryRequest) Validate() error {
+	// Validate agent mode if provided
+	if r.AgentMode != "" {
+		validModes := []string{AgentModeSimple, AgentModeReAct, AgentModeOrchestrator, AgentModeWorkflow}
+		valid := false
+		for _, mode := range validModes {
+			if r.AgentMode == mode {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("invalid agent mode: %s, must be one of: %v", r.AgentMode, validModes)
+		}
+	}
+
+	// Validate selected folder is required for orchestrator/workflow modes
+	if r.AgentMode == AgentModeOrchestrator || r.AgentMode == AgentModeWorkflow {
+		if r.SelectedFolder == "" {
+			return fmt.Errorf("selected_folder is required for agent mode: %s", r.AgentMode)
+		}
+	}
+
+	// Validate LLM config if provided
+	if r.LLMConfig != nil {
+		if r.LLMConfig.ModelID == "" {
+			return fmt.Errorf("model_id is required when llm_config is provided")
+		}
+		validProviders := []string{"openrouter", "bedrock", "openai"}
+		valid := false
+		for _, provider := range validProviders {
+			if r.LLMConfig.Provider == provider {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("invalid provider: %s, must be one of: %v", r.LLMConfig.Provider, validProviders)
+		}
+	}
+
+	return nil
 }
 
 // ListPresetQueriesResponse represents the response for listing preset queries

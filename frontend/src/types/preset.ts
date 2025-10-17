@@ -16,8 +16,8 @@ export interface PredefinedPreset {
   id: string
   label: string
   query: string
-  selectedServers?: string[]
-  agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
-  selectedFolder?: PlannerFile
-  llmConfig?: PresetLLMConfig // LLM configuration for this preset
+  selectedServers?: string[];
+  agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow';
+  selectedFolder?: PlannerFile;
+  llmConfig?: PresetLLMConfig; // LLM configuration for this preset
 }

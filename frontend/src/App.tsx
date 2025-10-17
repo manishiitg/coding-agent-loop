@@ -9,7 +9,7 @@ import { resetSessionId } from "./services/api";
 import type { ActiveSessionInfo } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
-import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore } from "./stores";
+import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
@@ -37,13 +37,6 @@ function App() {
   
   // App Store subscriptions for workspace and chat
   const {
-    selectedFile,
-    fileContent,
-    loadingFileContent,
-    showFileContent,
-    setShowFileContent,
-    showRevisionsModal,
-    setShowRevisionsModal,
     clearFileContext,
     setChatSessionId,
     setChatSessionTitle,
@@ -53,7 +46,17 @@ function App() {
     setWorkspaceMinimized
   } = useAppStore()
   
-  const { setActivePresetId } = useGlobalPresetStore()
+  const {
+    selectedFile,
+    fileContent,
+    loadingFileContent,
+    showFileContent,
+    setShowFileContent,
+    showRevisionsModal,
+    setShowRevisionsModal
+  } = useWorkspaceStore()
+  
+  const { clearActivePreset, applyPreset } = useGlobalPresetStore()
 
   const hasInitializedRef = useRef(false)
 
@@ -100,9 +103,28 @@ function App() {
     clearFileContext();
     setChatSessionId(''); // Clear chat session ID to exit historical mode
     setChatSessionTitle('');
-    setSelectedPresetId(null); // Clear selected preset filter
-    if (selectedModeCategory) {
-      setActivePresetId(selectedModeCategory, null); // Also clear in global store
+    
+    // Preserve active preset for workflow and deep-research modes, clear for other modes
+    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'deep-research') {
+      // For workflow and deep-research modes, preserve the active preset
+      const { getActivePreset } = useGlobalPresetStore.getState()
+      const activePreset = getActivePreset(selectedModeCategory)
+      if (activePreset) {
+        // Keep the preset selected, just clear the filter
+        setSelectedPresetId(null) // Clear filter but keep preset active
+        // Don't clear the activePresetId in global store for these modes
+        // The preset will be re-applied after chat state is reset
+      } else {
+        // No preset selected, clear everything
+        setSelectedPresetId(null)
+        clearActivePreset(selectedModeCategory)
+      }
+    } else {
+      // For other modes (chat), clear preset state as before
+      setSelectedPresetId(null); // Clear selected preset filter
+      if (selectedModeCategory) {
+        clearActivePreset(selectedModeCategory); // Also clear in global store
+      }
     }
     
     // Reset the global session ID to force generation of a new one
@@ -110,7 +132,22 @@ function App() {
     
     // Clear the requiresNewChat flag after successful new chat initialization
     useAppStore.getState().clearRequiresNewChat();
-  }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId, setActivePresetId, selectedModeCategory]);
+    
+    // Re-apply active preset for workflow and deep-research modes after chat reset
+    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'deep-research') {
+      const { getActivePreset } = useGlobalPresetStore.getState()
+      const activePreset = getActivePreset(selectedModeCategory)
+      if (activePreset) {
+        // Use setTimeout to ensure chat state reset is complete before applying preset
+        setTimeout(() => {
+          const result = applyPreset(activePreset.id, selectedModeCategory)
+          if (!result.success) {
+            console.error('[NEW_CHAT] Failed to re-apply preset:', result.error)
+          }
+        }, 100)
+      }
+    }
+  }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
 
   // Handle chat session selection
   const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => {
@@ -213,12 +250,6 @@ function App() {
                 }
               }}
               onChatSessionSelect={handleChatSessionSelect}
-              onClearPresetFilter={() => {
-                setSelectedPresetId(null)
-                if (selectedModeCategory) {
-                  setActivePresetId(selectedModeCategory, null)
-                }
-              }}
               minimized={sidebarMinimized}
               onToggleMinimize={toggleSidebarMinimize}
             />

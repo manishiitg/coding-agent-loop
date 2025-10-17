@@ -3,7 +3,7 @@ import { Brain, ChevronDown, Check, RefreshCw } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import type { LLMOption } from '../utils/llmConfig';
+import type { LLMOption } from '../types/llm';
 
 interface LLMSelectionDropdownProps {
   availableLLMs: LLMOption[];
@@ -26,7 +26,7 @@ export default function LLMSelectionDropdown({
 }: LLMSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  // Handle clicks outside when in modal
+  // Handle clicks outside and keyboard events when in modal
   useEffect(() => {
     if (isOpen && inModal) {
       const handleClickOutside = (event: MouseEvent) => {
@@ -35,10 +35,15 @@ export default function LLMSelectionDropdown({
           setIsOpen(false);
         }
       };
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setIsOpen(false);
+      };
 
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
       return () => {
         document.removeEventListener('mousedown', handleClickOutside);
+        document.removeEventListener('keydown', handleKeyDown);
       };
     }
   }, [isOpen, inModal]);
@@ -63,11 +68,14 @@ export default function LLMSelectionDropdown({
               type="button"
               variant="outline"
               size="sm"
-                  onClick={() => {
-                    setIsOpen(!isOpen);
-                  }}
+              onClick={() => {
+                setIsOpen(!isOpen);
+              }}
               disabled={disabled || availableLLMs.length === 0}
               className="h-8 px-2 text-xs font-medium bg-background border-border hover:bg-secondary text-foreground"
+              aria-expanded={isOpen}
+              aria-haspopup="menu"
+              aria-label="Select primary LLM"
             >
               <Brain className="w-3 h-3 mr-1" />
               {getDisplayText()}
@@ -97,6 +105,8 @@ export default function LLMSelectionDropdown({
                   : 'top-full mt-1'
               }`}
               onClick={(e) => e.stopPropagation()}
+              role="menu"
+              aria-label="LLM selection menu"
             >
               <Card className="p-4 shadow-lg border-border bg-card" onClick={(e) => e.stopPropagation()}>
                 <div className="space-y-3">
@@ -172,6 +182,16 @@ export default function LLMSelectionDropdown({
                                   handleLLMSelect(llm);
                                   setIsOpen(false);
                                 }}
+                                role="menuitem"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    handleLLMSelect(llm);
+                                    setIsOpen(false);
+                                  }
+                                }}
+                                aria-label={`Select ${llm.label}`}
                               >
                                 <div className="flex-1">
                                   <div className="text-sm font-medium text-foreground">

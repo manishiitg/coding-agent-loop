@@ -10,7 +10,7 @@ import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
-import type { LLMOption } from '../stores/types';
+import type { LLMOption } from '../types/llm';
 
 interface PresetModalProps {
   isOpen: boolean;
@@ -254,7 +254,7 @@ const PresetModal: React.FC<PresetModalProps> = ({
               {/* Folder Selection */}
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Folder {agentMode === 'orchestrator' || agentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
+                  Folder {effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
                 </label>
                 <div className="space-y-2">
                   {selectedFolder && (
@@ -277,7 +277,7 @@ const PresetModal: React.FC<PresetModalProps> = ({
                     data-folder-button
                     onClick={handleSelectFolders}
                     className={`w-full p-3 border-2 border-dashed rounded-md transition-colors ${
-                      (agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder
+                      (effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder
                         ? 'border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500'
                         : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-blue-500'
                     }`}
@@ -293,9 +293,9 @@ const PresetModal: React.FC<PresetModalProps> = ({
                     Selected: {selectedFolder.filepath}
                   </p>
                 )}
-                {(agentMode === 'orchestrator' || agentMode === 'workflow') && !selectedFolder && (
+                {(effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder && (
                   <p className="text-xs text-red-500 mt-1">
-                    ⚠️ Folder selection is required for {agentMode} presets
+                    ⚠️ Folder selection is required for {effectiveAgentMode} presets
                   </p>
                 )}
               </div>

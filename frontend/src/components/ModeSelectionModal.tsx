@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { MessageCircle, Search, Workflow, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
-import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
+import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { getModeInfoForModal } from '../constants/modeInfo'
@@ -144,8 +144,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
   isOpen,
   onClose
 }) => {
-  const { setModeCategory, completeInitialSetup, getAgentModeFromCategory } = useModeStore()
-  const { setAgentMode } = useAppStore()
+  const { completeInitialSetup } = useModeStore()
   const { getActivePreset, applyPreset } = usePresetApplication()
   const { customPresets } = usePresetManagement()
   
@@ -158,20 +157,28 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 
     if (category === 'chat') {
       // Chat mode doesn't need preset selection
-      setModeCategory(category)
-      const agentMode = getAgentModeFromCategory(category)
-      setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
+      // Clear any active presets when switching to chat mode
+      useGlobalPresetStore.getState().clearActivePreset('deep-research')
+      useGlobalPresetStore.getState().clearActivePreset('workflow')
+      useAppStore.getState().setModeCategory(category)
       completeInitialSetup()
       onClose()
     } else {
-      // Deep Research or Workflow mode - check if preset is needed
+      // Deep Research or Workflow mode - always show preset selection when switching between modes
+      // Clear the current mode's preset first
+      const currentModeCategory = useModeStore.getState().selectedModeCategory
+      if (currentModeCategory === 'deep-research') {
+        useGlobalPresetStore.getState().clearActivePreset('deep-research')
+      } else if (currentModeCategory === 'workflow') {
+        useGlobalPresetStore.getState().clearActivePreset('workflow')
+      }
+      
+      // Check if target mode already has a preset
       const activePreset = getActivePreset(category)
       
       if (activePreset) {
         // Preset already selected, proceed with mode selection
-        setModeCategory(category)
-        const agentMode = getAgentModeFromCategory(category)
-        setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
+        useAppStore.getState().setModeCategory(category)
         completeInitialSetup()
         onClose()
       } else {
@@ -194,9 +201,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
         
         if (result.success) {
           // Now proceed with mode selection
-          setModeCategory(pendingModeCategory)
-          const agentMode = getAgentModeFromCategory(pendingModeCategory)
-          setAgentMode((agentMode || 'ReAct') as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')
+          useAppStore.getState().setModeCategory(pendingModeCategory)
           completeInitialSetup()
           
           // Close overlays

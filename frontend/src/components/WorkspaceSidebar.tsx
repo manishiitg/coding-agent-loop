@@ -75,7 +75,7 @@ export default function WorkspaceSidebar({
               </svg>
             </button>
           )}
-          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘4</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -94,7 +94,7 @@ export default function WorkspaceSidebar({
               </button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>{minimized ? "Expand sidebar" : "Minimize sidebar"} (Ctrl+4)</p>
+              <p>{minimized ? "Expand sidebar" : "Minimize sidebar"} (Ctrl+5)</p>
             </TooltipContent>
           </Tooltip>
         </div>
@@ -147,7 +147,10 @@ export default function WorkspaceSidebar({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={onToggleMinimize}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleMinimize()
+                }}
                 className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
                 title="Expand sidebar"
               >

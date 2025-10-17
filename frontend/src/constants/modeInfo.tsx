@@ -28,7 +28,7 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
   'deep-research': {
     icon: <Search className="w-16 h-16 text-blue-500" />,
     title: 'Deep Research Mode',
-    description: 'Multi-step planning and execution for comprehensive analysis',
+    description: 'Advanced planning and execution for comprehensive analysis',
     features: [
       'Multi-step planning and execution',
       'Long-term memory and context retention',
@@ -41,7 +41,7 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
   'workflow': {
     icon: <Workflow className="w-16 h-16 text-blue-500" />,
     title: 'Workflow Mode',
-    description: 'Sequential task execution with human verification at each step',
+    description: 'Structured task execution with step-by-step control',
     features: [
       'Sequential task execution',
       'Human verification at each step',

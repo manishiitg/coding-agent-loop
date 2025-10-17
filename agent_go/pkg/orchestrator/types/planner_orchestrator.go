@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -692,7 +693,7 @@ func (po *PlannerOrchestrator) executeParallel(ctx context.Context, objective st
 	}
 
 	// Step 2: Use plan breakdown agent to analyze dependencies and get independent steps
-	independentSteps, err := po.analyzeDependencies(ctx, planningResult)
+	independentSteps, err := po.analyzeDependenciesWithStructuredOutput(ctx, planningResult)
 	if err != nil {
 		emitOrchestratorError(err, "dependency analysis phase")
 		return "", fmt.Errorf("failed to analyze dependencies: %w", err)
@@ -759,8 +760,150 @@ func (po *PlannerOrchestrator) getInitialPlan(ctx context.Context, objective str
 	return planningResult, nil
 }
 
-// analyzeDependencies analyzes dependencies and creates independent steps using structured output
-func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planningResult string) ([]ParallelStep, error) {
+// generateStructuredBreakdownResponse generates structured output using LLM
+func (po *PlannerOrchestrator) generateStructuredBreakdownResponse(ctx context.Context, agentResponse string) (*agents.BreakdownResponse, error) {
+	po.AgentTemplate.GetLogger().Infof("🔍 Generating structured breakdown response from agent output")
+
+	// Create LLM model for structured output
+	llm, err := po.createStructuredOutputLLM(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create structured output LLM: %w", err)
+	}
+
+	// Get the breakdown schema
+	schema := po.getBreakdownSchema()
+
+	// Create structured output generator
+	config := mcpagent.LangchaingoStructuredOutputConfig{
+		UseJSONMode:    true,
+		ValidateOutput: true,
+		MaxRetries:     2,
+	}
+	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(llm, config, po.AgentTemplate.GetLogger())
+
+	// Generate structured output from the agent response
+	structuredResult, err := generator.GenerateStructuredOutput(ctx, agentResponse, schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate structured breakdown analysis: %w", err)
+	}
+
+	// Parse the JSON response
+	var response agents.BreakdownResponse
+	if err := json.Unmarshal([]byte(structuredResult), &response); err != nil {
+		return nil, fmt.Errorf("failed to parse breakdown response: %w", err)
+	}
+
+	po.AgentTemplate.GetLogger().Infof("✅ Generated structured breakdown with %d steps", len(response.Steps))
+	return &response, nil
+}
+
+// createStructuredOutputLLM creates an LLM model for structured output
+func (po *PlannerOrchestrator) createStructuredOutputLLM(ctx context.Context) (llms.Model, error) {
+	// Create agent config for structured output
+	config := po.createAgentConfig("plan_breakdown", "structured-output-agent", 100, po.AgentTemplate.GetLogger())
+
+	// Create a temporary agent to get the LLM configuration
+	tempAgent := agents.NewPlanBreakdownAgent(config, po.AgentTemplate.GetLogger(), po.tracer, nil)
+
+	// Initialize the agent to set up the LLM configuration
+	if err := tempAgent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize temp agent: %w", err)
+	}
+
+	// Create LLM directly using the same configuration
+	// We'll use the orchestrator's existing LLM creation logic
+	return po.createLLMForStructuredOutput(ctx, config)
+}
+
+// createLLMForStructuredOutput creates an LLM for structured output using the same pattern as agents
+func (po *PlannerOrchestrator) createLLMForStructuredOutput(ctx context.Context, config *agents.OrchestratorAgentConfig) (llms.Model, error) {
+	// Generate trace ID for this structured output session
+	traceID := observability.TraceID(fmt.Sprintf("structured-output-%d", time.Now().UnixNano()))
+
+	// Build fallback models list
+	var fallbackModels []string
+	if config.FallbackModels != nil {
+		fallbackModels = config.FallbackModels
+	} else {
+		// Use default fallback models for the provider
+		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(config.Provider))...)
+	}
+
+	// Add cross-provider fallback models if configured
+	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
+		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.CrossProviderFallback.Provider))
+		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
+	} else {
+		// Add default cross-provider fallbacks
+		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.Provider))
+		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
+	}
+
+	// Create LLM configuration
+	llmConfig := llm.Config{
+		Provider:       llm.Provider(config.Provider),
+		ModelID:        config.Model,
+		Temperature:    config.Temperature,
+		Tracers:        nil, // Tracers will be set later if needed
+		TraceID:        traceID,
+		FallbackModels: fallbackModels,
+		MaxRetries:     config.MaxRetries,
+		Logger:         po.AgentTemplate.GetLogger(),
+	}
+
+	// Initialize LLM using the existing factory
+	llmInstance, err := llm.InitializeLLM(llmConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize structured output LLM: %w", err)
+	}
+
+	return llmInstance, nil
+}
+
+// getBreakdownSchema returns the JSON schema for breakdown analysis
+func (po *PlannerOrchestrator) getBreakdownSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"description": "Unique identifier for the step"
+						},
+						"description": {
+							"type": "string",
+							"description": "Clear description of what this step does"
+						},
+						"dependencies": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "List of step IDs this step depends on"
+						},
+						"is_independent": {
+							"type": "boolean",
+							"description": "Whether this step can be executed independently"
+						},
+						"reasoning": {
+							"type": "string",
+							"description": "Clear explanation for independence assessment"
+						}
+					},
+					"required": ["id", "description", "dependencies", "is_independent", "reasoning"]
+				}
+			}
+		},
+		"required": ["steps"]
+	}`
+}
+
+// analyzeDependenciesWithStructuredOutput analyzes dependencies using structured output
+func (po *PlannerOrchestrator) analyzeDependenciesWithStructuredOutput(ctx context.Context, planningResult string) ([]ParallelStep, error) {
 	po.AgentTemplate.GetLogger().Infof("🔍 Analyzing dependencies for parallel execution using structured output")
 
 	// Create plan breakdown agent on-demand
@@ -789,10 +932,10 @@ func (po *PlannerOrchestrator) analyzeDependencies(ctx context.Context, planning
 		return nil, fmt.Errorf("plan breakdown execution failed: %w", err)
 	}
 
-	// Parse the structured response from the execution result
-	var breakdownResponse agents.BreakdownResponse
-	if err := json.Unmarshal([]byte(breakdownResult), &breakdownResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse breakdown response: %w", err)
+	// Generate structured output from the agent response
+	breakdownResponse, err := po.generateStructuredBreakdownResponse(ctx, breakdownResult)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate structured breakdown response: %w", err)
 	}
 
 	// Convert structured response to ParallelStep format
@@ -934,7 +1077,7 @@ func (po *PlannerOrchestrator) executeStepsInParallel(ctx context.Context, steps
 			po.AgentTemplate.GetLogger().Infof("🔄 Starting parallel execution of step %d: %s", index+1, parallelStep.Description)
 
 			// Execute step
-			executionResult, err := po.executeSingleStep(ctx, parallelStep, index)
+			executionResult, err := po.executeSingleStep(ctx, parallelStep, index, steps)
 			if err != nil {
 				errors[index] = err
 				results[index] = ParallelResult{
@@ -994,7 +1137,7 @@ func (po *PlannerOrchestrator) executeStepsInParallel(ctx context.Context, steps
 }
 
 // executeSingleStep executes a single step
-func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step ParallelStep, stepIndex int) (string, error) {
+func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step ParallelStep, stepIndex int, allSteps []ParallelStep) (string, error) {
 	// Create dedicated execution agent for this step
 	executionAgent, err := po.createDedicatedExecutionAgent(stepIndex)
 	if err != nil {
@@ -1005,11 +1148,21 @@ func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step Paral
 	executionObjective := fmt.Sprintf("Execute parallel step %d: %s", stepIndex+1, step.Description)
 	executionAgent.SetOrchestratorContext(stepIndex, 0, executionObjective, "parallel-execution-agent")
 
+	// Generate list of other objectives running in parallel
+	var otherObjectives []string
+	for i, otherStep := range allSteps {
+		if i != stepIndex {
+			otherObjectives = append(otherObjectives, fmt.Sprintf("Step %d: %s", i+1, otherStep.Description))
+		}
+	}
+	otherObjectivesStr := strings.Join(otherObjectives, "; ")
+
 	// Prepare execution template variables
 	executionTemplateVars := map[string]string{
-		"Objective":     step.Description,
-		"StepID":        step.ID,
-		"WorkspacePath": po.workspacePath,
+		"Objective":       step.Description,
+		"StepID":          step.ID,
+		"WorkspacePath":   po.workspacePath,
+		"OtherObjectives": otherObjectivesStr,
 	}
 
 	// Execute the step
@@ -1052,8 +1205,8 @@ func (po *PlannerOrchestrator) validateSingleStep(ctx context.Context, step Para
 
 // createDedicatedExecutionAgent creates a dedicated execution agent for parallel step execution
 func (po *PlannerOrchestrator) createDedicatedExecutionAgent(stepIndex int) (agents.OrchestratorAgent, error) {
-	agentName := fmt.Sprintf("execution-agent-step-%d", stepIndex+1)
-	executionConfig := po.createAgentConfig("execution", agentName, 100, po.AgentTemplate.GetLogger())
+	agentName := fmt.Sprintf("parallel-execution-agent-step-%d", stepIndex+1)
+	executionConfig := po.createAgentConfig("parallel_execution", agentName, 100, po.AgentTemplate.GetLogger())
 
 	// Cast event bridge to the correct type
 	var eventBridge EventBridge
@@ -1061,10 +1214,10 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(stepIndex int) (age
 		eventBridge = bridge
 	}
 
-	executionAgent := agents.NewOrchestratorExecutionAgent(context.Background(), executionConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
+	executionAgent := agents.NewOrchestratorParallelExecutionAgent(context.Background(), executionConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
 
-	if err := po.setupAgent(executionAgent, "execution", agentName, eventBridge); err != nil {
-		return nil, fmt.Errorf("failed to setup execution agent: %w", err)
+	if err := po.setupAgent(executionAgent, "parallel_execution", agentName, eventBridge); err != nil {
+		return nil, fmt.Errorf("failed to setup parallel execution agent: %w", err)
 	}
 
 	return executionAgent, nil

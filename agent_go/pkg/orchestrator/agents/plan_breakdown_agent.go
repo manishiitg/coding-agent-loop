@@ -2,16 +2,12 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"text/template"
-	"time"
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 
 	"github.com/tmc/langchaingo/llms"
@@ -20,8 +16,7 @@ import (
 // PlanBreakdownAgent analyzes dependencies and creates independent steps for parallel execution
 type PlanBreakdownAgent struct {
 	*BaseOrchestratorAgent
-	breakdownPrompts    *prompts.PlanBreakdownPrompts
-	structuredOutputLLM llms.Model
+	breakdownPrompts *prompts.PlanBreakdownPrompts
 }
 
 // NewPlanBreakdownAgent creates a new plan breakdown agent
@@ -36,15 +31,9 @@ func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.Extende
 		eventBridge,
 	)
 
-	// Create LLM model for structured output (reuse the same config as base agent)
-	var structuredOutputLLM llms.Model
-	// The LLM model will be created on-demand when needed
-	// For now, we'll set it to nil and create it in the structured method
-
 	return &PlanBreakdownAgent{
 		BaseOrchestratorAgent: baseAgent,
 		breakdownPrompts:      breakdownPrompts,
-		structuredOutputLLM:   structuredOutputLLM,
 	}
 }
 
@@ -53,27 +42,11 @@ func (pba *PlanBreakdownAgent) Initialize(ctx context.Context) error {
 	return pba.BaseOrchestratorAgent.Initialize(ctx)
 }
 
-// Execute executes the plan breakdown agent with direct dependency analysis
+// Execute executes the plan breakdown agent using the standard agent pattern
 func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
-	// Extract template variables for dependency analysis
-	planningResult := templateVars["PlanningResult"]
-	objective := templateVars["Objective"]
-	workspacePath := templateVars["WorkspacePath"]
-
-	// Call AnalyzeDependencies directly to avoid infinite recursion
-	breakdownResponse, err := pba.AnalyzeDependencies(ctx, planningResult, objective, workspacePath)
-	if err != nil {
-		return "", fmt.Errorf("plan breakdown execution failed: %w", err)
-	}
-
-	// Convert structured response to JSON string
-	jsonResponse, err := json.Marshal(breakdownResponse)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal breakdown response: %w", err)
-	}
-
-	// Return the JSON string result
-	return string(jsonResponse), nil
+	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
+	// This will automatically emit agent start/end events
+	return pba.ExecuteWithInputProcessor(ctx, templateVars, pba.breakdownInputProcessor, conversationHistory)
 }
 
 // breakdownInputProcessor processes inputs specifically for plan breakdown - pure prompt renderer
@@ -108,201 +81,6 @@ type BreakdownStep struct {
 // BreakdownResponse represents the structured response from breakdown analysis
 type BreakdownResponse struct {
 	Steps []BreakdownStep `json:"steps"`
-}
-
-// GetBreakdownSchema returns the JSON schema for breakdown analysis
-func (pba *PlanBreakdownAgent) GetBreakdownSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"id": {
-							"type": "string",
-							"description": "Unique identifier for the step"
-						},
-						"description": {
-							"type": "string",
-							"description": "Clear description of what this step does"
-						},
-						"dependencies": {
-							"type": "array",
-							"items": {
-								"type": "string"
-							},
-							"description": "List of step IDs this step depends on"
-						},
-						"is_independent": {
-							"type": "boolean",
-							"description": "Whether this step can be executed independently"
-						},
-						"reasoning": {
-							"type": "string",
-							"description": "Clear explanation for independence assessment"
-						}
-					},
-					"required": ["id", "description", "dependencies", "is_independent", "reasoning"]
-				}
-			}
-		},
-		"required": ["steps"]
-	}`
-}
-
-// AnalyzeDependencies analyzes dependencies using structured output
-func (pba *PlanBreakdownAgent) AnalyzeDependencies(ctx context.Context, planningResult, objective, workspacePath string) (*BreakdownResponse, error) {
-	pba.AgentTemplate.GetLogger().Infof("🔍 Starting dependency analysis for plan breakdown")
-	startTime := time.Now()
-
-	// Emit structured output start event
-	if pba.GetEventBridge() != nil {
-		startEventData := &events.StructuredOutputEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: startTime,
-			},
-			Operation: "plan_breakdown_analysis",
-			EventType: "structured_output_start",
-		}
-
-		// Create unified event wrapper
-		unifiedEvent := &events.AgentEvent{
-			Type:      events.StructuredOutputStart,
-			Timestamp: startTime,
-			Data:      startEventData,
-		}
-
-		// Emit through the bridge
-		if bridge, ok := pba.GetEventBridge().(mcpagent.AgentEventListener); ok {
-			bridge.HandleEvent(ctx, unifiedEvent)
-			pba.AgentTemplate.GetLogger().Infof("✅ Emitted structured output start event")
-		}
-	}
-
-	// Create LLM model on-demand if not available
-	if pba.structuredOutputLLM == nil {
-		llm, err := pba.BaseOrchestratorAgent.createLLM(ctx)
-		if err != nil {
-			// Emit error event
-			pba.emitStructuredOutputError(ctx, "failed to create LLM model", err, startTime)
-			return nil, fmt.Errorf("failed to create LLM model: %w", err)
-		}
-		pba.structuredOutputLLM = llm
-	}
-
-	// Create template variables for prompt rendering
-	templateVars := map[string]string{
-		"PlanningResult": planningResult,
-		"Objective":      objective,
-		"WorkspacePath":  workspacePath,
-	}
-
-	// Render the prompt template directly (no recursive call)
-	templateStr := pba.breakdownPrompts.AnalyzeDependenciesPrompt
-
-	// Parse and execute the template
-	tmpl, err := template.New("breakdown").Parse(templateStr)
-	if err != nil {
-		// Emit error event
-		pba.emitStructuredOutputError(ctx, "failed to parse breakdown template", err, startTime)
-		return nil, fmt.Errorf("failed to parse breakdown template: %w", err)
-	}
-
-	var promptBuilder strings.Builder
-	err = tmpl.Execute(&promptBuilder, templateVars)
-	if err != nil {
-		// Emit error event
-		pba.emitStructuredOutputError(ctx, "failed to execute breakdown template", err, startTime)
-		return nil, fmt.Errorf("failed to execute breakdown template: %w", err)
-	}
-
-	prompt := promptBuilder.String()
-	schema := pba.GetBreakdownSchema()
-
-	// Create structured output generator
-	config := mcpagent.LangchaingoStructuredOutputConfig{
-		UseJSONMode:    true,
-		ValidateOutput: true,
-		MaxRetries:     2,
-	}
-	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(pba.structuredOutputLLM, config, pba.AgentTemplate.GetLogger())
-
-	// Generate structured output
-	llmResult, err := generator.GenerateStructuredOutput(ctx, prompt, schema)
-	if err != nil {
-		// Emit error event
-		pba.emitStructuredOutputError(ctx, "failed to generate structured breakdown analysis", err, startTime)
-		return nil, fmt.Errorf("failed to generate structured breakdown analysis: %w", err)
-	}
-
-	// Parse the JSON response
-	var response BreakdownResponse
-	if err := json.Unmarshal([]byte(llmResult), &response); err != nil {
-		// Emit error event
-		pba.emitStructuredOutputError(ctx, "failed to parse breakdown response", err, startTime)
-		return nil, fmt.Errorf("failed to parse breakdown response: %w", err)
-	}
-
-	duration := time.Since(startTime)
-
-	// Emit structured output end event
-	if pba.GetEventBridge() != nil {
-		endEventData := &events.StructuredOutputEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Operation: "plan_breakdown_analysis",
-			EventType: "structured_output_end",
-			Duration:  duration.String(),
-		}
-
-		// Create unified event wrapper
-		unifiedEvent := &events.AgentEvent{
-			Type:      events.StructuredOutputEnd,
-			Timestamp: time.Now(),
-			Data:      endEventData,
-		}
-
-		// Emit through the bridge
-		if bridge, ok := pba.GetEventBridge().(mcpagent.AgentEventListener); ok {
-			bridge.HandleEvent(ctx, unifiedEvent)
-			pba.AgentTemplate.GetLogger().Infof("✅ Emitted structured output end event")
-		}
-	}
-
-	pba.AgentTemplate.GetLogger().Infof("✅ Dependency analysis completed successfully with %d steps", len(response.Steps))
-	return &response, nil
-}
-
-// emitStructuredOutputError emits a structured output error event
-func (pba *PlanBreakdownAgent) emitStructuredOutputError(ctx context.Context, operation string, err error, startTime time.Time) {
-	if pba.GetEventBridge() != nil {
-		duration := time.Since(startTime)
-		errorEventData := &events.StructuredOutputEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Operation: operation,
-			EventType: "structured_output_error",
-			Error:     err.Error(),
-			Duration:  duration.String(),
-		}
-
-		// Create unified event wrapper
-		unifiedEvent := &events.AgentEvent{
-			Type:      events.StructuredOutputError,
-			Timestamp: time.Now(),
-			Data:      errorEventData,
-		}
-
-		// Emit through the bridge
-		if bridge, ok := pba.GetEventBridge().(mcpagent.AgentEventListener); ok {
-			bridge.HandleEvent(ctx, unifiedEvent)
-			pba.AgentTemplate.GetLogger().Infof("✅ Emitted structured output error event")
-		}
-	}
 }
 
 // GetAgentType returns the agent type

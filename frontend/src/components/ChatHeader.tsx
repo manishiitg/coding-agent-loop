@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { MessageCircle, Search, Workflow, Settings } from 'lucide-react'
+import { MessageCircle, Search, Workflow, Settings, ExternalLink } from 'lucide-react'
 import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
@@ -7,6 +7,7 @@ import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile } from '../services/api-types'
 import PresetModal from './PresetModal'
 import { useMCPStore } from '../stores/useMCPStore'
+import { APISamplesDialog } from './APISamplesDialog'
 
 interface ChatHeaderProps {
   chatSessionTitle: string
@@ -70,10 +71,14 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     getPresetsForMode
   } = usePresetApplication()
 
+  // Get active preset for current mode
+  const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+
   
   const [showModeSwitch, setShowModeSwitch] = useState(false)
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
+  const [showAPISamples, setShowAPISamples] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
 
   // Preset click handler - now uses the global store
@@ -385,6 +390,18 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           
           {/* Right: Event Controls & Streaming Info */}
           <div className="flex items-center gap-3">
+            {/* External Connection Button - Show when there's an active preset */}
+            {activePreset && (
+              <button
+                onClick={() => setShowAPISamples(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600"
+                title="View External Connection Examples"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>External Connection</span>
+              </button>
+            )}
+            
             {/* Event Mode Toggle */}
             <EventModeToggle />
             
@@ -433,6 +450,12 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         availableServers={enabledServers}
         hideAgentModeSelection={!!editingPreset}
         fixedAgentMode={editingPreset?.agentMode}
+      />
+      
+      {/* API Samples Dialog */}
+      <APISamplesDialog
+        isOpen={showAPISamples}
+        onClose={() => setShowAPISamples(false)}
       />
     </div>
   )

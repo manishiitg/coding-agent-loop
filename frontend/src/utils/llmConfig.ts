@@ -1,10 +1,4 @@
 // Shared LLM configuration utilities
-export interface LLMOption {
-  provider: string;
-  model: string;
-  label: string;
-  description?: string;
-}
 
 // Available models for each provider (shared with sidebar)
 export const OPENROUTER_MODELS = [

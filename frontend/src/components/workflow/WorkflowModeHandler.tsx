@@ -4,6 +4,7 @@ import { WorkflowPhaseHandler } from './WorkflowPhaseHandler'
 import { agentApi } from '../../services/api'
 import { WORKFLOW_PHASES, type WorkflowPhase } from '../../constants/workflow'
 import { useAppStore, useChatStore } from '../../stores'
+import { usePresetApplication } from '../../stores/useGlobalPresetStore'
 
 interface Preset {
   id: string
@@ -34,9 +35,14 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   // Store subscriptions
   const { agentMode } = useAppStore()
   const { 
-    selectedWorkflowPreset,
-    workflowPhase
+    currentWorkflowPhase
   } = useChatStore()
+  
+  const { getActivePreset } = usePresetApplication()
+  
+  // Get active preset for workflow mode
+  const activeWorkflowPreset = getActivePreset('workflow')
+  const selectedWorkflowPreset = activeWorkflowPreset?.id || null
 
   // Use Zustand store for selectedPresetId
   const { selectedPresetId } = useAppStore();
@@ -46,7 +52,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   const [isCreatingWorkflow, setIsCreatingWorkflow] = useState<boolean>(false)
 
   // Use external state from ChatArea
-  const currentPhase = workflowPhase
+  const currentPhase = currentWorkflowPhase
 
   // Load presets function - can be called multiple times
   const loadPresets = useCallback(async () => {

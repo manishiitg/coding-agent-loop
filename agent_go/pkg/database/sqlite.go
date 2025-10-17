@@ -323,30 +323,25 @@ func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*
 	// Build query
 	whereClause := "WHERE 1=1"
 	args := []interface{}{}
-	argIndex := 1
 
 	if req.SessionID != "" {
 		whereClause += " AND session_id = ?"
 		args = append(args, req.SessionID)
-		argIndex++
 	}
 
 	if req.EventType != "" {
 		whereClause += " AND event_type = ?"
 		args = append(args, req.EventType)
-		argIndex++
 	}
 
 	if !req.FromDate.IsZero() {
 		whereClause += " AND timestamp >= ?"
 		args = append(args, req.FromDate)
-		argIndex++
 	}
 
 	if !req.ToDate.IsZero() {
 		whereClause += " AND timestamp <= ?"
 		args = append(args, req.ToDate)
-		argIndex++
 	}
 
 	// Get total count
@@ -457,6 +452,11 @@ func (s *SQLiteDB) Ping(ctx context.Context) error {
 
 // CreatePresetQuery creates a new preset query
 func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQueryRequest) (*PresetQuery, error) {
+	// Validate the request
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
 	// Convert selected servers to JSON
 	selectedServersJSON := "[]"
 	if len(req.SelectedServers) > 0 {
@@ -467,22 +467,35 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 		selectedServersJSON = string(serversJSON)
 	}
 
+	// Prepare LLM config for insert (NULL when absent)
+	var llmConfigParam interface{}
+	if req.LLMConfig != nil {
+		llmConfigBytes, err := json.Marshal(req.LLMConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal LLM config: %w", err)
+		}
+		llmConfigParam = string(llmConfigBytes)
+	} else {
+		llmConfigParam = nil
+	}
+
 	// Set default agent mode if not provided
 	agentMode := req.AgentMode
 	if agentMode == "" {
-		agentMode = "ReAct" // Default to ReAct for backward compatibility
+		agentMode = AgentModeReAct // Use constant for default
 	}
 
 	query := `
-		INSERT INTO preset_queries (label, query, selected_servers, selected_folder, agent_mode, is_predefined, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		RETURNING id, label, query, selected_servers, selected_folder, agent_mode, is_predefined, created_at, updated_at, created_by
+		INSERT INTO preset_queries (label, query, selected_servers, selected_folder, agent_mode, llm_config, is_predefined, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id, label, query, selected_servers, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
 	`
 
 	var preset PresetQuery
 	var selectedServersStr string
-	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, req.SelectedFolder, agentMode, req.IsPredefined, "user").Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &preset.SelectedFolder, &preset.AgentMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	var llmConfigNullStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, req.SelectedFolder, agentMode, llmConfigParam, req.IsPredefined, "user").Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &preset.SelectedFolder, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -490,6 +503,11 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 
 	// Parse selected servers JSON
 	preset.SelectedServers = selectedServersStr
+	if llmConfigNullStr.Valid {
+		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+	} else {
+		preset.LLMConfig = json.RawMessage("null")
+	}
 
 	return &preset, nil
 }
@@ -497,15 +515,16 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 // GetPresetQuery retrieves a preset query by ID
 func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
 	query := `
-		SELECT id, label, query, selected_servers, agent_mode, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		WHERE id = ?
 	`
 
 	var preset PresetQuery
 	var selectedServersStr string
+	var llmConfigNullStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &preset.AgentMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &preset.SelectedFolder, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -515,11 +534,21 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	}
 
 	preset.SelectedServers = selectedServersStr
+	if llmConfigNullStr.Valid {
+		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+	} else {
+		preset.LLMConfig = nil
+	}
 	return &preset, nil
 }
 
 // UpdatePresetQuery updates a preset query
 func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *UpdatePresetQueryRequest) (*PresetQuery, error) {
+	// Validate the request
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
 	// Build dynamic update query
 	updateFields := []string{}
 	args := []interface{}{}
@@ -563,6 +592,16 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 		argIndex++
 	}
 
+	if req.LLMConfig != nil {
+		llmConfigBytes, err := json.Marshal(req.LLMConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal LLM config: %w", err)
+		}
+		updateFields = append(updateFields, "llm_config = ?")
+		args = append(args, string(llmConfigBytes))
+		argIndex++
+	}
+
 	if len(updateFields) == 0 {
 		return nil, fmt.Errorf("no fields to update")
 	}
@@ -574,13 +613,14 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 		UPDATE preset_queries
 		SET %s
 		WHERE id = ?
-		RETURNING id, label, query, selected_servers, selected_folder, agent_mode, is_predefined, created_at, updated_at, created_by
+		RETURNING id, label, query, selected_servers, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
 	`, strings.Join(updateFields, ", "))
 
 	var preset PresetQuery
 	var selectedServersStr string
+	var llmConfigNullStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &preset.SelectedFolder, &preset.AgentMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &preset.SelectedFolder, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -590,6 +630,11 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 	}
 
 	preset.SelectedServers = selectedServersStr
+	if llmConfigNullStr.Valid {
+		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+	} else {
+		preset.LLMConfig = nil
+	}
 	return &preset, nil
 }
 
@@ -626,7 +671,7 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 
 	// Get presets
 	query := `
-		SELECT id, label, query, selected_servers, selected_folder, agent_mode, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
@@ -643,14 +688,20 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 		var preset PresetQuery
 		var selectedServersStr string
 		var selectedFolderStr sql.NullString
+		var llmConfigNullStr sql.NullString
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedFolderStr, &preset.AgentMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
 		}
 
 		preset.SelectedServers = selectedServersStr
+		if llmConfigNullStr.Valid {
+			preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+		} else {
+			preset.LLMConfig = json.RawMessage("null")
+		}
 		if selectedFolderStr.Valid {
 			preset.SelectedFolder = selectedFolderStr.String
 		} else {

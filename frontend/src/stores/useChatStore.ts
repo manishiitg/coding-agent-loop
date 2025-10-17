@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { PollingEvent } from '../services/api-types'
-import type { StoreActions, WorkflowPhase } from './types'
+import type { StoreActions } from './types'
+import type { WorkflowPhase } from '../constants/workflow'
+import { useAppStore } from './useAppStore'
 
 interface ChatState extends StoreActions {
   // Chat streaming state
@@ -21,6 +23,7 @@ interface ChatState extends StoreActions {
   
   // Session state
   sessionId: string | null
+  hasActiveChat: boolean
   
   // Chat UI state
   autoScroll: boolean
@@ -38,10 +41,9 @@ interface ChatState extends StoreActions {
   sessionState: 'loading' | 'active' | 'completed' | 'not_found' | 'error'
   isCheckingActiveSessions: boolean
   
-  // Workflow state
-  selectedWorkflowPreset: string | null
-  workflowPhase: WorkflowPhase
-  workflowPresetQueryId: string | null
+  // Workflow execution state (not preset management)
+  currentWorkflowPhase: WorkflowPhase
+  currentWorkflowQueryId: string | null
   
   // Toast notifications
   toasts: Array<{ id: string; message: string; type: 'success' | 'info' | 'error' | 'warning' }>
@@ -65,6 +67,7 @@ interface ChatState extends StoreActions {
   
   // Session actions
   setSessionId: (id: string | null) => void
+  setHasActiveChat: (active: boolean) => void
   
   // UI actions
   setAutoScroll: (autoScroll: boolean) => void
@@ -82,10 +85,9 @@ interface ChatState extends StoreActions {
   setSessionState: (state: 'loading' | 'active' | 'completed' | 'not_found' | 'error') => void
   setIsCheckingActiveSessions: (checking: boolean) => void
   
-  // Workflow actions
-  setSelectedWorkflowPreset: (preset: string | null) => void
-  setWorkflowPhase: (phase: WorkflowPhase) => void
-  setWorkflowPresetQueryId: (id: string | null) => void
+  // Workflow execution actions
+  setCurrentWorkflowPhase: (phase: WorkflowPhase) => void
+  setCurrentWorkflowQueryId: (id: string | null) => void
   
   // Toast actions
   addToast: (message: string, type: 'success' | 'info' | 'error' | 'warning') => void
@@ -111,6 +113,7 @@ export const useChatStore = create<ChatState>()(
       currentUserMessage: '',
       showUserMessage: true,
       sessionId: null,
+      hasActiveChat: false,
       autoScroll: true,
       lastScrollTop: 0,
       finalResponse: '',
@@ -119,9 +122,8 @@ export const useChatStore = create<ChatState>()(
       isApprovingWorkflow: false,
       sessionState: 'loading',
       isCheckingActiveSessions: false,
-      selectedWorkflowPreset: null,
-      workflowPhase: 'PRE_VERIFICATION' as WorkflowPhase,
-      workflowPresetQueryId: null,
+      currentWorkflowPhase: 'pre-verification' as WorkflowPhase,
+      currentWorkflowQueryId: null,
       toasts: [],
 
       // Actions
@@ -186,6 +188,10 @@ export const useChatStore = create<ChatState>()(
         set({ sessionId: id })
       },
 
+      setHasActiveChat: (active) => {
+        set({ hasActiveChat: active })
+      },
+
       // UI actions
       setAutoScroll: (autoScroll) => {
         set({ autoScroll })
@@ -222,17 +228,13 @@ export const useChatStore = create<ChatState>()(
         set({ isCheckingActiveSessions: checking })
       },
 
-      // Workflow actions
-      setSelectedWorkflowPreset: (preset) => {
-        set({ selectedWorkflowPreset: preset })
+      // Workflow execution actions
+      setCurrentWorkflowPhase: (phase) => {
+        set({ currentWorkflowPhase: phase })
       },
 
-      setWorkflowPhase: (phase) => {
-        set({ workflowPhase: phase })
-      },
-
-      setWorkflowPresetQueryId: (id) => {
-        set({ workflowPresetQueryId: id })
+      setCurrentWorkflowQueryId: (id) => {
+        set({ currentWorkflowQueryId: id })
       },
 
       // Toast actions
@@ -266,6 +268,7 @@ export const useChatStore = create<ChatState>()(
           currentUserMessage: '',
           showUserMessage: true,
           sessionId: null,
+          hasActiveChat: false,
           autoScroll: true,
           lastScrollTop: 0,
           finalResponse: '',
@@ -274,11 +277,13 @@ export const useChatStore = create<ChatState>()(
           isApprovingWorkflow: false,
           sessionState: 'loading',
           isCheckingActiveSessions: false,
-          selectedWorkflowPreset: null,
-          workflowPhase: 'PRE_VERIFICATION' as WorkflowPhase,
-          workflowPresetQueryId: null,
+          currentWorkflowPhase: 'pre-verification' as WorkflowPhase,
+          currentWorkflowQueryId: null,
           toasts: []
         })
+        
+        // Clear the requiresNewChat flag after successful chat reset
+        useAppStore.getState().clearRequiresNewChat()
       },
 
       isAtBottom: (element) => {

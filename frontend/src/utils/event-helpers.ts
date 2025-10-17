@@ -36,7 +36,7 @@ export const isValidJSON = (str: string): boolean => {
  * @param jsonString - The JSON string to parse
  * @returns Parsed object or null if invalid JSON
  */
-export const safeParseJSON = (jsonString: string): any => {
+export const safeParseJSON = (jsonString: string): unknown => {
   try {
     return JSON.parse(jsonString)
   } catch {

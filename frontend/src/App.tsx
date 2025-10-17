@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
@@ -8,7 +8,9 @@ import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
 import { resetSessionId } from "./services/api";
 import type { ActiveSessionInfo } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
-import { useAppStore, useLLMStore, useMCPStore } from "./stores";
+import { ModeSelectionModal } from "./components/ModeSelectionModal";
+import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore } from "./stores";
+import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
 
@@ -27,17 +29,23 @@ function App() {
   const chatAreaRef = useRef<ChatAreaRef>(null)
 
   // Store subscriptions
-  const { setAgentMode } = useAppStore()
+  const { setAgentMode, setSidebarMinimized } = useAppStore()
+  const { hasCompletedInitialSetup, selectedModeCategory } = useModeStore()
   
   // Load LLM defaults from backend
   useLLMDefaults()
   
-  // Legacy state for backward compatibility (will be removed)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [currentPresetServers, setCurrentPresetServers] = useState<string[]>([]) // Used in onPresetSelect
-  const [selectedPresetFolder, setSelectedPresetFolder] = useState<string | null>(null)
-  
   // App Store subscriptions for workspace and chat
+  const {
+    clearFileContext,
+    setChatSessionId,
+    setChatSessionTitle,
+    setSelectedPresetId,
+    sidebarMinimized,
+    workspaceMinimized,
+    setWorkspaceMinimized
+  } = useAppStore()
+  
   const {
     selectedFile,
     fileContent,
@@ -45,16 +53,10 @@ function App() {
     showFileContent,
     setShowFileContent,
     showRevisionsModal,
-    setShowRevisionsModal,
-    clearFileContext,
-    setChatSessionId,
-    setChatSessionTitle,
-    setSelectedPresetId,
-    sidebarMinimized,
-    setSidebarMinimized,
-    workspaceMinimized,
-    setWorkspaceMinimized
-  } = useAppStore()
+    setShowRevisionsModal
+  } = useWorkspaceStore()
+  
+  const { clearActivePreset, applyPreset } = useGlobalPresetStore()
 
   const hasInitializedRef = useRef(false)
 
@@ -71,7 +73,23 @@ function App() {
     
     // Initialize LLM store
     useLLMStore.getState().refreshAvailableLLMs()
+    
+    // Initialize global preset store
+    useGlobalPresetStore.getState().refreshPresets()
   }, [])
+
+  // Auto-minimize sidebar when mode is selected or preset is selected
+  useEffect(() => {
+    if (selectedModeCategory && !sidebarMinimized) {
+      setSidebarMinimized(true)
+    }
+    // NOTE: Only include selectedModeCategory and setSidebarMinimized in dependencies
+    // Do NOT include sidebarMinimized as it would cause the effect to re-run every time
+    // the sidebar state changes, preventing manual toggle functionality after auto-minimize
+  }, [selectedModeCategory, setSidebarMinimized])
+
+  // Show mode selection modal if initial setup not completed
+  const showModeSelection = !hasCompletedInitialSetup
 
   // Start new chat function
   const startNewChat = useCallback(() => {
@@ -85,12 +103,51 @@ function App() {
     clearFileContext();
     setChatSessionId(''); // Clear chat session ID to exit historical mode
     setChatSessionTitle('');
-    setSelectedPresetId(null); // Clear selected preset filter
-    setSelectedPresetFolder(null); // Clear selected preset folder
+    
+    // Preserve active preset for workflow and deep-research modes, clear for other modes
+    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'deep-research') {
+      // For workflow and deep-research modes, preserve the active preset
+      const { getActivePreset } = useGlobalPresetStore.getState()
+      const activePreset = getActivePreset(selectedModeCategory)
+      if (activePreset) {
+        // Keep the preset selected, just clear the filter
+        setSelectedPresetId(null) // Clear filter but keep preset active
+        // Don't clear the activePresetId in global store for these modes
+        // The preset will be re-applied after chat state is reset
+      } else {
+        // No preset selected, clear everything
+        setSelectedPresetId(null)
+        clearActivePreset(selectedModeCategory)
+      }
+    } else {
+      // For other modes (chat), clear preset state as before
+      setSelectedPresetId(null); // Clear selected preset filter
+      if (selectedModeCategory) {
+        clearActivePreset(selectedModeCategory); // Also clear in global store
+      }
+    }
     
     // Reset the global session ID to force generation of a new one
     resetSessionId();
-  }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId]);
+    
+    // Clear the requiresNewChat flag after successful new chat initialization
+    useAppStore.getState().clearRequiresNewChat();
+    
+    // Re-apply active preset for workflow and deep-research modes after chat reset
+    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'deep-research') {
+      const { getActivePreset } = useGlobalPresetStore.getState()
+      const activePreset = getActivePreset(selectedModeCategory)
+      if (activePreset) {
+        // Use setTimeout to ensure chat state reset is complete before applying preset
+        setTimeout(() => {
+          const result = applyPreset(activePreset.id, selectedModeCategory)
+          if (!result.success) {
+            console.error('[NEW_CHAT] Failed to re-apply preset:', result.error)
+          }
+        }, 100)
+      }
+    }
+  }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
 
   // Handle chat session selection
   const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => {
@@ -176,22 +233,16 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        {/* Mode Selection Modal */}
+        <ModeSelectionModal 
+          isOpen={showModeSelection}
+          onClose={() => {}} // Modal handles its own closing
+        />
+        
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
             <WorkspaceSidebar
-              onPresetSelect={(servers, agentMode) => {
-                // Clear previous file context when switching presets
-                clearFileContext();
-                setCurrentPresetServers(servers);
-                if (agentMode) {
-                  setAgentMode(agentMode);
-                }
-              }}
-              onPresetFolderSelect={(folderPath) => {
-                // Store the selected preset folder path
-                setSelectedPresetFolder(folderPath || null);
-              }}
               onPresetAdded={() => {
                 // Refresh workflow presets when a new preset is added
                 if (chatAreaRef.current) {
@@ -199,7 +250,6 @@ function App() {
                 }
               }}
               onChatSessionSelect={handleChatSessionSelect}
-              onClearPresetFilter={() => setSelectedPresetId(null)}
               minimized={sidebarMinimized}
               onToggleMinimize={toggleSidebarMinimize}
             />
@@ -212,8 +262,6 @@ function App() {
               <ChatArea
                 ref={chatAreaRef}
                 onNewChat={startNewChat}
-                selectedPresetFolder={selectedPresetFolder}
-                currentPresetServers={currentPresetServers}
               />
             </div>
             
@@ -300,7 +348,7 @@ function App() {
           isOpen={showRevisionsModal}
           onClose={() => setShowRevisionsModal(false)}
           filepath={selectedFile?.path || ''}
-          onRestoreVersion={(version) => {
+          onRestoreVersion={() => {
             // TODO: Implement version restoration
             setShowRevisionsModal(false)
           }}

@@ -1,14 +1,14 @@
-import { useEffect, useCallback, useRef } from 'react'
+import { useEffect, useCallback, useRef, useMemo } from 'react'
 import { Plus, Upload, FolderPlus, ChevronDown } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
+import { processHierarchicalFiles } from '../utils/fileUtils'
 import GitSyncStatus from './workspace/GitSyncStatus'
 import SemanticSearchSync from './workspace/SemanticSearchSync'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { useFolderExpansion } from '../hooks/useFolderExpansion'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores'
 
@@ -24,13 +24,9 @@ export default function Workspace({
   // Store subscriptions
   const {
     chatFileContext,
-    addFileToContext,
-    setSelectedFile,
-    setFileContent,
-    setLoadingFileContent,
-    setShowFileContent
+    addFileToContext
   } = useAppStore()
-  
+
   const {
     files,
     setFiles,
@@ -57,24 +53,23 @@ export default function Workspace({
     closeDeleteAllFilesDialog,
     showActionsDropdown,
     setShowActionsDropdown,
-    removeFile
+    removeFile,
+    expandedFolders,
+    expandFoldersForFile,
+    toggleFolder,
+    expandFoldersToLevel,
+    highlightedFile,
+    setSelectedFile,
+    setFileContent,
+    setLoadingFileContent,
+    setShowFileContent
   } = useWorkspaceStore()
-  
-  // Custom hooks for file highlighting and folder expansion
-  const { expandedFolders, expandFoldersForFile, toggleFolder, expandFoldersToLevel } = useFolderExpansion()
   
   // Ref for the workspace scrollable container
   const workspaceScrollRef = useRef<HTMLDivElement>(null)
   
-  // API now returns hierarchical structure, no need to reconstruct
-  const processHierarchicalFiles = (files: PlannerFile[]): PlannerFile[] => {
-    // API returns hierarchical structure directly, just ensure type is set correctly
-    return files.map(file => ({
-      ...file,
-      type: file.type || 'file', // Ensure type is set
-      children: file.children || [] // Ensure children array exists
-    }))
-  }
+  // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
+  const emptyLoadingSet = useMemo(() => new Set<string>(), [])
   
   // Fetch files from Planner
   const fetchFiles = useCallback(async () => {
@@ -101,9 +96,6 @@ export default function Workspace({
       setLoading(false)
     }
   }, [expandFoldersToLevel, setLoading, setError, setFiles])
-  
-  // Use workspace store for file highlighting
-  const { highlightedFile } = useWorkspaceStore()
   
   // Function to scroll to highlighted file
   const scrollToHighlightedFile = useCallback((filepath: string) => {
@@ -432,6 +424,7 @@ export default function Workspace({
               <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
                 Workspace
               </h2>
+              {/* Mode-specific workspace info */}
             </div>
             <div className="flex items-center gap-2">
               <Tooltip>
@@ -611,7 +604,7 @@ export default function Workspace({
                 onDeleteAllFilesInFolder={handleDeleteAllFilesInFolder}
                 onRetry={fetchFiles}
                 expandedFolders={expandedFolders}
-                loadingChildren={new Set()}
+                loadingChildren={emptyLoadingSet}
                 chatFileContext={chatFileContext}
                 addFileToContext={addFileToContext}
                 highlightedFile={highlightedFile}

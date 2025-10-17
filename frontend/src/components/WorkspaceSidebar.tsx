@@ -11,13 +11,11 @@ import { useAppStore, useMCPStore, useChatStore, useLLMStore } from '../stores'
 
 interface WorkspaceSidebarProps {
   // Presets (callbacks only)
-  onPresetSelect: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void
   onPresetFolderSelect?: (folderPath?: string) => void
   onPresetAdded?: () => void
   
   // Chat session selection
   onChatSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
-  onClearPresetFilter?: () => void
   
   // Minimize functionality
   minimized: boolean
@@ -25,17 +23,15 @@ interface WorkspaceSidebarProps {
 }
 
 export default function WorkspaceSidebar({
-  onPresetSelect,
   onPresetFolderSelect,
   onPresetAdded,
   onChatSessionSelect,
-  onClearPresetFilter,
   minimized,
   onToggleMinimize
 }: WorkspaceSidebarProps) {
   
   // Store subscriptions
-  const { agentMode, setAgentMode, setCurrentQuery, selectedPresetId } = useAppStore()
+  const { agentMode, setAgentMode, setCurrentQuery } = useAppStore()
   const { getAvailableServers, showMCPDetails, setShowMCPDetails } = useMCPStore()
   const { isStreaming } = useChatStore()
   const { showLLMModal, setShowLLMModal } = useLLMStore()
@@ -79,7 +75,7 @@ export default function WorkspaceSidebar({
               </svg>
             </button>
           )}
-          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘4</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -98,7 +94,7 @@ export default function WorkspaceSidebar({
               </button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>{minimized ? "Expand sidebar" : "Minimize sidebar"} (Ctrl+4)</p>
+              <p>{minimized ? "Expand sidebar" : "Minimize sidebar"} (Ctrl+5)</p>
             </TooltipContent>
           </Tooltip>
         </div>
@@ -120,12 +116,13 @@ export default function WorkspaceSidebar({
             {/* Preset Queries */}
             <PresetQueriesSection
               availableServers={availableServers}
-              onPresetSelect={onPresetSelect}
               onPresetFolderSelect={onPresetFolderSelect}
               setCurrentQuery={setCurrentQuery}
               isStreaming={isStreaming}
               onPresetAdded={onPresetAdded}
             />
+
+
 
             {/* Chat History */}
             <ChatHistorySection
@@ -134,8 +131,6 @@ export default function WorkspaceSidebar({
                   onChatSessionSelect(sessionId, sessionTitle, sessionType, activeSessionInfo)
                 }
               }}
-              selectedPresetId={selectedPresetId}
-              onClearFilter={onClearPresetFilter}
             />
           </div>
         </div>
@@ -143,12 +138,40 @@ export default function WorkspaceSidebar({
 
       {/* Minimized Icons */}
       {minimized && (
-        <div className="flex-1 flex flex-col items-center py-4 space-y-4">
+        <div 
+          onClick={onToggleMinimize}
+          className="flex-1 flex flex-col items-center py-4 space-y-4 cursor-pointer"
+          title="Click to expand sidebar"
+        >
+          {/* Expand Sidebar Button */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleMinimize()
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                title="Expand sidebar"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand sidebar (Ctrl+5)</p>
+            </TooltipContent>
+          </Tooltip>
+
           {/* Agent Mode Icon */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setAgentMode(agentMode === 'ReAct' ? 'simple' : 'ReAct')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setAgentMode(agentMode === 'ReAct' ? 'simple' : 'ReAct')
+                }}
                 className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -168,7 +191,10 @@ export default function WorkspaceSidebar({
 
           {/* MCP Servers Icon */}
           <button
-            onClick={() => setShowMCPDetails(!showMCPDetails)}
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowMCPDetails(!showMCPDetails)
+            }}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
             title="MCP Servers"
           >

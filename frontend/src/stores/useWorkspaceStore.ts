@@ -2,17 +2,7 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import { agentApi } from '../services/api'
-import { findFileInTree } from '../utils/fileUtils'
-
-// Helper functions
-const processHierarchicalFiles = (files: PlannerFile[]): PlannerFile[] => {
-  // API returns hierarchical structure directly, just ensure type is set correctly
-  return files.map(file => ({
-    ...file,
-    type: file.type || 'file', // Ensure type is set
-    children: file.children || [] // Ensure children array exists
-  }))
-}
+import { findFileInTree, extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
 
 interface WorkspaceState {
   // File Management
@@ -26,6 +16,18 @@ interface WorkspaceState {
   // Search/Filter
   searchQuery: string
   setSearchQuery: (query: string) => void
+  
+  // Selected file and content
+  selectedFile: {name: string, path: string} | null
+  setSelectedFile: (file: {name: string, path: string} | null) => void
+  fileContent: string
+  setFileContent: (content: string) => void
+  loadingFileContent: boolean
+  setLoadingFileContent: (loading: boolean) => void
+  showFileContent: boolean
+  setShowFileContent: (show: boolean) => void
+  showRevisionsModal: boolean
+  setShowRevisionsModal: (show: boolean) => void
   
   // Upload Dialog
   uploadDialog: {
@@ -81,9 +83,15 @@ interface WorkspaceState {
   
   // File highlighting
   highlightedFile: string | null
-  highlightTimeout: NodeJS.Timeout | null
+  highlightTimeout: ReturnType<typeof setTimeout> | null
   highlightFile: (filepath: string) => Promise<void>
   clearHighlight: () => void
+  
+  // Folder expansion
+  expandedFolders: Set<string>
+  expandFoldersForFile: (filepath: string) => void
+  toggleFolder: (folderPath: string) => void
+  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number) => void
   
   // Auto-scroll functionality
   scrollToFile: (filepath: string) => Promise<void>
@@ -100,6 +108,11 @@ const initialState = {
   loading: true,
   error: null,
   searchQuery: '',
+  selectedFile: null,
+  fileContent: '',
+  loadingFileContent: false,
+  showFileContent: false,
+  showRevisionsModal: false,
   uploadDialog: {
     isOpen: false,
     isLoading: false,
@@ -122,7 +135,8 @@ const initialState = {
   },
   showActionsDropdown: false,
   highlightedFile: null,
-  highlightTimeout: null
+  highlightTimeout: null,
+  expandedFolders: new Set<string>()
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()(
@@ -137,6 +151,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       
       // Search/Filter
       setSearchQuery: (searchQuery) => set({ searchQuery }),
+      
+      // Selected file and content
+      setSelectedFile: (file) => set({ selectedFile: file }),
+      setFileContent: (content) => set({ fileContent: content }),
+      setLoadingFileContent: (loading) => set({ loadingFileContent: loading }),
+      setShowFileContent: (show) => set({ showFileContent: show }),
+      setShowRevisionsModal: (show) => set({ showRevisionsModal: show }),
       
       // Upload Dialog
       setUploadDialog: (dialog) => set((state) => ({
@@ -406,18 +427,54 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
       },
       
+      // Folder expansion methods
+      expandFoldersForFile: (filepath: string) => {
+        const foldersToExpand = extractFolderPaths(filepath)
+        
+        set(state => ({
+          expandedFolders: new Set([...state.expandedFolders, ...foldersToExpand])
+        }))
+      },
+      
+      toggleFolder: (folderPath: string) => {
+        set(state => {
+          const newExpanded = new Set(state.expandedFolders)
+          if (newExpanded.has(folderPath)) {
+            newExpanded.delete(folderPath)
+          } else {
+            newExpanded.add(folderPath)
+          }
+          return { expandedFolders: newExpanded }
+        })
+      },
+      
+      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2) => {
+        const foldersToExpand = new Set<string>()
+        
+        const collectFoldersAtLevel = (fileList: PlannerFile[], currentLevel: number) => {
+          fileList.forEach(file => {
+            if (file.type === 'folder' && currentLevel < maxLevel) {
+              foldersToExpand.add(file.filepath)
+              if (file.children) {
+                collectFoldersAtLevel(file.children, currentLevel + 1)
+              }
+            }
+          })
+        }
+        
+        collectFoldersAtLevel(files, 0)
+        set({ expandedFolders: foldersToExpand })
+      },
+      
       // Reset all state
-      resetWorkspaceState: () => set(initialState)
+      resetWorkspaceState: () => set({
+        ...initialState,
+        expandedFolders: new Set<string>(),
+        highlightTimeout: null
+      })
     }),
     {
-      name: 'workspace-store',
-      partialize: (state: WorkspaceState) => ({
-        // Only persist search query and dialog states
-        searchQuery: state.searchQuery,
-        uploadDialog: state.uploadDialog,
-        createFolderDialog: state.createFolderDialog,
-        deleteDialog: state.deleteDialog
-      })
+      name: 'workspace-store'
     }
   )
 )

@@ -35,7 +35,10 @@ export default function LLMConfigurationSummary({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setShowLLMModal(true)}
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowLLMModal(true)
+              }}
               className="p-2 text-muted-foreground hover:text-foreground transition-colors"
               title="LLM Configuration"
             >
@@ -103,7 +106,10 @@ export default function LLMConfigurationSummary({
 
             {/* Configure Button */}
             <button
-              onClick={() => setShowLLMModal(true)}
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowLLMModal(true)
+              }}
               className="w-full px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium rounded-md transition-colors focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background"
             >
               Configure LLM Settings
@@ -122,7 +128,10 @@ export default function LLMConfigurationSummary({
         {!isExpanded && (
           <div 
             className="bg-card rounded-md p-3 cursor-pointer hover:bg-secondary transition-colors"
-            onClick={() => setShowLLMModal(true)}
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowLLMModal(true)
+            }}
           >
             <div className="flex items-center justify-between">
               <div>

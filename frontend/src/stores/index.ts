@@ -4,6 +4,7 @@ export { useLLMStore } from './useLLMStore'
 export { useMCPStore } from './useMCPStore'
 export { useChatStore } from './useChatStore'
 export { useWorkspaceStore } from './useWorkspaceStore'
+export { useGlobalPresetStore, usePresetApplication, usePresetManagement, usePresetState } from './useGlobalPresetStore'
 
 // Export types
 export type * from './types'
@@ -21,4 +22,8 @@ export const initializeStores = async () => {
   // Initialize workspace store
   const { useWorkspaceStore } = await import('./useWorkspaceStore')
   useWorkspaceStore.getState()
+  
+  // Initialize global preset store
+  const { useGlobalPresetStore } = await import('./useGlobalPresetStore')
+  await useGlobalPresetStore.getState().refreshPresets()
 }

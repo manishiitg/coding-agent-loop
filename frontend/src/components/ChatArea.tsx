@@ -2,12 +2,11 @@ import React, { useEffect, useRef, useCallback, forwardRef, useImperativeHandle,
 import { agentApi, type AgentQueryRequest } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
 import { EXECUTION_MODES } from '../services/api-types'
-import { EventModeProvider, EventModeToggle } from './events'
+import { EventModeProvider } from './events'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
-import { getAgentModeDescription } from '../utils/agentModeDescriptions'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { WORKFLOW_PHASES } from '../constants/workflow'
@@ -16,16 +15,16 @@ import { WorkflowExplanation } from './WorkflowExplanation'
 import { ReActExplanation } from './ReActExplanation'
 import GuidanceFloatingIcon from './GuidanceFloatingIcon'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
+import { useModeStore } from '../stores/useModeStore'
+import { ModeEmptyState } from './ModeEmptyState'
+import { PresetSelectionOverlay } from './PresetSelectionOverlay'
+import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
+import { ChatHeader } from './ChatHeader'
 
 interface ChatAreaProps {
   // New chat handler
   onNewChat: () => void
-  
-  // Selected preset folder path
-  selectedPresetFolder?: string | null
-  
-  // Current preset servers (from preset selection)
-  currentPresetServers?: string[]
 }
 
 // Ref interface for ChatArea component
@@ -38,9 +37,7 @@ export interface ChatAreaRef {
 
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
-  onNewChat,
-  selectedPresetFolder,
-  currentPresetServers = []
+  onNewChat
 }, ref) => {
   // Store subscriptions
   const { 
@@ -50,8 +47,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     chatFileContext,
     clearFileContext,
     chatSessionId,
-    chatSessionTitle
+    chatSessionTitle,
+    requiresNewChat
   } = useAppStore()
+  
+  const { selectedModeCategory } = useModeStore()
+  const { getActivePreset, applyPreset, currentPresetServers, clearActivePreset } = usePresetApplication()
   
   const { 
     primaryConfig: llmConfig,
@@ -85,6 +86,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setShowUserMessage,
     sessionId,
     setSessionId,
+    setHasActiveChat,
     autoScroll,
     setAutoScroll,
     lastScrollTop,
@@ -115,6 +117,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     isAtBottom
   } = useChatStore()
 
+  // Get active preset for workflow mode
+  const activeWorkflowPreset = getActivePreset('workflow')
+  const selectedWorkflowPreset = activeWorkflowPreset?.id || null
+
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
     if (agentMode !== 'orchestrator' && agentMode !== 'workflow') return true; // No validation needed for other modes
@@ -138,6 +144,109 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Use currentPresetServers from props (passed from App.tsx when preset is selected)
   const primaryLLM = getCurrentLLMOption()
+
+  // State for preset selection overlay
+  const [showPresetSelection, setShowPresetSelection] = useState(false)
+  const [pendingModeCategory, setPendingModeCategory] = useState<'deep-research' | 'workflow' | null>(null)
+  
+  // State for mode switch dialog
+  const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
+  const [pendingModeSwitch, setPendingModeSwitch] = useState<'chat' | 'deep-research' | 'workflow' | null>(null)
+  
+
+  // Handle mode selection from dropdown
+  const handleModeSelect = (category: 'chat' | 'deep-research' | 'workflow') => {
+    if (category === selectedModeCategory) {
+      return
+    }
+
+    // Check if there's an active chat session
+    const hasActiveChat = events.length > 0 || isStreaming
+    
+    if (hasActiveChat) {
+      // Show mode switch dialog for confirmation
+      setPendingModeSwitch(category)
+      setShowModeSwitchDialog(true)
+    } else {
+      // Switch mode directly
+      handleModeSwitchWithPreset(category)
+      // Clear backend session and reset UI after mode switch
+      handleNewChat()
+    }
+  }
+
+  // Handle mode switching with preset selection for Deep Research/Workflow
+  const handleModeSwitchWithPreset = (category: 'chat' | 'deep-research' | 'workflow') => {
+    if (category === 'chat') {
+      // Chat mode doesn't need preset selection
+      // Clear any active presets when switching to chat mode
+      clearActivePreset('deep-research')
+      clearActivePreset('workflow')
+      switchMode(category)
+    } else {
+      // Deep Research or Workflow mode - always show preset selection when switching between modes
+      // Clear the current mode's preset first
+      if (selectedModeCategory === 'deep-research') {
+        clearActivePreset('deep-research')
+      } else if (selectedModeCategory === 'workflow') {
+        clearActivePreset('workflow')
+      }
+      
+      // Check if target mode already has a preset
+      const activePreset = getActivePreset(category)
+      
+      if (activePreset) {
+        // Preset already selected, switch mode directly
+        switchMode(category)
+      } else {
+        // No preset selected, show preset selection overlay
+        setPendingModeCategory(category)
+        setShowPresetSelection(true)
+      }
+    }
+  }
+
+  // Switch mode function
+  const switchMode = (category: 'chat' | 'deep-research' | 'workflow') => {
+    const { setModeCategory, getAgentModeFromCategory } = useModeStore.getState()
+    const { setAgentMode } = useAppStore.getState()
+    
+    setModeCategory(category)
+    
+    // Set the corresponding agent mode using centralized mapping
+    const agentModeToSet = getAgentModeFromCategory(category) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+    setAgentMode(agentModeToSet)
+    
+    // Start a new chat when switching modes
+    // Note: startNewChat will be handled by the parent component
+  }
+
+  // Handle preset selection from overlay
+  const handlePresetSelected = (presetId: string) => {
+    if (pendingModeCategory) {
+      // Now switch to the mode
+      switchMode(pendingModeCategory)
+      
+      // Apply the preset after mode switch (this will also set the active preset ID)
+      setTimeout(() => {
+        const result = applyPreset(presetId, pendingModeCategory)
+        if (!result.success) {
+          console.error('[MODE_SWITCH] Failed to apply preset:', result.error)
+        }
+      }, 100)
+      
+      // Close overlay
+      setShowPresetSelection(false)
+      setPendingModeCategory(null)
+    }
+  }
+
+  // Handle preset selection overlay close
+  const handlePresetSelectionClose = () => {
+    setShowPresetSelection(false)
+    setPendingModeCategory(null)
+  }
+
   
   // Filter toasts to only include types supported by ToastContainer
   const filteredToasts = toasts.filter((toast: { type: string }) => toast.type === 'success' || toast.type === 'info') as Array<{id: string, message: string, type: 'success' | 'info'}>
@@ -146,6 +255,23 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   const handleGuidanceChange = useCallback(() => {
     // Guidance updated
   }, [])
+  
+  // Handle mode switch dialog confirmation
+  const handleModeSwitchConfirm = () => {
+    if (pendingModeSwitch) {
+      handleModeSwitchWithPreset(pendingModeSwitch)
+      // Clear backend session and reset UI after mode switch
+      handleNewChat()
+    }
+    setShowModeSwitchDialog(false)
+    setPendingModeSwitch(null)
+  }
+  
+  // Handle mode switch dialog cancellation
+  const handleModeSwitchCancel = () => {
+    setShowModeSwitchDialog(false)
+    setPendingModeSwitch(null)
+  }
   
   // Add ref for auto-scrolling
   const chatContentRef = useRef<HTMLDivElement>(null)
@@ -167,6 +293,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   
   // Selected preset folder state
   const lastEventIndexRef = useRef<number>(0)
+  const totalEventsRef = useRef<number>(0)
 
   // Toast wrapper for components that only support limited types
   const addToastLimited = useCallback((message: string, type: 'success' | 'info') => {
@@ -277,16 +404,21 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   }, [finalResponse, autoScroll, scrollToBottom])
 
 
-  // Update ref when lastEventIndex changes
+  // Update refs when values change
   useEffect(() => {
     lastEventIndexRef.current = lastEventIndex
   }, [lastEventIndex])
+  
+  useEffect(() => {
+    totalEventsRef.current = totalEvents
+  }, [totalEvents])
 
   // Workflow preset handlers
   const handleWorkflowPresetSelected = useCallback(async (presetId: string, presetContent: string) => {
     // Clear previous file context when switching workflow presets
     clearFileContext()
-    setSelectedWorkflowPreset(presetId)
+    // Apply the preset using the global preset store
+    applyPreset(presetId, 'workflow')
     setWorkflowPresetQueryId(presetId) // Store the preset query ID for workflow approval
     
     try {
@@ -319,21 +451,21 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
       setCurrentQuery(presetContent)
     }
-  }, [setCurrentQuery, setSelectedWorkflowPreset, setWorkflowPhase, setWorkflowPresetQueryId, clearFileContext])
+  }, [setCurrentQuery, applyPreset, setWorkflowPhase, setWorkflowPresetQueryId, clearFileContext])
 
   const handleWorkflowPresetCleared = useCallback(() => {
-    setSelectedWorkflowPreset(null)
+    clearActivePreset('workflow')
     setWorkflowPresetQueryId(null) // Clear the stored preset query ID
     setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION) // Reset to preset selection phase
     setCurrentQuery('')
-  }, [setCurrentQuery, setSelectedWorkflowPreset, setWorkflowPresetQueryId, setWorkflowPhase])
+  }, [clearActivePreset, setWorkflowPresetQueryId, setWorkflowPhase, setCurrentQuery])
   
   // Clear workflow state when starting a new chat
   const clearWorkflowState = useCallback(() => {
-    setSelectedWorkflowPreset(null)
+    clearActivePreset('workflow')
     setWorkflowPresetQueryId(null)
     setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
-  }, [setSelectedWorkflowPreset, setWorkflowPresetQueryId, setWorkflowPhase])
+  }, [clearActivePreset, setWorkflowPresetQueryId, setWorkflowPhase])
 
   // Handle human verification actions
   // TODO: Re-enable when RequestHumanFeedbackEvent is available
@@ -343,7 +475,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setIsApprovingWorkflow(true)  // Set loading state
     
     // Use the stored preset query ID instead of the request ID
-    const presetQueryId = workflowPresetQueryId
+    const presetQueryId = currentWorkflowQueryId
     if (!presetQueryId) {
       console.error('[WORKFLOW] No preset query ID available for workflow approval')
       setIsApprovingWorkflow(false)
@@ -374,7 +506,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setShowUserMessage(false)
       
       // Update phase to the determined next phase
-      setWorkflowPhase(nextPhase as WorkflowPhase)
+      setCurrentWorkflowPhase(nextPhase as WorkflowPhase)
       
     } catch (error) {
       console.error('[WORKFLOW] Failed to approve workflow:', error)
@@ -394,24 +526,59 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Initialize observer on mount (only if not loading from chat session)
   useEffect(() => {
-    if (chatSessionId) {
+    // If we have a chatSessionId and don't require a new chat, don't initialize observer
+    if (chatSessionId && !requiresNewChat) {
+      console.log('[INIT] Skipping observer initialization - chatSessionId exists and requiresNewChat is false')
       return
     }
+    
+    // If requiresNewChat is true, clear the chatSessionId to force fresh initialization
+    if (requiresNewChat) {
+      console.log('[INIT] requiresNewChat is true - clearing chatSessionId for fresh initialization')
+      useAppStore.getState().setChatSessionId('')
+    }
+    
+    // Check if we need to initialize observer (no observerId or requiresNewChat)
+    if (observerId && !requiresNewChat) {
+      console.log('[INIT] Skipping observer initialization - already have working observer:', observerId)
+      return
+    }
+    
+    console.log('[INIT] Starting observer initialization...')
     
     // Clear any existing observer ID to ensure fresh start
     setObserverId('')
     
+    let retryCount = 0
+    const maxRetries = 3
+    const retryDelay = 1000 // 1 second
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null
+    
     const initializeObserver = async () => {
       try {
+        console.log(`[INIT] Attempting to register observer (attempt ${retryCount + 1}/${maxRetries + 1})`)
         const response = await agentApi.registerObserver()
         
         if (response.observer_id) {
+          console.log(`[INIT] Observer registered successfully: ${response.observer_id}`)
           setObserverId(response.observer_id)
+          
+          // Clear the requiresNewChat flag after successful initialization
+          useAppStore.getState().clearRequiresNewChat()
+          console.log('[INIT] Cleared requiresNewChat flag after successful observer registration')
         } else {
           console.error('[INIT] No observer_id received from server')
+          // Retry if we haven't exceeded max retries
+          if (retryCount < maxRetries) {
+            retryCount++
+            console.log(`[INIT] Retrying observer registration in ${retryDelay}ms...`)
+            retryTimeout = setTimeout(() => initializeObserver(), retryDelay)
+          } else {
+            console.error('[INIT] Max retries exceeded, giving up on observer registration')
+          }
         }
       } catch (error) {
-        console.error('[INIT] Failed to register observer:', error)
+        console.error(`[INIT] Failed to register observer (attempt ${retryCount + 1}):`, error)
         if (error instanceof Error) {
           console.error('[INIT] Error details:', {
             name: error.name,
@@ -421,11 +588,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         } else {
           console.error('[INIT] Unknown error type:', typeof error, error)
         }
+        
+        // Retry if we haven't exceeded max retries
+        if (retryCount < maxRetries) {
+          retryCount++
+          console.log(`[INIT] Retrying observer registration in ${retryDelay}ms...`)
+          retryTimeout = setTimeout(() => initializeObserver(), retryDelay)
+        } else {
+          console.error('[INIT] Max retries exceeded, giving up on observer registration')
+        }
       }
     }
 
     initializeObserver()
-  }, [chatSessionId, setObserverId])
+    
+    // Cleanup function to clear any pending retry timeout
+    return () => {
+      if (retryTimeout) {
+        clearTimeout(retryTimeout)
+        console.log('[INIT] Cleaned up observer registration retry timeout')
+      }
+    }
+  }, [chatSessionId, setObserverId, requiresNewChat, observerId])
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -451,7 +635,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         // Process events if we have any events (remove the lastEventIndex condition)
         // The condition was preventing early events from being displayed
         setLastEventIndex(response.last_event_index)
-        setTotalEvents(totalEvents + response.events.length)
+        setTotalEvents(totalEventsRef.current + response.events.length)
         setLastEventCount(response.events.length)
         
         // Add new events to the events array for rich UI display
@@ -543,6 +727,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           }
           setIsStreaming(false)
           setIsCompleted(true)
+          setHasActiveChat(false)
           
           // Check for unified_completion event first - it takes precedence (only for non-Deep Search modes)
           let hasError = false
@@ -711,7 +896,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         console.error('[POLL] HTTP data:', axiosError.response?.data)
       }
     }
-  }, [observerId, pollingInterval, setPollingInterval, setIsStreaming, setIsCompleted, setLastEventIndex, setTotalEvents, setLastEventCount, setEvents, finalResponse, agentMode, setWorkflowPhase, totalEvents, workflowPhase])
+  }, [observerId, pollingInterval, setPollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setLastEventIndex, setTotalEvents, setLastEventCount, setEvents, finalResponse, agentMode, setCurrentWorkflowPhase, currentWorkflowPhase])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -796,7 +981,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                     
                     // Process events
                     setLastEventIndex(response.last_event_index)
-                    setTotalEvents(totalEvents + response.events.length)
+                    setTotalEvents(totalEventsRef.current + response.events.length)
                     setLastEventCount(response.events.length)
                     
                     // Add new events to the events array
@@ -813,6 +998,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                           }
                         }
                         
+                        // Avoid duplicating user messages we inject on submit
+                        if (event.type === 'user_message') {
+                          return false
+                        }
                         return true
                       })
                       
@@ -874,6 +1063,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             setTotalEvents(pollingEvents.length)
             setIsCompleted(true)
             setIsStreaming(false)
+            setHasActiveChat(false)
             setIsLoadingHistory(false)
             processingRef.current = null
             return
@@ -921,7 +1111,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
     // Add validation check for Tasks folder requirement in Deep Search and Workflow modes
     if ((agentMode === 'orchestrator' || agentMode === 'workflow') && !isRequiredFolderSelected) {
-      console.error('[SUBMIT] Validation failed - Tasks folder required for', agentMode, 'mode')
+      console.error(
+        '[SUBMIT] Validation failed -',
+        agentMode === 'workflow' ? 'Workflow' : 'Tasks',
+        'folder required for',
+        agentMode,
+        'mode'
+      )
       return
     }
 
@@ -1073,6 +1269,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         // Set streaming to true immediately when query starts successfully
         setIsStreaming(true)
         setIsCompleted(false)
+        // Mark that there's an active chat session
+        setHasActiveChat(true)
     } else {
         console.error('[SUBMIT] Query failed:', response)
         // Only reset streaming state if query fails to start
@@ -1093,7 +1291,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setOrchestratorExecutionMode(EXECUTION_MODES.PARALLEL)
       orchestratorModeHandlerRef.current?.resetSelection?.()
     }
-  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode, setOrchestratorExecutionMode])
+  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setHasActiveChat, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode, setOrchestratorExecutionMode])
 
 
   // Handle new chat - clear backend session and reset all chat state
@@ -1107,8 +1305,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       }
     }
     
-    // Clear workflow state
-    clearWorkflowState()
+    // For workflow mode, preserve the selected preset but reset workflow phase
+    if (agentMode === 'workflow' && selectedWorkflowPreset) {
+      // Keep the preset selected, just reset the workflow phase
+      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+      // Don't clear selectedWorkflowPreset or workflowPresetQueryId
+    } else {
+      // For other modes, clear workflow state completely
+      clearWorkflowState()
+    }
     
     // Reset frontend state
     resetChatState()
@@ -1140,38 +1345,38 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   return (
     <div className="flex flex-col h-full min-w-0">
+      {/* Preset Selection Overlay */}
+      {showPresetSelection && pendingModeCategory && (
+        <PresetSelectionOverlay
+          isOpen={showPresetSelection}
+          onClose={handlePresetSelectionClose}
+          onPresetSelected={handlePresetSelected}
+          modeCategory={pendingModeCategory}
+          setCurrentQuery={setCurrentQuery}
+        />
+      )}
+
+      {/* Mode Switch Dialog */}
+      {showModeSwitchDialog && pendingModeSwitch && (
+        <ModeSwitchDialog
+          isOpen={showModeSwitchDialog}
+          onCancel={handleModeSwitchCancel}
+          onConfirm={handleModeSwitchConfirm}
+          currentModeCategory={selectedModeCategory}
+          newModeCategory={pendingModeSwitch}
+        />
+      )}
+
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-16">
-        <div className="flex items-center justify-between h-full">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">
-              {chatSessionTitle ? `Chat: ${chatSessionTitle}` : 'Chat'}
-            </h2>
-            <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
-              {chatSessionId ? (
-                sessionState === 'active' ? 'Live Session' : 
-                sessionState === 'completed' ? 'Historical Session' :
-                sessionState === 'loading' ? 'Checking session...' :
-                sessionState === 'error' ? 'Session Error' :
-                'Session Not Found'
-              ) : getAgentModeDescription(agentMode)}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <EventModeToggle />
-            {isStreaming && (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                <span>
-                  Streaming... 
-                  <span className="ml-2">
-                    📊 Events: {totalEvents} (Last: {lastEventCount})
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <ChatHeader
+        chatSessionTitle={chatSessionTitle}
+        chatSessionId={chatSessionId}
+        sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
+        isStreaming={isStreaming}
+        totalEvents={totalEvents}
+        lastEventCount={lastEventCount}
+        onModeSelect={handleModeSelect}
+      />
 
       {/* Chat Content - Separated to prevent input re-renders */}
       <div ref={chatContentRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative">
@@ -1269,17 +1474,40 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             onPresetCleared={handleWorkflowPresetCleared}
             onWorkflowPhaseChange={setWorkflowPhase}
           >
-            <SharedEventDisplay />
+            {/* Empty State - Show when no events and not in historical session */}
+            {!chatSessionId && events.length === 0 && !isStreaming && (
+              <ModeEmptyState modeCategory={selectedModeCategory} />
+            )}
+            
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+            />
           </WorkflowModeHandler>
         ) : agentMode === 'orchestrator' ? (
           <OrchestratorModeHandler
             ref={orchestratorModeHandlerRef}
             onExecutionModeChange={handleOrchestratorExecutionModeChange}
           >
-            <SharedEventDisplay />
+            {/* Empty State - Show when no events and not in historical session */}
+            {!chatSessionId && events.length === 0 && !isStreaming && (
+              <ModeEmptyState modeCategory={selectedModeCategory} />
+            )}
+            
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+            />
           </OrchestratorModeHandler>
         ) : (
-          <SharedEventDisplay />
+          <>
+            {/* Empty State - Show when no events and not in historical session */}
+            {!chatSessionId && events.length === 0 && !isStreaming && (
+              <ModeEmptyState modeCategory={selectedModeCategory} />
+            )}
+            
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+            />
+          </>
         )}
         </div>
       </div>
@@ -1290,7 +1518,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onSubmit={submitQuery}
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}
-          selectedPresetFolder={selectedPresetFolder}
         />
       )}
       

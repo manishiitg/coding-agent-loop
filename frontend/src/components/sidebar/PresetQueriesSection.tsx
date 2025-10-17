@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Settings } from 'lucide-react'
 import PresetQueries from '../PresetQueries'
+import { useModeStore } from '../../stores/useModeStore'
+import ActivePresetDisplay from './ActivePresetDisplay'
 
 interface PresetQueriesSectionProps {
   availableServers: string[]
-  onPresetSelect: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void
   onPresetFolderSelect?: (folderPath?: string) => void
   setCurrentQuery: (query: string) => void
   isStreaming: boolean
@@ -13,7 +14,6 @@ interface PresetQueriesSectionProps {
 
 export default function PresetQueriesSection({
   availableServers,
-  onPresetSelect,
   onPresetFolderSelect,
   setCurrentQuery,
   isStreaming,
@@ -21,6 +21,10 @@ export default function PresetQueriesSection({
 }: PresetQueriesSectionProps) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['presets']))
   const [triggerAddPreset, setTriggerAddPreset] = useState(false)
+  const [showPresetSelector, setShowPresetSelector] = useState(false)
+  
+  // Store subscriptions
+  const { selectedModeCategory } = useModeStore()
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => {
@@ -37,10 +41,23 @@ export default function PresetQueriesSection({
 
   return (
     <div className="space-y-2">
+      {/* Current Preset Display */}
+      {selectedModeCategory && selectedModeCategory !== 'chat' && (
+        <div className="space-y-2">
+          <ActivePresetDisplay
+            modeCategory={selectedModeCategory as 'deep-research' | 'workflow'}
+            showSelector={showPresetSelector}
+            onToggle={() => setShowPresetSelector(!showPresetSelector)}
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Preset Queries</span>
+          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+            {selectedModeCategory === 'chat' ? 'Preset Queries' : 'Available Presets'}
+          </span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -68,7 +85,6 @@ export default function PresetQueriesSection({
             setCurrentQuery={setCurrentQuery}
             isStreaming={isStreaming}
             availableServers={availableServers}
-            onPresetSelect={onPresetSelect}
             onPresetFolderSelect={onPresetFolderSelect}
             triggerAddPreset={triggerAddPreset}
             onAddPresetTriggered={() => setTriggerAddPreset(false)}

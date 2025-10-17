@@ -1,5 +1,5 @@
-import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
-import { Send, Loader2, Zap, Brain, Workflow, Square, Plus } from 'lucide-react'
+import React, { useRef, useCallback, useMemo, useState } from 'react'
+import { Send, Loader2, Zap, Brain, Square, Plus } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -8,31 +8,27 @@ import ServerSelectionDropdown from './ServerSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import type { PlannerFile } from '../services/api-types'
-import type { LLMOption } from '../stores/types'
+import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
+import { useModeStore } from '../stores/useModeStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
+import { usePresetState, usePresetApplication } from '../stores/useGlobalPresetStore'
 
 interface ChatInputProps {
   // Handlers (callbacks only)
   onSubmit: () => void
   onStopStreaming: () => void
   onNewChat: () => void
-  
-  // Selected preset folder path
-  selectedPresetFolder?: string | null
 }
 
 // Completely isolated input component that doesn't re-render when events change
 export const ChatInput = React.memo<ChatInputProps>(({
   onSubmit,
   onStopStreaming,
-  onNewChat,
-  selectedPresetFolder
+  onNewChat
 }) => {
   // Store subscriptions
   const {
-    currentQuery,
-    setCurrentQuery,
     agentMode,
     setAgentMode,
     chatFileContext,
@@ -41,10 +37,15 @@ export const ChatInput = React.memo<ChatInputProps>(({
     addFileToContext
   } = useAppStore()
   
+  // Get current query from global preset store for consistency
+  const { currentQuery, setCurrentQuery: setGlobalCurrentQuery } = usePresetState()
+  const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
+  
+  const { selectedModeCategory } = useModeStore()
+  
   const {
     isStreaming,
-    observerId,
-    selectedWorkflowPreset
+    observerId
   } = useChatStore()
   
   const {
@@ -107,33 +108,18 @@ export const ChatInput = React.memo<ChatInputProps>(({
   const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [atPosition, setAtPosition] = useState(-1) // Position of @ in text
 
-  // Handle preset folder selection
-  useEffect(() => {
-    if (selectedPresetFolder && (agentMode === 'orchestrator' || agentMode === 'workflow')) {
-      // Check if the folder is already in context
-      const isAlreadyInContext = chatFileContext.some((item: { path: string }) => item.path === selectedPresetFolder)
-      
-      if (!isAlreadyInContext && selectedPresetFolder) {
-        // Add the preset folder to file context
-        const folderName = (selectedPresetFolder as string).split('/').pop() || selectedPresetFolder
-        addFileToContext({
-          name: folderName,
-          path: selectedPresetFolder,
-          type: 'folder'
-        })
-        
-        // Auto-scroll to the preset folder in workspace
-        scrollToFile(selectedPresetFolder)
-      }
-    }
-  }, [selectedPresetFolder, agentMode, chatFileContext, addFileToContext, scrollToFile])
+  // Handle preset folder selection - now handled by global store
+  // The global store's applyPreset method handles workspace selection and folder expansion
+  // No need to add to file context here as it's handled by workspace selection
 
   // Debug logging for currentQuery prop changes
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
-    setCurrentQuery(newValue)
+    setGlobalCurrentQuery(newValue)
+    // Also update AppStore for consistency
+    useAppStore.getState().setCurrentQuery(newValue)
 
     // Check for @ symbol and update file dialog state
     const cursorPosition = e.target.selectionStart || 0
@@ -185,7 +171,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
     removedFiles.forEach(filePath => {
       removeFileFromContext(filePath)
     })
-  }, [setCurrentQuery, chatFileContext, removeFileFromContext])
+  }, [setGlobalCurrentQuery, chatFileContext, removeFileFromContext])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If file dialog is open, let it handle keyboard events
@@ -212,14 +198,16 @@ export const ChatInput = React.memo<ChatInputProps>(({
       const end = textarea.selectionEnd
       const value = currentQuery
       const newValue = value.substring(0, start) + '\n' + value.substring(end)
-      setCurrentQuery(newValue)
+      setGlobalCurrentQuery(newValue)
+      // Also update AppStore for consistency
+      useAppStore.getState().setCurrentQuery(newValue)
       
       // Set cursor position after the newline
       setTimeout(() => {
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [currentQuery, isStreaming, onSubmit, setCurrentQuery, showFileDialog])
+  }, [currentQuery, isStreaming, onSubmit, setGlobalCurrentQuery, showFileDialog])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -237,7 +225,9 @@ export const ChatInput = React.memo<ChatInputProps>(({
     const afterSearch = currentQuery.substring(atPosition + 1 + fileSearchQuery.length)
     const newQuery = beforeAt + '@' + file.filepath + ' ' + afterSearch
     
-    setCurrentQuery(newQuery)
+    setGlobalCurrentQuery(newQuery)
+    // Also update AppStore for consistency
+    useAppStore.getState().setCurrentQuery(newQuery)
     setShowFileDialog(false)
     setAtPosition(-1)
     setFileSearchQuery('')
@@ -267,7 +257,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
       }
     }, 0)
-  }, [currentQuery, atPosition, fileSearchQuery, setCurrentQuery, chatFileContext, addFileToContext, scrollToFile])
+  }, [currentQuery, atPosition, fileSearchQuery, setGlobalCurrentQuery, chatFileContext, addFileToContext, scrollToFile])
 
   const handleFileDialogClose = useCallback(() => {
     setShowFileDialog(false)
@@ -276,12 +266,123 @@ export const ChatInput = React.memo<ChatInputProps>(({
     textareaRef.current?.focus()
   }, [])
 
+  // State for editing preset query
+  const [isEditingQuery, setIsEditingQuery] = useState(false)
+  
+  // Get active preset for current mode - directly reactive to store changes
+  const activePreset = useMemo(() => {
+    if (agentMode === 'workflow') {
+      const presetId = activePresetIds['workflow']
+      if (!presetId) return null
+      
+      // Find preset in custom or predefined presets
+      const customPreset = customPresets.find(p => p.id === presetId)
+      if (customPreset) return customPreset
+      
+      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
+      if (predefinedPreset) return predefinedPreset
+      
+      return null
+    } else if (agentMode === 'orchestrator') {
+      const presetId = activePresetIds['deep-research']
+      if (!presetId) return null
+      
+      // Find preset in custom or predefined presets
+      const customPreset = customPresets.find(p => p.id === presetId)
+      if (customPreset) return customPreset
+      
+      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
+      if (predefinedPreset) return predefinedPreset
+      
+      return null
+    }
+    return null
+  }, [agentMode, activePresetIds, customPresets, predefinedPresets])
+
+  // Handle editing preset query
+  const handleEditQuery = useCallback(() => {
+    setIsEditingQuery(true)
+    // Set the current query to the preset query for editing
+    if (activePreset) {
+      setGlobalCurrentQuery(activePreset.query)
+      useAppStore.getState().setCurrentQuery(activePreset.query)
+      
+      // IMPORTANT: Ensure the preset's file context is preserved
+      // If the preset has a selected folder, make sure it's still in the file context
+      if (activePreset.selectedFolder) {
+        const folderPath = activePreset.selectedFolder.filepath
+        const folderName = folderPath.split('/').pop() || folderPath
+        
+        // Check if the folder is already in the file context
+        const isFolderInContext = chatFileContext.some((item: { path: string }) => item.path === folderPath)
+        
+        if (!isFolderInContext) {
+          // Re-add the folder to file context if it's missing
+          addFileToContext({
+            name: folderName,
+            path: folderPath,
+            type: 'folder'
+          })
+          
+          // Also ensure the workspace selection is preserved
+          useWorkspaceStore.getState().setSelectedFile({
+            name: folderName,
+            path: folderPath
+          })
+        }
+      }
+    }
+  }, [activePreset, setGlobalCurrentQuery, chatFileContext, addFileToContext])
+
+  // Handle canceling query edit
+  const handleCancelEdit = useCallback(() => {
+    setIsEditingQuery(false)
+    // Reset to preset query
+    if (activePreset) {
+      setGlobalCurrentQuery(activePreset.query)
+      useAppStore.getState().setCurrentQuery(activePreset.query)
+      
+      // IMPORTANT: Ensure the preset's file context is preserved when canceling edit
+      // If the preset has a selected folder, make sure it's still in the file context
+      if (activePreset.selectedFolder) {
+        const folderPath = activePreset.selectedFolder.filepath
+        const folderName = folderPath.split('/').pop() || folderPath
+        
+        // Check if the folder is already in the file context
+        const isFolderInContext = chatFileContext.some((item: { path: string }) => item.path === folderPath)
+        
+        if (!isFolderInContext) {
+          // Re-add the folder to file context if it's missing
+          addFileToContext({
+            name: folderName,
+            path: folderPath,
+            type: 'folder'
+          })
+          
+          // Also ensure the workspace selection is preserved
+          useWorkspaceStore.getState().setSelectedFile({
+            name: folderName,
+            path: folderPath
+          })
+        }
+      }
+    }
+  }, [activePreset, setGlobalCurrentQuery, chatFileContext, addFileToContext])
+
+  // Handle saving edited query
+  const handleSaveEdit = useCallback(() => {
+    setIsEditingQuery(false)
+    // The current query is already updated by the text input
+  }, [])
 
   // Check if workflow mode requires preset selection
-  const isWorkflowReady = agentMode !== 'workflow' || (selectedWorkflowPreset && isRequiredFolderSelected)
+  const isWorkflowReady = agentMode !== 'workflow' || (getActivePreset('workflow') && isRequiredFolderSelected)
+  
+  // Check if deep research mode requires preset selection
+  const isDeepResearchReady = agentMode !== 'orchestrator' || (getActivePreset('deep-research') && isRequiredFolderSelected)
   
   // Debug the submit button disable condition
-  const submitButtonDisabled = !currentQuery?.trim() || !observerId || !isRequiredFolderSelected || !isWorkflowReady
+  const submitButtonDisabled = !currentQuery?.trim() || !observerId || !isRequiredFolderSelected || !isWorkflowReady || !isDeepResearchReady
   
 
   // Memoized placeholder to prevent re-computation
@@ -315,37 +416,42 @@ export const ChatInput = React.memo<ChatInputProps>(({
       {agentMode === 'orchestrator' && !isRequiredFolderSelected && chatFileContext.length === 0 && (
         <div className="px-4">
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded px-1.5 py-0.5 mb-0">
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-red-600 dark:text-red-400 font-medium">
-                ⚠️ Deep Search mode requires a Tasks folder to be selected
-              </span>
-            </div>
+            <span className="text-xs text-red-600 dark:text-red-400 font-medium">
+              ⚠️ Deep Search mode requires a Tasks folder to be selected
+            </span>
           </div>
         </div>
       )}
 
       {/* Validation message for Workflow mode - no preset selected */}
-      {agentMode === 'workflow' && !selectedWorkflowPreset && (
+      {agentMode === 'workflow' && !getActivePreset('workflow') && (
         <div className="px-4">
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 mb-0">
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-                ℹ️ Workflow mode requires a preset to be selected first
-              </span>
-            </div>
+            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+              ℹ️ Workflow mode requires a preset to be selected first. Use the mode selector to choose a preset.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Validation message for Deep Research mode - no preset selected */}
+      {agentMode === 'orchestrator' && !getActivePreset('deep-research') && (
+        <div className="px-4">
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 mb-0">
+            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+              ℹ️ Deep Research mode requires a preset to be selected first. Use the mode selector to choose a preset.
+            </span>
           </div>
         </div>
       )}
 
       {/* Validation message for Workflow mode - no Workflow folder selected */}
-      {agentMode === 'workflow' && selectedWorkflowPreset && !isRequiredFolderSelected && (
+      {agentMode === 'workflow' && getActivePreset('workflow') && !isRequiredFolderSelected && (
         <div className="px-4">
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-1.5 py-0.5 mb-0">
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-                💡 Select a folder from Workflow/ directory to proceed with workflow
-              </span>
-            </div>
+            <span className="text-xs text-yellow-600 dark:text-yellow-400">
+              💡 Select a folder from Workflow/ directory to proceed with workflow
+            </span>
           </div>
         </div>
       )}
@@ -354,11 +460,9 @@ export const ChatInput = React.memo<ChatInputProps>(({
       {chatFileContext.length === 0 && agentMode !== 'orchestrator' && (
         <div className="px-4">
           <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-0.5 mb-0">
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                💡 Click chat icon in workspace to add files, or type @ to search and add files
-              </span>
-            </div>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              💡 Click chat icon in workspace to add files, or type @ to search and add files
+            </span>
           </div>
         </div>
       )}
@@ -367,11 +471,9 @@ export const ChatInput = React.memo<ChatInputProps>(({
       {agentMode === 'orchestrator' && chatFileContext.length > 0 && !isRequiredFolderSelected && (
         <div className="px-4">
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-1.5 py-0.5 mb-0">
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-yellow-600 dark:text-yellow-400">
-                💡 Select a folder from Tasks/ directory to proceed
-              </span>
-            </div>
+            <span className="text-xs text-yellow-600 dark:text-yellow-400">
+              💡 Select a folder from Tasks/ directory to proceed
+            </span>
           </div>
         </div>
       )}
@@ -380,92 +482,158 @@ export const ChatInput = React.memo<ChatInputProps>(({
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
-            <Textarea
-              ref={textareaRef}
-              value={currentQuery}
-              onChange={handleTextChange}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              className="min-h-[60px] max-h-[100px] resize-none text-sm"
-              disabled={isStreaming || !observerId}
-            />
+            {/* Show compact preset info with action buttons for workflow and deep research modes */}
+            {(agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset && !isEditingQuery ? (
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-2 flex-1 min-w-0 cursor-default">
+                        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"></div>
+                        <span className="text-sm font-medium text-blue-900 dark:text-blue-100 truncate">
+                          {activePreset.label}
+                        </span>
+                        <span className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
+                          ({agentMode === 'workflow' ? 'Workflow' : 'Deep Research'})
+                        </span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="max-w-sm">
+                        <p className="font-medium mb-1">{activePreset.label}</p>
+                        <p className="text-sm">{activePreset.query}</p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                  
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={handleEditQuery}
+                          className="px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/30 rounded transition-colors"
+                        >
+                          Edit
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Edit the preset query</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={onSubmit}
+                          disabled={isStreaming || !observerId || !isRequiredFolderSelected}
+                          className="px-2 py-0.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Start Chat
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Start a new chat with this preset</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={onNewChat}
+                          className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                        >
+                          New Chat
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Create a new chat session</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Show text input for chat mode or when editing preset query */
+              <Textarea
+                ref={textareaRef}
+                value={currentQuery}
+                onChange={handleTextChange}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                className="min-h-[60px] max-h-[100px] resize-none text-sm"
+                disabled={isStreaming || !observerId}
+              />
+            )}
+            
+            {/* Show compact edit controls when editing preset query */}
+            {(agentMode === 'workflow' || agentMode === 'orchestrator') && isEditingQuery && (
+              <div className="flex items-center gap-1 px-2 py-1 bg-gray-50 dark:bg-gray-800 rounded text-xs">
+                <span className="text-gray-600 dark:text-gray-400">Editing:</span>
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="px-2 py-0.5 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
-                {/* Agent Mode Selector */}
-                <div className="flex items-center gap-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => setAgentMode('simple')}
-                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                          agentMode === 'simple'
-                            ? 'agent-mode-selected'
-                            : 'agent-mode-unselected'
-                        }`}
-                      >
-                        <Zap className="w-3 h-3 inline mr-1" />
-                        Simple
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Simple mode - Ctrl+1</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => setAgentMode('ReAct')}
-                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                          agentMode === 'ReAct'
-                            ? 'agent-mode-selected'
-                            : 'agent-mode-unselected'
-                        }`}
-                      >
-                        <Brain className="w-3 h-3 inline mr-1" />
-                        ReAct
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>ReAct mode - Ctrl+2</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => setAgentMode('orchestrator')}
-                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                          agentMode === 'orchestrator'
-                            ? 'agent-mode-selected'
-                            : 'agent-mode-unselected'
-                        }`}
-                      >
-                        <Workflow className="w-3 h-3 inline mr-1" />
-                        Deep Search
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Deep Search mode - Ctrl+3</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => setAgentMode('workflow')}
-                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                          agentMode === 'workflow'
-                            ? 'agent-mode-selected'
-                            : 'agent-mode-unselected'
-                        }`}
-                      >
-                        <Workflow className="w-3 h-3 inline mr-1" />
-                        Workflow
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Workflow mode - Ctrl+4</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
+                
+                {/* Agent Mode Selector - Only for Chat Mode */}
+                {selectedModeCategory === 'chat' && (
+                  <div className="flex items-center gap-1">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => setAgentMode('simple')}
+                          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                            agentMode === 'simple'
+                              ? 'agent-mode-selected'
+                              : 'agent-mode-unselected'
+                          }`}
+                        >
+                          <Zap className="w-3 h-3 inline mr-1" />
+                          Simple
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Simple mode - Ctrl+1</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => setAgentMode('ReAct')}
+                          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                            agentMode === 'ReAct'
+                              ? 'agent-mode-selected'
+                              : 'agent-mode-unselected'
+                          }`}
+                        >
+                          <Brain className="w-3 h-3 inline mr-1" />
+                          ReAct
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>ReAct mode - Ctrl+2</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                )}
                 
                 {/* Server and LLM Selection for Simple/ReAct modes */}
                 {(agentMode === 'simple' || agentMode === 'ReAct') && (
@@ -484,6 +652,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
                       onLLMSelect={onPrimaryLLMSelect}
                       onRefresh={onRefreshAvailableLLMs}
                       disabled={isStreaming}
+                      openDirection="up"
                     />
                   </div>
                 )}
@@ -493,79 +662,78 @@ export const ChatInput = React.memo<ChatInputProps>(({
                   {!observerId ? (
                     <span>
                       <Loader2 className="w-3 h-3 inline animate-spin mr-1" />
-                      Initializing observer...
+                      Initializing observer... (retrying if needed)
                     </span>
                   ) : (
                     ''
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                {/* New Chat Button */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={onNewChat}
-                      disabled={isStreaming}
-                      className="px-3"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Start a new chat (Ctrl+N / Cmd+N)</p>
-                  </TooltipContent>
-                </Tooltip>
-                
-                {isStreaming ? (
+              {/* Show old buttons only for chat mode */}
+              {selectedModeCategory === 'chat' && (
+                <div className="flex items-center gap-2">
+                  {/* New Chat Button */}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button 
+                      <Button
                         type="button"
-                        variant="destructive"
-                        onClick={onStopStreaming}
+                        variant="outline"
                         size="sm"
+                        onClick={onNewChat}
+                        disabled={isStreaming}
                         className="px-3"
                       >
-                        <Square className="w-4 h-4" />
+                        <Plus className="w-4 h-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Stop streaming</p>
+                      <p>Start a new chat (Ctrl+N / Cmd+N)</p>
                     </TooltipContent>
                   </Tooltip>
-                ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button 
-                        type="submit" 
-                        disabled={submitButtonDisabled}
-                        size="sm"
-                        className="px-3"
-                      >
-                        <Send className="w-4 h-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>
-                        {!currentQuery?.trim()
-                          ? 'Type a message to send'
-                          : !observerId 
-                            ? 'Observer not ready yet' 
-                            : !isRequiredFolderSelected 
-                              ? (agentMode === 'workflow' ? 'Select a Workflow folder and preset for workflow mode' : 'Select a Tasks folder to proceed')
-                              : !isWorkflowReady
-                                ? 'Select a preset for workflow mode'
-                                : 'Send message'
-                        }
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
+                  
+                  {isStreaming ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          type="button"
+                          variant="destructive"
+                          onClick={onStopStreaming}
+                          size="sm"
+                          className="px-3"
+                        >
+                          <Square className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Stop streaming</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          type="submit" 
+                          disabled={submitButtonDisabled}
+                          size="sm"
+                          className="px-3"
+                        >
+                          <Send className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>
+                          {!currentQuery?.trim()
+                            ? 'Type a message to send'
+                            : !observerId 
+                              ? 'Observer not ready yet' 
+                              : 'Send message'
+                          }
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </form>

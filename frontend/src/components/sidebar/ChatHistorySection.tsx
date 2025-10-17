@@ -1,20 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { agentApi } from '../../services/api'
 import type { ChatSession, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
+import { useModeStore } from '../../stores/useModeStore'
+import { usePresetApplication } from '../../stores/useGlobalPresetStore'
 
 interface ChatHistorySectionProps {
   onSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
   minimized?: boolean
-  selectedPresetId?: string | null
-  onClearFilter?: () => void
 }
 
 export default function ChatHistorySection({ 
   onSessionSelect, 
-  minimized = false,
-  selectedPresetId,
-  onClearFilter
+  minimized = false
 }: ChatHistorySectionProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [loading, setLoading] = useState(false)
@@ -24,6 +22,21 @@ export default function ChatHistorySection({
   
   // Active session state
   const [activeSessions, setActiveSessions] = useState<ActiveSessionInfo[]>([])
+  
+  // Mode store subscription
+  const { selectedModeCategory } = useModeStore()
+  
+  // Active preset query store
+  const { getActivePreset } = usePresetApplication()
+  
+  // Track active preset for current category to trigger reloads
+  const activePresetForCategory = useMemo(() => {
+    if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
+      const preset = getActivePreset(selectedModeCategory)
+      return preset?.id || null
+    }
+    return null
+  }, [selectedModeCategory, getActivePreset])
 
   // Fetch preset query details
   const fetchPresetQuery = useCallback(async (presetQueryId: string) => {
@@ -63,18 +76,73 @@ export default function ChatHistorySection({
     return activeSessions.find(session => session.session_id === sessionId)
   }, [activeSessions])
 
+  // Helper function to get the active preset query ID for a category
+  const getBackendPresetQueryId = useCallback((category: 'deep-research' | 'workflow') => {
+    const preset = getActivePreset(category)
+    return preset?.id || null
+  }, [getActivePreset])
+
+  // Filter sessions based on mode and active preset
+  const filterSessionsByMode = useCallback((sessions: ChatSession[]) => {
+    if (!selectedModeCategory) return sessions
+
+    switch (selectedModeCategory) {
+      case 'chat':
+        // Show all sessions where agentMode is 'simple' or 'ReAct'
+        return sessions.filter(session => 
+          session.agent_mode === 'simple' || session.agent_mode === 'ReAct'
+        )
+      
+      case 'deep-research': {
+        // Show sessions filtered by active preset (orchestrator category)
+        const backendPresetQueryId = getBackendPresetQueryId('deep-research')
+        if (backendPresetQueryId) {
+          return sessions.filter(session => 
+            session.agent_mode === 'orchestrator' && 
+            session.preset_query_id === backendPresetQueryId
+          )
+        }
+        return sessions.filter(session => session.agent_mode === 'orchestrator')
+      }
+      
+      case 'workflow': {
+        // Show sessions filtered by active preset (workflow category)
+        const backendPresetQueryId = getBackendPresetQueryId('workflow')
+        if (backendPresetQueryId) {
+          return sessions.filter(session => 
+            session.agent_mode === 'workflow' && 
+            session.preset_query_id === backendPresetQueryId
+          )
+        }
+        return sessions.filter(session => session.agent_mode === 'workflow')
+      }
+      
+      default:
+        return sessions
+    }
+  }, [selectedModeCategory, getBackendPresetQueryId])
+
   // Load chat sessions
   const loadSessions = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await agentApi.getChatSessions(50, 0, selectedPresetId || undefined) // Load last 50 sessions, filtered by preset
-      // Ensure sessions is always an array, never null
-      const sessions = response.sessions || []
-      setSessions(sessions)
+      // Use server-side filtering when an active preset is selected
+      let response
+      if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
+        const activePresetQueryId = activePresetForCategory
+        response = await agentApi.getChatSessions(100, 0, activePresetQueryId || undefined) // server filters by preset
+      } else {
+        response = await agentApi.getChatSessions(100, 0)
+      }
+      const allSessions = response.sessions || []
+      
+      // Filter sessions based on current mode (for cases where server filtering isn't sufficient)
+      const filteredSessions = filterSessionsByMode(allSessions)
+      setSessions(filteredSessions)
       
       // Fetch preset details for sessions that have preset_query_id
-      const presetPromises = sessions
+      const presetPromises = filteredSessions
         .filter(session => session.preset_query_id && !presetCache[session.preset_query_id])
         .map(session => fetchPresetQuery(session.preset_query_id!))
       
@@ -87,13 +155,13 @@ export default function ChatHistorySection({
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, selectedPresetId])
+  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, activePresetForCategory])
 
   // Load sessions and active sessions on mount
   useEffect(() => {
     loadSessions()
     loadActiveSessions()
-  }, [loadSessions, loadActiveSessions])
+  }, [loadSessions, loadActiveSessions, activePresetForCategory])
 
   // Refresh active sessions periodically
   useEffect(() => {
@@ -132,7 +200,9 @@ export default function ChatHistorySection({
       case 'react':
         return 'ReAct'
       case 'orchestrator':
-        return 'Deep Search'
+        return 'Deep Research'
+      case 'workflow':
+        return 'Workflow'
       default:
         return agentMode
     }
@@ -181,7 +251,10 @@ export default function ChatHistorySection({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setExpanded(!expanded)}
+              onClick={(e) => {
+                e.stopPropagation()
+                setExpanded(!expanded)
+              }}
               className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
               title="Chat History"
             >
@@ -206,23 +279,9 @@ export default function ChatHistorySection({
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
-          {selectedPresetId ? 'Filtered Chats' : 'Previous Chats'}
+          Previous Chats
         </h3>
         <div className="flex items-center gap-1">
-          {selectedPresetId && (
-            <button
-              onClick={() => {
-                // Clear the filter by calling the parent callback
-                onClearFilter?.()
-              }}
-              className="p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
-              title="Clear filter"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
           <button
             onClick={loadSessions}
             disabled={loading}
@@ -244,6 +303,7 @@ export default function ChatHistorySection({
           </button>
         </div>
       </div>
+
 
       {/* Content */}
       {expanded && (

@@ -1,6 +1,20 @@
 import type { PlannerFile } from '../services/api-types'
 
 /**
+ * Processes hierarchical files from API response
+ * @param files - Array of files from API
+ * @returns Processed files with ensured type and children properties
+ */
+export const processHierarchicalFiles = (files: PlannerFile[]): PlannerFile[] => {
+  // API returns hierarchical structure directly, just ensure type is set correctly
+  return files.map(file => ({
+    ...file,
+    type: file.type || 'file', // Ensure type is set
+    children: file.children || [] // Ensure children array exists
+  }))
+}
+
+/**
  * Recursively searches for a file in the file tree
  * @param fileList - Array of files to search through
  * @param targetPath - Path of the file to find

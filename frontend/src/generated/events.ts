@@ -970,6 +970,7 @@ export interface OrchestratorStartEvent {
   agents_count?: number;
   servers_count?: number;
   configuration?: string;
+  execution_mode?: string;
 }
 export interface OrchestratorEndEvent {
   timestamp?: string;
@@ -990,6 +991,7 @@ export interface OrchestratorEndEvent {
   duration?: number;
   status?: string;
   error?: string;
+  execution_mode?: string;
 }
 export interface OrchestratorErrorEvent {
   timestamp?: string;
@@ -1008,6 +1010,7 @@ export interface OrchestratorErrorEvent {
   context?: string;
   error?: string;
   duration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentStartEvent {
   timestamp?: string;
@@ -1036,6 +1039,7 @@ export interface OrchestratorAgentStartEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentEndEvent {
   timestamp?: string;
@@ -1068,6 +1072,7 @@ export interface OrchestratorAgentEndEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }
 export interface OrchestratorAgentErrorEvent {
   timestamp?: string;
@@ -1095,4 +1100,5 @@ export interface OrchestratorAgentErrorEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  execution_mode?: string;
 }

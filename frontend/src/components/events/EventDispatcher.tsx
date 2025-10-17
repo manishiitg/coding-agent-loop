@@ -79,7 +79,10 @@ import type {
   SmartRoutingStartEvent,
   SmartRoutingEndEvent,
   AgentStartEvent,
-  AgentEndEvent
+  AgentEndEvent,
+  StructuredOutputStartEvent,
+  StructuredOutputEndEvent,
+  IndependentStepsSelectedEvent
 } from '../../generated/events'
 
 // Import from the new organized component structure
@@ -130,7 +133,8 @@ import {
   OrchestratorErrorEventDisplay,
   OrchestratorAgentStartEventDisplay,
   OrchestratorAgentEndEventDisplay,
-  OrchestratorAgentErrorEventDisplay
+  OrchestratorAgentErrorEventDisplay,
+  IndependentStepsSelectedEventDisplay
 } from './orchestrator'
 
 import {
@@ -157,21 +161,24 @@ import {
   SmartRoutingEndEventDisplay,
   // Cache event components
   CacheEventDisplay,
-  ComprehensiveCacheEventDisplay
+  ComprehensiveCacheEventDisplay,
+  // Structured output event components
+  StructuredOutputStartEventDisplay,
+  StructuredOutputEndEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
-import { HumanVerificationDisplay } from './HumanVerificationDisplay'
-import type { RequestHumanFeedbackEvent } from '../../generated/events-bridge'
+// import { HumanVerificationDisplay } from './HumanVerificationDisplay'
+// import type { RequestHumanFeedbackEvent } from '../../generated/events-bridge'
 
 
 interface EventDispatcherProps {
   event: PollingEvent
   mode?: 'compact' | 'detailed'
-  onApproveWorkflow?: (requestId: string) => void
-  isApproving?: boolean  // Loading state for approve button
+  // onApproveWorkflow?: (requestId: string) => void
+  // isApproving?: boolean  // Loading state for approve button
 }
 
-export const EventDispatcher: React.FC<EventDispatcherProps> = ({ event, mode, onApproveWorkflow, isApproving }) => {
+export const EventDispatcher: React.FC<EventDispatcherProps> = ({ event, mode }) => {
   if (!event.type || !event.data) {
     return (
       <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
@@ -264,6 +271,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = ({ event, mode, o
       return <OrchestratorAgentErrorEventDisplay event={extractEventData<OrchestratorAgentErrorEvent>(event.data)} />
 
     // Human Verification Events
+    // TODO: Re-enable when RequestHumanFeedbackEvent is available
+    /*
     case 'request_human_feedback':
       return <HumanVerificationDisplay 
         event={{
@@ -284,6 +293,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = ({ event, mode, o
         onApprove={onApproveWorkflow || (() => {})}
         isApproving={isApproving}
       />
+    */
 
     // Workflow Events
     case 'workflow_start':
@@ -343,6 +353,16 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = ({ event, mode, o
     case 'unified_completion':
       return <UnifiedCompletionEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
 
+    // Structured Output Events
+    case 'structured_output_start':
+      return <StructuredOutputStartEventDisplay event={extractEventData<StructuredOutputStartEvent>(event.data)} />
+    case 'structured_output_end':
+      return <StructuredOutputEndEventDisplay event={extractEventData<StructuredOutputEndEvent>(event.data)} />
+
+    // Independent Steps Events
+    case 'independent_steps_selected':
+      return <IndependentStepsSelectedEventDisplay event={extractEventData<IndependentStepsSelectedEvent>(event.data)} />
+
     // Default case for unknown event types
     default:
       return (
@@ -361,9 +381,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = ({ event, mode, o
 // Event list component for displaying multiple events
 export const EventList: React.FC<{ 
   events: PollingEvent[]
-  onApproveWorkflow?: (requestId: string) => void
-  isApproving?: boolean  // Loading state for approve button
-}> = React.memo(({ events, onApproveWorkflow, isApproving }) => {
+  // onApproveWorkflow?: (requestId: string) => void
+  // isApproving?: boolean  // Loading state for approve button
+}> = React.memo(({ events }) => {
   const { shouldShowEvent, mode } = useEventMode()
   
   // Debug: Log events received by EventList
@@ -382,7 +402,7 @@ export const EventList: React.FC<{
     })
     // Filtered events
     return filtered
-  }, [events, shouldShowEvent, mode])
+  }, [events, shouldShowEvent])
   
   if (events.length === 0) {
     return <div className="text-gray-500 text-center py-4">No events to display</div>
@@ -403,7 +423,5 @@ export const EventList: React.FC<{
   
   return <EventHierarchy 
     events={filteredEvents} 
-    onApproveWorkflow={onApproveWorkflow}
-    isApproving={isApproving}
   />
 }) 

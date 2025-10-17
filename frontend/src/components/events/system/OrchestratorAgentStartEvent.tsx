@@ -28,6 +28,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               Deep Search Agent Started: {event.agent_name}{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
+                {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}
                 {event.step_index !== undefined && ` | Step: ${event.step_index}`}
               </span>
             </div>

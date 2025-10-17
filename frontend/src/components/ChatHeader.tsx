@@ -4,7 +4,7 @@ import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { PlannerFile } from '../services/api-types'
+import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import { useMCPStore } from '../stores/useMCPStore'
 import { APISamplesDialog } from './APISamplesDialog'
@@ -13,9 +13,6 @@ interface ChatHeaderProps {
   chatSessionTitle: string
   chatSessionId: string
   sessionState: 'active' | 'completed' | 'loading' | 'error' | 'not-found'
-  isStreaming: boolean
-  totalEvents: number
-  lastEventCount: number
   onModeSelect: (category: 'chat' | 'deep-research' | 'workflow') => void
 }
 
@@ -49,9 +46,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   chatSessionTitle,
   chatSessionId,
   sessionState,
-  isStreaming,
-  totalEvents,
-  lastEventCount,
   onModeSelect
 }) => {
   const { selectedModeCategory } = useModeStore()
@@ -388,7 +382,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             </div>
           </div>
           
-          {/* Right: Event Controls & Streaming Info */}
+          {/* Right: Event Controls */}
           <div className="flex items-center gap-3">
             {/* External Connection Button - Show when there's an active preset */}
             {activePreset && (
@@ -404,18 +398,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             
             {/* Event Mode Toggle */}
             <EventModeToggle />
-            
-            {/* Streaming Status */}
-            {isStreaming && (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                <span>
-                  Streaming... 
-                  <span className="ml-2">
-                    📊 Events: {totalEvents} (Last: {lastEventCount})
-                  </span>
-                </span>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -427,14 +409,14 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           setShowPresetModal(false)
           setEditingPreset(null)
         }}
-        onSave={async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => {
+        onSave={async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
           try {
             if (editingPreset) {
               // Editing existing preset - use the existing agent mode
-              await updatePreset(editingPreset.id, label, query, selectedServers, editingPreset.agentMode, selectedFolder)
+              await updatePreset(editingPreset.id, label, query, selectedServers, editingPreset.agentMode, selectedFolder, llmConfig)
             } else {
               // Creating new preset - allow agent mode selection
-              const newPreset = await addPreset(label, query, selectedServers, agentMode, selectedFolder)
+              const newPreset = await addPreset(label, query, selectedServers, agentMode, selectedFolder, llmConfig)
               // Apply the new preset immediately
               if (newPreset) {
                 handlePresetClick(newPreset)

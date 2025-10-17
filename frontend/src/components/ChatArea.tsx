@@ -1,13 +1,15 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import { agentApi, type AgentQueryRequest } from '../services/api'
-import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
+import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
+import { EXECUTION_MODES } from '../services/api-types'
 import { EventModeProvider } from './events'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
+import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { WORKFLOW_PHASES, type WorkflowPhase } from '../constants/workflow'
+import { WORKFLOW_PHASES } from '../constants/workflow'
 import { OrchestratorExplanation } from './OrchestratorExplanation'
 import { WorkflowExplanation } from './WorkflowExplanation'
 import { ReActExplanation } from './ReActExplanation'
@@ -90,18 +92,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     lastScrollTop,
     setLastScrollTop,
     finalResponse,
-    setFinalResponse,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    setFinalResponse: _setFinalResponse,
     setIsCompleted,
     isLoadingHistory,
     setIsLoadingHistory,
-    setIsApprovingWorkflow,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    setIsApprovingWorkflow: _setIsApprovingWorkflow,
     sessionState,
     setSessionState,
     isCheckingActiveSessions,
     setIsCheckingActiveSessions,
     currentWorkflowPhase,
     setCurrentWorkflowPhase,
-    currentWorkflowQueryId,
     setCurrentWorkflowQueryId,
     toasts,
     addToast,
@@ -271,6 +274,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   
   // Add ref for workflow mode handler
   const workflowModeHandlerRef = useRef<WorkflowModeHandlerRef>(null)
+  
+  // Add ref for orchestrator mode handler
+  const orchestratorModeHandlerRef = useRef<OrchestratorModeHandlerRef>(null)
+  
+  
+  // Orchestrator execution mode state
+  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.PARALLEL)
+  
+  // Handle orchestrator execution mode change
+  const handleOrchestratorExecutionModeChange = useCallback((mode: OrchestratorExecutionMode) => {
+    setOrchestratorExecutionMode(mode)
+  }, [])
   
   // Selected preset folder state
   const lastEventIndexRef = useRef<number>(0)
@@ -449,6 +464,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase])
 
   // Handle human verification actions
+  // TODO: Re-enable when RequestHumanFeedbackEvent is available
+  /*
   const handleApproveWorkflow = useCallback(async (_requestId: string, eventData?: { next_phase?: string }) => {
     
     setIsApprovingWorkflow(true)  // Set loading state
@@ -494,6 +511,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setIsApprovingWorkflow(false)  // Clear loading state
     }
   }, [currentWorkflowQueryId, pollingInterval, setIsApprovingWorkflow, setEvents, setTotalEvents, setLastEventCount, setLastEventIndex, setFinalResponse, setIsCompleted, setCurrentUserMessage, setShowUserMessage, setCurrentWorkflowPhase, setPollingInterval])
+  */
 
   // Initialize observer on mount (only if not loading from chat session)
   useEffect(() => {
@@ -1212,6 +1230,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         model_id: llmConfigToUse.model_id,
         llm_config: llmConfigToUse,
         preset_query_id: selectedWorkflowPreset || undefined,
+        // Add orchestrator execution mode for orchestrator mode
+        orchestrator_execution_mode: agentMode === 'orchestrator' ? orchestratorExecutionMode : undefined,
       }
 
 
@@ -1256,8 +1276,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       // Only reset streaming state if query fails
       setIsStreaming(false)
       setIsCompleted(false)
+      // Reset orchestrator mode selection to default on error
+      setOrchestratorExecutionMode(EXECUTION_MODES.PARALLEL)
+      orchestratorModeHandlerRef.current?.resetSelection?.()
     }
-  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setHasActiveChat, setObserverId, setPollingInterval, setSessionId, setShowUserMessage])
+  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setHasActiveChat, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode, setOrchestratorExecutionMode])
 
 
   // Handle new chat - clear backend session and reset all chat state
@@ -1275,7 +1298,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     if (agentMode === 'workflow' && selectedWorkflowPreset) {
       // Keep the preset selected, just reset the workflow phase
       setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
-      // Don't clear selectedWorkflowPreset or workflowPresetQueryId
+      // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
     } else {
       // For other modes, clear workflow state completely
       clearWorkflowState()
@@ -1284,12 +1307,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     // Reset frontend state
     resetChatState()
     
+        // Reset orchestrator mode selection to default
+        setOrchestratorExecutionMode('parallel_execution')
+    orchestratorModeHandlerRef.current?.resetSelection?.()
+    
     // Clear guidance state
     setSessionId(null)
     
     // Call the parent's new chat handler
     onNewChat()
-  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, agentMode, selectedWorkflowPreset, setCurrentWorkflowPhase])
+  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, setOrchestratorExecutionMode, agentMode, selectedWorkflowPreset, setCurrentWorkflowPhase])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {
@@ -1334,9 +1361,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         chatSessionTitle={chatSessionTitle}
         chatSessionId={chatSessionId}
         sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
-        isStreaming={isStreaming}
-        totalEvents={totalEvents}
-        lastEventCount={lastEventCount}
         onModeSelect={handleModeSelect}
       />
 
@@ -1429,22 +1453,48 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           {/* Show ReAct explanation when in ReAct mode */}
           <ReActExplanation agentMode={agentMode} />
 
-        <WorkflowModeHandler
-          ref={workflowModeHandlerRef}
-          onPresetSelected={handleWorkflowPresetSelected}
-          onPresetCleared={handleWorkflowPresetCleared}
-          onWorkflowPhaseChange={setCurrentWorkflowPhase}
-        >
-          {/* Empty State - Show when no events and not in historical session */}
-          {!chatSessionId && events.length === 0 && !isStreaming && (
-            <ModeEmptyState modeCategory={selectedModeCategory} />
-          )}
-          
-          <EventDisplay 
-            onDismissUserMessage={() => setShowUserMessage(false)}
-            onApproveWorkflow={handleApproveWorkflow}
-          />
-        </WorkflowModeHandler>
+        {agentMode === 'workflow' ? (
+          <WorkflowModeHandler
+            ref={workflowModeHandlerRef}
+            onPresetSelected={handleWorkflowPresetSelected}
+            onPresetCleared={handleWorkflowPresetCleared}
+            onWorkflowPhaseChange={setCurrentWorkflowPhase}
+          >
+            {/* Empty State - Show when no events and not in historical session */}
+            {!chatSessionId && events.length === 0 && !isStreaming && (
+              <ModeEmptyState modeCategory={selectedModeCategory} />
+            )}
+            
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+            />
+          </WorkflowModeHandler>
+        ) : agentMode === 'orchestrator' ? (
+          <OrchestratorModeHandler
+            ref={orchestratorModeHandlerRef}
+            onExecutionModeChange={handleOrchestratorExecutionModeChange}
+          >
+            {/* Empty State - Show when no events and not in historical session */}
+            {!chatSessionId && events.length === 0 && !isStreaming && (
+              <ModeEmptyState modeCategory={selectedModeCategory} />
+            )}
+            
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+            />
+          </OrchestratorModeHandler>
+        ) : (
+          <>
+            {/* Empty State - Show when no events and not in historical session */}
+            {!chatSessionId && events.length === 0 && !isStreaming && (
+              <ModeEmptyState modeCategory={selectedModeCategory} />
+            )}
+            
+            <EventDisplay 
+              onDismissUserMessage={() => setShowUserMessage(false)}
+            />
+          </>
+        )}
         </div>
       </div>
 
@@ -1455,6 +1505,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}
         />
+      )}
+      
+      {/* Streaming Status - Show at bottom when streaming */}
+      {isStreaming && !chatSessionId && (
+        <div className="px-3 py-1 border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
+          <div className="flex items-center justify-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
+            <span>Streaming</span>
+            <span>📊 {totalEvents} ({lastEventCount})</span>
+          </div>
+        </div>
       )}
       
       {/* Historical Session Notice */}

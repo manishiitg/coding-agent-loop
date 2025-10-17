@@ -29,6 +29,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
               Deep Search Agent Completed: {event.agent_name}{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Duration: {formatDuration(event.duration)}
+                {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}
                 {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                 {event.iteration !== undefined && ` | Iteration: ${event.iteration}`}
               </span>

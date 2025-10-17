@@ -274,6 +274,11 @@ func isOrchestratorEvent(eventType unifiedevents.EventType) bool {
 		eventType == unifiedevents.OrchestratorAgentError
 }
 
+// getExecutionModeLabel returns a human-readable label for execution mode
+func getExecutionModeLabel(mode string) string {
+	return orchtypes.ParseExecutionMode(mode).GetLabel()
+}
+
 // QueryRequest represents an agent query request
 type QueryRequest struct {
 	Query          string               `json:"query"`
@@ -287,6 +292,8 @@ type QueryRequest struct {
 	LLMConfig      *orchtypes.LLMConfig `json:"llm_config,omitempty"`
 	PresetQueryID  string               `json:"preset_query_id,omitempty"`
 	LLMGuidance    string               `json:"llm_guidance,omitempty"` // LLM guidance message
+	// Orchestrator execution mode selection
+	OrchestratorExecutionMode orchtypes.ExecutionMode `json:"orchestrator_execution_mode,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1094,13 +1101,42 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				chatDB:          api.chatDB, // Add database reference for event storage
 			}
 
+			// Create selected options for orchestrator execution mode
+			var selectedOptions *orchtypes.PlannerSelectedOptions
+			if req.OrchestratorExecutionMode != "" {
+				// Create selected options with execution mode
+				selectedOptions = &orchtypes.PlannerSelectedOptions{
+					Selections: []orchtypes.PlannerSelectedOption{
+						{
+							OptionID:    req.OrchestratorExecutionMode.String(),
+							OptionLabel: req.OrchestratorExecutionMode.GetLabel(),
+							OptionValue: req.OrchestratorExecutionMode.String(),
+							Group:       "execution_strategy",
+						},
+					},
+				}
+				log.Printf("[ORCHESTRATOR DEBUG] Using execution mode from request: %s", req.OrchestratorExecutionMode.String())
+			} else {
+				// Default to sequential execution if no mode specified
+				defaultMode := orchtypes.SequentialExecution
+				selectedOptions = &orchtypes.PlannerSelectedOptions{
+					Selections: []orchtypes.PlannerSelectedOption{
+						{
+							OptionID:    defaultMode.String(),
+							OptionLabel: defaultMode.GetLabel(),
+							OptionValue: defaultMode.String(),
+							Group:       "execution_strategy",
+						},
+					},
+				}
+				log.Printf("[ORCHESTRATOR DEBUG] Using default execution mode: %s", defaultMode.String())
+			}
+
 			// Always create a fresh orchestrator for this session
 			orchestrator := orchtypes.NewPlannerOrchestrator(
 				api.logger,
 				api.config.AgentMode,
-				api.config.StructuredOutputProvider,
-				api.config.StructuredOutputModel,
-				api.config.StructuredOutputTemp,
+				selectedOptions, // Pass selected options with execution mode
 			)
 			log.Printf("[ORCHESTRATOR DEBUG] Created fresh orchestrator for session %s", sessionID)
 
@@ -1281,6 +1317,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						AgentsCount:   5, // planning, execution, validation, organizer, report generation
 						ServersCount:  len(selectedServers),
 						Configuration: fmt.Sprintf("Provider: %s, Model: %s", req.Provider, req.ModelID),
+						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
 					}
 
 					// Create unified event wrapper
@@ -1395,11 +1432,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						BaseEventData: unifiedevents.BaseEventData{
 							Timestamp: time.Now(),
 						},
-						Objective: req.Query,
-						Result:    result,
-						Duration:  duration,
-						Status:    status,
-						Error:     errorMsg,
+						Objective:     req.Query,
+						Result:        result,
+						Duration:      duration,
+						Status:        status,
+						Error:         errorMsg,
+						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
 					}
 
 					// Create unified event wrapper

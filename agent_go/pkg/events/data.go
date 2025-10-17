@@ -1696,6 +1696,7 @@ type OrchestratorStartEvent struct {
 	AgentsCount   int    `json:"agents_count"`
 	ServersCount  int    `json:"servers_count"`
 	Configuration string `json:"configuration,omitempty"`
+	ExecutionMode string `json:"execution_mode"` // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorStartEvent) GetEventType() EventType {
@@ -1704,11 +1705,12 @@ func (e *OrchestratorStartEvent) GetEventType() EventType {
 
 type OrchestratorEndEvent struct {
 	BaseEventData
-	Objective string        `json:"objective"`
-	Result    string        `json:"result"`
-	Duration  time.Duration `json:"duration"`
-	Status    string        `json:"status"`
-	Error     string        `json:"error,omitempty"`
+	Objective     string        `json:"objective"`
+	Result        string        `json:"result"`
+	Duration      time.Duration `json:"duration"`
+	Status        string        `json:"status"`
+	Error         string        `json:"error,omitempty"`
+	ExecutionMode string        `json:"execution_mode"` // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorEndEvent) GetEventType() EventType {
@@ -1717,9 +1719,10 @@ func (e *OrchestratorEndEvent) GetEventType() EventType {
 
 type OrchestratorErrorEvent struct {
 	BaseEventData
-	Context  string        `json:"context"`
-	Error    string        `json:"error"`
-	Duration time.Duration `json:"duration"`
+	Context       string        `json:"context"`
+	Error         string        `json:"error"`
+	Duration      time.Duration `json:"duration"`
+	ExecutionMode string        `json:"execution_mode"` // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorErrorEvent) GetEventType() EventType {
@@ -1729,17 +1732,18 @@ func (e *OrchestratorErrorEvent) GetEventType() EventType {
 // Orchestrator Agent Events
 type OrchestratorAgentStartEvent struct {
 	BaseEventData
-	AgentType    string            `json:"agent_type"`           // planning, execution, validation, organizer
-	AgentName    string            `json:"agent_name"`           // specific agent name
-	Objective    string            `json:"objective"`            // what the agent is trying to accomplish
-	InputData    map[string]string `json:"input_data"`           // template variables passed to agent
-	ModelID      string            `json:"model_id"`             // which LLM model
-	Provider     string            `json:"provider"`             // which LLM provider
-	ServersCount int               `json:"servers_count"`        // number of MCP servers available
-	MaxTurns     int               `json:"max_turns"`            // maximum conversation turns
-	PlanID       string            `json:"plan_id,omitempty"`    // associated plan ID
-	StepIndex    int               `json:"step_index,omitempty"` // which step in the plan
-	Iteration    int               `json:"iteration,omitempty"`  // which iteration of the loop
+	AgentType     string            `json:"agent_type"`           // planning, execution, validation, organizer
+	AgentName     string            `json:"agent_name"`           // specific agent name
+	Objective     string            `json:"objective"`            // what the agent is trying to accomplish
+	InputData     map[string]string `json:"input_data"`           // template variables passed to agent
+	ModelID       string            `json:"model_id"`             // which LLM model
+	Provider      string            `json:"provider"`             // which LLM provider
+	ServersCount  int               `json:"servers_count"`        // number of MCP servers available
+	MaxTurns      int               `json:"max_turns"`            // maximum conversation turns
+	PlanID        string            `json:"plan_id,omitempty"`    // associated plan ID
+	StepIndex     int               `json:"step_index,omitempty"` // which step in the plan
+	Iteration     int               `json:"iteration,omitempty"`  // which iteration of the loop
+	ExecutionMode string            `json:"execution_mode"`       // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorAgentStartEvent) GetEventType() EventType {
@@ -1748,21 +1752,22 @@ func (e *OrchestratorAgentStartEvent) GetEventType() EventType {
 
 type OrchestratorAgentEndEvent struct {
 	BaseEventData
-	AgentType    string            `json:"agent_type"`           // planning, execution, validation, organizer
-	AgentName    string            `json:"agent_name"`           // specific agent name
-	Objective    string            `json:"objective"`            // what the agent was trying to accomplish
-	InputData    map[string]string `json:"input_data"`           // template variables passed to agent
-	Result       string            `json:"result"`               // agent's output/result
-	Success      bool              `json:"success"`              // whether agent completed successfully
-	Error        string            `json:"error,omitempty"`      // error message if failed
-	Duration     time.Duration     `json:"duration"`             // how long the agent took
-	ModelID      string            `json:"model_id"`             // which LLM model was used
-	Provider     string            `json:"provider"`             // which LLM provider
-	ServersCount int               `json:"servers_count"`        // number of MCP servers used
-	MaxTurns     int               `json:"max_turns"`            // maximum conversation turns
-	PlanID       string            `json:"plan_id,omitempty"`    // associated plan ID
-	StepIndex    int               `json:"step_index,omitempty"` // which step in the plan
-	Iteration    int               `json:"iteration,omitempty"`  // which iteration of the loop
+	AgentType     string            `json:"agent_type"`           // planning, execution, validation, organizer
+	AgentName     string            `json:"agent_name"`           // specific agent name
+	Objective     string            `json:"objective"`            // what the agent was trying to accomplish
+	InputData     map[string]string `json:"input_data"`           // template variables passed to agent
+	Result        string            `json:"result"`               // agent's output/result
+	Success       bool              `json:"success"`              // whether agent completed successfully
+	Error         string            `json:"error,omitempty"`      // error message if failed
+	Duration      time.Duration     `json:"duration"`             // how long the agent took
+	ModelID       string            `json:"model_id"`             // which LLM model was used
+	Provider      string            `json:"provider"`             // which LLM provider
+	ServersCount  int               `json:"servers_count"`        // number of MCP servers used
+	MaxTurns      int               `json:"max_turns"`            // maximum conversation turns
+	PlanID        string            `json:"plan_id,omitempty"`    // associated plan ID
+	StepIndex     int               `json:"step_index,omitempty"` // which step in the plan
+	Iteration     int               `json:"iteration,omitempty"`  // which iteration of the loop
+	ExecutionMode string            `json:"execution_mode"`       // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorAgentEndEvent) GetEventType() EventType {
@@ -1771,18 +1776,19 @@ func (e *OrchestratorAgentEndEvent) GetEventType() EventType {
 
 type OrchestratorAgentErrorEvent struct {
 	BaseEventData
-	AgentType    string        `json:"agent_type"`           // planning, execution, validation, organizer
-	AgentName    string        `json:"agent_name"`           // specific agent name
-	Objective    string        `json:"objective"`            // what the agent was trying to accomplish
-	Error        string        `json:"error"`                // error message
-	Duration     time.Duration `json:"duration"`             // how long before error occurred
-	ModelID      string        `json:"model_id"`             // which LLM model was used
-	Provider     string        `json:"provider"`             // which LLM provider
-	ServersCount int           `json:"servers_count"`        // number of MCP servers available
-	MaxTurns     int           `json:"max_turns"`            // maximum conversation turns
-	PlanID       string        `json:"plan_id,omitempty"`    // associated plan ID
-	StepIndex    int           `json:"step_index,omitempty"` // which step in the plan
-	Iteration    int           `json:"iteration,omitempty"`  // which iteration of the loop
+	AgentType     string        `json:"agent_type"`           // planning, execution, validation, organizer
+	AgentName     string        `json:"agent_name"`           // specific agent name
+	Objective     string        `json:"objective"`            // what the agent was trying to accomplish
+	Error         string        `json:"error"`                // error message
+	Duration      time.Duration `json:"duration"`             // how long before error occurred
+	ModelID       string        `json:"model_id"`             // which LLM model was used
+	Provider      string        `json:"provider"`             // which LLM provider
+	ServersCount  int           `json:"servers_count"`        // number of MCP servers available
+	MaxTurns      int           `json:"max_turns"`            // maximum conversation turns
+	PlanID        string        `json:"plan_id,omitempty"`    // associated plan ID
+	StepIndex     int           `json:"step_index,omitempty"` // which step in the plan
+	Iteration     int           `json:"iteration,omitempty"`  // which iteration of the loop
+	ExecutionMode string        `json:"execution_mode"`       // "sequential_execution" or "parallel_execution"
 }
 
 func (e *OrchestratorAgentErrorEvent) GetEventType() EventType {

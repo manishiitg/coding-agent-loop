@@ -91,15 +91,15 @@ func GetWorkflowConstants() WorkflowConstants {
 					},
 					// Execution Strategy Options
 					{
-						ID:          "sequential_execution",
-						Label:       "Sequential Execution",
+						ID:          SequentialExecution.String(),
+						Label:       SequentialExecution.GetLabel(),
 						Description: "Execute todos one by one in order, waiting for each to complete before starting the next",
 						Group:       "execution_strategy",
 						Default:     true,
 					},
 					{
-						ID:          "parallel_execution",
-						Label:       "Parallel Execution",
+						ID:          ParallelExecution.String(),
+						Label:       ParallelExecution.GetLabel(),
 						Description: "Execute multiple todos simultaneously when they don't have dependencies",
 						Group:       "execution_strategy",
 						Default:     false,

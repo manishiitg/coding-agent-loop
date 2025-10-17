@@ -1464,6 +1464,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1540,6 +1543,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1616,6 +1622,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1671,6 +1680,9 @@
         },
         "error": {
           "type": "string"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1720,6 +1732,9 @@
         },
         "duration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1771,6 +1786,9 @@
           "type": "integer"
         },
         "configuration": {
+          "type": "string"
+        },
+        "execution_mode": {
           "type": "string"
         }
       },

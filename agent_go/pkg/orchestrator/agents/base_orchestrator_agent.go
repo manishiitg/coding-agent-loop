@@ -190,6 +190,8 @@ func (boa *BaseOrchestratorAgent) GetEventBridge() mcpagent.AgentEventListener {
 
 // emitEvent emits an event through the event bridge
 func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType events.EventType, data events.EventData) {
+	boa.AgentTemplate.logger.Infof("🔍 emitEvent called - EventType: %s, AgentType: %s", eventType, boa.agentType)
+
 	// Create agent event
 	agentEvent := &events.AgentEvent{
 		Type:      eventType,
@@ -203,6 +205,8 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 	}); ok {
 		if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
 			boa.AgentTemplate.logger.Warnf("⚠️ Failed to emit event %s: %v", eventType, err)
+		} else {
+			boa.AgentTemplate.logger.Infof("✅ Successfully emitted event %s for agent type %s", eventType, boa.agentType)
 		}
 	} else {
 		boa.AgentTemplate.logger.Warnf("⚠️ Event bridge does not implement HandleEvent method: %T", boa.eventBridge)
@@ -211,9 +215,15 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 
 // emitAgentStartEvent emits an agent start event automatically
 func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string, executionMode string) {
+	boa.AgentTemplate.logger.Infof("🔍 emitAgentStartEvent called for agent type: %s, executionMode: %s", boa.agentType, executionMode)
+
 	if boa.orchestratorContext == nil {
+		boa.AgentTemplate.logger.Warnf("⚠️ Orchestrator context is nil - skipping agent start event emission for %s", boa.agentType)
 		return // No context available yet
 	}
+
+	boa.AgentTemplate.logger.Infof("✅ Orchestrator context available - AgentName: %s, StepIndex: %d, Iteration: %d",
+		boa.orchestratorContext.AgentName, boa.orchestratorContext.StepIndex, boa.orchestratorContext.Iteration)
 
 	eventData := &events.OrchestratorAgentStartEvent{
 		BaseEventData: events.BaseEventData{

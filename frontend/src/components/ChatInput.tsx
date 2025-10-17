@@ -99,6 +99,20 @@ export const ChatInput = React.memo<ChatInputProps>(({
     return true;
   }, [agentMode, chatFileContext])
 
+  // Helper function for dynamic button text based on agent mode
+  const getButtonText = useCallback(() => {
+    if (agentMode === 'workflow') return 'Start Workflow'
+    if (agentMode === 'orchestrator') return 'Start Deep Search'
+    return 'Start Chat'
+  }, [agentMode])
+
+  // Helper function for dynamic tooltip text based on agent mode
+  const getButtonTooltip = useCallback(() => {
+    if (agentMode === 'workflow') return 'Start workflow execution with this preset'
+    if (agentMode === 'orchestrator') return 'Start deep research with this preset'
+    return 'Start a new chat with this preset'
+  }, [agentMode])
+
   // Preset folder selection (for Deep Search/workflow modes)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   
@@ -507,51 +521,75 @@ export const ChatInput = React.memo<ChatInputProps>(({
                   </Tooltip>
                   
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={handleEditQuery}
-                          className="px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/30 rounded transition-colors"
-                        >
-                          Edit
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Edit the preset query</p>
-                      </TooltipContent>
-                    </Tooltip>
+                    {/* Edit button - only show when not streaming */}
+                    {!isStreaming && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={handleEditQuery}
+                            className="px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/30 rounded transition-colors"
+                          >
+                            Edit
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Edit the preset query</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                     
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={onSubmit}
-                          disabled={isStreaming || !observerId || !isRequiredFolderSelected}
-                          className="px-2 py-0.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-                        >
-                          Start Chat
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Start a new chat with this preset</p>
-                      </TooltipContent>
-                    </Tooltip>
+                    {/* Dynamic button - Start or Stop based on streaming state */}
+                    {isStreaming ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={onStopStreaming}
+                            className="px-2 py-0.5 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                          >
+                            Stop
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Stop the current execution</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={onSubmit}
+                            disabled={!observerId || !isRequiredFolderSelected}
+                            className="px-2 py-0.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {getButtonText()}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{getButtonTooltip()}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                     
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={onNewChat}
-                          className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-                        >
-                          New Chat
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Create a new chat session</p>
-                      </TooltipContent>
-                    </Tooltip>
+                    {/* New Chat button - only show when not streaming */}
+                    {!isStreaming && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={onNewChat}
+                            className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                          >
+                            New Chat
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Create a new chat session</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </div>
                 </div>
               </div>

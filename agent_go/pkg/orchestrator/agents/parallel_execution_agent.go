@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/tmc/langchaingo/llms"
 
@@ -44,7 +45,32 @@ func (pea *OrchestratorParallelExecutionAgent) Initialize(ctx context.Context) e
 
 // Execute executes the parallel execution agent with parallel execution-specific input processing
 func (pea *OrchestratorParallelExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
-	return pea.ExecuteWithInputProcessor(ctx, templateVars, pea.parallelExecutionInputProcessor, conversationHistory)
+	startTime := time.Now()
+
+	// Auto-emit agent start event with parallel execution mode
+	pea.emitAgentStartEvent(ctx, templateVars, "parallel_execution")
+
+	// Process inputs using the parallel execution processor
+	userMessage := pea.parallelExecutionInputProcessor(templateVars)
+
+	// Delegate to template's Execute method which enforces event patterns
+	baseAgentTemplateVars := map[string]string{
+		"userMessage": userMessage,
+	}
+	result, err := pea.AgentTemplate.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
+
+	duration := time.Since(startTime)
+
+	// Auto-emit agent end event with parallel execution mode
+	pea.emitAgentEndEvent(ctx, templateVars, result, err, duration, "parallel_execution")
+
+	if err != nil {
+		pea.AgentTemplate.logger.Errorf("❌ Parallel Execution Agent (%s) execution failed: %v", pea.agentType, err)
+		return "", fmt.Errorf("parallel execution failed: %w", err)
+	}
+
+	// Parallel execution agent execution completed
+	return result, nil
 }
 
 // parallelExecutionInputProcessor processes inputs specifically for parallel execution using template replacement

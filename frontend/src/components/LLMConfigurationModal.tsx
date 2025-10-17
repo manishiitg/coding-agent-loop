@@ -106,26 +106,18 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     }
   }, [testAPIKey])
 
-  // Auto-save indicator - show when changes are made
+  // Auto-save indicator - show when changes are made (with debounce)
   useEffect(() => {
     if (saveStatus === 'idle') {
-      // Show brief auto-save indicator when configurations change
+      // Debounce the auto-save indicator to prevent excessive messages
       const timeoutId = setTimeout(() => {
         setSaveStatus('saved')
-        setTimeout(() => setSaveStatus('idle'), 1500)
-      }, 100)
+        setTimeout(() => setSaveStatus('idle'), 2000) // Show for 2 seconds
+      }, 500) // Wait 500ms before showing "saved"
       
       return () => clearTimeout(timeoutId)
     }
   }, [openrouterConfig, bedrockConfig, openaiConfig, primaryConfig, saveStatus])
-
-  // Enhanced auto-save feedback - trigger on any configuration change
-  const triggerAutoSave = useCallback(() => {
-    setSaveStatus('saved')
-    setTimeout(() => {
-      setSaveStatus('idle')
-    }, 1500)
-  }, [])
 
   // Handle Escape key to close modal
   useEffect(() => {
@@ -201,10 +193,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
   return (
     <TooltipProvider>
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-hidden">
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
+        <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-border">
+          <div className="flex items-center justify-between p-6 border-b border-border flex-shrink-0">
             <div className="flex items-center gap-3">
               <Settings className="w-6 h-6 text-primary" />
               <h2 className="text-xl font-semibold text-foreground">LLM Configuration</h2>
@@ -220,9 +212,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
           </div>
 
           {/* Content */}
-          <div className="flex h-[calc(90vh-120px)]">
+          <div className="flex flex-1 min-h-0">
             {/* Left Sidebar - Provider Tabs */}
-            <div className="w-64 border-r border-border bg-muted/30 p-4">
+            <div className="w-48 sm:w-64 border-r border-border bg-muted/30 p-3 sm:p-4 flex-shrink-0">
               <div className="space-y-2">
                 <h3 className="text-sm font-medium text-muted-foreground mb-3">Providers</h3>
                 
@@ -294,7 +286,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
             </div>
 
             {/* Right Content - Provider Configuration */}
-            <div className="flex-1 p-6 overflow-y-auto">
+            <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
               {activeTab === 'openrouter' && (
             <OpenRouterSection
               config={openrouterConfig}
@@ -306,7 +298,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               onSetPrimary={() => handleSetPrimaryProvider('openrouter')}
               getAvailableModelsForProvider={getAvailableModelsForProvider}
               currentProvider="openrouter"
-              triggerAutoSave={triggerAutoSave}
             />
               )}
 
@@ -321,7 +312,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onSetPrimary={() => handleSetPrimaryProvider('bedrock')}
                   getAvailableModelsForProvider={getAvailableModelsForProvider}
                   currentProvider="bedrock"
-                  triggerAutoSave={triggerAutoSave}
                 />
               )}
 
@@ -336,14 +326,13 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onSetPrimary={() => handleSetPrimaryProvider('openai')}
                   getAvailableModelsForProvider={getAvailableModelsForProvider}
                   currentProvider="openai"
-                  triggerAutoSave={triggerAutoSave}
                 />
               )}
             </div>
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between p-6 border-t border-border bg-muted/30">
+          <div className="flex items-center justify-between p-3 sm:p-6 border-t border-border bg-muted/30 flex-shrink-0">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {saveStatus === 'saving' && (
                 <>
@@ -413,7 +402,6 @@ interface ProviderSectionProps {
   onSetPrimary: () => void
   getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter') => string[]
   currentProvider: 'openai' | 'bedrock' | 'openrouter'
-  triggerAutoSave: () => void
 }
 
 interface BedrockSectionProps {
@@ -426,10 +414,9 @@ interface BedrockSectionProps {
   onSetPrimary: () => void
   getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter') => string[]
   currentProvider: 'openai' | 'bedrock' | 'openrouter'
-  triggerAutoSave: () => void
 }
 
-function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider, triggerAutoSave }: ProviderSectionProps) {
+function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [customModelInput, setCustomModelInput] = useState('')
   const [customModels, setCustomModels] = useState<string[]>(() => {
@@ -649,7 +636,6 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
                       ? [...config.fallback_models, model]
                       : config.fallback_models.filter(m => m !== model)
                     onUpdate({ ...config, fallback_models: newFallbacks })
-                    triggerAutoSave()
                   }}
                   className="rounded border-border text-primary focus:ring-primary"
                 />
@@ -681,10 +667,8 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
                       models: fallbackModels.length > 0 ? [fallbackModels[0]] : []
                     }
                   })
-                  triggerAutoSave()
                 } else {
                   onUpdate({ ...config, cross_provider_fallback: undefined })
-                  triggerAutoSave()
                 }
               }}
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
@@ -720,7 +704,6 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
                               models: newModels
                             }
                           })
-                          triggerAutoSave()
                         }}
                         className="rounded border-border text-primary focus:ring-primary"
                       />
@@ -737,7 +720,7 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
 }
 
 // Bedrock Section Component
-function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErrors, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider, triggerAutoSave }: BedrockSectionProps) {
+function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErrors, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: BedrockSectionProps) {
   const [region, setRegion] = useState(config.region || 'us-east-1')
   const [newCustomModel, setNewCustomModel] = useState('')
   
@@ -907,7 +890,6 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
                       ? [...config.fallback_models, model]
                       : config.fallback_models.filter(m => m !== model)
                     onUpdate({ ...config, fallback_models: newFallbacks })
-                    triggerAutoSave()
                   }}
                   className="rounded border-border text-primary focus:ring-primary"
                 />
@@ -988,10 +970,8 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
                       models: fallbackModels.length > 0 ? [fallbackModels[0]] : []
                     }
                   })
-                  triggerAutoSave()
                 } else {
                   onUpdate({ ...config, cross_provider_fallback: undefined })
-                  triggerAutoSave()
                 }
               }}
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
@@ -1027,7 +1007,6 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
                               models: newModels
                             }
                           })
-                          triggerAutoSave()
                         }}
                         className="rounded border-border text-primary focus:ring-primary"
                       />
@@ -1044,7 +1023,7 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
 }
 
 // OpenAI Section Component
-function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider, triggerAutoSave }: ProviderSectionProps) {
+function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   
   const { availableOpenAIModels } = useLLMStore()
@@ -1193,7 +1172,6 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                       ? [...config.fallback_models, model]
                       : config.fallback_models.filter(m => m !== model)
                     onUpdate({ ...config, fallback_models: newFallbacks })
-                    triggerAutoSave()
                   }}
                   className="rounded border-border text-primary focus:ring-primary"
                 />
@@ -1225,10 +1203,8 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                       models: fallbackModels.length > 0 ? [fallbackModels[0]] : []
                     }
                   })
-                  triggerAutoSave()
                 } else {
                   onUpdate({ ...config, cross_provider_fallback: undefined })
-                  triggerAutoSave()
                 }
               }}
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
@@ -1264,7 +1240,6 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                               models: newModels
                             }
                           })
-                          triggerAutoSave()
                         }}
                         className="rounded border-border text-primary focus:ring-primary"
                       />

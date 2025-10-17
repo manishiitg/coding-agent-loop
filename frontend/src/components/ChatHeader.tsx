@@ -12,9 +12,6 @@ interface ChatHeaderProps {
   chatSessionTitle: string
   chatSessionId: string
   sessionState: 'active' | 'completed' | 'loading' | 'error' | 'not-found'
-  isStreaming: boolean
-  totalEvents: number
-  lastEventCount: number
   onModeSelect: (category: 'chat' | 'deep-research' | 'workflow') => void
 }
 
@@ -48,9 +45,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   chatSessionTitle,
   chatSessionId,
   sessionState,
-  isStreaming,
-  totalEvents,
-  lastEventCount,
   onModeSelect
 }) => {
   const { selectedModeCategory } = useModeStore()
@@ -383,22 +377,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             </div>
           </div>
           
-          {/* Right: Event Controls & Streaming Info */}
+          {/* Right: Event Controls */}
           <div className="flex items-center gap-3">
             {/* Event Mode Toggle */}
             <EventModeToggle />
-            
-            {/* Streaming Status */}
-            {isStreaming && (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                <span>
-                  Streaming... 
-                  <span className="ml-2">
-                    📊 Events: {totalEvents} (Last: {lastEventCount})
-                  </span>
-                </span>
-              </div>
-            )}
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import { agentApi, type AgentQueryRequest } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
 import { EXECUTION_MODES } from '../services/api-types'
@@ -103,13 +103,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setSessionState,
     isCheckingActiveSessions,
     setIsCheckingActiveSessions,
-    selectedWorkflowPreset,
-    setSelectedWorkflowPreset,
-    workflowPhase,
-    setWorkflowPhase,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    workflowPresetQueryId: _workflowPresetQueryId,
-    setWorkflowPresetQueryId,
+    currentWorkflowPhase,
+    setCurrentWorkflowPhase,
+    setCurrentWorkflowQueryId,
     toasts,
     addToast,
     removeToast,
@@ -419,7 +415,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     clearFileContext()
     // Apply the preset using the global preset store
     applyPreset(presetId, 'workflow')
-    setWorkflowPresetQueryId(presetId) // Store the preset query ID for workflow approval
+    setCurrentWorkflowQueryId(presetId) // Store the preset query ID for workflow approval
     
     try {
       // Check if workflow already exists for this preset
@@ -431,41 +427,41 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         
         // Set the workflow phase based on the database status
         if (status === WORKFLOW_PHASES.POST_VERIFICATION) {
-          setWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
+          setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
         } else if (status === WORKFLOW_PHASES.POST_VERIFICATION_TODO_REFINEMENT) {
-          setWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION_TODO_REFINEMENT)
+          setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION_TODO_REFINEMENT)
         } else {
-          setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+          setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
         }
         
         // Use presetContent directly (this is the objective from preset query)
         setCurrentQuery(presetContent)
       } else {
         // No workflow exists, proceed with normal flow
-        setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+        setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
         setCurrentQuery(presetContent)
       }
     } catch (error) {
       console.error('[WORKFLOW] Error checking workflow status:', error)
       // Fallback to normal flow on error
-      setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
       setCurrentQuery(presetContent)
     }
-  }, [setCurrentQuery, applyPreset, setWorkflowPhase, setWorkflowPresetQueryId, clearFileContext])
+  }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId, clearFileContext])
 
   const handleWorkflowPresetCleared = useCallback(() => {
     clearActivePreset('workflow')
-    setWorkflowPresetQueryId(null) // Clear the stored preset query ID
-    setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION) // Reset to preset selection phase
+    setCurrentWorkflowQueryId(null) // Clear the stored preset query ID
+    setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION) // Reset to preset selection phase
     setCurrentQuery('')
-  }, [clearActivePreset, setWorkflowPresetQueryId, setWorkflowPhase, setCurrentQuery])
+  }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase, setCurrentQuery])
   
   // Clear workflow state when starting a new chat
   const clearWorkflowState = useCallback(() => {
     clearActivePreset('workflow')
-    setWorkflowPresetQueryId(null)
-    setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
-  }, [clearActivePreset, setWorkflowPresetQueryId, setWorkflowPhase])
+    setCurrentWorkflowQueryId(null)
+    setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+  }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase])
 
   // Handle human verification actions
   // TODO: Re-enable when RequestHumanFeedbackEvent is available
@@ -514,15 +510,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     } finally {
       setIsApprovingWorkflow(false)  // Clear loading state
     }
-  }, [workflowPresetQueryId, pollingInterval, setIsApprovingWorkflow, setEvents, setTotalEvents, setLastEventCount, setLastEventIndex, setFinalResponse, setIsCompleted, setCurrentUserMessage, setShowUserMessage, setWorkflowPhase, setPollingInterval])
+  }, [currentWorkflowQueryId, pollingInterval, setIsApprovingWorkflow, setEvents, setTotalEvents, setLastEventCount, setLastEventIndex, setFinalResponse, setIsCompleted, setCurrentUserMessage, setShowUserMessage, setCurrentWorkflowPhase, setPollingInterval])
   */
-
-  // Shared EventDisplay component to avoid duplication
-  const SharedEventDisplay = React.memo(() => (
-    <EventDisplay 
-      onDismissUserMessage={() => setShowUserMessage(false)}
-    />
-  ))
 
   // Initialize observer on mount (only if not loading from chat session)
   useEffect(() => {
@@ -673,10 +662,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                   if (result) {
                     // Only reset to PRE_VERIFICATION if workflow hasn't been approved yet
                     // This prevents resetting the phase after user approval
-                    if (workflowPhase === WORKFLOW_PHASES.POST_VERIFICATION) {
+                    if (currentWorkflowPhase === WORKFLOW_PHASES.POST_VERIFICATION) {
                       // Workflow already approved, keeping POST_VERIFICATION phase
                     } else {
-                      setWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+                      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
                     }
                   }
                 }
@@ -684,7 +673,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
               // Handle workflow completion events
               if (event.type === 'workflow_end') {
-                setWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
+                setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
               }
 
             }
@@ -1309,7 +1298,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     if (agentMode === 'workflow' && selectedWorkflowPreset) {
       // Keep the preset selected, just reset the workflow phase
       setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
-      // Don't clear selectedWorkflowPreset or workflowPresetQueryId
+      // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
     } else {
       // For other modes, clear workflow state completely
       clearWorkflowState()
@@ -1327,7 +1316,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     
     // Call the parent's new chat handler
     onNewChat()
-  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, setOrchestratorExecutionMode])
+  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, setOrchestratorExecutionMode, agentMode, selectedWorkflowPreset, setCurrentWorkflowPhase])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {
@@ -1372,9 +1361,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         chatSessionTitle={chatSessionTitle}
         chatSessionId={chatSessionId}
         sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
-        isStreaming={isStreaming}
-        totalEvents={totalEvents}
-        lastEventCount={lastEventCount}
         onModeSelect={handleModeSelect}
       />
 
@@ -1472,7 +1458,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             ref={workflowModeHandlerRef}
             onPresetSelected={handleWorkflowPresetSelected}
             onPresetCleared={handleWorkflowPresetCleared}
-            onWorkflowPhaseChange={setWorkflowPhase}
+            onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
             {/* Empty State - Show when no events and not in historical session */}
             {!chatSessionId && events.length === 0 && !isStreaming && (
@@ -1519,6 +1505,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}
         />
+      )}
+      
+      {/* Streaming Status - Show at bottom when streaming */}
+      {isStreaming && !chatSessionId && (
+        <div className="px-3 py-1 border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
+          <div className="flex items-center justify-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
+            <span>Streaming</span>
+            <span>📊 {totalEvents} ({lastEventCount})</span>
+          </div>
+        </div>
       )}
       
       {/* Historical Session Notice */}

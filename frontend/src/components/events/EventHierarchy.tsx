@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { PollingEvent } from '../../services/api-types';
 import { EventDispatcher } from './EventDispatcher';
 import './EventHierarchy.css';
 
 interface EventHierarchyProps {
   events: PollingEvent[];
-  onApproveWorkflow?: (requestId: string) => void
-  isApproving?: boolean  // Loading state for approve button
+  // onApproveWorkflow?: (requestId: string) => void
+  // isApproving?: boolean  // Loading state for approve button
 }
 
 interface EventNode {
@@ -16,14 +17,12 @@ interface EventNode {
   isExpanded: boolean;
 }
 
-export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, isApproving }) => {
+export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-  const [showAllEvents, setShowAllEvents] = useState(false);
+  const parentRef = useRef<HTMLDivElement>(null);
   
-  // Limit events to latest 500 for performance
-  const MAX_EVENTS = 500;
-  const displayEvents = showAllEvents ? events : events.slice(-MAX_EVENTS);
-  const hasMoreEvents = events.length > MAX_EVENTS;
+  // No longer need MAX_EVENTS limit - virtualization handles performance
+  const displayEvents = events;
 
   // Extract parent_id from event data
   const getParentId = (event: PollingEvent): string | undefined => {
@@ -147,8 +146,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
             <div className="event-details">
               <EventDispatcher 
                 event={event} 
-                onApproveWorkflow={onApproveWorkflow}
-                isApproving={isApproving}
               />
             </div>
           </div>
@@ -166,6 +163,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
 
   const eventTree = buildEventTree(displayEvents);
 
+  // Setup virtualizer for performance with large event lists
+  const virtualizer = useVirtualizer({
+    count: eventTree.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80, // Average event height in pixels
+    overscan: 5, // Render 5 extra items above/below viewport for smooth scrolling
+  });
+
   if (eventTree.length === 0) {
     return (
       <div className="text-gray-500 text-center py-4">
@@ -176,29 +181,53 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
 
   return (
     <div className="event-hierarchy">
-      {/* Event count and load more button */}
-      {hasMoreEvents && (
+      {/* Event count info */}
+      {events.length > 100 && (
         <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
           <div className="flex items-center justify-between">
             <div className="text-sm text-blue-700 dark:text-blue-300">
-              {showAllEvents ? (
-                <>Showing all {events.length} events</>
-              ) : (
-                <>Showing latest {displayEvents.length} of {events.length} events</>
-              )}
+              Showing all {events.length} events (virtualized for performance)
             </div>
-            <button
-              onClick={() => setShowAllEvents(!showAllEvents)}
-              className="px-3 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-800 hover:bg-blue-200 dark:hover:bg-blue-700 rounded-md transition-colors"
-            >
-              {showAllEvents ? 'Show Latest 500' : 'Show All Events'}
-            </button>
           </div>
         </div>
       )}
       
-      <div className="event-tree">
-        {eventTree.map(node => renderEventNode(node))}
+      {/* Virtualized event tree */}
+      <div
+        ref={parentRef}
+        className="event-tree-container"
+        style={{
+          height: '100%',
+          overflow: 'auto'
+        }}
+      >
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative'
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const node = eventTree[virtualRow.index];
+            return (
+              <div
+                key={node.event.id}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`
+                }}
+              >
+                {renderEventNode(node)}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

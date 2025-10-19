@@ -68,17 +68,35 @@ const PresetModal: React.FC<PresetModalProps> = ({
     });
   }, [primaryConfig, setPrimaryConfig]);
 
-  // Get current LLM option for display
-  const currentLLMOption = getCurrentLLMOption();
+  // Convert preset LLM config to LLMOption for display
+  const getPresetLLMOption = useCallback(() => {
+    console.log('[PRESET MODAL] Getting preset LLM option, llmConfig:', llmConfig);
+    if (llmConfig) {
+      // Find the matching LLM option from available LLMs
+      const matchingLLM = availableLLMs.find(llm => 
+        llm.provider === llmConfig.provider && llm.model === llmConfig.model_id
+      );
+      console.log('[PRESET MODAL] Matching LLM found:', matchingLLM);
+      return matchingLLM || null;
+    }
+    console.log('[PRESET MODAL] No llmConfig, using current LLM option');
+    return getCurrentLLMOption();
+  }, [llmConfig, availableLLMs, getCurrentLLMOption]);
+
+  const currentLLMOption = getPresetLLMOption();
 
   useEffect(() => {
     if (editingPreset) {
+      console.log('[PRESET MODAL] Editing preset:', editingPreset);
       setLabel(editingPreset.label);
       setQuery(editingPreset.query);
       setSelectedServers(editingPreset.selectedServers || []);
       setAgentMode(editingPreset.agentMode || 'ReAct');
       setSelectedFolder(editingPreset.selectedFolder || null);
-      setLlmConfig(editingPreset.llmConfig || null);
+      setLlmConfig(editingPreset.llmConfig || {
+        provider: primaryConfig.provider,
+        model_id: primaryConfig.model_id
+      });
     } else {
       setLabel('');
       setQuery('');
@@ -126,6 +144,7 @@ const PresetModal: React.FC<PresetModalProps> = ({
         alert('Folder selection is required for Deep Search and workflow presets');
         return;
       }
+      console.log('[PRESET MODAL] Saving preset with llmConfig:', llmConfig);
       onSave(label.trim(), query.trim(), selectedServers, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
       onClose();
     }

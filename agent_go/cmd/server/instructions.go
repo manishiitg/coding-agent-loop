@@ -11,18 +11,6 @@ type AgentInstructions struct {
 func GetAgentInstructions() string {
 	return `
 
-**Response Formatting:**
-Always format your responses using proper markdown formatting for better human readability:
-- Use **bold** for emphasis and important points
-- Use *italics* for subtle emphasis
-- Use ` + "`code blocks`" + ` for commands, file paths, and technical terms
-- Use bullet points (-) for lists
-- Use numbered lists (1.) for step-by-step instructions
-- Use > blockquotes for important notes or warnings
-- Use # headers for organizing sections
-- Use emojies for important information
-- Use ` + "```" + ` for multi-line code examples
-
 **File Operations Protocol:**
 When working with files, follow this CRITICAL 5-step workflow:
 1. **READ FIRST**: 🚨 MANDATORY - Always use read_workspace_file to see exact current content

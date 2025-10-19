@@ -1464,6 +1464,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1540,6 +1543,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1616,6 +1622,9 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1671,6 +1680,9 @@
         },
         "error": {
           "type": "string"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1720,6 +1732,9 @@
         },
         "duration": {
           "type": "integer"
+        },
+        "execution_mode": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1771,6 +1786,9 @@
           "type": "integer"
         },
         "configuration": {
+          "type": "string"
+        },
+        "execution_mode": {
           "type": "string"
         }
       },
@@ -1985,6 +2003,73 @@
           "type": "string"
         },
         "content": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RequestHumanFeedbackEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "todo_list_markdown": {
+          "type": "string"
+        },
+        "workflow_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "verification_type": {
+          "type": "string"
+        },
+        "next_phase": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "action_label": {
+          "type": "string"
+        },
+        "action_description": {
           "type": "string"
         }
       },
@@ -3034,6 +3119,9 @@
     },
     "orchestrator_agent_error": {
       "$ref": "#/$defs/OrchestratorAgentErrorEvent"
+    },
+    "request_human_feedback": {
+      "$ref": "#/$defs/RequestHumanFeedbackEvent"
     }
   },
   "additionalProperties": false,

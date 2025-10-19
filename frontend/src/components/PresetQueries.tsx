@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { usePresetManagement, usePresetApplication } from '../stores/useGlobalPresetStore';
 import PresetModal from './PresetModal';
 import type { CustomPreset } from '../types/preset';
-import type { PlannerFile } from '../services/api-types';
+import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { Checkbox } from './ui/checkbox';
 import { Card } from './ui/Card';
 import { useModeStore } from '../stores/useModeStore';
@@ -112,15 +112,15 @@ interface PresetQueriesProps {
     }
   };
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => {
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
     if (editingPreset) {
-      await updatePreset(editingPreset.id, label, query, selectedServers, agentMode, selectedFolder);
+      await updatePreset(editingPreset.id, label, query, selectedServers, agentMode, selectedFolder, llmConfig);
       // Call the callback to refresh workflow presets when a preset is updated
       setTimeout(() => {
         onPresetAdded?.();
       }, 100);
     } else {
-      await addPreset(label, query, selectedServers, agentMode, selectedFolder);
+      await addPreset(label, query, selectedServers, agentMode, selectedFolder, llmConfig);
       // Add a small delay to ensure the preset is fully processed
       setTimeout(() => {
         onPresetAdded?.();

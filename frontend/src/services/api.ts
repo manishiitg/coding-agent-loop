@@ -84,6 +84,10 @@ export function resetSessionId(): void {
   sessionIdRef = null
 }
 
+export function setSessionId(sessionId: string): void {
+  sessionIdRef = sessionId
+}
+
 // --- Observer ID Management ---
 function getObserverId(): string {
   const observerId = localStorage.getItem('agent_observer_id')

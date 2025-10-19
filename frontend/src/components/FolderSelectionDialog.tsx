@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Folder, Search, ChevronRight, ChevronDown } from 'lucide-react'
+import { Folder, Search, ChevronRight, ChevronDown, FolderPlus } from 'lucide-react'
 import type { PlannerFile } from '../services/api-types'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
+import CreateFolderDialog from './workspace/CreateFolderDialog'
+import { agentApi } from '../services/api'
 
 interface FolderSelectionDialogProps {
   isOpen: boolean
@@ -20,10 +22,12 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
   position,
   agentMode
 }) => {
-  const { files } = useWorkspaceStore()
+  const { files, fetchFiles } = useWorkspaceStore()
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [filteredFolders, setFilteredFolders] = useState<PlannerFile[]>([])
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const [showCreateFolderDialog, setShowCreateFolderDialog] = useState(false)
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -34,6 +38,10 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
+        // Don't close main dialog if create folder dialog is open
+        if (showCreateFolderDialog) {
+          return
+        }
         onClose()
       } else if (event.key === 'Enter') {
         event.preventDefault()
@@ -51,7 +59,59 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, onSelectFolder, filteredFolders, selectedIndex])
+  }, [isOpen, onClose, onSelectFolder, filteredFolders, selectedIndex, showCreateFolderDialog])
+
+  // Get the appropriate parent path for folder creation based on agent mode
+  const getParentPathForCreation = useCallback((): string => {
+    if (!agentMode || agentMode === 'simple' || agentMode === 'ReAct') {
+      return '' // Root level for simple modes
+    }
+    
+    if (agentMode === 'workflow') {
+      return 'Workflow'
+    }
+    
+    if (agentMode === 'orchestrator') {
+      return 'Tasks'
+    }
+    
+    return ''
+  }, [agentMode])
+
+  // Handle create folder button click
+  const handleCreateFolderClick = useCallback(() => {
+    setShowCreateFolderDialog(true)
+  }, [])
+
+  // Handle folder creation
+  const handleCreateFolder = useCallback(async (folderPath: string, commitMessage?: string) => {
+    setIsCreatingFolder(true)
+    
+    try {
+      await agentApi.createPlannerFolder(folderPath, commitMessage)
+      
+      // Refresh the file list to show the new folder
+      await fetchFiles()
+      
+      // Close the create folder dialog
+      setShowCreateFolderDialog(false)
+      
+      // Don't automatically select and close - let user choose
+      // The folder will now appear in the list for manual selection
+    } catch (error) {
+      console.error('Failed to create folder:', error)
+      throw error // Re-throw to let CreateFolderDialog handle the error
+    } finally {
+      setIsCreatingFolder(false)
+    }
+  }, [fetchFiles])
+
+  // Handle create folder dialog close
+  const handleCreateFolderDialogClose = useCallback(() => {
+    if (!isCreatingFolder) {
+      setShowCreateFolderDialog(false)
+    }
+  }, [isCreatingFolder])
 
   // Filter folders based on agent mode while maintaining hierarchy
   const filterFoldersByAgentMode = useCallback((files: PlannerFile[]): PlannerFile[] => {
@@ -317,10 +377,14 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
         break
       case 'Escape':
         e.preventDefault()
+        // Don't close main dialog if create folder dialog is open
+        if (showCreateFolderDialog) {
+          return
+        }
         onClose()
         break
     }
-  }, [isOpen, filteredFolders, selectedIndex, onSelectFolder, onClose])
+  }, [isOpen, filteredFolders, selectedIndex, onSelectFolder, onClose, showCreateFolderDialog])
 
   // Add keyboard event listeners
   useEffect(() => {
@@ -349,6 +413,10 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dialogRef.current && !dialogRef.current.contains(event.target as Node)) {
+        // Don't close if the create folder dialog is open
+        if (showCreateFolderDialog) {
+          return
+        }
         onClose()
       }
     }
@@ -359,7 +427,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
         document.removeEventListener('mousedown', handleClickOutside)
       }
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, showCreateFolderDialog])
 
   // Handle folder click - expand/collapse or select
   const handleFolderClick = useCallback((folder: PlannerFile, event: React.MouseEvent) => {
@@ -462,6 +530,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
   if (!isOpen) return null
 
   return (
+    <React.Fragment>
     <div
       ref={dialogRef}
       className="fixed z-50 bg-background border border-border rounded-lg shadow-lg max-w-md w-full max-h-80 overflow-hidden"
@@ -538,12 +607,37 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">
-        <div className="flex items-center justify-between">
-          <span>↑↓ to navigate • → to expand folders</span>
-          <span>Enter to select • Esc to close</span>
+      <div className="px-3 py-2 border-t border-border bg-secondary">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-muted-foreground">↑↓ to navigate • → to expand folders</span>
+          <span className="text-xs text-muted-foreground">Enter to select • Esc to close</span>
         </div>
+        
+        {/* Create New Folder Button */}
+        <button
+          onClick={handleCreateFolderClick}
+          disabled={isCreatingFolder}
+          className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <FolderPlus className="w-3 h-3" />
+          <span>Create New Folder</span>
+        </button>
+        
+        {agentMode && (agentMode === 'workflow' || agentMode === 'orchestrator') && (
+          <p className="text-xs text-muted-foreground mt-1 text-center">
+            Will be created in {agentMode === 'workflow' ? 'Workflow/' : 'Tasks/'}
+          </p>
+        )}
       </div>
     </div>
+
+    {/* Create Folder Dialog */}
+    <CreateFolderDialog
+      isOpen={showCreateFolderDialog}
+      onClose={handleCreateFolderDialogClose}
+      onCreateFolder={handleCreateFolder}
+      parentPath={getParentPathForCreation()}
+    />
+  </React.Fragment>
   )
 }

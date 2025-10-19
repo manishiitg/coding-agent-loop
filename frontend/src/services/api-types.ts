@@ -27,10 +27,17 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
   region?: string
 }
 
+// Execution mode constants matching backend enum
+export const EXECUTION_MODES = {
+  SEQUENTIAL: 'sequential_execution',
+  PARALLEL: 'parallel_execution'
+} as const
+
+export type OrchestratorExecutionMode = typeof EXECUTION_MODES[keyof typeof EXECUTION_MODES]
+
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  servers?: string[]
   provider?: 'bedrock' | 'openai' | 'openrouter'
   model_id?: string
   temperature?: number
@@ -40,6 +47,8 @@ export interface AgentQueryRequest {
   agent_mode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
   llm_config?: LLMConfiguration
   preset_query_id?: string
+  // Orchestrator execution mode selection
+  orchestrator_execution_mode?: OrchestratorExecutionMode
 }
 
 export interface AgentQueryResponse {

@@ -26,6 +26,7 @@ export const OrchestratorErrorEventDisplay: React.FC<OrchestratorErrorEventDispl
               ❌ Deep Search Error{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Duration: {formatDuration(event.duration || 0)}
+                {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}
                 {event.context && ` | Context: ${event.context.length > 20 ? `${event.context.substring(0, 20)}...` : event.context}`}
               </span>
             </div>

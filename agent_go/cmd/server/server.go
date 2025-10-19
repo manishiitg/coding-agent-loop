@@ -274,6 +274,11 @@ func isOrchestratorEvent(eventType unifiedevents.EventType) bool {
 		eventType == unifiedevents.OrchestratorAgentError
 }
 
+// getExecutionModeLabel returns a human-readable label for execution mode
+func getExecutionModeLabel(mode string) string {
+	return orchtypes.ParseExecutionMode(mode).GetLabel()
+}
+
 // QueryRequest represents an agent query request
 type QueryRequest struct {
 	Query          string               `json:"query"`
@@ -287,6 +292,8 @@ type QueryRequest struct {
 	LLMConfig      *orchtypes.LLMConfig `json:"llm_config,omitempty"`
 	PresetQueryID  string               `json:"preset_query_id,omitempty"`
 	LLMGuidance    string               `json:"llm_guidance,omitempty"` // LLM guidance message
+	// Orchestrator execution mode selection
+	OrchestratorExecutionMode orchtypes.ExecutionMode `json:"orchestrator_execution_mode,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -297,9 +304,10 @@ type CrossProviderFallback struct {
 
 // QueryResponse represents an agent query response
 type QueryResponse struct {
-	QueryID string `json:"query_id"`
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
+	QueryID    string `json:"query_id"`
+	ObserverID string `json:"observer_id"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
 }
 
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
@@ -632,6 +640,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
 
+	// External API routes (for external systems - curl, Postman, etc.)
+	apiRouter.HandleFunc("/external/execute", api.handleExecutePreset).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/external/cancel", api.handleCancelExecution).Methods("POST", "OPTIONS")
+
 	// Static file serving (for frontend)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 
@@ -942,11 +954,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Create a fresh agent for each request
 	log.Printf("[LLM CONFIG DEBUG] Creating fresh agent for each request")
 
-	// Return immediate response with query ID
+	// Return immediate response with query ID and observer ID
 	response := QueryResponse{
-		QueryID: queryID,
-		Status:  "started",
-		Message: "Query processing started. Use polling API to get real-time updates.",
+		QueryID:    queryID,
+		ObserverID: observerID, // Include observer ID in response
+		Status:     "started",
+		Message:    "Query processing started. Use polling API to get real-time updates.",
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -1090,13 +1103,42 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				chatDB:          api.chatDB, // Add database reference for event storage
 			}
 
+			// Create selected options for orchestrator execution mode
+			var selectedOptions *orchtypes.PlannerSelectedOptions
+			if req.OrchestratorExecutionMode != "" {
+				// Create selected options with execution mode
+				selectedOptions = &orchtypes.PlannerSelectedOptions{
+					Selections: []orchtypes.PlannerSelectedOption{
+						{
+							OptionID:    req.OrchestratorExecutionMode.String(),
+							OptionLabel: req.OrchestratorExecutionMode.GetLabel(),
+							OptionValue: req.OrchestratorExecutionMode.String(),
+							Group:       "execution_strategy",
+						},
+					},
+				}
+				log.Printf("[ORCHESTRATOR DEBUG] Using execution mode from request: %s", req.OrchestratorExecutionMode.String())
+			} else {
+				// Default to parallel execution if no mode specified
+				defaultMode := orchtypes.ParallelExecution
+				selectedOptions = &orchtypes.PlannerSelectedOptions{
+					Selections: []orchtypes.PlannerSelectedOption{
+						{
+							OptionID:    defaultMode.String(),
+							OptionLabel: defaultMode.GetLabel(),
+							OptionValue: defaultMode.String(),
+							Group:       "execution_strategy",
+						},
+					},
+				}
+				log.Printf("[ORCHESTRATOR DEBUG] Using default execution mode: %s", defaultMode.String())
+			}
+
 			// Always create a fresh orchestrator for this session
 			orchestrator := orchtypes.NewPlannerOrchestrator(
 				api.logger,
 				api.config.AgentMode,
-				api.config.StructuredOutputProvider,
-				api.config.StructuredOutputModel,
-				api.config.StructuredOutputTemp,
+				selectedOptions, // Pass selected options with execution mode
 			)
 			log.Printf("[ORCHESTRATOR DEBUG] Created fresh orchestrator for session %s", sessionID)
 
@@ -1277,6 +1319,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						AgentsCount:   5, // planning, execution, validation, organizer, report generation
 						ServersCount:  len(selectedServers),
 						Configuration: fmt.Sprintf("Provider: %s, Model: %s", req.Provider, req.ModelID),
+						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
 					}
 
 					// Create unified event wrapper
@@ -1391,11 +1434,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						BaseEventData: unifiedevents.BaseEventData{
 							Timestamp: time.Now(),
 						},
-						Objective: req.Query,
-						Result:    result,
-						Duration:  duration,
-						Status:    status,
-						Error:     errorMsg,
+						Objective:     req.Query,
+						Result:        result,
+						Duration:      duration,
+						Status:        status,
+						Error:         errorMsg,
+						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
 					}
 
 					// Create unified event wrapper
@@ -2038,13 +2082,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// --- BEGIN: Update chat session status to completed ---
 		if chatSession != nil {
 			// Update session status to completed with completion timestamp
-			// Preserve the existing title and agent_mode
+			// Only update status and completed_at to avoid foreign key constraint issues
 			completedAt := time.Now()
 			updateReq := &database.UpdateChatSessionRequest{
-				Title:       chatSession.Title,     // Preserve existing title
-				AgentMode:   chatSession.AgentMode, // Preserve existing agent_mode
-				Status:      "completed",
-				CompletedAt: &completedAt,
+				Status:        "completed",
+				CompletedAt:   &completedAt,
+				PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 			}
 			_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
 			if err != nil {
@@ -2569,8 +2612,9 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 
 		log.Printf("[ACTIVE_SESSION] Updating database for session %s status to: %s", sessionID, status)
 		_, err := api.chatDB.UpdateChatSession(ctx, sessionID, &database.UpdateChatSessionRequest{
-			Status:      status,
-			CompletedAt: completedAt,
+			Status:        status,
+			CompletedAt:   completedAt,
+			PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 		})
 		if err != nil {
 			log.Printf("[ACTIVE_SESSION] Failed to update database for session %s: %v", sessionID, err)

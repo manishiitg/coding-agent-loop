@@ -5,6 +5,64 @@ import type { StoreActions } from './types'
 import type { WorkflowPhase } from '../constants/workflow'
 import { useAppStore } from './useAppStore'
 
+// Event memory management constants
+const MAX_EVENTS = 1000
+const CLEANUP_THRESHOLD = 1200
+
+// Helper function to identify important events that should always be retained
+const shouldRetainEvent = (event: PollingEvent): boolean => {
+  if (!event.type) return false
+  
+  const importantTypes = [
+    'agent_error',
+    'conversation_error',
+    'orchestrator_error',
+    'unified_completion',
+    'conversation_end',
+    'workflow_end',
+    'request_human_feedback',
+    'orchestrator_end',
+    'agent_end',
+    'workflow_start'
+  ]
+  return importantTypes.includes(event.type)
+}
+
+// Helper function to cleanup old events while retaining important ones
+const cleanupOldEvents = (events: PollingEvent[]): PollingEvent[] => {
+  if (events.length <= MAX_EVENTS) return events
+  
+  // Separate important and regular events
+  const important = events.filter(shouldRetainEvent)
+  const regular = events.filter(e => !shouldRetainEvent(e))
+  
+  // Trim important events if they exceed MAX_EVENTS
+  let trimmedImportant = important
+  if (important.length > MAX_EVENTS) {
+    // Keep only the newest MAX_EVENTS important events
+    trimmedImportant = important
+      .sort((a, b) => {
+        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+        return bTime - aTime // Sort newest first
+      })
+      .slice(0, MAX_EVENTS)
+  }
+  
+  // Calculate budget for regular events (clamped to 0)
+  const budget = Math.max(0, MAX_EVENTS - trimmedImportant.length)
+  
+  // Keep latest regular events within budget
+  const keepRegular = budget > 0 ? regular.slice(-budget) : []
+  
+  // Combine and sort by timestamp
+  return [...trimmedImportant, ...keepRegular].sort((a, b) => {
+    const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+    const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+    return aTime - bTime
+  })
+}
+
 interface ChatState extends StoreActions {
   // Chat streaming state
   isStreaming: boolean
@@ -155,11 +213,24 @@ export const useChatStore = create<ChatState>()(
       setEvents: (events) => {
         if (typeof events === 'function') {
           set((state) => {
-            const newEvents = events(state.events)
+            let newEvents = events(state.events)
+            
+            // Trigger cleanup if threshold exceeded
+            if (newEvents.length >= CLEANUP_THRESHOLD) {
+              console.log(`[MEMORY] Cleaning up events: ${newEvents.length} -> ${MAX_EVENTS}`)
+              newEvents = cleanupOldEvents(newEvents)
+            }
+            
             return { events: newEvents }
           })
         } else {
-          set({ events })
+          // Trigger cleanup if threshold exceeded
+          let finalEvents = events
+          if (events.length >= CLEANUP_THRESHOLD) {
+            console.log(`[MEMORY] Cleaning up events: ${events.length} -> ${MAX_EVENTS}`)
+            finalEvents = cleanupOldEvents(events)
+          }
+          set({ events: finalEvents })
         }
       },
 

@@ -31,9 +31,6 @@ type OrchestratorAgent interface {
 
 	// GetBaseAgent returns the base agent for event listener attachment
 	GetBaseAgent() *BaseAgent
-
-	// SetOrchestratorContext sets the orchestrator context for event emission
-	SetOrchestratorContext(stepIndex, iteration int, objective, agentName string)
 }
 
 // OutputFormat represents the output format for an agent
@@ -47,10 +44,6 @@ const (
 
 // OrchestratorAgentConfig defines the configuration for an orchestrator agent
 type OrchestratorAgentConfig struct {
-	// Required Agent identity
-	Name string `json:"name" validate:"required"`
-	Type string `json:"type" validate:"required"`
-
 	// Required LLM configuration
 	Provider    string  `json:"provider" validate:"required"`
 	Model       string  `json:"model" validate:"required"`
@@ -98,8 +91,6 @@ type CrossProviderFallback struct {
 // NewOrchestratorAgentConfig creates a new agent configuration with minimal defaults
 func NewOrchestratorAgentConfig(agentType, name string) *OrchestratorAgentConfig {
 	return &OrchestratorAgentConfig{
-		Name:        name,
-		Type:        agentType,
 		Provider:    "", // Must be set by caller
 		Model:       "", // Must be set by caller
 		Temperature: 0.0,
@@ -170,14 +161,6 @@ func LoadOrchestratorAgentConfigFromEnv(agentType, name string) *OrchestratorAge
 // ValidateOrchestratorAgentConfig validates that all required fields are provided
 func ValidateOrchestratorAgentConfig(config *OrchestratorAgentConfig) error {
 	var errors []string
-
-	// Check required agent identity
-	if config.Name == "" {
-		errors = append(errors, "Name is required")
-	}
-	if config.Type == "" {
-		errors = append(errors, "Type is required")
-	}
 
 	// Check required LLM configuration
 	if config.Provider == "" {

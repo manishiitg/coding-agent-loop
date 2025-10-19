@@ -27,6 +27,7 @@ import (
 	"mcp-agent/agent_go/pkg/database"
 	unifiedevents "mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
 
@@ -34,10 +35,31 @@ import (
 
 	"github.com/joho/godotenv"
 
+	eventbridge "mcp-agent/agent_go/cmd/server/event_bridge"
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	mcpagent "mcp-agent/agent_go/pkg/mcpagent"
 	"strconv"
 )
+
+// extractWorkspacePathFromObjective extracts the workspace path from the objective string
+// Looks for pattern: "📁 Files in context: Workflow/[FolderName]"
+func extractWorkspacePathFromObjective(objective string) string {
+	// Look for pattern: "📁 Files in context: Workflow/[FolderName]"
+	// This is the standard pattern used by workflow orchestrator
+	prefix := "📁 Files in context: "
+	if idx := strings.Index(objective, prefix); idx != -1 {
+		// Find the start of the workspace path
+		start := idx + len(prefix)
+		// Find the end of the workspace path (typically before a newline or end of string)
+		end := strings.Index(objective[start:], "\n")
+		if end == -1 {
+			// No newline found, use the rest of the string
+			return objective[start:]
+		}
+		return objective[start : start+end]
+	}
+	return ""
+}
 
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
@@ -79,14 +101,6 @@ type ServerConfig struct {
 	StructuredOutputTemp     float64 `json:"structured_output_temperature"`
 }
 
-// StoredOrchestratorState represents stored state for any orchestrator type
-type StoredOrchestratorState struct {
-	Type          string                       `json:"type"` // "planner" or "workflow"
-	PlannerState  *orchtypes.OrchestratorState `json:"planner_state,omitempty"`
-	WorkflowState *orchtypes.WorkflowState     `json:"workflow_state,omitempty"`
-	StoredAt      time.Time                    `json:"stored_at"`
-}
-
 // ActiveSessionInfo represents an active session for page refresh recovery
 type ActiveSessionInfo struct {
 	SessionID    string    `json:"session_id"`
@@ -117,7 +131,7 @@ type StreamingAPI struct {
 	orchestratorContexts   map[string]context.CancelFunc
 	orchestratorContextMux sync.RWMutex
 
-	// Workflow orchestrator sessions: sessionID -> *WorkflowOrchestrator
+	// Workflow orchestrator sessions: sessionID -> orchestrator.Orchestrator
 
 	// Workflow orchestrator contexts for cancellation: sessionID -> context.CancelFunc
 	workflowOrchestratorContexts   map[string]context.CancelFunc
@@ -130,10 +144,6 @@ type StreamingAPI struct {
 	// Conversation history storage: sessionID -> conversation history
 	conversationHistory map[string][]llms.MessageContent
 	conversationMux     sync.RWMutex
-
-	// Orchestrator state storage: sessionID -> orchestrator state (supports both planner and workflow)
-	orchestratorStates   map[string]*StoredOrchestratorState
-	orchestratorStateMux sync.RWMutex
 
 	// Database for chat history storage
 	chatDB database.Database
@@ -156,8 +166,8 @@ type StreamingAPI struct {
 	internalLLM       llms.Model
 
 	// Orchestrator objects in memory for guidance injection
-	workflowOrchestrators map[string]*orchtypes.WorkflowOrchestrator
-	plannerOrchestrators  map[string]*orchtypes.PlannerOrchestrator
+	workflowOrchestrators map[string]orchestrator.Orchestrator
+	plannerOrchestrators  map[string]orchestrator.Orchestrator
 
 	toolStatus    map[string]ToolStatus
 	enabledTools  map[string][]string // queryID/sessionID -> enabled tool names
@@ -175,123 +185,19 @@ type StreamingAPI struct {
 	logger utils.ExtendedLogger
 }
 
-// OrchestratorAgentEventBridge bridges individual agent events from within orchestrator to the main server event system
-type OrchestratorAgentEventBridge struct {
-	eventStore      *events.EventStore
-	observerManager *events.ObserverManager
-	observerID      string // Observer ID for polling API
-	sessionID       string // Session ID for database storage
-	logger          utils.ExtendedLogger
-	agent           *mcpagent.Agent   // Add agent reference for hierarchy support
-	chatDB          database.Database // Add database reference for chat history storage
-}
-
-// Name returns the bridge name
-func (b *OrchestratorAgentEventBridge) Name() string {
-	return "orchestrator_agent_event_bridge"
-}
-
-// HandleEvent processes agent events from within orchestrator and converts them to server events
-func (b *OrchestratorAgentEventBridge) HandleEvent(ctx context.Context, event *unifiedevents.AgentEvent) error {
-	b.logger.Infof("[ORCHESTRATOR AGENT BRIDGE] Processing agent event: %s", event.Type)
-
-	// ✅ HIERARCHY FIX: For orchestrator events, use agent's EmitTypedEvent to get proper hierarchy
-	if b.agent != nil && isOrchestratorEvent(event.Type) {
-		b.logger.Infof("[ORCHESTRATOR AGENT BRIDGE] Using agent.EmitTypedEvent for orchestrator event: %s", event.Type)
-		b.agent.EmitTypedEvent(ctx, event.Data)
-		return nil
-	}
-
-	// For other events, use the original bridge logic
-	// Create server event with typed AgentEvent data directly - no conversion needed!
-	serverEvent := events.Event{
-		ID:        fmt.Sprintf("orch_agent_%s_%d", event.Type, time.Now().UnixNano()),
-		Type:      string(event.Type),
-		Timestamp: time.Now(),
-		Data:      event,        // Pass through the typed AgentEvent directly
-		SessionID: b.observerID, // Use observerID for in-memory storage (polling)
-	}
-
-	// Store the event in the server's event store for polling API
-	// Use the observer ID for in-memory storage (this is what the frontend polls)
-	b.eventStore.AddEvent(b.observerID, serverEvent)
-
-	// ✅ CHAT HISTORY FIX: Store event in database for chat history
-	if b.chatDB != nil {
-		// Extract hierarchy information from event data if available
-		hierarchyLevel := 0
-		component := "orchestrator"
-
-		// Try to extract hierarchy info from BaseEventData if the event data has it
-		if baseData, ok := event.Data.(interface {
-			GetBaseEventData() *unifiedevents.BaseEventData
-		}); ok {
-			if base := baseData.GetBaseEventData(); base != nil {
-				hierarchyLevel = base.HierarchyLevel
-				if base.Component != "" {
-					component = base.Component
-				}
-			}
-		}
-
-		// Convert unified event to database-compatible agent event
-		// unifiedevents is just an alias for events package, so we can use it directly
-		agentEvent := &unifiedevents.AgentEvent{
-			Type:           event.Type,
-			Timestamp:      event.Timestamp,
-			EventIndex:     0, // Will be set by database
-			TraceID:        event.TraceID,
-			SpanID:         event.SpanID,
-			ParentID:       event.ParentID,
-			CorrelationID:  event.CorrelationID,
-			Data:           event.Data,
-			HierarchyLevel: hierarchyLevel, // Use extracted hierarchy level
-			SessionID:      b.sessionID,    // Use sessionID for database storage
-			Component:      component,      // Use extracted component
-		}
-
-		// Store in database using the session ID (same as chat session)
-		// The orchestrator events don't set SessionID, so we always use the bridge's session ID
-		b.logger.Infof("[ORCHESTRATOR AGENT BRIDGE] DEBUG: Using sessionID=%s for database storage (observerID=%s)", b.sessionID, b.observerID)
-		if err := b.chatDB.StoreEvent(ctx, b.sessionID, agentEvent); err != nil {
-			b.logger.Errorf("[ORCHESTRATOR AGENT BRIDGE] Failed to store event in database: %v", err)
-		} else {
-			b.logger.Infof("[ORCHESTRATOR AGENT BRIDGE] Stored event %s in database for chat history (hierarchy: %d, component: %s)", event.Type, hierarchyLevel, component)
-		}
-	}
-
-	b.logger.Infof("[ORCHESTRATOR AGENT BRIDGE] Successfully bridged agent event: %s (typed data preserved)", event.Type)
-	return nil
-}
-
-// isOrchestratorEvent checks if the event type is an orchestrator event
-func isOrchestratorEvent(eventType unifiedevents.EventType) bool {
-	return eventType == unifiedevents.OrchestratorStart ||
-		eventType == unifiedevents.OrchestratorEnd ||
-		eventType == unifiedevents.OrchestratorError ||
-		eventType == unifiedevents.OrchestratorAgentStart ||
-		eventType == unifiedevents.OrchestratorAgentEnd ||
-		eventType == unifiedevents.OrchestratorAgentError
-}
-
-// getExecutionModeLabel returns a human-readable label for execution mode
-func getExecutionModeLabel(mode string) string {
-	return orchtypes.ParseExecutionMode(mode).GetLabel()
-}
-
 // QueryRequest represents an agent query request
 type QueryRequest struct {
-	Query          string               `json:"query"`
-	Servers        []string             `json:"servers,omitempty"`
-	EnabledServers []string             `json:"enabled_servers,omitempty"`
-	Provider       string               `json:"provider,omitempty"`
-	ModelID        string               `json:"model_id,omitempty"`
-	Temperature    float64              `json:"temperature,omitempty"`
-	MaxTurns       int                  `json:"max_turns,omitempty"`
-	AgentMode      string               `json:"agent_mode,omitempty"`
-	LLMConfig      *orchtypes.LLMConfig `json:"llm_config,omitempty"`
-	PresetQueryID  string               `json:"preset_query_id,omitempty"`
-	LLMGuidance    string               `json:"llm_guidance,omitempty"` // LLM guidance message
+	Query          string                  `json:"query"`
+	Servers        []string                `json:"servers,omitempty"`
+	EnabledServers []string                `json:"enabled_servers,omitempty"`
+	Provider       string                  `json:"provider,omitempty"`
+	ModelID        string                  `json:"model_id,omitempty"`
+	Temperature    float64                 `json:"temperature,omitempty"`
+	MaxTurns       int                     `json:"max_turns,omitempty"`
+	AgentMode      string                  `json:"agent_mode,omitempty"`
+	LLMConfig      *orchestrator.LLMConfig `json:"llm_config,omitempty"`
+	PresetQueryID  string                  `json:"preset_query_id,omitempty"`
+	LLMGuidance    string                  `json:"llm_guidance,omitempty"` // LLM guidance message
 	// Orchestrator execution mode selection
 	OrchestratorExecutionMode orchtypes.ExecutionMode `json:"orchestrator_execution_mode,omitempty"`
 }
@@ -542,7 +448,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
 		workflowObjectives:           make(map[string]string),
 		conversationHistory:          make(map[string][]llms.MessageContent),
-		orchestratorStates:           make(map[string]*StoredOrchestratorState),
 		chatDB:                       chatDB,
 		eventStore:                   eventStore,
 		observerManager:              observerManager,
@@ -565,8 +470,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Initialize active session tracking
 		activeSessions: make(map[string]*ActiveSessionInfo),
 		// Initialize orchestrator storage
-		workflowOrchestrators: make(map[string]*orchtypes.WorkflowOrchestrator),
-		plannerOrchestrators:  make(map[string]*orchtypes.PlannerOrchestrator),
+		workflowOrchestrators: make(map[string]orchestrator.Orchestrator),
+		plannerOrchestrators:  make(map[string]orchestrator.Orchestrator),
 	}
 
 	// Setup routes
@@ -938,14 +843,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[DATABASE DEBUG] Found existing chat session: %s", chatSession.ID)
 	}
 
-	// Extract observer ID from request
+	// Extract observer ID from request - this is required
 	observerID := r.Header.Get("X-Observer-ID")
-
-	// Create observer if not provided
 	if observerID == "" {
-		observer := api.observerManager.RegisterObserver(sessionID)
-		observerID = observer.ID
-		log.Printf("[ACTIVE_SESSION] Created observer %s for session %s", observerID, sessionID)
+		errorMsg := "X-Observer-ID header is required. Please register an observer first using /api/observer/register"
+		http.Error(w, errorMsg, http.StatusBadRequest)
+		return
 	}
 
 	// Track active session for page refresh recovery
@@ -995,30 +898,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Emit server-level error completion event
-				if observerID != "" {
-					// Create an error completion event using UnifiedCompletionEvent
-					errorEventData := unifiedevents.NewUnifiedCompletionEventWithError(
-						"server",              // agentType
-						req.AgentMode,         // agentMode
-						req.Query,             // question
-						errorMsg,              // error message
-						time.Since(startTime), // duration
-						0,                     // turns
-					)
+				// Create an error completion event using UnifiedCompletionEvent
+				errorEventData := unifiedevents.NewUnifiedCompletionEventWithError(
+					"server",              // agentType
+					req.AgentMode,         // agentMode
+					req.Query,             // question
+					errorMsg,              // error message
+					time.Since(startTime), // duration
+					0,                     // turns
+				)
 
-					agentEvent := unifiedevents.NewAgentEvent(errorEventData)
-					agentEvent.SessionID = observerID
+				agentEvent := unifiedevents.NewAgentEvent(errorEventData)
+				agentEvent.SessionID = observerID
 
-					serverErrorEvent := events.Event{
-						ID:        fmt.Sprintf("server_error_%s_%d", queryID, time.Now().UnixNano()),
-						Type:      string(unifiedevents.EventTypeUnifiedCompletion),
-						Timestamp: time.Now(),
-						Data:      agentEvent,
-						SessionID: observerID,
-					}
-					api.eventStore.AddEvent(observerID, serverErrorEvent)
-					log.Printf("[SERVER DEBUG] Emitted server error completion event for query %s", queryID)
+				serverErrorEvent := events.Event{
+					ID:        fmt.Sprintf("server_error_%s_%d", queryID, time.Now().UnixNano()),
+					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
+					Timestamp: time.Now(),
+					Data:      agentEvent,
+					SessionID: observerID,
 				}
+				api.eventStore.AddEvent(observerID, serverErrorEvent)
+				log.Printf("[SERVER DEBUG] Emitted server error completion event for query %s", queryID)
 			}
 		}
 
@@ -1038,25 +939,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Handle orchestrator mode first to avoid unnecessary agent creation
 		if req.AgentMode == "orchestrator" {
-			// Check if there's stored orchestrator state for this session
-			storedState, hasStoredState := api.getOrchestratorState(sessionID)
-
-			if hasStoredState {
-				log.Printf("[ORCHESTRATOR DEBUG] Found stored planner orchestrator state for session %s - will restore and continue", sessionID)
-				log.Printf("[ORCHESTRATOR DEBUG] Stored state: iteration %d, step %d, phase %s",
-					storedState.CurrentIteration, storedState.CurrentStepIndex, storedState.CurrentPhase)
-			} else {
-				log.Printf("[ORCHESTRATOR DEBUG] No stored planner orchestrator state for session %s - starting fresh", sessionID)
-			}
-
-			log.Printf("[ORCHESTRATOR DEBUG] Orchestrator mode requested for query %s", queryID)
+			log.Printf("[ORCHESTRATOR DEBUG] Orchestrator mode requested for query %s - starting fresh", queryID)
 			log.Printf("[ORCHESTRATOR DEBUG] Cache-only mode: true (always enabled)")
 
-			// Create observer for orchestrator polling API
+			// Observer ID is now required - should have been set above
 			if observerID == "" {
-				observer := api.observerManager.RegisterObserver(sessionID)
-				observerID = observer.ID
-				log.Printf("[ORCHESTRATOR DEBUG] Created observer %s for orchestrator session %s", observerID, sessionID)
+				errorMsg := "X-Observer-ID header is required for orchestrator mode. Please register an observer first using /api/observer/register"
+				sendError(errorMsg, true)
+				return
 			}
 
 			// Update chat session for orchestrator (it may already exist from regular flow)
@@ -1067,6 +957,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				existingSession, err := api.chatDB.GetChatSession(streamCtx, sessionID)
 				var presetQueryID string
 				if err != nil {
+
 					log.Printf("[ORCHESTRATOR DEBUG] Could not get existing chat session: %v", err)
 					presetQueryID = "" // No preset if session doesn't exist
 				} else {
@@ -1093,14 +984,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Create a bridge to connect individual agent events from within orchestrator to the main server event system
-			orchestratorAgentEventBridge := &OrchestratorAgentEventBridge{
-				eventStore:      api.eventStore,
-				observerManager: api.observerManager,
-				observerID:      observerID, // Use observerID for polling API
-				sessionID:       sessionID,  // Use sessionID for database storage
-				logger:          api.logger,
-				agent:           nil,        // No agent reference needed for orchestrator mode
-				chatDB:          api.chatDB, // Add database reference for event storage
+			orchestratorAgentEventBridge := &eventbridge.OrchestratorAgentEventBridge{
+				BaseEventBridge: &eventbridge.BaseEventBridge{
+					EventStore:      api.eventStore,
+					ObserverManager: api.observerManager,
+					ObserverID:      observerID, // Use observerID for polling API
+					SessionID:       sessionID,  // Use sessionID for database storage
+					Logger:          api.logger,
+					ChatDB:          api.chatDB, // Add database reference for event storage
+					BridgeName:      "orchestrator_agent",
+				},
 			}
 
 			// Create selected options for orchestrator execution mode
@@ -1134,13 +1027,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[ORCHESTRATOR DEBUG] Using default execution mode: %s", defaultMode.String())
 			}
 
-			// Always create a fresh orchestrator for this session
-			orchestrator := orchtypes.NewPlannerOrchestrator(
-				api.logger,
-				api.config.AgentMode,
-				selectedOptions, // Pass selected options with execution mode
-			)
-			log.Printf("[ORCHESTRATOR DEBUG] Created fresh orchestrator for session %s", sessionID)
+			// Create standardized orchestrator instance with full configuration
 
 			// Initialize orchestrator agents
 			// Use server's default temperature if request doesn't provide one
@@ -1151,12 +1038,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Convert frontend LLM config to orchestrator format
-			var llmConfig *orchtypes.LLMConfig
+			var llmConfig *orchestrator.LLMConfig
 			var orchestratorProvider string
 			var orchestratorModel string
 
 			if req.LLMConfig != nil {
-				llmConfig = &orchtypes.LLMConfig{
+				llmConfig = &orchestrator.LLMConfig{
 					Provider:       req.LLMConfig.Provider,
 					ModelID:        req.LLMConfig.ModelID,
 					FallbackModels: req.LLMConfig.FallbackModels,
@@ -1201,75 +1088,64 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				allExecutors[name] = executor
 			}
 
-			// Always initialize fresh orchestrator with custom tools
-			err := orchestrator.InitializeAgents(
-				streamCtx,
-				orchestratorProvider, // Use the correct provider (from LLM config or fallback)
-				orchestratorModel,    // Use the correct model (from LLM config or fallback)
-				api.configPath,
-				traceID,
-				temperature,
-				orchestratorAgentEventBridge, // Pass the agent event bridge
-				selectedServers,              // Pass the selected servers from frontend
-				false,                        // Disable cache-only mode to allow fresh connections
-				llmConfig,                    // Pass detailed LLM configuration
-				tracer,                       // Pass the Langfuse tracer
-				api.logger,                   // Pass the logger
-				allTools,                     // Pass all custom tools (workspace + human)
-				allExecutors,                 // Pass all custom tool executors
+			// Create standardized orchestrator instance with full configuration
+			var err error
+			orchestrator, err := orchtypes.NewPlannerOrchestrator(
+				streamCtx,                    // ctx
+				orchestratorProvider,         // provider
+				orchestratorModel,            // model
+				api.configPath,               // mcpConfigPath
+				temperature,                  // temperature
+				api.config.AgentMode,         // agentMode
+				api.workspaceRoot,            // workspaceRoot
+				api.logger,                   // logger
+				api.internalLLM,              // llm
+				orchestratorAgentEventBridge, // eventBridge
+				tracer,                       // tracer
+				selectedServers,              // selectedServers
+				selectedOptions,              // selectedOptions
+				allTools,                     // customTools
+				allExecutors,                 // customToolExecutors
+				llmConfig,                    // llmConfig
+				req.MaxTurns,                 // maxTurns
 			)
 			if err != nil {
-				log.Printf("[ORCHESTRATOR ERROR] Failed to initialize orchestrator agents: %v", err)
+				log.Printf("[ORCHESTRATOR ERROR] Failed to create orchestrator: %v", err)
 			} else {
-				log.Printf("[ORCHESTRATOR DEBUG] Successfully initialized fresh orchestrator agents")
+				log.Printf("[ORCHESTRATOR DEBUG] Successfully created standardized orchestrator for session %s", sessionID)
 			}
 
-			// Custom tools are now passed during InitializeAgents, so no need for separate SetCustomTools call
-			log.Printf("[ORCHESTRATOR DEBUG] Custom tools (%d workspace + %d human = %d total) passed during InitializeAgents", len(workspaceTools), len(humanTools), len(allTools))
-
-			// Restore state if available
-			if hasStoredState && err == nil {
-				log.Printf("[ORCHESTRATOR DEBUG] Restoring orchestrator state for session %s", sessionID)
-				if restoreErr := orchestrator.RestoreState(storedState); restoreErr != nil {
-					log.Printf("[ORCHESTRATOR ERROR] Failed to restore orchestrator state: %v", restoreErr)
-					// Continue without restored state - will start fresh
-				} else {
-					log.Printf("[ORCHESTRATOR DEBUG] Successfully restored orchestrator state: iteration %d, step %d, phase %s",
-						storedState.CurrentIteration, storedState.CurrentStepIndex, storedState.CurrentPhase)
-				}
-			}
+			log.Printf("[ORCHESTRATOR DEBUG] Custom tools (%d workspace + %d human = %d total) passed during construction", len(workspaceTools), len(humanTools), len(allTools))
 
 			if err != nil {
 
 				// Emit orchestrator error event for frontend visibility
-				if observerID != "" {
-					orchestratorErrorEvent := &unifiedevents.OrchestratorErrorEvent{
-						BaseEventData: unifiedevents.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Context:  "orchestrator_initialization",
-						Error:    err.Error(),
-						Duration: time.Since(startTime),
-					}
-
-					// Create unified event wrapper
-					unifiedEvent := &unifiedevents.AgentEvent{
-						Type:      unifiedevents.OrchestratorError,
+				orchestratorErrorEvent := &unifiedevents.OrchestratorErrorEvent{
+					BaseEventData: unifiedevents.BaseEventData{
 						Timestamp: time.Now(),
-						Data:      orchestratorErrorEvent,
-					}
-
-					// Emit through the event store
-					serverErrorEvent := events.Event{
-						ID:        fmt.Sprintf("orchestrator_error_%s_%d", queryID, time.Now().UnixNano()),
-						Type:      string(unifiedevents.OrchestratorError),
-						Timestamp: time.Now(),
-						Data:      unifiedEvent,
-						SessionID: observerID,
-					}
-					api.eventStore.AddEvent(observerID, serverErrorEvent)
-					log.Printf("[SERVER DEBUG] Emitted orchestrator error event for query %s", queryID)
+					},
+					Context:  "orchestrator_initialization",
+					Error:    err.Error(),
+					Duration: time.Since(startTime),
 				}
+
+				// Create unified event wrapper
+				unifiedEvent := &unifiedevents.AgentEvent{
+					Type:      unifiedevents.OrchestratorError,
+					Timestamp: time.Now(),
+					Data:      orchestratorErrorEvent,
+				}
+
+				// Emit through the event store
+				serverErrorEvent := events.Event{
+					ID:        fmt.Sprintf("orchestrator_error_%s_%d", queryID, time.Now().UnixNano()),
+					Type:      string(unifiedevents.OrchestratorError),
+					Timestamp: time.Now(),
+					Data:      unifiedEvent,
+					SessionID: observerID,
+				}
+				api.eventStore.AddEvent(observerID, serverErrorEvent)
+				log.Printf("[SERVER DEBUG] Emitted orchestrator error event for query %s", queryID)
 
 				sendError(fmt.Sprintf("Failed to initialize orchestrator: %v", err), true)
 				return
@@ -1277,17 +1153,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Store planner orchestrator for guidance injection
 			api.storePlannerOrchestrator(sessionID, orchestrator)
-
-			// Load conversation history for orchestrator
-			api.conversationMux.RLock()
-			history, exists := api.conversationHistory[sessionID]
-			api.conversationMux.RUnlock()
-
-			if exists && len(history) > 0 {
-				log.Printf("[ORCHESTRATOR DEBUG] Loading %d messages from conversation history for orchestrator session %s", len(history), sessionID)
-			} else {
-				log.Printf("[ORCHESTRATOR DEBUG] No conversation history found for orchestrator session %s, starting fresh", sessionID)
-			}
 
 			// Create a cancellable context for orchestrator execution using background context
 			// This prevents the orchestrator from being cancelled when the HTTP request ends
@@ -1310,34 +1175,39 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[ORCHESTRATOR DEBUG] Starting asynchronous orchestrator execution for query %s", queryID)
 
 				// Emit orchestrator start event
-				if observerID != "" {
-					orchestratorStartEvent := &unifiedevents.OrchestratorStartEvent{
-						BaseEventData: unifiedevents.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Objective:     req.Query,
-						AgentsCount:   5, // planning, execution, validation, organizer, report generation
-						ServersCount:  len(selectedServers),
-						Configuration: fmt.Sprintf("Provider: %s, Model: %s", req.Provider, req.ModelID),
-						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
-					}
-
-					// Create unified event wrapper
-					unifiedEvent := &unifiedevents.AgentEvent{
-						Type:      unifiedevents.OrchestratorStart,
+				orchestratorStartEvent := &unifiedevents.OrchestratorStartEvent{
+					BaseEventData: unifiedevents.BaseEventData{
 						Timestamp: time.Now(),
-						Data:      orchestratorStartEvent,
-					}
+					},
+					Objective:     req.Query,
+					AgentsCount:   5, // planning, execution, validation, organizer, report generation
+					ServersCount:  len(selectedServers),
+					Configuration: fmt.Sprintf("Provider: %s, Model: %s", req.Provider, req.ModelID),
+					ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
+				}
 
-					// Emit through the bridge
-					orchestratorAgentEventBridge.HandleEvent(orchestratorCtx, unifiedEvent)
-					log.Printf("[ORCHESTRATOR DEBUG] Emitted orchestrator start event")
+				// Create unified event wrapper
+				unifiedEvent := &unifiedevents.AgentEvent{
+					Type:      unifiedevents.OrchestratorStart,
+					Timestamp: time.Now(),
+					Data:      orchestratorStartEvent,
+				}
+
+				// Emit through the bridge
+				orchestratorAgentEventBridge.HandleEvent(orchestratorCtx, unifiedEvent)
+				log.Printf("[ORCHESTRATOR DEBUG] Emitted orchestrator start event")
+
+				// Extract workspace path from objective
+				workspacePath := extractWorkspacePathFromObjective(req.Query)
+				if workspacePath == "" {
+					log.Printf("[ORCHESTRATOR ERROR] Workspace path not found in objective for query %s", queryID)
+					workspacePath = "default_workspace" // fallback, though this shouldn't happen
 				}
 
 				// Execute orchestrator flow with conversation history using cancellable context
 				// The orchestrator will automatically continue from restored state if available
-				log.Printf("[ORCHESTRATOR DEBUG] Starting orchestrator execution for query %s", queryID)
-				result, err := orchestrator.ExecuteFlow(orchestratorCtx, req.Query, history, orchestratorAgentEventBridge)
+				log.Printf("[ORCHESTRATOR DEBUG] Starting orchestrator execution for query %s with workspace: %s", queryID, workspacePath)
+				result, err := orchestrator.Execute(orchestratorCtx, req.Query, workspacePath, nil)
 
 				// Check for orchestrator execution error
 				if err != nil {
@@ -1425,63 +1295,59 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				})
 
 				// Emit orchestrator end event
-				if observerID != "" {
-					duration := time.Since(startTime)
-					status := "completed"
-					errorMsg := ""
+				duration := time.Since(startTime)
+				status := "completed"
+				errorMsg := ""
 
-					orchestratorEndEvent := &unifiedevents.OrchestratorEndEvent{
-						BaseEventData: unifiedevents.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Objective:     req.Query,
-						Result:        result,
-						Duration:      duration,
-						Status:        status,
-						Error:         errorMsg,
-						ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
-					}
-
-					// Create unified event wrapper
-					unifiedEvent := &unifiedevents.AgentEvent{
-						Type:      unifiedevents.OrchestratorEnd,
+				orchestratorEndEvent := &unifiedevents.OrchestratorEndEvent{
+					BaseEventData: unifiedevents.BaseEventData{
 						Timestamp: time.Now(),
-						Data:      orchestratorEndEvent,
-					}
-
-					// Emit through the bridge
-					orchestratorAgentEventBridge.HandleEvent(orchestratorCtx, unifiedEvent)
-					log.Printf("[ORCHESTRATOR DEBUG] Emitted orchestrator end event")
+					},
+					Objective:     req.Query,
+					Result:        result,
+					Duration:      duration,
+					Status:        status,
+					Error:         errorMsg,
+					ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
 				}
+
+				// Create unified event wrapper
+				unifiedEvent = &unifiedevents.AgentEvent{
+					Type:      unifiedevents.OrchestratorEnd,
+					Timestamp: time.Now(),
+					Data:      orchestratorEndEvent,
+				}
+
+				// Emit through the bridge
+				orchestratorAgentEventBridge.HandleEvent(orchestratorCtx, unifiedEvent)
+				log.Printf("[ORCHESTRATOR DEBUG] Emitted orchestrator end event")
 
 				// Emit server-level completion event for orchestrator mode
-				if observerID != "" {
-					completionEventData := unifiedevents.NewUnifiedCompletionEvent(
-						"orchestrator",        // agentType
-						"orchestrator",        // agentMode
-						req.Query,             // question
-						result,                // finalResult
-						"completed",           // status
-						time.Since(startTime), // duration
-						1,                     // turns
-					)
+				completionEventData := unifiedevents.NewUnifiedCompletionEvent(
+					"orchestrator",        // agentType
+					"orchestrator",        // agentMode
+					req.Query,             // question
+					result,                // finalResult
+					"completed",           // status
+					time.Since(startTime), // duration
+					1,                     // turns
+				)
 
-					// Log the completion event data length for debugging
-					log.Printf("[ORCHESTRATOR DEBUG] Unified completion event final_result length: %d characters", len(result))
+				// Log the completion event data length for debugging
+				log.Printf("[ORCHESTRATOR DEBUG] Unified completion event final_result length: %d characters", len(result))
 
-					agentEvent := unifiedevents.NewAgentEvent(completionEventData)
-					agentEvent.SessionID = observerID
+				agentEvent := unifiedevents.NewAgentEvent(completionEventData)
+				agentEvent.SessionID = observerID
 
-					serverCompletionEvent := events.Event{
-						ID:        fmt.Sprintf("server_completion_%s_%d", queryID, time.Now().UnixNano()),
-						Type:      string(unifiedevents.EventTypeUnifiedCompletion),
-						Timestamp: time.Now(),
-						Data:      agentEvent,
-						SessionID: observerID,
-					}
-					api.eventStore.AddEvent(observerID, serverCompletionEvent)
-					log.Printf("[SERVER DEBUG] Emitted orchestrator server completion event for query %s", queryID)
+				serverCompletionEvent := events.Event{
+					ID:        fmt.Sprintf("server_completion_%s_%d", queryID, time.Now().UnixNano()),
+					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
+					Timestamp: time.Now(),
+					Data:      agentEvent,
+					SessionID: observerID,
 				}
+				api.eventStore.AddEvent(observerID, serverCompletionEvent)
+				log.Printf("[SERVER DEBUG] Emitted orchestrator server completion event for query %s", queryID)
 
 				log.Printf("[ORCHESTRATOR DEBUG] Asynchronous orchestrator execution completed for query %s", queryID)
 			}()
@@ -1520,16 +1386,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Handle workflow mode - use workflow orchestrator
 		if req.AgentMode == "workflow" {
-			// Check if there's stored workflow state for this session
-			storedWorkflowState, hasStoredWorkflowState := api.getWorkflowState(sessionID)
-
-			if hasStoredWorkflowState {
-				log.Printf("[WORKFLOW DEBUG] Found stored workflow state for session %s - will restore and continue", sessionID)
-				log.Printf("[WORKFLOW DEBUG] Stored state: phase %s, todo index %d, step %d, cycle %d",
-					storedWorkflowState.CurrentPhase, storedWorkflowState.CurrentTodoIndex, storedWorkflowState.CurrentStep, storedWorkflowState.ExecutionCycle)
-			} else {
-				log.Printf("[WORKFLOW DEBUG] No stored workflow state for session %s - starting fresh", sessionID)
-			}
+			log.Printf("[WORKFLOW DEBUG] Starting workflow for session %s", sessionID)
 
 			// Check if preset_id is provided and workflow is approved
 			if req.PresetQueryID != "" {
@@ -1558,23 +1415,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[WORKFLOW DEBUG] Current observerID: '%s', sessionID: '%s'", observerID, sessionID)
 			log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
 
-			// Create observer for workflow polling API
+			// Observer ID is now required - should have been set above
 			if observerID == "" {
-				observer := api.observerManager.RegisterObserver(sessionID)
-				observerID = observer.ID
-				log.Printf("[WORKFLOW DEBUG] Created observer %s for workflow session %s", observerID, sessionID)
-			} else {
-				log.Printf("[WORKFLOW DEBUG] Using existing observer %s for workflow session %s", observerID, sessionID)
+				http.Error(w, "X-Observer-ID header is required for workflow mode. Please register an observer first using /api/observer/register", http.StatusBadRequest)
+				return
 			}
+			log.Printf("[WORKFLOW DEBUG] Using observer %s for workflow session %s", observerID, sessionID)
 
 			// Create workflow event bridge for event emission
-			workflowEventBridge := &WorkflowEventBridge{
-				eventStore:      api.eventStore,
-				observerManager: api.observerManager,
-				observerID:      observerID,
-				sessionID:       sessionID,
-				logger:          api.logger,
-				chatDB:          api.chatDB,
+			workflowEventBridge := &eventbridge.WorkflowEventBridge{
+				BaseEventBridge: &eventbridge.BaseEventBridge{
+					EventStore:      api.eventStore,
+					ObserverManager: api.observerManager,
+					ObserverID:      observerID,
+					SessionID:       sessionID,
+					Logger:          api.logger,
+					ChatDB:          api.chatDB,
+					BridgeName:      "workflow",
+				},
 			}
 
 			// Create custom tools for workflow agents (workspace tools + human tools)
@@ -1599,18 +1457,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Create workflow orchestrator for this request
 			workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
-				streamCtx, // Pass the stream context
-				finalProvider,
-				finalModelID,
-				api.mcpConfigPath,
-				api.temperature,
-				"workflow",
-				api.workspaceRoot,
-				api.logger,
-				api.internalLLM,
-				workflowEventBridge, // Use workflow event bridge for event emission
-				tracer,              // Pass the tracer
-				selectedServers,     // Pass the selected servers from frontend
+				streamCtx,           // ctx
+				finalProvider,       // provider
+				finalModelID,        // model
+				api.mcpConfigPath,   // mcpConfigPath
+				api.temperature,     // temperature
+				"workflow",          // agentMode
+				api.logger,          // logger
+				api.internalLLM,     // llm
+				workflowEventBridge, // eventBridge
+				tracer,              // tracer
+				selectedServers,     // selectedServers
+				allTools,            // customTools
+				allExecutors,        // customToolExecutors
+				req.LLMConfig,       // llmConfig
+				req.MaxTurns,        // maxTurns
 			)
 			if err != nil {
 				log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %v", err)
@@ -1618,29 +1479,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Initialize workflow orchestrator with custom tools
-			err = workflowOrchestrator.InitializeAgents(streamCtx, allTools, allExecutors)
-			if err != nil {
-				log.Printf("[WORKFLOW ERROR] Failed to initialize workflow orchestrator: %v", err)
-				http.Error(w, fmt.Sprintf("Failed to initialize workflow orchestrator: %v", err), http.StatusInternalServerError)
-				return
-			}
-			log.Printf("[WORKFLOW DEBUG] Initialized workflow orchestrator with %d custom tools (%d workspace + %d human)", len(allTools), len(workspaceTools), len(humanTools))
+			log.Printf("[WORKFLOW DEBUG] Created workflow orchestrator with %d custom tools (%d workspace + %d human)", len(allTools), len(workspaceTools), len(humanTools))
 
 			// Store workflow orchestrator for guidance injection
 			api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
-
-			// Restore workflow state if available
-			if hasStoredWorkflowState && storedWorkflowState != nil {
-				log.Printf("[WORKFLOW DEBUG] Restoring workflow state for session %s", sessionID)
-				if restoreErr := workflowOrchestrator.RestoreState(storedWorkflowState); restoreErr != nil {
-					log.Printf("[WORKFLOW ERROR] Failed to restore workflow state: %v", restoreErr)
-					// Continue without restored state - will start fresh
-				} else {
-					log.Printf("[WORKFLOW DEBUG] Successfully restored workflow state: phase %s, todo index %d, step %d, cycle %d",
-						storedWorkflowState.CurrentPhase, storedWorkflowState.CurrentTodoIndex, storedWorkflowState.CurrentStep, storedWorkflowState.ExecutionCycle)
-				}
-			}
 
 			// Create a cancellable context for workflow execution using background context
 			// This prevents the workflow from being cancelled when the HTTP request ends
@@ -1700,13 +1542,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				log.Printf("[WORKFLOW EXECUTION] Executing workflow with status: %s", workflowStatus)
 
+				// Extract workspace path from objective
+				workflowWorkspacePath := extractWorkspacePathFromObjective(req.Query)
+				if workflowWorkspacePath == "" {
+					log.Printf("[WORKFLOW ERROR] Workspace path not found in objective for query %s", queryID)
+					workflowWorkspacePath = "default_workspace" // fallback
+				}
+
+				// Prepare options for the Execute method
+				workflowOptions := map[string]interface{}{
+					"workflowStatus":  workflowStatus,  // Current workflow status
+					"selectedOptions": selectedOptions, // Pass selected options from database
+				}
+
 				// Execute workflow with the query
-				_, err := workflowOrchestrator.ExecuteWorkflow(
+				log.Printf("[WORKFLOW DEBUG] Starting workflow execution for query %s with workspace: %s", queryID, workflowWorkspacePath)
+				_, err := workflowOrchestrator.Execute(
 					workflowCtx,
-					queryID, // Use queryID as workflow ID
 					req.Query,
-					workflowStatus,  // Current workflow status
-					selectedOptions, // Pass selected options from database
+					workflowWorkspacePath,
+					workflowOptions,
 				)
 				if err != nil {
 					log.Printf("[WORKFLOW ERROR] Workflow execution failed for query %s: %v", queryID, err)
@@ -1919,37 +1774,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Add event observer immediately after agent creation to capture all events
 		// ✅ FIX: Always attach EventObserver to agent, even in orchestrator mode
-		// The OrchestratorAgentEventBridge handles orchestrator-specific events, but we still need EventObserver for regular agent events
+		// The eventbridge.OrchestratorAgentEventBridge handles orchestrator-specific events, but we still need EventObserver for regular agent events
 		log.Printf("[DATABASE DEBUG] Starting event observer setup for session %s", sessionID)
 		log.Printf("[DATABASE DEBUG] ObserverID: %s", observerID)
 		log.Printf("[DATABASE DEBUG] ChatDB available: %v", api.chatDB != nil)
 
-		if observerID != "" {
-			log.Printf("[DATABASE DEBUG] Creating in-memory event observer for session %s", sessionID)
-			// Create in-memory event observer for real-time updates
-			eventObserver := events.NewEventObserverWithLogger(api.eventStore, observerID, sessionID, api.logger)
+		log.Printf("[DATABASE DEBUG] Creating in-memory event observer for session %s", sessionID)
+		// Create in-memory event observer for real-time updates
+		eventObserver := events.NewEventObserverWithLogger(api.eventStore, observerID, sessionID, api.logger)
 
-			log.Printf("[DATABASE DEBUG] Creating database event observer for session %s", sessionID)
-			// Create database event observer to store events in database
-			dbEventObserver := database.NewEventDatabaseObserver(api.chatDB)
-			log.Printf("[DATABASE DEBUG] Database event observer created successfully for session %s", sessionID)
+		log.Printf("[DATABASE DEBUG] Creating database event observer for session %s", sessionID)
+		// Create database event observer to store events in database
+		dbEventObserver := database.NewEventDatabaseObserver(api.chatDB)
+		log.Printf("[DATABASE DEBUG] Database event observer created successfully for session %s", sessionID)
 
-			// Add event observer directly to the underlying MCP agent since the wrapper's AddEventListener is disabled
-			log.Printf("[DATABASE DEBUG] Getting underlying agent for session %s", sessionID)
-			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-				log.Printf("[DATABASE DEBUG] Underlying agent found, adding event observers for session %s", sessionID)
-				underlyingAgent.AddEventListener(eventObserver)
-				log.Printf("[DATABASE DEBUG] Added in-memory event observer for session %s", sessionID)
-				underlyingAgent.AddEventListener(dbEventObserver)
-				log.Printf("[DATABASE DEBUG] Added database event observer for session %s", sessionID)
-				log.Printf("[POLLING DEBUG] Added event observer %s for session %s (new agent) - connected to underlying MCP agent", observerID, sessionID)
-				log.Printf("[POLLING DEBUG] Added database event observer for session %s - events will be stored in database", sessionID)
-			} else {
-				log.Printf("[DATABASE DEBUG] ERROR: Underlying MCP agent is nil for session %s", sessionID)
-				log.Printf("[POLLING DEBUG] Warning: Cannot add event observer - underlying MCP agent is nil")
-			}
+		// Add event observer directly to the underlying MCP agent since the wrapper's AddEventListener is disabled
+		log.Printf("[DATABASE DEBUG] Getting underlying agent for session %s", sessionID)
+		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			log.Printf("[DATABASE DEBUG] Underlying agent found, adding event observers for session %s", sessionID)
+			underlyingAgent.AddEventListener(eventObserver)
+			log.Printf("[DATABASE DEBUG] Added in-memory event observer for session %s", sessionID)
+			underlyingAgent.AddEventListener(dbEventObserver)
+			log.Printf("[DATABASE DEBUG] Added database event observer for session %s", sessionID)
+			log.Printf("[POLLING DEBUG] Added event observer %s for session %s (new agent) - connected to underlying MCP agent", observerID, sessionID)
+			log.Printf("[POLLING DEBUG] Added database event observer for session %s - events will be stored in database", sessionID)
 		} else {
-			log.Printf("[DATABASE DEBUG] WARNING: ObserverID is empty for session %s, skipping event observer setup", sessionID)
+			log.Printf("[DATABASE DEBUG] ERROR: Underlying MCP agent is nil for session %s", sessionID)
+			log.Printf("[POLLING DEBUG] Warning: Cannot add event observer - underlying MCP agent is nil")
 		}
 
 		// --- BEGIN: Load conversation history and accumulate for streaming ---
@@ -2036,30 +1887,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.updateSessionStatus(sessionID, "error")
 
 				// Emit server-level timeout completion event
-				if observerID != "" {
-					// Create a timeout completion event using UnifiedCompletionEvent
-					timeoutEventData := unifiedevents.NewUnifiedCompletionEventWithError(
-						"server",              // agentType
-						req.AgentMode,         // agentMode
-						req.Query,             // question
-						"context timeout",     // error message
-						time.Since(startTime), // duration
-						0,                     // turns
-					)
+				// Create a timeout completion event using UnifiedCompletionEvent
+				timeoutEventData := unifiedevents.NewUnifiedCompletionEventWithError(
+					"server",              // agentType
+					req.AgentMode,         // agentMode
+					req.Query,             // question
+					"context timeout",     // error message
+					time.Since(startTime), // duration
+					0,                     // turns
+				)
 
-					agentEvent := unifiedevents.NewAgentEvent(timeoutEventData)
-					agentEvent.SessionID = observerID
+				agentEvent := unifiedevents.NewAgentEvent(timeoutEventData)
+				agentEvent.SessionID = observerID
 
-					serverTimeoutEvent := events.Event{
-						ID:        fmt.Sprintf("server_timeout_%s_%d", queryID, time.Now().UnixNano()),
-						Type:      string(unifiedevents.EventTypeUnifiedCompletion),
-						Timestamp: time.Now(),
-						Data:      agentEvent,
-						SessionID: observerID,
-					}
-					api.eventStore.AddEvent(observerID, serverTimeoutEvent)
-					log.Printf("[SERVER DEBUG] Emitted server timeout completion event for query %s", queryID)
+				serverTimeoutEvent := events.Event{
+					ID:        fmt.Sprintf("server_timeout_%s_%d", queryID, time.Now().UnixNano()),
+					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
+					Timestamp: time.Now(),
+					Data:      agentEvent,
+					SessionID: observerID,
 				}
+				api.eventStore.AddEvent(observerID, serverTimeoutEvent)
+				log.Printf("[SERVER DEBUG] Emitted server timeout completion event for query %s", queryID)
 				return
 			default:
 			}
@@ -2136,42 +1985,11 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// Note: No regular agent cleanup needed - fresh agents created per request
 
 	// Handle orchestrator sessions with state preservation
-	// Store planner orchestrator state before stopping
+	// Planner orchestrator is now stateless - no state management needed
 	api.orchestratorMux.RLock()
 	if plannerOrch, exists := api.plannerOrchestrators[sessionID]; exists {
-		// Get current state before stopping - need to get objective from stored state
-		storedState, hasStoredState := api.getOrchestratorState(sessionID)
-		var objective string
-		if hasStoredState && storedState != nil {
-			objective = storedState.Objective
-		} else {
-			// Fallback to empty string if no stored state
-			objective = ""
-		}
-
-		state, err := plannerOrch.GetState(objective)
-		if err == nil {
-			// Store state for later restoration
-			api.storeOrchestratorState(sessionID, state)
-			log.Printf("[SESSION DEBUG] Saved planner orchestrator state for session %s", sessionID)
-		} else {
-			log.Printf("[SESSION DEBUG] Failed to get planner orchestrator state for session %s: %v", sessionID, err)
-		}
-	}
-	api.orchestratorMux.RUnlock()
-
-	// Store workflow orchestrator state before stopping
-	api.orchestratorMux.RLock()
-	if workflowOrch, exists := api.workflowOrchestrators[sessionID]; exists {
-		// Get current state before stopping
-		state, err := workflowOrch.GetState()
-		if err == nil {
-			// Store state for later restoration
-			api.storeWorkflowState(sessionID, state)
-			log.Printf("[SESSION DEBUG] Saved workflow orchestrator state for session %s", sessionID)
-		} else {
-			log.Printf("[SESSION DEBUG] Failed to get workflow orchestrator state for session %s: %v", sessionID, err)
-		}
+		// Planner orchestrator is now stateless
+		_ = plannerOrch // Avoid unused variable warning
 	}
 	api.orchestratorMux.RUnlock()
 
@@ -2224,8 +2042,7 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 	}
 	api.conversationMux.Unlock()
 
-	// Clear orchestrator state
-	api.clearOrchestratorState(sessionID)
+	// Clear orchestrator state (removed - now stateless)
 
 	// Clear orchestrator instance (legacy removed)
 	// Legacy orchestrator cleanup removed - now handled by plannerOrchestrators
@@ -2242,66 +2059,7 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 	w.Write([]byte("Session cleared (conversation history and orchestrator state removed)"))
 }
 
-// storeOrchestratorState stores the orchestrator state for later restoration
-func (api *StreamingAPI) storeOrchestratorState(sessionID string, state *orchtypes.OrchestratorState) {
-	api.orchestratorStateMux.Lock()
-	defer api.orchestratorStateMux.Unlock()
-
-	api.orchestratorStates[sessionID] = &StoredOrchestratorState{
-		Type:         "planner",
-		PlannerState: state,
-		StoredAt:     time.Now(),
-	}
-	log.Printf("[SESSION DEBUG] Stored planner orchestrator state for session %s", sessionID)
-}
-
-// storeWorkflowState stores the workflow state for later restoration
-func (api *StreamingAPI) storeWorkflowState(sessionID string, state *orchtypes.WorkflowState) {
-	api.orchestratorStateMux.Lock()
-	defer api.orchestratorStateMux.Unlock()
-
-	api.orchestratorStates[sessionID] = &StoredOrchestratorState{
-		Type:          "workflow",
-		WorkflowState: state,
-		StoredAt:      time.Now(),
-	}
-	log.Printf("[SESSION DEBUG] Stored workflow orchestrator state for session %s", sessionID)
-}
-
-// getOrchestratorState retrieves the stored orchestrator state
-func (api *StreamingAPI) getOrchestratorState(sessionID string) (*orchtypes.OrchestratorState, bool) {
-	api.orchestratorStateMux.RLock()
-	defer api.orchestratorStateMux.RUnlock()
-
-	storedState, exists := api.orchestratorStates[sessionID]
-	if !exists || storedState.Type != "planner" || storedState.PlannerState == nil {
-		return nil, false
-	}
-	return storedState.PlannerState, true
-}
-
-// getWorkflowState retrieves the stored workflow state
-func (api *StreamingAPI) getWorkflowState(sessionID string) (*orchtypes.WorkflowState, bool) {
-	api.orchestratorStateMux.RLock()
-	defer api.orchestratorStateMux.RUnlock()
-
-	storedState, exists := api.orchestratorStates[sessionID]
-	if !exists || storedState.Type != "workflow" || storedState.WorkflowState == nil {
-		return nil, false
-	}
-	return storedState.WorkflowState, true
-}
-
-// clearOrchestratorState clears the stored orchestrator state
-func (api *StreamingAPI) clearOrchestratorState(sessionID string) {
-	api.orchestratorStateMux.Lock()
-	defer api.orchestratorStateMux.Unlock()
-
-	if _, exists := api.orchestratorStates[sessionID]; exists {
-		delete(api.orchestratorStates, sessionID)
-		log.Printf("[SESSION DEBUG] Cleared orchestrator state for session %s", sessionID)
-	}
-}
+// State management functions removed - orchestrator is now stateless
 
 // createServerLogger creates a logger instance for the server
 func createServerLogger() utils.ExtendedLogger {
@@ -2684,7 +2442,7 @@ func (api *StreamingAPI) cleanupInactiveSessions(maxInactiveTime time.Duration) 
 }
 
 // storeWorkflowOrchestrator stores a workflow orchestrator for a session
-func (api *StreamingAPI) storeWorkflowOrchestrator(sessionID string, orchestrator *orchtypes.WorkflowOrchestrator) {
+func (api *StreamingAPI) storeWorkflowOrchestrator(sessionID string, orchestrator orchestrator.Orchestrator) {
 	api.orchestratorMux.Lock()
 	defer api.orchestratorMux.Unlock()
 	api.workflowOrchestrators[sessionID] = orchestrator
@@ -2692,7 +2450,7 @@ func (api *StreamingAPI) storeWorkflowOrchestrator(sessionID string, orchestrato
 }
 
 // storePlannerOrchestrator stores a planner orchestrator for a session
-func (api *StreamingAPI) storePlannerOrchestrator(sessionID string, orchestrator *orchtypes.PlannerOrchestrator) {
+func (api *StreamingAPI) storePlannerOrchestrator(sessionID string, orchestrator orchestrator.Orchestrator) {
 	api.orchestratorMux.Lock()
 	defer api.orchestratorMux.Unlock()
 	api.plannerOrchestrators[sessionID] = orchestrator

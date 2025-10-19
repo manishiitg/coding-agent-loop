@@ -20,7 +20,7 @@ type OrchestratorParallelExecutionAgent struct {
 }
 
 // NewOrchestratorParallelExecutionAgent creates a new parallel execution agent
-func NewOrchestratorParallelExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorParallelExecutionAgent {
+func NewOrchestratorParallelExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *OrchestratorParallelExecutionAgent {
 	parallelExecutionPrompts := prompts.NewParallelExecutionPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -78,5 +78,5 @@ func (pea *OrchestratorParallelExecutionAgent) GetType() string {
 
 // BaseAgent returns the underlying base agent for direct access
 func (pea *OrchestratorParallelExecutionAgent) BaseAgent() *BaseAgent {
-	return pea.AgentTemplate.baseAgent
+	return pea.baseAgent
 }

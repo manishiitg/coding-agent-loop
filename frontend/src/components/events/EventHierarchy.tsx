@@ -167,7 +167,23 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   const virtualizer = useVirtualizer({
     count: eventTree.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 80, // Average event height in pixels
+    estimateSize: (index) => {
+      // Estimate size based on event type and content
+      const node = eventTree[index];
+      if (!node) return 80;
+      
+      // Basic estimation based on event type
+      const baseSize = 80;
+      const hasChildren = node.children.length > 0;
+      const isExpanded = expandedNodes.has(node.event.id);
+      
+      // Add extra height for expanded nodes with children
+      if (hasChildren && isExpanded) {
+        return baseSize + (node.children.length * 60);
+      }
+      
+      return baseSize;
+    },
     overscan: 5, // Render 5 extra items above/below viewport for smooth scrolling
   });
 
@@ -214,7 +230,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
               <div
                 key={node.event.id}
                 data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
+                ref={(el) => {
+                  if (el) {
+                    virtualizer.measureElement(el);
+                  }
+                }}
                 style={{
                   position: 'absolute',
                   top: 0,

@@ -32,12 +32,10 @@
 41.. can we add a like a user input context to the current execution step.. without actually stopping? 
 like pass this from frontend to a variable and when we are sending a user message to LLM.. we just add that .. 
 
-43. read google sheets via mcp , can we setup flows with playwrite?
-
 44. we need a way to see logs for mcp installation and tool testing
 
 45. /Users/mipl/ai-work/mcp-agent/frontend/src/components/sidebar/LLMConfigurationSection.tsx   this should come env in backend
 
-46. bedrock 4.5 is not working
-
 51. get resource, doesn't work test with google-sheets
+
+52. add support for docker in install of mcp

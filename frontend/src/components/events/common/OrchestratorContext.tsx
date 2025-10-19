@@ -11,14 +11,32 @@ export const OrchestratorContext: React.FC<OrchestratorContextProps> = ({
   metadata, 
   className = "" 
 }) => {
-  if (!metadata) return null;
+  // Debug: Log metadata to see what's being received
+  React.useEffect(() => {
+    console.log('OrchestratorContext - metadata received:', metadata);
+  }, [metadata]);
+
+  if (!metadata) {
+    console.log('OrchestratorContext - no metadata provided');
+    return null;
+  }
 
   const orchestratorPhase = metadata.orchestrator_phase as string;
   const step = metadata.orchestrator_step as number;
   const iteration = metadata.orchestrator_iteration as number;
   const agentName = metadata.orchestrator_agent_name as string;
 
-  if (!orchestratorPhase) return null;
+  console.log('OrchestratorContext - extracted values:', {
+    orchestratorPhase,
+    step,
+    iteration,
+    agentName
+  });
+
+  if (!orchestratorPhase) {
+    console.log('OrchestratorContext - no orchestrator_phase found');
+    return null;
+  }
 
   const getPhaseInfo = (phase: string) => {
     const phases = {

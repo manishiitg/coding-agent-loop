@@ -14,6 +14,11 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 )
 
+// EventBridge defines the interface for event handling in orchestrator agents
+type EventBridge interface {
+	mcpagent.AgentEventListener
+}
+
 // OrchestratorContext holds context information for event emission
 type OrchestratorContext struct {
 	StepIndex int
@@ -24,11 +29,13 @@ type OrchestratorContext struct {
 
 // BaseOrchestratorAgent provides common functionality for all orchestrator agents
 type BaseOrchestratorAgent struct {
-	AgentTemplate       *AgentTemplate
+	config              *OrchestratorAgentConfig
+	logger              utils.ExtendedLogger
+	baseAgent           *BaseAgent // set during init
 	tracer              observability.Tracer
 	agentType           AgentType
 	systemPrompt        string
-	eventBridge         interface{}          // Event bridge for auto events
+	eventBridge         EventBridge          // Event bridge for auto events
 	orchestratorContext *OrchestratorContext // Context info for events
 }
 
@@ -38,28 +45,16 @@ func NewBaseOrchestratorAgentWithEventBridge(
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
 	agentType AgentType,
-	eventBridge interface{},
+	eventBridge EventBridge,
 ) *BaseOrchestratorAgent {
 	return &BaseOrchestratorAgent{
-		AgentTemplate: &AgentTemplate{
-			config: config,
-			logger: logger,
-		},
+		config:              config,
+		logger:              logger,
 		tracer:              tracer,
 		agentType:           agentType,
 		systemPrompt:        "", // Not used for base orchestrator
 		eventBridge:         eventBridge,
 		orchestratorContext: nil, // Will be set dynamically
-	}
-}
-
-// SetOrchestratorContext sets the orchestrator context for event emission
-func (boa *BaseOrchestratorAgent) SetOrchestratorContext(stepIndex, iteration int, objective, agentName string) {
-	boa.orchestratorContext = &OrchestratorContext{
-		StepIndex: stepIndex,
-		Iteration: iteration,
-		Objective: objective,
-		AgentName: agentName,
 	}
 }
 
@@ -74,39 +69,39 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 	// Create traceID
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%s-%d",
 		boa.agentType,
-		boa.AgentTemplate.config.Model,
+		boa.config.Model,
 		time.Now().UnixNano()))
 
 	// Create base agent
 	baseAgent, err := NewBaseAgent(
 		ctx,
 		boa.agentType,
-		boa.AgentTemplate.config.Name,
+		string(boa.agentType), // Use agent type as name
 		llmInstance,
 		boa.systemPrompt,
-		boa.AgentTemplate.config.ServerNames,
-		boa.AgentTemplate.config.Mode,
+		boa.config.ServerNames,
+		boa.config.Mode,
 		boa.tracer,
 		traceID,
-		boa.AgentTemplate.config.MCPConfigPath,
-		boa.AgentTemplate.config.Model,
-		boa.AgentTemplate.config.Temperature,
-		boa.AgentTemplate.config.ToolChoice,
-		boa.AgentTemplate.config.MaxTurns,
-		boa.AgentTemplate.config.Provider,
-		boa.AgentTemplate.logger,
-		boa.AgentTemplate.config.CacheOnly,
+		boa.config.MCPConfigPath,
+		boa.config.Model,
+		boa.config.Temperature,
+		boa.config.ToolChoice,
+		boa.config.MaxTurns,
+		boa.config.Provider,
+		boa.logger,
+		boa.config.CacheOnly,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)
 	}
 
-	boa.AgentTemplate.baseAgent = baseAgent
+	boa.baseAgent = baseAgent
 
 	// Append the agent-specific prompt to the existing system prompt
-	boa.AgentTemplate.baseAgent.agent.AppendSystemPrompt(boa.systemPrompt)
+	boa.baseAgent.agent.AppendSystemPrompt(boa.systemPrompt)
 
-	boa.AgentTemplate.logger.Infof("✅ Base Orchestrator Agent (%s) created successfully", boa.agentType)
+	boa.logger.Infof("✅ Base Orchestrator Agent (%s) created successfully", boa.agentType)
 	return nil
 }
 
@@ -122,7 +117,7 @@ func ExecuteStructured[T any](boa *BaseOrchestratorAgent, ctx context.Context, t
 	userMessage := inputProcessor(templateVars)
 
 	// Get the base agent for structured output
-	baseAgent := boa.AgentTemplate.baseAgent
+	baseAgent := boa.baseAgent
 
 	// Use the agent's built-in structured output capability
 	result, err := AskStructured[T](baseAgent, ctx, userMessage, schema)
@@ -163,7 +158,7 @@ func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context,
 	baseAgentTemplateVars := map[string]string{
 		"userMessage": userMessage,
 	}
-	result, err := boa.AgentTemplate.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
+	result, err := boa.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
 
 	duration := time.Since(startTime)
 
@@ -171,7 +166,7 @@ func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context,
 	boa.emitAgentEndEvent(ctx, templateVars, result, err, duration, "sequential_execution")
 
 	if err != nil {
-		boa.AgentTemplate.logger.Errorf("❌ Base Orchestrator Agent (%s) execution failed: %v", boa.agentType, err)
+		boa.logger.Errorf("❌ Base Orchestrator Agent (%s) execution failed: %v", boa.agentType, err)
 		return "", fmt.Errorf("base orchestrator execution failed: %w", err)
 	}
 
@@ -186,29 +181,29 @@ func (boa *BaseOrchestratorAgent) GetType() string {
 
 // GetConfig returns the agent configuration
 func (boa *BaseOrchestratorAgent) GetConfig() *OrchestratorAgentConfig {
-	return boa.AgentTemplate.config
+	return boa.config
 }
 
 // Close closes the base orchestrator agent
 func (boa *BaseOrchestratorAgent) Close() error {
-	if boa.AgentTemplate.baseAgent != nil {
-		return boa.AgentTemplate.baseAgent.Close()
+	if boa.baseAgent != nil {
+		return boa.baseAgent.Close()
 	}
 	return nil
 }
 
 // BaseAgent returns the base agent
 func (boa *BaseOrchestratorAgent) BaseAgent() *BaseAgent {
-	return boa.AgentTemplate.baseAgent
+	return boa.baseAgent
 }
 
 // GetBaseAgent returns the base agent (implements OrchestratorAgent interface)
 func (boa *BaseOrchestratorAgent) GetBaseAgent() *BaseAgent {
-	return boa.AgentTemplate.baseAgent
+	return boa.baseAgent
 }
 
 // SetEventBridge sets the event bridge for the agent
-func (boa *BaseOrchestratorAgent) SetEventBridge(bridge interface{}) {
+func (boa *BaseOrchestratorAgent) SetEventBridge(bridge EventBridge) {
 	boa.eventBridge = bridge
 }
 
@@ -219,15 +214,12 @@ func (boa *BaseOrchestratorAgent) GetTracer() observability.Tracer {
 
 // GetEventBridge returns the event bridge
 func (boa *BaseOrchestratorAgent) GetEventBridge() mcpagent.AgentEventListener {
-	if bridge, ok := boa.eventBridge.(mcpagent.AgentEventListener); ok {
-		return bridge
-	}
-	return nil
+	return boa.eventBridge
 }
 
 // emitEvent emits an event through the event bridge
 func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType events.EventType, data events.EventData) {
-	boa.AgentTemplate.logger.Infof("🔍 emitEvent called - EventType: %s, AgentType: %s", eventType, boa.agentType)
+	boa.logger.Infof("🔍 emitEvent called - EventType: %s, AgentType: %s", eventType, boa.agentType)
 
 	// Create agent event
 	agentEvent := &events.AgentEvent{
@@ -236,30 +228,24 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 		Data:      data,
 	}
 
-	// Emit through event bridge - cast to the proper interface
-	if bridge, ok := boa.eventBridge.(interface {
-		HandleEvent(context.Context, *events.AgentEvent) error
-	}); ok {
-		if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-			boa.AgentTemplate.logger.Warnf("⚠️ Failed to emit event %s: %v", eventType, err)
-		} else {
-			boa.AgentTemplate.logger.Infof("✅ Successfully emitted event %s for agent type %s", eventType, boa.agentType)
-		}
+	// Emit through event bridge
+	if err := boa.eventBridge.HandleEvent(ctx, agentEvent); err != nil {
+		boa.logger.Warnf("⚠️ Failed to emit event %s: %v", eventType, err)
 	} else {
-		boa.AgentTemplate.logger.Warnf("⚠️ Event bridge does not implement HandleEvent method: %T", boa.eventBridge)
+		boa.logger.Infof("✅ Successfully emitted event %s for agent type %s", eventType, boa.agentType)
 	}
 }
 
 // emitAgentStartEvent emits an agent start event automatically
 func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string, executionMode string) {
-	boa.AgentTemplate.logger.Infof("🔍 emitAgentStartEvent called for agent type: %s, executionMode: %s", boa.agentType, executionMode)
+	boa.logger.Infof("🔍 emitAgentStartEvent called for agent type: %s, executionMode: %s", boa.agentType, executionMode)
 
 	if boa.orchestratorContext == nil {
-		boa.AgentTemplate.logger.Warnf("⚠️ Orchestrator context is nil - skipping agent start event emission for %s", boa.agentType)
+		boa.logger.Warnf("⚠️ Orchestrator context is nil - skipping agent start event emission for %s", boa.agentType)
 		return // No context available yet
 	}
 
-	boa.AgentTemplate.logger.Infof("✅ Orchestrator context available - AgentName: %s, StepIndex: %d, Iteration: %d",
+	boa.logger.Infof("✅ Orchestrator context available - AgentName: %s, StepIndex: %d, Iteration: %d",
 		boa.orchestratorContext.AgentName, boa.orchestratorContext.StepIndex, boa.orchestratorContext.Iteration)
 
 	eventData := &events.OrchestratorAgentStartEvent{
@@ -270,10 +256,10 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		AgentName:     boa.orchestratorContext.AgentName,
 		Objective:     boa.orchestratorContext.Objective,
 		InputData:     templateVars,
-		ModelID:       boa.AgentTemplate.config.Model,
-		Provider:      boa.AgentTemplate.config.Provider,
-		ServersCount:  len(boa.AgentTemplate.config.ServerNames),
-		MaxTurns:      boa.AgentTemplate.config.MaxTurns,
+		ModelID:       boa.config.Model,
+		Provider:      boa.config.Provider,
+		ServersCount:  len(boa.config.ServerNames),
+		MaxTurns:      boa.config.MaxTurns,
 		StepIndex:     boa.orchestratorContext.StepIndex,
 		Iteration:     boa.orchestratorContext.Iteration,
 		ExecutionMode: executionMode,
@@ -304,10 +290,10 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templat
 		Result:        result,
 		Success:       success,
 		Duration:      duration,
-		ModelID:       boa.AgentTemplate.config.Model,
-		Provider:      boa.AgentTemplate.config.Provider,
-		ServersCount:  len(boa.AgentTemplate.config.ServerNames),
-		MaxTurns:      boa.AgentTemplate.config.MaxTurns,
+		ModelID:       boa.config.Model,
+		Provider:      boa.config.Provider,
+		ServersCount:  len(boa.config.ServerNames),
+		MaxTurns:      boa.config.MaxTurns,
 		StepIndex:     boa.orchestratorContext.StepIndex,
 		Iteration:     boa.orchestratorContext.Iteration,
 		ExecutionMode: executionMode,
@@ -325,37 +311,37 @@ func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llms.Model, er
 	var fallbackModels []string
 
 	// Add custom fallback models from frontend if provided
-	if len(boa.AgentTemplate.config.FallbackModels) > 0 {
-		fallbackModels = append(fallbackModels, boa.AgentTemplate.config.FallbackModels...)
+	if len(boa.config.FallbackModels) > 0 {
+		fallbackModels = append(fallbackModels, boa.config.FallbackModels...)
 		// Using custom fallback models from frontend
 	} else {
 		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(boa.AgentTemplate.config.Provider))...)
+		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(boa.config.Provider))...)
 		// Using default fallback models for provider
 	}
 
 	// Add cross-provider fallback models if configured
-	if boa.AgentTemplate.config.CrossProviderFallback != nil && len(boa.AgentTemplate.config.CrossProviderFallback.Models) > 0 {
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.AgentTemplate.config.CrossProviderFallback.Provider))
+	if boa.config.CrossProviderFallback != nil && len(boa.config.CrossProviderFallback.Models) > 0 {
+		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.config.CrossProviderFallback.Provider))
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
 		// Added cross-provider fallback models
 	} else {
 		// Add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.AgentTemplate.config.Provider))
+		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.config.Provider))
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
 		// Added default cross-provider fallback models
 	}
 
 	// Create LLM configuration
 	config := llm.Config{
-		Provider:       llm.Provider(boa.AgentTemplate.config.Provider),
-		ModelID:        boa.AgentTemplate.config.Model,
-		Temperature:    boa.AgentTemplate.config.Temperature,
+		Provider:       llm.Provider(boa.config.Provider),
+		ModelID:        boa.config.Model,
+		Temperature:    boa.config.Temperature,
 		Tracers:        nil, // Tracers will be set later if needed
 		TraceID:        traceID,
 		FallbackModels: fallbackModels,
-		MaxRetries:     boa.AgentTemplate.config.MaxRetries,
-		Logger:         boa.AgentTemplate.logger,
+		MaxRetries:     boa.config.MaxRetries,
+		Logger:         boa.logger,
 	}
 
 	// Initialize LLM using the existing factory

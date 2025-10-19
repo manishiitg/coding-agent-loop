@@ -361,17 +361,17 @@ export const useChatStore = create<ChatState>()(
         const threshold = 50 // Increased threshold for more lenient detection
         const isAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - threshold
         
-        // Debug logging to help troubleshoot
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[AUTO_SCROLL] Bottom detection:', {
-            scrollTop: element.scrollTop,
-            clientHeight: element.clientHeight,
-            scrollHeight: element.scrollHeight,
-            threshold,
-            isAtBottom,
-            distanceFromBottom: element.scrollHeight - element.scrollTop - element.clientHeight
-          });
-        }
+        // // Debug logging to help troubleshoot
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.log('[AUTO_SCROLL] Bottom detection:', {
+        //     scrollTop: element.scrollTop,
+        //     clientHeight: element.clientHeight,
+        //     scrollHeight: element.scrollHeight,
+        //     threshold,
+        //     isAtBottom,
+        //     distanceFromBottom: element.scrollHeight - element.scrollTop - element.clientHeight
+        //   });
+        // }
         
         return isAtBottom;
       },

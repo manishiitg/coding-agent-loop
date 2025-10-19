@@ -418,7 +418,6 @@ func (ou *OrchestratorUtils) setupAgent(
     customTools []llms.Tool,
     customToolExecutors map[string]interface{},
     eventBridge EventBridge,
-    setContextFunc func(string, int, string),
 ) error {
     ctx := context.Background()
     if err := agent.Initialize(ctx); err != nil {
@@ -734,7 +733,6 @@ func (ou *OrchestratorUtils) setupAgent(
     customTools []llms.Tool,
     customToolExecutors map[string]interface{},
     eventBridge EventBridge,
-    setContextFunc func(string, int, string),
 ) error {
     ctx := context.Background()
     

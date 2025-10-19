@@ -14,8 +14,10 @@ import (
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/pkg/database"
 	unifiedevents "mcp-agent/agent_go/pkg/events"
+	"mcp-agent/agent_go/pkg/orchestrator"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
 
+	eventbridge "mcp-agent/agent_go/cmd/server/event_bridge"
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 )
 
@@ -269,7 +271,7 @@ func (api *StreamingAPI) executePresetInBackground(sessionID, observerID string,
 	}
 
 	// Parse preset LLM config
-	var llmConfig *orchtypes.LLMConfig
+	var llmConfig *orchestrator.LLMConfig
 	var provider, model string
 	if len(preset.LLMConfig) > 0 {
 		var presetLLMConfig database.PresetLLMConfig
@@ -278,7 +280,7 @@ func (api *StreamingAPI) executePresetInBackground(sessionID, observerID string,
 		} else {
 			provider = presetLLMConfig.Provider
 			model = presetLLMConfig.ModelID
-			llmConfig = &orchtypes.LLMConfig{
+			llmConfig = &orchestrator.LLMConfig{
 				Provider: provider,
 				ModelID:  model,
 			}
@@ -311,7 +313,7 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 	preset *database.PresetQuery,
 	selectedServers []string,
 	provider, model string,
-	llmConfig *orchtypes.LLMConfig,
+	llmConfig *orchestrator.LLMConfig,
 	traceID observability.TraceID,
 	tracer observability.Tracer,
 	startTime time.Time,
@@ -319,21 +321,17 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 ) {
 	log.Printf("[EXTERNAL API] Starting orchestrator execution for session %s", sessionID)
 
-	// Check for stored orchestrator state
-	storedState, hasStoredState := api.getOrchestratorState(sessionID)
-	if hasStoredState {
-		log.Printf("[EXTERNAL API] Found stored orchestrator state for session %s", sessionID)
-	}
-
 	// Create orchestrator agent event bridge
-	orchestratorAgentEventBridge := &OrchestratorAgentEventBridge{
-		eventStore:      api.eventStore,
-		observerManager: api.observerManager,
-		observerID:      observerID,
-		sessionID:       sessionID,
-		logger:          api.logger,
-		agent:           nil,
-		chatDB:          api.chatDB,
+	orchestratorAgentEventBridge := &eventbridge.OrchestratorAgentEventBridge{
+		BaseEventBridge: &eventbridge.BaseEventBridge{
+			EventStore:      api.eventStore,
+			ObserverManager: api.observerManager,
+			ObserverID:      observerID,
+			SessionID:       sessionID,
+			Logger:          api.logger,
+			ChatDB:          api.chatDB,
+			BridgeName:      "orchestrator_agent",
+		},
 	}
 
 	// Create selected options from user request
@@ -348,13 +346,6 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 		},
 	}
 	log.Printf("[EXTERNAL API] Using orchestrator execution mode: %s", req.OrchestratorExecutionMode.String())
-
-	// Create fresh orchestrator
-	orchestrator := orchtypes.NewPlannerOrchestrator(
-		api.logger,
-		api.config.AgentMode,
-		selectedOptions,
-	)
 
 	// Create custom tools (workspace + human tools)
 	workspaceTools := virtualtools.CreateWorkspaceTools()
@@ -371,43 +362,34 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 		allExecutors[name] = executor
 	}
 
-	// Initialize orchestrator agents
-	err := orchestrator.InitializeAgents(
+	// Create fresh orchestrator
+	orchestrator, err := orchtypes.NewPlannerOrchestrator(
 		ctx,
 		provider,
 		model,
 		api.configPath,
-		traceID,
 		api.temperature,
-		orchestratorAgentEventBridge,
-		selectedServers,
-		false, // Disable cache-only mode
-		llmConfig,
-		tracer,
+		"orchestrator",
+		api.workspaceRoot,
 		api.logger,
+		api.internalLLM,
+		orchestratorAgentEventBridge,
+		tracer,
+		selectedServers,
+		selectedOptions,
 		allTools,
 		allExecutors,
+		llmConfig,
+		100, // maxTurns
 	)
 	if err != nil {
-		log.Printf("[EXTERNAL API] Failed to initialize orchestrator: %v", err)
+		log.Printf("[EXTERNAL API] Failed to create orchestrator: %v", err)
 		api.emitExecutionError(observerID, sessionID, "orchestrator", preset.Query, err, startTime, traceID, tracer)
 		return
 	}
 
-	// Restore state if available
-	if hasStoredState {
-		if restoreErr := orchestrator.RestoreState(storedState); restoreErr != nil {
-			log.Printf("[EXTERNAL API] Failed to restore orchestrator state: %v", restoreErr)
-		}
-	}
-
 	// Store orchestrator for guidance injection
 	api.storePlannerOrchestrator(sessionID, orchestrator)
-
-	// Load conversation history
-	api.conversationMux.RLock()
-	history := api.conversationHistory[sessionID]
-	api.conversationMux.RUnlock()
 
 	// Create cancellable context
 	orchestratorCtx, orchestratorCancel := context.WithCancel(context.Background())
@@ -423,7 +405,7 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 
 	// Execute orchestrator flow
 	log.Printf("[EXTERNAL API] Executing orchestrator flow for query: %s", preset.Query)
-	result, err := orchestrator.ExecuteFlow(orchestratorCtx, preset.Query, history, orchestratorAgentEventBridge)
+	result, err := orchestrator.Execute(orchestratorCtx, preset.Query, "", nil)
 
 	if err != nil {
 		log.Printf("[EXTERNAL API] Orchestrator execution failed: %v", err)
@@ -454,7 +436,7 @@ func (api *StreamingAPI) executeWorkflowPreset(
 	executionPhase string,
 	selectedServers []string,
 	provider, model string,
-	llmConfig *orchtypes.LLMConfig,
+	llmConfig *orchestrator.LLMConfig,
 	traceID observability.TraceID,
 	tracer observability.Tracer,
 	startTime time.Time,
@@ -462,20 +444,17 @@ func (api *StreamingAPI) executeWorkflowPreset(
 ) {
 	log.Printf("[EXTERNAL API] Starting workflow execution for session %s (phase: %s)", sessionID, executionPhase)
 
-	// Check for stored workflow state
-	storedWorkflowState, hasStoredWorkflowState := api.getWorkflowState(sessionID)
-	if hasStoredWorkflowState {
-		log.Printf("[EXTERNAL API] Found stored workflow state for session %s", sessionID)
-	}
-
 	// Create workflow event bridge
-	workflowEventBridge := &WorkflowEventBridge{
-		eventStore:      api.eventStore,
-		observerManager: api.observerManager,
-		observerID:      observerID,
-		sessionID:       sessionID,
-		logger:          api.logger,
-		chatDB:          api.chatDB,
+	workflowEventBridge := &eventbridge.WorkflowEventBridge{
+		BaseEventBridge: &eventbridge.BaseEventBridge{
+			EventStore:      api.eventStore,
+			ObserverManager: api.observerManager,
+			ObserverID:      observerID,
+			SessionID:       sessionID,
+			Logger:          api.logger,
+			ChatDB:          api.chatDB,
+			BridgeName:      "workflow",
+		},
 	}
 
 	// Create custom tools (workspace + human tools)
@@ -501,12 +480,15 @@ func (api *StreamingAPI) executeWorkflowPreset(
 		api.mcpConfigPath,
 		api.temperature,
 		"workflow",
-		api.workspaceRoot,
 		api.logger,
 		api.internalLLM,
 		workflowEventBridge,
 		tracer,
 		selectedServers,
+		allTools,
+		allExecutors,
+		llmConfig,
+		100, // maxTurns
 	)
 	if err != nil {
 		log.Printf("[EXTERNAL API] Failed to create workflow orchestrator: %v", err)
@@ -514,23 +496,8 @@ func (api *StreamingAPI) executeWorkflowPreset(
 		return
 	}
 
-	// Initialize workflow orchestrator
-	err = workflowOrchestrator.InitializeAgents(ctx, allTools, allExecutors)
-	if err != nil {
-		log.Printf("[EXTERNAL API] Failed to initialize workflow orchestrator: %v", err)
-		api.emitExecutionError(observerID, sessionID, "workflow", preset.Query, err, startTime, traceID, tracer)
-		return
-	}
-
 	// Store workflow orchestrator for guidance injection
 	api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
-
-	// Restore workflow state if available
-	if hasStoredWorkflowState {
-		if restoreErr := workflowOrchestrator.RestoreState(storedWorkflowState); restoreErr != nil {
-			log.Printf("[EXTERNAL API] Failed to restore workflow state: %v", restoreErr)
-		}
-	}
 
 	// Create cancellable context
 	workflowCtx, workflowCancel := context.WithCancel(context.Background())
@@ -562,17 +529,22 @@ func (api *StreamingAPI) executeWorkflowPreset(
 		}
 	}
 
-	// Generate unique workflow ID
-	workflowID := fmt.Sprintf("workflow_%s_%d", preset.ID, time.Now().UnixNano())
+	// Set workspace path
+	workflowWorkspacePath := "default_workspace" // Use default workspace path
+
+	// Prepare options for the Execute method
+	workflowOptions := map[string]interface{}{
+		"workflowStatus":  workflowStatus,
+		"selectedOptions": selectedOptions,
+	}
 
 	// Execute workflow
 	log.Printf("[EXTERNAL API] Executing workflow for query: %s (status: %s)", preset.Query, workflowStatus)
-	_, err = workflowOrchestrator.ExecuteWorkflow(
+	_, err = workflowOrchestrator.Execute(
 		workflowCtx,
-		workflowID,
 		preset.Query,
-		workflowStatus,
-		selectedOptions,
+		workflowWorkspacePath,
+		workflowOptions,
 	)
 
 	if err != nil {
@@ -624,24 +596,8 @@ func (api *StreamingAPI) handleCancelExecution(w http.ResponseWriter, r *http.Re
 
 	log.Printf("[EXTERNAL API] Cancelling execution for session %s (mode: %s)", req.SessionID, activeSession.AgentMode)
 
-	// Store state before cancellation based on mode
+	// Cancel execution based on mode
 	if activeSession.AgentMode == "orchestrator" {
-		// Store planner orchestrator state
-		api.orchestratorMux.RLock()
-		if plannerOrch, exists := api.plannerOrchestrators[req.SessionID]; exists {
-			storedState, hasStoredState := api.getOrchestratorState(req.SessionID)
-			var objective string
-			if hasStoredState && storedState != nil {
-				objective = storedState.Objective
-			}
-			state, err := plannerOrch.GetState(objective)
-			if err == nil {
-				api.storeOrchestratorState(req.SessionID, state)
-				log.Printf("[EXTERNAL API] Saved orchestrator state for session %s", req.SessionID)
-			}
-		}
-		api.orchestratorMux.RUnlock()
-
 		// Cancel orchestrator context
 		api.orchestratorContextMux.Lock()
 		if cancelFunc, exists := api.orchestratorContexts[req.SessionID]; exists {
@@ -651,17 +607,6 @@ func (api *StreamingAPI) handleCancelExecution(w http.ResponseWriter, r *http.Re
 		}
 		api.orchestratorContextMux.Unlock()
 	} else if activeSession.AgentMode == "workflow" {
-		// Store workflow orchestrator state
-		api.orchestratorMux.RLock()
-		if workflowOrch, exists := api.workflowOrchestrators[req.SessionID]; exists {
-			state, err := workflowOrch.GetState()
-			if err == nil {
-				api.storeWorkflowState(req.SessionID, state)
-				log.Printf("[EXTERNAL API] Saved workflow state for session %s", req.SessionID)
-			}
-		}
-		api.orchestratorMux.RUnlock()
-
 		// Cancel workflow context
 		api.orchestratorContextMux.Lock()
 		if cancelFunc, exists := api.orchestratorContexts[req.SessionID]; exists {

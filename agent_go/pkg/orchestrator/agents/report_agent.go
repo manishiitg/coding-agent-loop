@@ -20,7 +20,7 @@ type OrchestratorReportAgent struct {
 }
 
 // NewOrchestratorReportAgent creates a new report agent
-func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorReportAgent {
+func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *OrchestratorReportAgent {
 	reportPrompts := prompts.NewReportPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(

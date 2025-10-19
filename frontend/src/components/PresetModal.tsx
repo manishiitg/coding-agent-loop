@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
@@ -22,7 +22,7 @@ interface PresetModalProps {
   fixedAgentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow';
 }
 
-const PresetModal: React.FC<PresetModalProps> = ({
+const PresetModal: React.FC<PresetModalProps> = React.memo(({
   isOpen,
   onClose,
   onSave,
@@ -69,25 +69,19 @@ const PresetModal: React.FC<PresetModalProps> = ({
   }, [primaryConfig, setPrimaryConfig]);
 
   // Convert preset LLM config to LLMOption for display
-  const getPresetLLMOption = useCallback(() => {
-    console.log('[PRESET MODAL] Getting preset LLM option, llmConfig:', llmConfig);
+  const currentLLMOption = useMemo(() => {
     if (llmConfig) {
       // Find the matching LLM option from available LLMs
       const matchingLLM = availableLLMs.find(llm => 
         llm.provider === llmConfig.provider && llm.model === llmConfig.model_id
       );
-      console.log('[PRESET MODAL] Matching LLM found:', matchingLLM);
       return matchingLLM || null;
     }
-    console.log('[PRESET MODAL] No llmConfig, using current LLM option');
     return getCurrentLLMOption();
   }, [llmConfig, availableLLMs, getCurrentLLMOption]);
 
-  const currentLLMOption = getPresetLLMOption();
-
   useEffect(() => {
     if (editingPreset) {
-      console.log('[PRESET MODAL] Editing preset:', editingPreset);
       setLabel(editingPreset.label);
       setQuery(editingPreset.query);
       setSelectedServers(editingPreset.selectedServers || []);
@@ -422,6 +416,6 @@ const PresetModal: React.FC<PresetModalProps> = ({
       </Card>
     </div>
   );
-};
+});
 
 export default PresetModal;

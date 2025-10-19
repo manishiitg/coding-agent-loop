@@ -11,11 +11,15 @@ import { EventWithOrchestratorContext } from './common/EventWithOrchestratorCont
     // { id, type, timestamp, data: AgentEvent, error?, session_id? }
     // The AgentEvent contains all the actual event data
     
+    console.log('extractEventData - input eventData:', eventData);
+    
     if (eventData && typeof eventData === 'object' && eventData.data) {
+      console.log('extractEventData - extracted data:', eventData.data);
       return eventData.data as T
     }
 
     // Fallback: return the event data as-is (for backward compatibility)
+    console.log('extractEventData - fallback to original data');
     return eventData as T
   }
 
@@ -24,8 +28,15 @@ function wrapWithOrchestratorContext<T extends { metadata?: { [k: string]: unkno
   Component: React.ComponentType<{ event: T }>,
   eventData: T
 ) {
+  // Get metadata from the extracted event data
+  const metadata = eventData.metadata;
+  
+  // Debug: Log metadata extraction
+  console.log('wrapWithOrchestratorContext - eventData:', eventData);
+  console.log('wrapWithOrchestratorContext - metadata:', metadata);
+  
   return (
-    <EventWithOrchestratorContext metadata={eventData.metadata}>
+    <EventWithOrchestratorContext metadata={metadata}>
       <Component event={eventData} />
     </EventWithOrchestratorContext>
   )

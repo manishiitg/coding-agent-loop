@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
@@ -30,7 +31,7 @@ type TodoPlannerCritiqueAgent struct {
 }
 
 // NewTodoPlannerCritiqueAgent creates a new todo planner critique agent
-func NewTodoPlannerCritiqueAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *TodoPlannerCritiqueAgent {
+func NewTodoPlannerCritiqueAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) *TodoPlannerCritiqueAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -100,134 +101,161 @@ func (tpca *TodoPlannerCritiqueAgent) todoPlannerCritiqueInputProcessor(template
 	}
 
 	// Define the template
-	templateStr := `## PRIMARY TASK - EVALUATE TODO LIST QUALITY, REPRODUCIBILITY, AND VALIDATE OPTIMIZATION CLAIMS
+	templateStr := `## 🎯 PRIMARY TASK - EVALUATE FINAL TODO LIST SYNTHESIS
 
-You are a todo planner critique agent. Your ONLY job is to evaluate if the todo list covers ALL aspects of the objective, has properly broken down reproducible steps, and represents the best possible optimized approach.
+You are a todo planner critique agent. Evaluate if the FINAL todo list properly synthesizes learnings from ALL iterations.
 
 **OBJECTIVE**: {{.Objective}}
-**PLANNING ITERATION**: {{.Iteration}}
-**WORKSPACE PATH**: {{.WorkspacePath}}
+**ITERATION**: {{.Iteration}}
+**WORKSPACE**: {{.WorkspacePath}}
 
-## First: Read All Relevant Files for Full Context
+## 🎯 Understanding What You're Evaluating
 
-Use workspace tools to read the following files to understand the complete planning process:
+**IMPORTANT - Evaluation Context**:
+- 🔄 **10+ Iterations** = Long discovery process with multiple approaches
+- 📝 **Planning History** = Multiple "## Iteration X" sections in plan.md
+- 🧪 **Execution History** = Multiple "## Iteration X" sections in execution_results.md
+- ✅ **Validation History** = Validation reports across iterations
+- 📄 **Todo List** = Writer synthesized BEST methods from ALL iterations
+- **YOUR JOB** = Verify synthesis is comprehensive and optimal
 
-### 1. Planning Files
-- **{{.WorkspacePath}}/todo_creation/planning/plan.md** - The final plan created
+## 📁 Read Context Files First
 
-### 2. Execution Files  
-- **{{.WorkspacePath}}/todo_creation/execution/execution_results.md** - Comprehensive execution results
-- **{{.WorkspacePath}}/todo_creation/execution/completed_steps.md** - Steps that were successfully executed
-- **{{.WorkspacePath}}/todo_creation/execution/evidence/** - Any files or outputs created during execution
+Read these files to understand ALL iteration history:
 
-### 3. Validation Files
-- **{{.WorkspacePath}}/todo_creation/validation/execution_validation_report.md** - Execution validation results
+### Planning & Execution History
+- {{.WorkspacePath}}/todo_creation/planning/plan.md (READ ALL "## Iteration X" sections)
+- {{.WorkspacePath}}/todo_creation/execution/execution_results.md (READ ALL "## Iteration X" sections)
+- {{.WorkspacePath}}/todo_creation/execution/completed_steps.md
+- {{.WorkspacePath}}/todo_creation/execution/evidence/
 
-### 4. Final Todo List
-- **{{.WorkspacePath}}/todo_creation/todo.md** - The final todo list to evaluate
+### Validation History & Final Todo
+- {{.WorkspacePath}}/todo_creation/validation/execution_validation_report.md (ALL validations)
+- {{.WorkspacePath}}/todo_creation/todo.md (final synthesized todo)
 
-## Core Evaluation Questions
+## ❓ Core Evaluation Questions
 
-### 1. Objective Coverage Assessment
-- **Does the todo list cover ALL aspects of the objective?** (Every requirement, goal, and expectation addressed?)
-- **Are there missing elements?** (Gaps in the objective that aren't covered by steps?)
-- **Is the scope complete?** (All necessary work included to achieve the objective?)
+### 1. Synthesis Quality
+- Did Writer read ALL "## Iteration X" sections from plan.md?
+- Did Writer read ALL "## Iteration X" sections from execution_results.md?
+- Is the todo list based on learnings from ALL iterations (not just latest)?
+- Were all approaches tried across iterations properly compared?
 
-### 2. Step Quality Assessment
-- **Are steps properly broken down?** (Right level of detail, not too high-level or too granular?)
-- **Are steps clear and specific?** (Can anyone understand and follow them?)
-- **Are steps reproducible?** (Will they work consistently when executed?)
-- **Are dependencies clear?** (What needs to happen first, what depends on what?)
+### 2. Method Selection
+- Did Writer identify methods with HIGHEST success rates across iterations?
+- Are selected methods backed by evidence from execution history?
+- Were failed methods (from early iterations) properly excluded?
+- Is the selection justified by comparing iteration results?
 
-### 3. Optimization Assessment
-- **Are these the best possible steps?** (Optimal approach based on execution experience?)
-- **Are optimization claims backed by evidence?** (Do claimed optimal methods have proof?)
-- **Are steps efficient?** (No unnecessary work, streamlined approach?)
-- **Does it incorporate execution learnings?** (Uses insights from what worked/didn't work?)
+### 3. Objective Coverage
+- Does the synthesized todo list cover ALL objective requirements?
+- Are there missing elements or gaps?
+- Is the scope complete?
 
-### 4. Execution Completeness Assessment
-- **Was the objective fully executed?** (Did execution actually achieve the complete objective?)
-- **Are all critical steps completed?** (Were all essential steps successfully executed?)
-- **Is the objective achievement verified?** (Is there evidence that the objective was met?)
-- **Are there execution gaps?** (Steps that failed or weren't completed that prevent objective achievement?)
+### 4. Step Quality
+- Are steps using proven MCP tools from successful iterations?
+- Are steps clear, specific, and reproducible?
+- Do steps reflect learnings from failed iterations (avoiding mistakes)?
+- Are dependencies clearly defined?
 
-## Output Format
-**IMPORTANT: Return ONLY clean markdown, not JSON or structured data**
+### 5. Iteration Learning
+- Does todo reflect evolution across iterations (improvement over time)?
+- Were insights from validation integrated?
+- Are there patterns from multiple iterations incorporated?
+- Is this better than any single iteration's approach?
 
-# Todo List Assessment Report
+` + memory.GetWorkflowMemoryRequirements() + `
 
-## Objective Coverage Assessment
-- **Complete Coverage**: [Excellent/Good/Fair/Poor] - Does the todo list cover ALL aspects of the objective?
-- **Missing Elements**: [None/Minor/Major] - Are there gaps in the objective coverage?
-- **Scope Completeness**: [Complete/Mostly Complete/Incomplete] - Is all necessary work included?
+## 📤 Output Format
+**Return clean markdown only, not JSON**
 
-## Step Quality Assessment
-- **Step Breakdown**: [Excellent/Good/Fair/Poor] - Are steps properly broken down with right level of detail?
-- **Clarity**: [Excellent/Good/Fair/Poor] - Are steps clear and specific?
-- **Reproducibility**: [Excellent/Good/Fair/Poor] - Can anyone follow these steps consistently?
-- **Dependencies**: [Clear/Somewhat Clear/Unclear] - Are step dependencies clear?
+# Final Todo List Assessment Report - Iteration Synthesis
 
-## Optimization Assessment
-- **Best Possible Steps**: [Excellent/Good/Fair/Poor] - Are these the best possible optimized steps?
-- **Evidence-Backed Claims**: [Excellent/Good/Fair/Poor] - Are optimization claims supported by evidence?
-- **Efficiency**: [Excellent/Good/Fair/Poor] - Is the approach streamlined and efficient?
-- **Execution Learning Integration**: [Excellent/Good/Fair/Poor] - Does it incorporate execution insights?
-- **Reproducibility**: [Excellent/Good/Fair/Poor] - Can claimed optimizations be consistently reproduced?
+## 📊 Assessment Scores
 
-## Execution Completeness Assessment
-- **Objective Achievement**: [Complete/Partial/Failed] - Was the objective fully executed and achieved?
-- **Critical Steps Completed**: [All/Most/Some/None] - Were all essential steps successfully executed?
-- **Verification Evidence**: [Strong/Weak/None] - Is there evidence that the objective was met?
-- **Execution Gaps**: [None/Minor/Major] - Are there steps that failed or weren't completed?
-- **Overall Execution Success**: [Excellent/Good/Fair/Poor] - How successful was the execution overall?
+### Synthesis Quality: [High/Medium/Low]
+- **All Iterations Read**: Did Writer analyze ALL "## Iteration X" sections?
+- **Comprehensive Analysis**: [Yes/No - All planning + execution history reviewed?]
+- **Iteration Comparison**: Were methods compared across iterations?
+- **Confidence**: [High/Medium/Low]
 
-## Key Findings
-### Coverage Strengths
-- [What aspects of the objective are well covered]
+### Method Selection: [High/Medium/Low]
+- **Best Methods Selected**: Highest success rates from iterations?
+- **Evidence-Backed**: Selection justified by iteration results?
+- **Failed Methods Excluded**: Early failed approaches not included?
+- **Selection Quality**: [Strong/Moderate/Weak]
 
-### Coverage Gaps
-- [What aspects of the objective are missing or incomplete]
+### Objective Coverage: [High/Medium/Low]
+- **Coverage**: Does todo address all requirements?
+- **Missing Elements**: [None/Minor/Major gaps]
+- **Scope**: [Complete/Mostly Complete/Incomplete]
 
-### Step Quality Issues
-- [Steps that are unclear, too high-level, or hard to reproduce]
+### Step Quality: [High/Medium/Low]
+- **Proven MCP Tools**: Uses tools from successful iterations?
+- **Clarity**: Clear and specific?
+- **Reproducibility**: Consistently executable?
+- **Learning Integration**: Avoids mistakes from failed iterations?
 
-### Optimization Issues
-- [Optimization claims that lack evidence or aren't actually optimal]
+### Iteration Learning: [High/Medium/Low]
+- **Evolution**: Shows improvement over iterations?
+- **Pattern Recognition**: Incorporates patterns from multiple iterations?
+- **Better Than Single**: Superior to any single iteration?
+- **Validation Integration**: Includes validation insights?
 
-### Execution Completeness Issues
-- [Steps that failed or weren't completed that prevent objective achievement]
-- [Gaps in execution that need to be addressed]
-- [Evidence issues that prevent verification of objective achievement]
+## 🔍 Key Findings
 
-## Recommendations
-### Coverage Improvements
-1. [Most important missing element to add]
-2. [Second most important gap to address]
+### 📚 Iteration History Analysis
+- **Total Iterations Analyzed**: [Number from files]
+- **Planning Iterations Found**: [Count from plan.md]
+- **Execution Iterations Found**: [Count from execution_results.md]
+- **Validation Iterations Found**: [Count from validation report]
 
-### Step Quality Improvements
-- [Steps that need better breakdown or clarity]
-- [Dependencies that need to be clearer]
+### 🏆 Method Selection Analysis
+- **Iteration 1**: [Method tried, success rate]
+- **Iteration 2**: [Method tried, success rate]
+- **Iteration X**: [Method tried, success rate]
+- **Winner Selected**: [Which iteration's method was chosen for todo?]
+- **Correct Choice**: [Yes/No - Is this the best from all iterations?]
 
-### Optimization Improvements
-- [How to verify optimization claims with evidence]
-- [How to ensure steps are actually optimal]
+### ✅ Strengths
+[What aspects are well done]
 
-### Execution Completeness Improvements
-- [How to address failed or incomplete steps]
-- [How to fill execution gaps]
-- [How to improve verification evidence for objective achievement]
+### ⚠️ Coverage Gaps
+[Missing or incomplete aspects]
 
-## Final Assessment
-- **Does the todo list cover ALL aspects of the objective?** [Yes/No]
-- **Are the steps properly broken down and reproducible?** [Yes/No]
-- **Are these the best possible optimized steps?** [Yes/No]
-- **Was the objective fully executed and achieved?** [Yes/No]
-- **Is this todo list ready for execution?** [Yes/No]
-- **Key reason**: [Brief explanation focusing on coverage, step quality, optimization, and execution completeness]
+### 📝 Step Quality Issues
+[Steps that are unclear or hard to reproduce]
 
-Focus on objective coverage, step quality, optimization assessment, and execution completeness with full context from planning, execution, and validation phases.
+### 🔧 Optimization Issues
+[Claims lacking evidence or suboptimal approaches]
 
-` + memory.GetWorkflowMemoryRequirements() + ``
+### ❓ Approach Selection Concerns
+[If wrong approach was selected or selection not justified]
+
+## 💡 Recommendations
+
+### Priority Improvements
+1. [Most critical issue to address]
+2. [Second priority]
+3. [Third priority]
+
+### Specific Actions
+- **Coverage**: [How to address gaps]
+- **Quality**: [How to improve steps]
+- **Optimization**: [How to verify claims]
+- **Execution**: [How to complete gaps]
+
+## ✅ Final Assessment
+- **All Iterations Analyzed**: [Yes/No]
+- **Best Methods Selected**: [Yes/No - Highest success rates from iterations?]
+- **Synthesis Quality**: [High/Medium/Low]
+- **Complete Coverage**: [Yes/No]
+- **Reproducible Steps**: [Yes/No]
+- **Iteration Learning Applied**: [Yes/No]
+- **Production Ready**: [Yes/No]
+- **Reason**: [Brief explanation - focus on synthesis quality and iteration-based selection]
+
+Focus on verifying comprehensive iteration analysis, optimal method synthesis, and production readiness based on ALL iteration history.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("todoPlannerCritique").Parse(templateStr)

@@ -1,4 +1,4 @@
-package conditional
+package llm
 
 import (
 	"context"
@@ -26,50 +26,31 @@ func (cr *ConditionalResponse) GetResult() bool {
 
 // ConditionalLLM provides a simple true/false decision service
 type ConditionalLLM struct {
-	llm          llms.Model
-	logger       utils.ExtendedLogger
-	tracer       observability.Tracer
-	eventEmitter func(context.Context, events.EventData) // Event emitter function
+	*BaseLLM // Embed BaseLLM for common functionality
 }
 
-// NewConditionalLLM creates a new conditional LLM instance
-func NewConditionalLLM(
+// NewConditionalLLMWithEventBridge creates a new conditional LLM instance with mandatory event bridge
+func NewConditionalLLMWithEventBridge(
 	llm llms.Model,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
+	eventBridge mcpagent.AgentEventListener,
 ) *ConditionalLLM {
 	return &ConditionalLLM{
-		llm:    llm,
-		logger: logger,
-		tracer: tracer,
-	}
-}
-
-// NewConditionalLLMWithEventEmitter creates a new conditional LLM instance with event emitter
-func NewConditionalLLMWithEventEmitter(
-	llm llms.Model,
-	logger utils.ExtendedLogger,
-	tracer observability.Tracer,
-	eventEmitter func(context.Context, events.EventData),
-) *ConditionalLLM {
-	return &ConditionalLLM{
-		llm:          llm,
-		logger:       logger,
-		tracer:       tracer,
-		eventEmitter: eventEmitter,
+		BaseLLM: NewBaseLLM(llm, logger, tracer, eventBridge, "conditional"),
 	}
 }
 
 // SetEventEmitter sets the event emitter function
 func (cl *ConditionalLLM) SetEventEmitter(emitter func(context.Context, events.EventData)) {
-	cl.eventEmitter = emitter
+	cl.BaseLLM.SetEventEmitter(emitter)
 }
 
 // Decide makes a true/false decision based on context and question
 func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, stepIndex, iteration int) (*ConditionalResponse, error) {
 	startTime := time.Now()
 
-	cl.logger.Infof("🤔 Making conditional decision: %s", question)
+	cl.GetLogger().Infof("🤔 Making conditional decision: %s", question)
 
 	// Build prompt
 	prompt := GetPrompt(context, question)
@@ -81,16 +62,16 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 		ValidateOutput: true,
 		MaxRetries:     2,
 	}
-	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(cl.llm, config, cl.logger)
+	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(cl.GetLLM(), config, cl.GetLogger())
 
 	// Generate structured output
 	jsonOutput, err := generator.GenerateStructuredOutput(ctx, prompt, schema)
 	if err != nil {
 		duration := time.Since(startTime)
-		cl.logger.Errorf("❌ Conditional decision failed: %v", err)
+		cl.GetLogger().Errorf("❌ Conditional decision failed: %v", err)
 
 		// Emit orchestrator agent error event
-		if cl.eventEmitter != nil {
+		if cl.GetEventEmitter() != nil {
 			errorEvent := &events.OrchestratorAgentErrorEvent{
 				BaseEventData: events.BaseEventData{
 					Timestamp: time.Now(),
@@ -103,7 +84,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 				StepIndex: stepIndex,
 				Iteration: iteration,
 			}
-			cl.eventEmitter(ctx, errorEvent)
+			cl.GetEventEmitter()(ctx, errorEvent)
 		}
 
 		return nil, fmt.Errorf("failed to make conditional decision: %w", err)
@@ -113,10 +94,10 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 	var result ConditionalResponse
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
 		duration := time.Since(startTime)
-		cl.logger.Errorf("❌ Failed to parse conditional response: %v", err)
+		cl.GetLogger().Errorf("❌ Failed to parse conditional response: %v", err)
 
 		// Emit orchestrator agent error event
-		if cl.eventEmitter != nil {
+		if cl.GetEventEmitter() != nil {
 			errorEvent := &events.OrchestratorAgentErrorEvent{
 				BaseEventData: events.BaseEventData{
 					Timestamp: time.Now(),
@@ -129,17 +110,17 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 				StepIndex: stepIndex,
 				Iteration: iteration,
 			}
-			cl.eventEmitter(ctx, errorEvent)
+			cl.GetEventEmitter()(ctx, errorEvent)
 		}
 
 		return nil, fmt.Errorf("failed to parse conditional response: %w", err)
 	}
 
 	duration := time.Since(startTime)
-	cl.logger.Infof("✅ Conditional decision made: result=%t, reason=%s", result.Result, result.Reason)
+	cl.GetLogger().Infof("✅ Conditional decision made: result=%t, reason=%s", result.Result, result.Reason)
 
 	// Emit orchestrator agent end event
-	if cl.eventEmitter != nil {
+	if cl.GetEventEmitter() != nil {
 		resultText := fmt.Sprintf("Decision: %t, Reason: %s", result.Result, result.Reason)
 		endEvent := &events.OrchestratorAgentEndEvent{
 			BaseEventData: events.BaseEventData{
@@ -157,7 +138,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 			StepIndex: stepIndex,
 			Iteration: iteration,
 		}
-		cl.eventEmitter(ctx, endEvent)
+		cl.GetEventEmitter()(ctx, endEvent)
 	}
 
 	return &result, nil
@@ -165,5 +146,34 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 
 // Close cleans up resources
 func (cl *ConditionalLLM) Close() error {
-	return nil
+	return cl.BaseLLM.Close()
+}
+
+// GetPrompt returns a prompt for true/false decisions with reasoning
+func GetPrompt(context, question string) string {
+	return `You are a decision assistant. Analyze the context and return a true/false decision with reasoning.
+
+Context: ` + context + `
+
+Question: ` + question + `
+
+Instructions:
+1. You mainly need to determine answer to the question based on question.
+2. Yes = true , No = false
+3. Provide clear reasoning for your decision
+
+Return ONLY valid JSON: {"result": true/false, "reason": "your reasoning here"}`
+}
+
+// GetSchema returns the JSON schema
+func GetSchema() string {
+	return `{
+  "type": "object",
+  "properties": {
+    "result": {"type": "boolean"},
+    "reason": {"type": "string"}
+  },
+  "required": ["result", "reason"],
+  "additionalProperties": false
+}`
 }

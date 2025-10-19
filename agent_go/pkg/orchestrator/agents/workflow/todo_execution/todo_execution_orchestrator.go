@@ -9,6 +9,7 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent/agent_go/pkg/orchestrator/llm"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -17,29 +18,42 @@ import (
 type TodoExecutionOrchestrator struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
-
-	// Sub-agents (created on-demand)
-	executionAgent  agents.OrchestratorAgent
-	validationAgent agents.OrchestratorAgent
-	workspaceAgent  agents.OrchestratorAgent
 }
 
 // NewTodoExecutionOrchestrator creates a new multi-agent todo execution orchestrator
 func NewTodoExecutionOrchestrator(
-	config *agents.OrchestratorAgentConfig,
+	provider string,
+	model string,
+	temperature float64,
+	agentMode string,
+	selectedServers []string,
+	mcpConfigPath string,
+	llmConfig *orchestrator.LLMConfig,
+	maxTurns int,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
-	eventBridge interface{},
+	eventBridge orchestrator.EventBridge,
+	customTools []llms.Tool,
+	customToolExecutors map[string]interface{},
 ) (*TodoExecutionOrchestrator, error) {
 
 	// Create base workflow orchestrator
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
-		config,
 		logger,
 		tracer,
 		eventBridge,
 		agents.TodoExecutionAgentType,
 		orchestrator.OrchestratorTypeWorkflow,
+		provider,
+		model,
+		mcpConfigPath,
+		temperature,
+		agentMode,
+		selectedServers,
+		llmConfig, // llmConfig passed from caller
+		maxTurns,
+		customTools,
+		customToolExecutors,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
@@ -52,15 +66,15 @@ func NewTodoExecutionOrchestrator(
 
 // ExecuteTodos orchestrates the multi-agent todo execution process
 func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objective, workspacePath, runOption string) (string, error) {
-	teo.AgentTemplate.GetLogger().Infof("🚀 Starting multi-agent todo execution for objective: %s", objective)
-	teo.AgentTemplate.GetLogger().Infof("📁 Using workspace path: %s", workspacePath)
+	teo.GetLogger().Infof("🚀 Starting multi-agent todo execution for objective: %s", objective)
+	teo.GetLogger().Infof("📁 Using workspace path: %s", workspacePath)
 
 	// Set objective and workspace path directly
 	teo.SetObjective(objective)
 	teo.SetWorkspacePath(workspacePath)
 
 	// STEP 1: EXECUTION PHASE
-	teo.AgentTemplate.GetLogger().Infof("🔄 Step 1/3: Todo Execution")
+	teo.GetLogger().Infof("🔄 Step 1/3: Todo Execution")
 
 	executionResult, err := teo.runExecutionPhase(ctx, runOption)
 
@@ -69,78 +83,47 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 	}
 
 	// STEP 2: VALIDATION PHASE
-	teo.AgentTemplate.GetLogger().Infof("🔄 Step 2/3: Todo Validation")
+	teo.GetLogger().Infof("🔄 Step 2/3: Todo Validation")
 
 	validationResult, err := teo.runValidationPhase(ctx, executionResult)
 	if err != nil {
-		teo.AgentTemplate.GetLogger().Warnf("⚠️ Validation phase failed: %v", err)
+		teo.GetLogger().Warnf("⚠️ Validation phase failed: %v", err)
 		validationResult = "Validation failed: " + err.Error()
 	}
 
 	// STEP 3: WORKSPACE UPDATE PHASE
-	teo.AgentTemplate.GetLogger().Infof("🔄 Step 3/3: Workspace Update")
+	teo.GetLogger().Infof("🔄 Step 3/3: Workspace Update")
 
 	workspaceResult, err := teo.runWorkspaceUpdatePhase(ctx, executionResult, validationResult)
 	if err != nil {
-		teo.AgentTemplate.GetLogger().Warnf("⚠️ Workspace update phase failed: %v", err)
+		teo.GetLogger().Warnf("⚠️ Workspace update phase failed: %v", err)
 		workspaceResult = "Workspace update failed: " + err.Error()
 	}
 
 	// Check completion status
 	allTodosCompleted, completionReason, err := teo.checkCompletion(ctx, workspaceResult)
 	if err != nil {
-		teo.AgentTemplate.GetLogger().Warnf("⚠️ Completion check failed: %v", err)
+		teo.GetLogger().Warnf("⚠️ Completion check failed: %v", err)
 		allTodosCompleted = false
 		completionReason = "Completion check failed: " + err.Error()
 	}
 
 	duration := time.Since(teo.GetStartTime())
-	teo.AgentTemplate.GetLogger().Infof("✅ Multi-agent todo execution completed in %v", duration)
+	teo.GetLogger().Infof("✅ Multi-agent todo execution completed in %v", duration)
 
 	return teo.formatResults(executionResult, validationResult, workspaceResult, allTodosCompleted, completionReason), nil
 }
 
-// Execute implements the OrchestratorAgent interface
-func (teo *TodoExecutionOrchestrator) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
-	// Extract objective and run option from template variables
-	objective := templateVars["Objective"]
-	if objective == "" {
-		objective = templateVars["objective"] // Try lowercase as fallback
-	}
-	if objective == "" {
-		return "", fmt.Errorf("objective not found in template variables")
-	}
-
-	// Extract workspace path from template variables
-	workspacePath := templateVars["WorkspacePath"]
-	if workspacePath == "" {
-		return "", fmt.Errorf("workspace path not found in template variables")
-	}
-
-	runOption := templateVars["RunOption"]
-	if runOption == "" {
-		runOption = "create_new_runs_always" // Default
-	}
-
-	// Delegate to ExecuteTodos
-	return teo.ExecuteTodos(ctx, objective, workspacePath, runOption)
-}
-
-// GetType implements the OrchestratorAgent interface
-func (teo *TodoExecutionOrchestrator) GetType() string {
-	return string(agents.TodoExecutionAgentType)
-}
-
 // runExecutionPhase executes todos using the execution agent
 func (teo *TodoExecutionOrchestrator) runExecutionPhase(ctx context.Context, runOption string) (string, error) {
-	teo.AgentTemplate.GetLogger().Infof("🚀 Creating execution agent")
+	teo.GetLogger().Infof("🚀 Creating execution agent")
 
-	executionAgent, err := teo.createExecutionAgent()
+	executionAgent, err := teo.createExecutionAgent("execution", 0, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create execution agent: %w", err)
 	}
 
-	teo.AgentTemplate.GetLogger().Infof("🚀 Executing todos with run option: %s", runOption)
+	teo.GetLogger().Infof("🚀 Executing todos with run option: %s", runOption)
 
 	// Prepare template variables for Execute method
 	templateVars := map[string]string{
@@ -154,20 +137,20 @@ func (teo *TodoExecutionOrchestrator) runExecutionPhase(ctx context.Context, run
 		return "", fmt.Errorf("execution failed: %w", err)
 	}
 
-	teo.AgentTemplate.GetLogger().Infof("✅ Execution phase completed: %d characters", len(executionResult))
+	teo.GetLogger().Infof("✅ Execution phase completed: %d characters", len(executionResult))
 	return executionResult, nil
 }
 
 // runValidationPhase validates execution results using the validation agent
 func (teo *TodoExecutionOrchestrator) runValidationPhase(ctx context.Context, executionResult string) (string, error) {
-	teo.AgentTemplate.GetLogger().Infof("🔍 Creating validation agent")
+	teo.GetLogger().Infof("🔍 Creating validation agent")
 
-	validationAgent, err := teo.createValidationAgent()
+	validationAgent, err := teo.createValidationAgent("validation", 1, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create validation agent: %w", err)
 	}
 
-	teo.AgentTemplate.GetLogger().Infof("🔍 Validating execution results")
+	teo.GetLogger().Infof("🔍 Validating execution results")
 	validationTemplateVars := map[string]string{
 		"Objective":       teo.GetObjective(),
 		"WorkspacePath":   teo.GetWorkspacePath(),
@@ -178,20 +161,20 @@ func (teo *TodoExecutionOrchestrator) runValidationPhase(ctx context.Context, ex
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
-	teo.AgentTemplate.GetLogger().Infof("✅ Validation phase completed: %d characters", len(validationResult))
+	teo.GetLogger().Infof("✅ Validation phase completed: %d characters", len(validationResult))
 	return validationResult, nil
 }
 
 // runWorkspaceUpdatePhase updates workspace using the workspace agent
 func (teo *TodoExecutionOrchestrator) runWorkspaceUpdatePhase(ctx context.Context, executionResult, validationResult string) (string, error) {
-	teo.AgentTemplate.GetLogger().Infof("📁 Creating workspace update agent")
+	teo.GetLogger().Infof("📁 Creating workspace update agent")
 
-	workspaceAgent, err := teo.createWorkspaceAgent()
+	workspaceAgent, err := teo.createWorkspaceAgent("workspace", 2, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create workspace agent: %w", err)
 	}
 
-	teo.AgentTemplate.GetLogger().Infof("📁 Updating workspace with execution and validation results")
+	teo.GetLogger().Infof("📁 Updating workspace with execution and validation results")
 	workspaceTemplateVars := map[string]string{
 		"Objective":        teo.GetObjective(),
 		"WorkspacePath":    teo.GetWorkspacePath(),
@@ -203,17 +186,39 @@ func (teo *TodoExecutionOrchestrator) runWorkspaceUpdatePhase(ctx context.Contex
 		return "", fmt.Errorf("workspace update failed: %w", err)
 	}
 
-	teo.AgentTemplate.GetLogger().Infof("✅ Workspace update phase completed: %d characters", len(workspaceResult))
+	teo.GetLogger().Infof("✅ Workspace update phase completed: %d characters", len(workspaceResult))
 	return workspaceResult, nil
+}
+
+// createConditionalLLM creates a conditional LLM on-demand with todo execution-specific configuration
+func (teo *TodoExecutionOrchestrator) createConditionalLLM() (*llm.ConditionalLLM, error) {
+	// Create config for conditional LLM using todo execution-specific settings
+	conditionalConfig := &agents.OrchestratorAgentConfig{
+		Provider:      teo.GetProvider(),
+		Model:         teo.GetModel(),
+		Temperature:   teo.GetTemperature(),
+		ServerNames:   teo.GetSelectedServers(),
+		MCPConfigPath: teo.GetMCPConfigPath(),
+	}
+
+	// Create conditional LLM with todo execution-specific context
+	conditionalLLM, err := llm.CreateConditionalLLMWithEventBridge(conditionalConfig, teo.GetContextAwareBridge(), teo.GetLogger(), teo.GetTracer())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conditional LLM: %w", err)
+	}
+
+	return conditionalLLM, nil
 }
 
 // checkCompletion uses conditional logic to determine if all todos are completed
 func (teo *TodoExecutionOrchestrator) checkCompletion(ctx context.Context, workspaceResult string) (bool, string, error) {
-	teo.AgentTemplate.GetLogger().Infof("🎯 Checking todo completion status using conditional logic")
+	teo.GetLogger().Infof("🎯 Checking todo completion status using conditional logic")
 
-	if teo.GetConditionalLLM() == nil {
-		teo.AgentTemplate.GetLogger().Errorf("❌ Conditional LLM not initialized")
-		return false, "Conditional LLM not initialized", fmt.Errorf("conditional LLM not initialized")
+	// Create conditional LLM on-demand
+	conditionalLLM, err := teo.createConditionalLLM()
+	if err != nil {
+		teo.GetLogger().Errorf("❌ Failed to create conditional LLM: %v", err)
+		return false, "Failed to create conditional LLM: " + err.Error(), err
 	}
 
 	// Prepare context and question for true/false decision
@@ -221,13 +226,13 @@ func (teo *TodoExecutionOrchestrator) checkCompletion(ctx context.Context, works
 	question := "Are all todos completed? Look for completion status, remaining todos, and overall project status in the workspace update report."
 
 	// Use conditional LLM to make the decision
-	result, err := teo.GetConditionalLLM().Decide(ctx, context, question, 0, 0)
+	result, err := conditionalLLM.Decide(ctx, context, question, 0, 0)
 	if err != nil {
-		teo.AgentTemplate.GetLogger().Errorf("❌ Conditional LLM decision failed: %v", err)
+		teo.GetLogger().Errorf("❌ Conditional LLM decision failed: %v", err)
 		return false, "Conditional decision failed: " + err.Error(), err
 	}
 
-	teo.AgentTemplate.GetLogger().Infof("🎯 Conditional logic result: %t - %s", result.GetResult(), result.Reason)
+	teo.GetLogger().Infof("🎯 Conditional logic result: %t - %s", result.GetResult(), result.Reason)
 	return result.GetResult(), result.Reason, nil
 }
 
@@ -277,86 +282,93 @@ Focus on executing as many incomplete todos as possible effectively and providin
 }
 
 // Agent creation methods
-func (teo *TodoExecutionOrchestrator) createExecutionAgent() (agents.OrchestratorAgent, error) {
-	if teo.executionAgent != nil {
-		return teo.executionAgent, nil
+func (teo *TodoExecutionOrchestrator) createExecutionAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Use combined standardized agent creation and setup
+	agent, err := teo.CreateAndSetupStandardAgent(
+		"todo_execution",
+		"execution-agent",
+		phase,
+		step,
+		iteration,
+		teo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoExecutionAgent(config, logger, tracer, eventBridge)
+		},
+		teo.WorkspaceTools,
+		teo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoExecutionAgent(teo.AgentTemplate.GetConfig(), teo.AgentTemplate.GetLogger(), teo.GetTracer(), teo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize execution agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if teo.WorkspaceTools != nil && teo.WorkspaceToolExecutors != nil {
-		if err := teo.RegisterWorkspaceTools(agent); err != nil {
-			teo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for execution agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := teo.ConnectAgentToEventBridge(agent, "todo_execution_execution"); err != nil {
-		teo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect execution agent to event bridge: %v", err)
-	}
-
-	teo.executionAgent = agent
 	return agent, nil
 }
 
-func (teo *TodoExecutionOrchestrator) createValidationAgent() (agents.OrchestratorAgent, error) {
-	if teo.validationAgent != nil {
-		return teo.validationAgent, nil
+func (teo *TodoExecutionOrchestrator) createValidationAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Use combined standardized agent creation and setup
+	agent, err := teo.CreateAndSetupStandardAgent(
+		"todo_validation",
+		"validation-agent",
+		phase,
+		step,
+		iteration,
+		teo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoValidationAgent(config, logger, tracer, eventBridge)
+		},
+		teo.WorkspaceTools,
+		teo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoValidationAgent(teo.AgentTemplate.GetConfig(), teo.AgentTemplate.GetLogger(), teo.GetTracer(), teo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize validation agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if teo.WorkspaceTools != nil && teo.WorkspaceToolExecutors != nil {
-		if err := teo.RegisterWorkspaceTools(agent); err != nil {
-			teo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for validation agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := teo.ConnectAgentToEventBridge(agent, "todo_execution_validation"); err != nil {
-		teo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect validation agent to event bridge: %v", err)
-	}
-
-	teo.validationAgent = agent
 	return agent, nil
 }
 
-func (teo *TodoExecutionOrchestrator) createWorkspaceAgent() (agents.OrchestratorAgent, error) {
-	if teo.workspaceAgent != nil {
-		return teo.workspaceAgent, nil
+func (teo *TodoExecutionOrchestrator) createWorkspaceAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Use combined standardized agent creation and setup
+	agent, err := teo.CreateAndSetupStandardAgent(
+		"workspace_update",
+		"workspace-agent",
+		phase,
+		step,
+		iteration,
+		teo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewWorkspaceUpdateAgent(config, logger, tracer, eventBridge)
+		},
+		teo.WorkspaceTools,
+		teo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewWorkspaceUpdateAgent(teo.AgentTemplate.GetConfig(), teo.AgentTemplate.GetLogger(), teo.GetTracer(), teo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize workspace agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if teo.WorkspaceTools != nil && teo.WorkspaceToolExecutors != nil {
-		if err := teo.RegisterWorkspaceTools(agent); err != nil {
-			teo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for workspace agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := teo.ConnectAgentToEventBridge(agent, "todo_execution_workspace"); err != nil {
-		teo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect workspace agent to event bridge: %v", err)
-	}
-
-	teo.workspaceAgent = agent
 	return agent, nil
+}
+
+// Execute implements the Orchestrator interface
+func (teo *TodoExecutionOrchestrator) Execute(ctx context.Context, objective string, workspacePath string, options map[string]interface{}) (string, error) {
+	// Validate workspace path is provided
+	if workspacePath == "" {
+		return "", fmt.Errorf("workspace path is required")
+	}
+
+	// Extract run option from options
+	runOption := "create_new_runs_always" // default
+	if ro, ok := options["runOption"].(string); ok && ro != "" {
+		runOption = ro
+	}
+
+	// Call the existing ExecuteTodos method
+	return teo.ExecuteTodos(ctx, objective, workspacePath, runOption)
+}
+
+// GetType returns the orchestrator type
+func (teo *TodoExecutionOrchestrator) GetType() string {
+	return "todo_execution"
 }

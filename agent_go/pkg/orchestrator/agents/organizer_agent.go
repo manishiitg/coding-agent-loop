@@ -22,7 +22,7 @@ type PlanOrganizerAgent struct {
 }
 
 // NewPlanOrganizerAgent creates a new plan organizer agent
-func NewPlanOrganizerAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *PlanOrganizerAgent {
+func NewPlanOrganizerAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *PlanOrganizerAgent {
 	planOrganizerPrompts := prompts.NewPlanOrganizerPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -77,5 +77,5 @@ func (poa *PlanOrganizerAgent) GetType() string {
 // Event system - now handled by unified events system
 // BaseAgent returns the underlying base agent for direct access
 func (poa *PlanOrganizerAgent) BaseAgent() *BaseAgent {
-	return poa.AgentTemplate.baseAgent
+	return poa.baseAgent
 }

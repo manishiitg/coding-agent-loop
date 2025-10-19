@@ -674,9 +674,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
 
     try {
+      console.log(`[POLLING] Requesting events for observer '${observerId}' since index ${currentLastEventIndex}`)
       const response = await agentApi.getEvents(observerId, currentLastEventIndex)
-      
+      console.log(`[POLLING] Received ${response.events.length} events from API`)
+
       if (response.events.length > 0) {
+        console.log(`[POLLING] Event types received:`, response.events.map(e => e.type))
         
         // Update last event index immediately
         setLastEventIndex(response.last_event_index)
@@ -1168,7 +1171,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setPollingInterval(null)
     }
     setIsStreaming(false)
-    
+
     // Call backend to stop the agent execution (preserves conversation history)
     if (observerId) {
       try {
@@ -1177,7 +1180,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         console.error('[STOP] Failed to stop session:', error)
       }
     }
-  }, [pollingInterval, setPollingInterval, observerId, setIsStreaming])
+
+    // Reset event polling index so next workflow/chat starts fresh
+    // This prevents the frontend from missing orchestrator events
+    console.log('[STOP] Resetting event polling index for next workflow/chat')
+    setLastEventIndex(0)
+    setLastEventCount(0)
+  }, [pollingInterval, setPollingInterval, observerId, setIsStreaming, setLastEventIndex, setLastEventCount])
 
   // Wrapper function to submit query with the current local query
   const submitQueryWithQuery = useCallback(async (query: string) => {

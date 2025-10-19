@@ -20,7 +20,7 @@ type OrchestratorPlanningAgent struct {
 }
 
 // NewOrchestratorPlanningAgent creates a new planning agent
-func NewOrchestratorPlanningAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorPlanningAgent {
+func NewOrchestratorPlanningAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *OrchestratorPlanningAgent {
 	planningPrompts := prompts.NewPlanningPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(

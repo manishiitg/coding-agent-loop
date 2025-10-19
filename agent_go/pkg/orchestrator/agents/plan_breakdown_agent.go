@@ -20,7 +20,7 @@ type PlanBreakdownAgent struct {
 }
 
 // NewPlanBreakdownAgent creates a new plan breakdown agent
-func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *PlanBreakdownAgent {
+func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *PlanBreakdownAgent {
 	breakdownPrompts := prompts.NewPlanBreakdownPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(

@@ -101,11 +101,19 @@ func (api *StreamingAPI) handleGetEvents(w http.ResponseWriter, r *http.Request)
 	api.observerManager.UpdateObserverActivity(observerID)
 
 	// Get events for observer
+	fmt.Printf("[POLLING DEBUG] Getting events for observerID='%s', sinceIndex=%d\n", observerID, sinceIndex)
 	events, totalEvents, exists := api.eventStore.GetEvents(observerID, sinceIndex)
+	fmt.Printf("[POLLING DEBUG] Found %d events, totalEvents=%d, exists=%t\n", len(events), totalEvents, exists)
 
 	if !exists {
+		fmt.Printf("[POLLING DEBUG] Observer '%s' not found in event store\n", observerID)
 		http.Error(w, "Observer not found", http.StatusNotFound)
 		return
+	}
+
+	fmt.Printf("[POLLING DEBUG] Returning %d events to frontend:\n", len(events))
+	for i, event := range events {
+		fmt.Printf("  [%d] %s\n", i, event.Type)
 	}
 
 	response := GetEventsResponse{

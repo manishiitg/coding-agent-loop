@@ -20,7 +20,7 @@ type OrchestratorExecutionAgent struct {
 }
 
 // NewOrchestratorExecutionAgent creates a new execution agent
-func NewOrchestratorExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorExecutionAgent {
+func NewOrchestratorExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *OrchestratorExecutionAgent {
 	executionPrompts := prompts.NewExecutionPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -76,5 +76,5 @@ func (ea *OrchestratorExecutionAgent) GetType() string {
 
 // BaseAgent returns the underlying base agent for direct access
 func (ea *OrchestratorExecutionAgent) BaseAgent() *BaseAgent {
-	return ea.AgentTemplate.baseAgent
+	return ea.baseAgent
 }

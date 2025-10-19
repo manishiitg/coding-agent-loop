@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	workflowmemory "mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
@@ -29,7 +30,7 @@ type DataCritiqueAgent struct {
 }
 
 // NewDataCritiqueAgent creates a new data critique agent
-func NewDataCritiqueAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *DataCritiqueAgent {
+func NewDataCritiqueAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) *DataCritiqueAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,

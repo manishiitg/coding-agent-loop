@@ -20,7 +20,7 @@ type OrchestratorValidationAgent struct {
 }
 
 // NewOrchestratorValidationAgent creates a new validation agent
-func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorValidationAgent {
+func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *OrchestratorValidationAgent {
 	validationPrompts := prompts.NewValidationPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(

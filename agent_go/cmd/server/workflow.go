@@ -1,100 +1,13 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
-	"mcp-agent/agent_go/internal/events"
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
-	pkgevents "mcp-agent/agent_go/pkg/events"
 )
-
-// WorkflowEventBridge bridges workflow events to the main server event system
-type WorkflowEventBridge struct {
-	eventStore      *events.EventStore
-	observerManager *events.ObserverManager
-	observerID      string // Observer ID for polling API
-	sessionID       string // Session ID for database storage
-	logger          utils.ExtendedLogger
-	chatDB          database.Database // Add database reference for chat history storage
-}
-
-// Name returns the bridge name
-func (b *WorkflowEventBridge) Name() string {
-	return "workflow_event_bridge"
-}
-
-// HandleEvent processes workflow events and converts them to server events
-func (b *WorkflowEventBridge) HandleEvent(ctx context.Context, event *pkgevents.AgentEvent) error {
-	b.logger.Infof("[WORKFLOW EVENT BRIDGE] Processing workflow event: %s", event.Type)
-
-	// Store in event store for polling API
-	serverEvent := events.Event{
-		ID:        fmt.Sprintf("workflow_%s_%d", event.Type, time.Now().UnixNano()),
-		Type:      string(event.Type),
-		Timestamp: time.Now(),
-		Data:      event,
-		SessionID: b.observerID,
-	}
-	b.eventStore.AddEvent(b.observerID, serverEvent)
-
-	// Store event in database for chat history
-	if b.chatDB != nil {
-		// Extract hierarchy information from event data if available
-		hierarchyLevel := 0
-		component := "workflow"
-
-		// Try to extract hierarchy info from BaseEventData if the event data has it
-		if baseData, ok := event.Data.(interface {
-			GetBaseEventData() *pkgevents.BaseEventData
-		}); ok {
-			if base := baseData.GetBaseEventData(); base != nil {
-				hierarchyLevel = base.HierarchyLevel
-				if base.Component != "" {
-					component = base.Component
-				}
-			}
-		}
-
-		// Convert unified event to database-compatible agent event
-		agentEvent := &pkgevents.AgentEvent{
-			Type:           event.Type,
-			Timestamp:      event.Timestamp,
-			EventIndex:     0, // Will be set by database
-			TraceID:        event.TraceID,
-			SpanID:         event.SpanID,
-			ParentID:       event.ParentID,
-			HierarchyLevel: hierarchyLevel,
-			Component:      component,
-			Data:           event.Data,
-		}
-
-		// Store in database using session ID
-		err := b.chatDB.StoreEvent(ctx, b.sessionID, agentEvent)
-		if err != nil {
-			b.logger.Warnf("[WORKFLOW EVENT BRIDGE] Failed to store event in database: %v", err)
-		} else {
-			b.logger.Infof("[WORKFLOW EVENT BRIDGE] Stored event in database for session %s", b.sessionID)
-		}
-	}
-
-	b.logger.Infof("[WORKFLOW EVENT BRIDGE] Successfully bridged workflow event: %s", event.Type)
-	return nil
-}
-
-// jsonMarshal is a helper function to marshal JSON with error handling
-func jsonMarshal(v interface{}) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf(`{"error": "Failed to marshal JSON: %v"}`, err)
-	}
-	return string(data)
-}
 
 // WorkflowRequest represents a workflow creation request
 type WorkflowRequest struct {

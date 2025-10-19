@@ -9,6 +9,7 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent/agent_go/pkg/orchestrator/llm"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -17,34 +18,42 @@ import (
 type TodoPlannerOrchestrator struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
-
-	// Sub-agents (created on-demand)
-	planningAgent   agents.OrchestratorAgent
-	executionAgent  agents.OrchestratorAgent
-	validationAgent agents.OrchestratorAgent
-	writerAgent     agents.OrchestratorAgent
-	cleanupAgent    agents.OrchestratorAgent
-
-	// Enhanced critique system
-	critiqueAgent agents.OrchestratorAgent
 }
 
 // NewTodoPlannerOrchestrator creates a new multi-agent todo planner orchestrator
 func NewTodoPlannerOrchestrator(
-	config *agents.OrchestratorAgentConfig,
+	provider string,
+	model string,
+	temperature float64,
+	agentMode string,
+	selectedServers []string,
+	mcpConfigPath string,
+	llmConfig *orchestrator.LLMConfig,
+	maxTurns int,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
-	eventBridge interface{},
+	eventBridge orchestrator.EventBridge,
+	customTools []llms.Tool,
+	customToolExecutors map[string]interface{},
 ) (*TodoPlannerOrchestrator, error) {
 
 	// Create base workflow orchestrator
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
-		config,
 		logger,
 		tracer,
 		eventBridge,
 		agents.TodoPlannerAgentType,
 		orchestrator.OrchestratorTypeWorkflow,
+		provider,
+		model,
+		mcpConfigPath,
+		temperature,
+		agentMode,
+		selectedServers,
+		llmConfig, // llmConfig passed from caller
+		maxTurns,
+		customTools,
+		customToolExecutors,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
@@ -57,8 +66,8 @@ func NewTodoPlannerOrchestrator(
 
 // CreateTodoList orchestrates the multi-agent todo planning process with objective achievement checking
 func (tpo *TodoPlannerOrchestrator) CreateTodoList(ctx context.Context, objective, workspacePath string) (string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("🚀 Starting multi-agent todo planning for objective: %s", objective)
-	tpo.AgentTemplate.GetLogger().Infof("📁 Using workspace path: %s", workspacePath)
+	tpo.GetLogger().Infof("🚀 Starting multi-agent todo planning for objective: %s", objective)
+	tpo.GetLogger().Infof("📁 Using workspace path: %s", workspacePath)
 
 	// Set objective and workspace path directly
 	tpo.SetObjective(objective)
@@ -74,21 +83,21 @@ func (tpo *TodoPlannerOrchestrator) CreateTodoList(ctx context.Context, objectiv
 	for iteration := 1; iteration <= maxExecutionIterations; iteration++ {
 		// Determine strategy based on iteration phase
 		strategy := tpo.getIterationStrategy(iteration, maxExecutionIterations)
-		tpo.AgentTemplate.GetLogger().Infof("🔄 %s iteration %d/%d", strategy.Name, iteration, maxExecutionIterations)
+		tpo.GetLogger().Infof("🔄 %s iteration %d/%d", strategy.Name, iteration, maxExecutionIterations)
 
 		// Phase 1: Create/Refine plan based on iteration strategy
-		tpo.AgentTemplate.GetLogger().Infof("📋 Phase 1: %s (iteration %d)", strategy.PlanningPhase, iteration)
+		tpo.GetLogger().Infof("📋 Phase 1: %s (iteration %d)", strategy.PlanningPhase, iteration)
 
 		// Pass structured execution results to planning phase
 		structuredExecutionResult := tpo.structureExecutionResults(finalExecutionResult)
-		planResult, err := tpo.runPlanningPhase(ctx, structuredExecutionResult, finalValidationResult, finalCritiqueResult, iteration, strategy)
+		planResult, err := tpo.runPlanningPhase(ctx, structuredExecutionResult, finalValidationResult, finalCritiqueResult, iteration, maxExecutionIterations, strategy)
 
 		if err != nil {
 			return "", fmt.Errorf("planning phase failed: %w", err)
 		}
 
 		// Phase 2: Execute based on iteration strategy
-		tpo.AgentTemplate.GetLogger().Infof("🚀 Phase 2: %s (iteration %d)", strategy.ExecutionPhase, iteration)
+		tpo.GetLogger().Infof("🚀 Phase 2: %s (iteration %d)", strategy.ExecutionPhase, iteration)
 
 		executionResult, err := tpo.runExecutionPhase(ctx, planResult, iteration, strategy)
 
@@ -97,28 +106,28 @@ func (tpo *TodoPlannerOrchestrator) CreateTodoList(ctx context.Context, objectiv
 		}
 
 		// Phase 3: Validation based on iteration strategy
-		tpo.AgentTemplate.GetLogger().Infof("🔍 Phase 3: %s (iteration %d)", strategy.ValidationPhase, iteration)
+		tpo.GetLogger().Infof("🔍 Phase 3: %s (iteration %d)", strategy.ValidationPhase, iteration)
 
 		validationResult, err := tpo.runValidationPhase(ctx, planResult, iteration, executionResult, strategy)
 		if err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Validation phase failed: %v", err)
+			tpo.GetLogger().Warnf("⚠️ Validation phase failed: %v", err)
 			validationResult = "Validation failed: " + err.Error()
 		}
 
 		// Phase 4: Write/Update todo list based on iteration strategy
-		tpo.AgentTemplate.GetLogger().Infof("📝 Phase 4: %s (iteration %d)", strategy.WriterPhase, iteration)
+		tpo.GetLogger().Infof("📝 Phase 4: %s (iteration %d)", strategy.WriterPhase, iteration)
 
-		_, err = tpo.runWriterPhase(ctx, planResult, executionResult, validationResult, finalCritiqueResult, strategy)
+		_, err = tpo.runWriterPhase(ctx, planResult, executionResult, validationResult, finalCritiqueResult, iteration, strategy)
 		if err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Writer phase failed: %v", err)
+			tpo.GetLogger().Warnf("⚠️ Writer phase failed: %v", err)
 		}
 
 		// Phase 5: Critique todo list quality
-		tpo.AgentTemplate.GetLogger().Infof("🔍 Phase 5: Critiquing todo list quality (iteration %d)", iteration)
+		tpo.GetLogger().Infof("🔍 Phase 5: Critiquing todo list quality (iteration %d)", iteration)
 
 		critiqueResult, err := tpo.runTodoListCritiquePhase(ctx, tpo.GetObjective(), iteration)
 		if err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Todo list critique phase failed: %v", err)
+			tpo.GetLogger().Warnf("⚠️ Todo list critique phase failed: %v", err)
 			critiqueResult = "Todo list critique failed: " + err.Error()
 		}
 
@@ -130,33 +139,33 @@ func (tpo *TodoPlannerOrchestrator) CreateTodoList(ctx context.Context, objectiv
 		// Check if we should continue to next iteration or stop using iteration-aware conditional LLM
 		objectiveAchieved, reason, err := tpo.checkObjectiveAchievement(ctx, planResult, critiqueResult, iteration, strategy)
 		if err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to check objective achievement: %v", err)
+			tpo.GetLogger().Warnf("⚠️ Failed to check objective achievement: %v", err)
 			// Continue execution on error
 		} else if objectiveAchieved {
-			tpo.AgentTemplate.GetLogger().Infof("🎯 Objective achieved at iteration %d (%s): %s", iteration, strategy.Name, reason)
+			tpo.GetLogger().Infof("🎯 Objective achieved at iteration %d (%s): %s", iteration, strategy.Name, reason)
 			break
 		}
 
 		// If this is the last iteration, log warning
 		if iteration == maxExecutionIterations {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Max execution iterations (%d) reached, proceeding with current results", maxExecutionIterations)
+			tpo.GetLogger().Warnf("⚠️ Max execution iterations (%d) reached, proceeding with current results", maxExecutionIterations)
 		}
 	}
 
 	// Note: todoListResult is handled by the writer agent and saved to workspace
 
 	// Phase 6: Cleanup planning workspace
-	tpo.AgentTemplate.GetLogger().Infof("🧹 Phase 6: Cleaning up planning workspace")
+	tpo.GetLogger().Infof("🧹 Phase 6: Cleaning up planning workspace")
 
 	cleanupResult, err := tpo.runCleanupPhase(ctx)
 	if err != nil {
-		tpo.AgentTemplate.GetLogger().Warnf("⚠️ Cleanup phase failed: %v", err)
+		tpo.GetLogger().Warnf("⚠️ Cleanup phase failed: %v", err)
 	}
 
 	// Note: The writer agent handles saving the todo.md file directly
 
 	duration := time.Since(tpo.GetStartTime())
-	tpo.AgentTemplate.GetLogger().Infof("✅ Multi-agent todo planning completed in %v", duration)
+	tpo.GetLogger().Infof("✅ Multi-agent todo planning completed in %v", duration)
 
 	// Emit orchestrator end event
 
@@ -192,86 +201,73 @@ The todo list has been saved to %s/todo_final.md (moved from todo_creation folde
 		planResult, finalExecutionResult, finalValidationResult, finalCritiqueResult, cleanupResult, tpo.GetWorkspacePath()), nil
 }
 
-// Execute implements the OrchestratorAgent interface
-func (tpo *TodoPlannerOrchestrator) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
-	// Extract objective from template variables
-	objective := templateVars["Objective"]
-	if objective == "" {
-		objective = templateVars["objective"] // Try lowercase as fallback
-	}
-	if objective == "" {
-		return "", fmt.Errorf("objective not found in template variables")
-	}
-
-	// Extract workspace path from template variables
-	workspacePath := templateVars["WorkspacePath"]
-	if workspacePath == "" {
-		return "", fmt.Errorf("workspace path not found in template variables")
-	}
-
-	// Delegate to CreateTodoList
-	return tpo.CreateTodoList(ctx, objective, workspacePath)
-}
-
-// GetType implements the OrchestratorAgent interface
-func (tpo *TodoPlannerOrchestrator) GetType() string {
-	return string(agents.TodoPlannerAgentType)
-}
-
 // runPlanningPhase creates or refines the step-wise plan based on iteration strategy
-func (tpo *TodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, previousExecutionResult, previousValidationResult, previousCritiqueResult string, iteration int, strategy IterationStrategy) (string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("📋 Creating planning agent for %s", strategy.Name)
-
-	planningAgent, err := tpo.createPlanningAgent()
-	if err != nil {
-		return "", fmt.Errorf("failed to create planning agent: %w", err)
-	}
+func (tpo *TodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, previousExecutionResult, previousValidationResult, previousCritiqueResult string, iteration int, maxIterations int, strategy IterationStrategy) (string, error) {
+	tpo.GetLogger().Infof("📋 Creating planning agent for %s", strategy.Name)
 
 	if iteration == 1 {
-		tpo.AgentTemplate.GetLogger().Infof("📋 Creating initial step-wise plan")
+		tpo.GetLogger().Infof("📋 Creating initial step-wise plan")
 		planningTemplateVars := map[string]string{
 			"Objective":     tpo.GetObjective(),
 			"WorkspacePath": tpo.GetWorkspacePath(),
 			"Strategy":      strategy.Name,
 			"Focus":         strategy.Focus,
+			"Iteration":     fmt.Sprintf("%d", iteration),
+			"MaxIterations": fmt.Sprintf("%d", maxIterations),
 		}
+
+		// Create fresh planning agent with proper context
+		planningAgent, err := tpo.createPlanningAgent("planning", 0, iteration)
+		if err != nil {
+			return "", fmt.Errorf("failed to create planning agent: %w", err)
+		}
+
 		planResult, err := planningAgent.Execute(ctx, planningTemplateVars, nil)
 		if err != nil {
 			return "", fmt.Errorf("planning failed: %w", err)
 		}
-		tpo.AgentTemplate.GetLogger().Infof("✅ Planning phase completed: %d characters", len(planResult))
+		tpo.GetLogger().Infof("✅ Planning phase completed: %d characters", len(planResult))
 		return planResult, nil
 	} else {
-		tpo.AgentTemplate.GetLogger().Infof("📋 Refining step-wise plan based on previous execution, validation, and critique feedback (iteration %d)", iteration)
+		tpo.GetLogger().Infof("📋 Refining step-wise plan based on previous execution, validation, and critique feedback (iteration %d)", iteration)
 		planningTemplateVars := map[string]string{
 			"Objective":     tpo.GetObjective(),
 			"WorkspacePath": tpo.GetWorkspacePath(),
 			"Strategy":      strategy.Name,
 			"Focus":         strategy.Focus,
+			"Iteration":     fmt.Sprintf("%d", iteration),
+			"MaxIterations": fmt.Sprintf("%d", maxIterations),
 		}
+
+		// Create fresh planning agent with proper context
+		planningAgent, err := tpo.createPlanningAgent("planning", 0, iteration)
+		if err != nil {
+			return "", fmt.Errorf("failed to create planning agent: %w", err)
+		}
+
 		planResult, err := planningAgent.Execute(ctx, planningTemplateVars, nil)
 		if err != nil {
 			return "", fmt.Errorf("plan refinement failed: %w", err)
 		}
-		tpo.AgentTemplate.GetLogger().Infof("✅ Planning refinement completed: %d characters", len(planResult))
+		tpo.GetLogger().Infof("✅ Planning refinement completed: %d characters", len(planResult))
 		return planResult, nil
 	}
 }
 
 // runExecutionPhase executes the plan for the current iteration based on strategy
 func (tpo *TodoPlannerOrchestrator) runExecutionPhase(ctx context.Context, plan string, iteration int, strategy IterationStrategy) (string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("🚀 Creating execution agent for %s", strategy.Name)
+	tpo.GetLogger().Infof("🚀 Creating execution agent for %s", strategy.Name)
 
-	executionAgent, err := tpo.createExecutionAgent()
+	executionAgent, err := tpo.createExecutionAgent("execution", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create execution agent: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("🚀 Executing plan for iteration %d", iteration)
+	tpo.GetLogger().Infof("🚀 Executing plan for iteration %d", iteration)
 
 	// Prepare template variables for Execute method
+	// Execution agent is tactical - just needs the plan and workspace
 	templateVars := map[string]string{
-		"Objective":     tpo.GetObjective(),
 		"Plan":          plan,
 		"WorkspacePath": tpo.GetWorkspacePath(),
 	}
@@ -281,48 +277,47 @@ func (tpo *TodoPlannerOrchestrator) runExecutionPhase(ctx context.Context, plan 
 		return "", fmt.Errorf("execution failed: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("✅ Execution phase completed: %d characters", len(executionResult))
+	tpo.GetLogger().Infof("✅ Execution phase completed: %d characters", len(executionResult))
 	return executionResult, nil
 }
 
 // runValidationPhase validates the execution results for the current iteration based on strategy
 func (tpo *TodoPlannerOrchestrator) runValidationPhase(ctx context.Context, plan string, iteration int, executionResult string, strategy IterationStrategy) (string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("🔍 Creating validation agent for %s", strategy.Name)
+	tpo.GetLogger().Infof("🔍 Creating validation agent for %s", strategy.Name)
 
-	validationAgent, err := tpo.createValidationAgent()
+	validationAgent, err := tpo.createValidationAgent("validation", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create validation agent: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("🔍 Validating execution results for iteration %d", iteration)
+	tpo.GetLogger().Infof("🔍 Validating execution results for iteration %d", iteration)
+	// Validation agent is tactical - just validates execution results with evidence
 	validationTemplateVars := map[string]string{
-		"Objective":       tpo.GetObjective(),
-		"Plan":            plan,
 		"ExecutionResult": executionResult,
 		"WorkspacePath":   tpo.GetWorkspacePath(),
-		"Strategy":        strategy.Name,
-		"Focus":           strategy.Focus,
 	}
+
 	validationResult, err := validationAgent.Execute(ctx, validationTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("✅ Validation phase completed: %d characters", len(validationResult))
+	tpo.GetLogger().Infof("✅ Validation phase completed: %d characters", len(validationResult))
 	return validationResult, nil
 }
 
 // runWriterPhase creates optimal todo list based on plan and execution experience using strategy
-func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResult, executionResult, validationResult, critiqueResult string, strategy IterationStrategy) (string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("📝 Creating writer agent for %s", strategy.Name)
+func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResult, executionResult, validationResult, critiqueResult string, iteration int, strategy IterationStrategy) (string, error) {
+	tpo.GetLogger().Infof("📝 Creating writer agent for %s", strategy.Name)
 
-	writerAgent, err := tpo.createWriterAgent()
+	writerAgent, err := tpo.createWriterAgent("writer", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create writer agent: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("📝 Creating optimal todo list based on plan and execution experience")
+	tpo.GetLogger().Infof("📝 Creating optimal todo list based on plan and execution experience")
 	// Prepare template variables for Execute method
+	// Writer is strategic - needs to synthesize from all iterations
 	writerTemplateVars := map[string]string{
 		"Objective":        tpo.GetObjective(),
 		"PlanResult":       planResult,
@@ -330,6 +325,7 @@ func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResu
 		"ValidationResult": validationResult,
 		"CritiqueResult":   critiqueResult,
 		"WorkspacePath":    tpo.GetWorkspacePath(),
+		"TotalIterations":  fmt.Sprintf("%d", iteration),
 	}
 
 	todoListResult, err := writerAgent.Execute(ctx, writerTemplateVars, nil)
@@ -337,37 +333,38 @@ func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResu
 		return "", fmt.Errorf("todo list creation failed: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("✅ Writer phase completed: %d characters", len(todoListResult))
+	tpo.GetLogger().Infof("✅ Writer phase completed: %d characters", len(todoListResult))
 	return todoListResult, nil
 }
 
 // runCleanupPhase cleans up the planning workspace
 func (tpo *TodoPlannerOrchestrator) runCleanupPhase(ctx context.Context) (string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("🧹 Creating cleanup agent")
+	tpo.GetLogger().Infof("🧹 Creating cleanup agent")
 
-	cleanupAgent, err := tpo.createCleanupAgent()
+	cleanupAgent, err := tpo.createCleanupAgent("cleanup", 0, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create cleanup agent: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("🧹 Cleaning up planning workspace")
+	tpo.GetLogger().Infof("🧹 Cleaning up planning workspace")
 	cleanupTemplateVars := map[string]string{
 		"WorkspacePath": tpo.GetWorkspacePath(),
 	}
+
 	cleanupResult, err := cleanupAgent.Execute(ctx, cleanupTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("cleanup failed: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("✅ Cleanup phase completed: %d characters", len(cleanupResult))
+	tpo.GetLogger().Infof("✅ Cleanup phase completed: %d characters", len(cleanupResult))
 	return cleanupResult, nil
 }
 
 // runTodoListCritiquePhase critiques the todo list quality and reproducibility
 func (tpo *TodoPlannerOrchestrator) runTodoListCritiquePhase(ctx context.Context, objective string, iteration int) (string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("🔍 Creating todo list critique agent")
+	tpo.GetLogger().Infof("🔍 Creating todo list critique agent")
 
-	critiqueAgent, err := tpo.createCritiqueAgent()
+	critiqueAgent, err := tpo.createCritiqueAgent("critique", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create critique agent: %w", err)
 	}
@@ -385,19 +382,39 @@ func (tpo *TodoPlannerOrchestrator) runTodoListCritiquePhase(ctx context.Context
 		return "", fmt.Errorf("todo list critique failed: %w", err)
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("✅ Todo list critique phase completed: %d characters", len(critiqueResult))
+	tpo.GetLogger().Infof("✅ Todo list critique phase completed: %d characters", len(critiqueResult))
 	return critiqueResult, nil
+}
+
+// createConditionalLLM creates a conditional LLM on-demand with todo planner-specific configuration
+func (tpo *TodoPlannerOrchestrator) createConditionalLLM() (*llm.ConditionalLLM, error) {
+	// Create config for conditional LLM using todo planner-specific settings
+	conditionalConfig := &agents.OrchestratorAgentConfig{
+		Provider:      tpo.GetProvider(),
+		Model:         tpo.GetModel(),
+		Temperature:   tpo.GetTemperature(),
+		ServerNames:   tpo.GetSelectedServers(),
+		MCPConfigPath: tpo.GetMCPConfigPath(),
+	}
+
+	// Create conditional LLM with todo planner-specific context
+	conditionalLLM, err := llm.CreateConditionalLLMWithEventBridge(conditionalConfig, tpo.GetContextAwareBridge(), tpo.GetLogger(), tpo.GetTracer())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conditional LLM: %w", err)
+	}
+
+	return conditionalLLM, nil
 }
 
 // checkObjectiveAchievement uses conditional LLM to determine if the objective was achieved based on iteration strategy
 func (tpo *TodoPlannerOrchestrator) checkObjectiveAchievement(ctx context.Context, planResult, critiqueResult string, iteration int, strategy IterationStrategy) (bool, string, error) {
-	tpo.AgentTemplate.GetLogger().Infof("🎯 Checking objective achievement using %s approach", strategy.Name)
+	tpo.GetLogger().Infof("🎯 Checking objective achievement using %s approach", strategy.Name)
 
-	// Emit conditional LLM start event
-
-	if tpo.GetConditionalLLM() == nil {
-		tpo.AgentTemplate.GetLogger().Errorf("❌ Conditional LLM not initialized")
-		return false, "Conditional LLM not initialized", fmt.Errorf("conditional LLM not initialized")
+	// Create conditional LLM on-demand
+	conditionalLLM, err := tpo.createConditionalLLM()
+	if err != nil {
+		tpo.GetLogger().Errorf("❌ Failed to create conditional LLM: %v", err)
+		return false, "Failed to create conditional LLM: " + err.Error(), err
 	}
 
 	// Prepare context for objective achievement assessment based on iteration strategy
@@ -435,184 +452,154 @@ Consider:
 		strategy.Name, strategy.StoppingCriteria, strategy.StoppingCriteria)
 
 	// Use conditional LLM to make the decision
-	result, err := tpo.GetConditionalLLM().Decide(ctx, context, question, 0, 0)
+	result, err := conditionalLLM.Decide(ctx, context, question, 0, 0)
 
 	if err != nil {
-		tpo.AgentTemplate.GetLogger().Errorf("❌ Conditional LLM decision failed: %v", err)
+		tpo.GetLogger().Errorf("❌ Conditional LLM decision failed: %v", err)
 		return false, "Conditional decision failed: " + err.Error(), err
 	}
 
-	tpo.AgentTemplate.GetLogger().Infof("🎯 Balanced objective achievement check result: %t - %s", result.GetResult(), result.Reason)
+	tpo.GetLogger().Infof("🎯 Balanced objective achievement check result: %t - %s", result.GetResult(), result.Reason)
 
 	return result.GetResult(), result.Reason, nil
 }
 
 // Agent creation methods
-func (tpo *TodoPlannerOrchestrator) createPlanningAgent() (agents.OrchestratorAgent, error) {
-	if tpo.planningAgent != nil {
-		return tpo.planningAgent, nil
+func (tpo *TodoPlannerOrchestrator) createPlanningAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Create fresh agent for each execution with proper context
+	agent, err := tpo.CreateAndSetupStandardAgent(
+		"todo_planner_planning",
+		"planning-agent",
+		phase,
+		step,
+		iteration,
+		tpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoPlannerPlanningAgent(config, logger, tracer, eventBridge)
+		},
+		tpo.WorkspaceTools,
+		tpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoPlannerPlanningAgent(tpo.AgentTemplate.GetConfig(), tpo.AgentTemplate.GetLogger(), tpo.GetTracer(), tpo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize planning agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if tpo.WorkspaceTools != nil && tpo.WorkspaceToolExecutors != nil {
-		if err := tpo.RegisterWorkspaceTools(agent); err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for planning agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := tpo.ConnectAgentToEventBridge(agent, "todo_planner_planning"); err != nil {
-		tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect planning agent to event bridge: %v", err)
-	}
-
-	tpo.planningAgent = agent
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createExecutionAgent() (agents.OrchestratorAgent, error) {
-	if tpo.executionAgent != nil {
-		return tpo.executionAgent, nil
+func (tpo *TodoPlannerOrchestrator) createExecutionAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Create fresh agent for each execution with proper context
+	agent, err := tpo.CreateAndSetupStandardAgent(
+		"todo_planner_execution",
+		"execution-agent",
+		phase,
+		step,
+		iteration,
+		tpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoPlannerExecutionAgent(config, logger, tracer, eventBridge)
+		},
+		tpo.WorkspaceTools,
+		tpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoPlannerExecutionAgent(tpo.AgentTemplate.GetConfig(), tpo.AgentTemplate.GetLogger(), tpo.GetTracer(), tpo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize execution agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if tpo.WorkspaceTools != nil && tpo.WorkspaceToolExecutors != nil {
-		if err := tpo.RegisterWorkspaceTools(agent); err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for execution agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := tpo.ConnectAgentToEventBridge(agent, "todo_planner_execution"); err != nil {
-		tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect execution agent to event bridge: %v", err)
-	}
-
-	tpo.executionAgent = agent
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createValidationAgent() (agents.OrchestratorAgent, error) {
-	if tpo.validationAgent != nil {
-		return tpo.validationAgent, nil
+func (tpo *TodoPlannerOrchestrator) createValidationAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Create fresh agent for each execution with proper context
+	agent, err := tpo.CreateAndSetupStandardAgent(
+		"todo_planner_validation",
+		"validation-agent",
+		phase,
+		step,
+		iteration,
+		tpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoPlannerValidationAgent(config, logger, tracer, eventBridge)
+		},
+		tpo.WorkspaceTools,
+		tpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoPlannerValidationAgent(tpo.AgentTemplate.GetConfig(), tpo.AgentTemplate.GetLogger(), tpo.GetTracer(), tpo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize validation agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if tpo.WorkspaceTools != nil && tpo.WorkspaceToolExecutors != nil {
-		if err := tpo.RegisterWorkspaceTools(agent); err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for validation agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := tpo.ConnectAgentToEventBridge(agent, "todo_planner_validation"); err != nil {
-		tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect validation agent to event bridge: %v", err)
-	}
-
-	tpo.validationAgent = agent
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createWriterAgent() (agents.OrchestratorAgent, error) {
-	if tpo.writerAgent != nil {
-		return tpo.writerAgent, nil
+func (tpo *TodoPlannerOrchestrator) createWriterAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Create fresh agent for each execution with proper context
+	agent, err := tpo.CreateAndSetupStandardAgent(
+		"todo_planner_writer",
+		"writer-agent",
+		phase,
+		step,
+		iteration,
+		tpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoPlannerWriterAgent(config, logger, tracer, eventBridge)
+		},
+		tpo.WorkspaceTools,
+		tpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoPlannerWriterAgent(tpo.AgentTemplate.GetConfig(), tpo.AgentTemplate.GetLogger(), tpo.GetTracer(), tpo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize writer agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if tpo.WorkspaceTools != nil && tpo.WorkspaceToolExecutors != nil {
-		if err := tpo.RegisterWorkspaceTools(agent); err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for writer agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := tpo.ConnectAgentToEventBridge(agent, "todo_planner_writer"); err != nil {
-		tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect writer agent to event bridge: %v", err)
-	}
-
-	tpo.writerAgent = agent
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createCleanupAgent() (agents.OrchestratorAgent, error) {
-	if tpo.cleanupAgent != nil {
-		return tpo.cleanupAgent, nil
+func (tpo *TodoPlannerOrchestrator) createCleanupAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Create fresh agent for each execution with proper context
+	agent, err := tpo.CreateAndSetupStandardAgent(
+		"todo_planner_cleanup",
+		"cleanup-agent",
+		phase,
+		step,
+		iteration,
+		tpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoPlannerCleanupAgent(config, logger, tracer, eventBridge)
+		},
+		tpo.WorkspaceTools,
+		tpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoPlannerCleanupAgent(tpo.AgentTemplate.GetConfig(), tpo.AgentTemplate.GetLogger(), tpo.GetTracer(), tpo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize cleanup agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if tpo.WorkspaceTools != nil && tpo.WorkspaceToolExecutors != nil {
-		if err := tpo.RegisterWorkspaceTools(agent); err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for cleanup agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := tpo.ConnectAgentToEventBridge(agent, "todo_planner_cleanup"); err != nil {
-		tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect cleanup agent to event bridge: %v", err)
-	}
-
-	tpo.cleanupAgent = agent
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createCritiqueAgent() (agents.OrchestratorAgent, error) {
-	if tpo.critiqueAgent != nil {
-		return tpo.critiqueAgent, nil
+func (tpo *TodoPlannerOrchestrator) createCritiqueAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	// Create fresh agent for each execution with proper context
+	agent, err := tpo.CreateAndSetupStandardAgent(
+		"todo_planner_critique",
+		"critique-agent",
+		phase,
+		step,
+		iteration,
+		tpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			return NewTodoPlannerCritiqueAgent(config, logger, tracer, eventBridge)
+		},
+		tpo.WorkspaceTools,
+		tpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	agent := NewTodoPlannerCritiqueAgent(tpo.AgentTemplate.GetConfig(), tpo.AgentTemplate.GetLogger(), tpo.GetTracer(), tpo.GetEventBridge())
-
-	// Initialize the agent
-	if err := agent.Initialize(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to initialize critique agent: %w", err)
-	}
-
-	// Register workspace tools if available
-	if tpo.WorkspaceTools != nil && tpo.WorkspaceToolExecutors != nil {
-		if err := tpo.RegisterWorkspaceTools(agent); err != nil {
-			tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to register workspace tools for critique agent: %v", err)
-		}
-	}
-
-	// Connect to event bridge if available
-	if err := tpo.ConnectAgentToEventBridge(agent, "todo_planner_critique"); err != nil {
-		tpo.AgentTemplate.GetLogger().Warnf("⚠️ Failed to connect critique agent to event bridge: %v", err)
-	}
-
-	tpo.critiqueAgent = agent
 	return agent, nil
 }
 
@@ -695,4 +682,25 @@ func (tpo *TodoPlannerOrchestrator) getIterationStrategy(iteration, maxIteration
 		WriterPhase:      "Finalizing todo list with proven optimal methods",
 		StoppingCriteria: "Have we completed the objective using optimal methods?",
 	}
+}
+
+// Execute implements the Orchestrator interface
+func (tpo *TodoPlannerOrchestrator) Execute(ctx context.Context, objective string, workspacePath string, options map[string]interface{}) (string, error) {
+	// Validate that no options are provided since this orchestrator doesn't use them
+	if len(options) > 0 {
+		return "", fmt.Errorf("todo planner orchestrator does not accept options")
+	}
+
+	// Validate workspace path is provided
+	if workspacePath == "" {
+		return "", fmt.Errorf("workspace path is required")
+	}
+
+	// Call the existing CreateTodoList method
+	return tpo.CreateTodoList(ctx, objective, workspacePath)
+}
+
+// GetType returns the orchestrator type
+func (tpo *TodoPlannerOrchestrator) GetType() string {
+	return "todo_planner"
 }

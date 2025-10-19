@@ -23,8 +23,10 @@ import (
 
 // ExecutePresetRequest represents a request to execute a preset
 type ExecutePresetRequest struct {
-	PresetID string `json:"preset_id"`
-	Phase    string `json:"phase,omitempty"` // Optional: for workflow mode
+	PresetID                  string                            `json:"preset_id"`
+	Phase                     string                            `json:"phase,omitempty"`                       // Optional: for workflow mode
+	OrchestratorExecutionMode orchtypes.ExecutionMode           `json:"orchestrator_execution_mode,omitempty"` // Required for orchestrator mode
+	WorkflowSelectedOptions   *database.WorkflowSelectedOptions `json:"workflow_selected_options,omitempty"`   // Required for workflow mode
 }
 
 // ExecutePresetResponse represents the response for preset execution
@@ -36,6 +38,8 @@ type ExecutePresetResponse struct {
 	Phase      string `json:"phase,omitempty"`
 	Status     string `json:"status"`
 	Message    string `json:"message"`
+	// Add validation info
+	ValidatedParameters map[string]interface{} `json:"validated_parameters,omitempty"`
 }
 
 // CancelExecutionRequest represents a request to cancel an execution
@@ -89,6 +93,43 @@ func (api *StreamingAPI) handleExecutePreset(w http.ResponseWriter, r *http.Requ
 	if preset.AgentMode != "workflow" && preset.AgentMode != "orchestrator" {
 		http.Error(w, fmt.Sprintf("Invalid agent mode for external API: %s. Only 'workflow' and 'orchestrator' are supported", preset.AgentMode), http.StatusBadRequest)
 		return
+	}
+
+	// Validate required parameters based on agent mode
+	if preset.AgentMode == "orchestrator" {
+		if req.OrchestratorExecutionMode == "" {
+			http.Error(w, "orchestrator_execution_mode is required for orchestrator presets", http.StatusBadRequest)
+			return
+		}
+		// Validate execution mode is valid
+		if !req.OrchestratorExecutionMode.IsValid() {
+			http.Error(w, fmt.Sprintf("Invalid orchestrator_execution_mode: %s. Must be 'sequential_execution' or 'parallel_execution'", req.OrchestratorExecutionMode), http.StatusBadRequest)
+			return
+		}
+		log.Printf("[EXTERNAL API] Validated orchestrator execution mode: %s", req.OrchestratorExecutionMode.String())
+	} else if preset.AgentMode == "workflow" {
+		if req.WorkflowSelectedOptions == nil {
+			http.Error(w, "workflow_selected_options is required for workflow presets", http.StatusBadRequest)
+			return
+		}
+		// Validate workflow selected options structure
+		if len(req.WorkflowSelectedOptions.Selections) == 0 {
+			http.Error(w, "workflow_selected_options.selections cannot be empty", http.StatusBadRequest)
+			return
+		}
+		// Validate that execution strategy is provided
+		hasExecutionStrategy := false
+		for _, selection := range req.WorkflowSelectedOptions.Selections {
+			if selection.Group == "execution_strategy" {
+				hasExecutionStrategy = true
+				break
+			}
+		}
+		if !hasExecutionStrategy {
+			http.Error(w, "workflow_selected_options must include an execution_strategy selection", http.StatusBadRequest)
+			return
+		}
+		log.Printf("[EXTERNAL API] Validated workflow selected options with %d selections", len(req.WorkflowSelectedOptions.Selections))
 	}
 
 	// Determine execution phase
@@ -154,15 +195,33 @@ func (api *StreamingAPI) handleExecutePreset(w http.ResponseWriter, r *http.Requ
 	// Track active session
 	api.trackActiveSession(sessionID, observerID, preset.AgentMode, preset.Query)
 
+	// Create validated parameters info
+	validatedParams := make(map[string]interface{})
+	if preset.AgentMode == "orchestrator" {
+		validatedParams["orchestrator_execution_mode"] = req.OrchestratorExecutionMode.String()
+		validatedParams["execution_strategy"] = req.OrchestratorExecutionMode.GetLabel()
+	} else if preset.AgentMode == "workflow" {
+		validatedParams["workflow_selected_options_count"] = len(req.WorkflowSelectedOptions.Selections)
+		validatedParams["phase_id"] = req.WorkflowSelectedOptions.PhaseID
+		// Extract execution strategy from selections
+		for _, selection := range req.WorkflowSelectedOptions.Selections {
+			if selection.Group == "execution_strategy" {
+				validatedParams["execution_strategy"] = selection.OptionValue
+				break
+			}
+		}
+	}
+
 	// Return immediate response
 	response := ExecutePresetResponse{
-		SessionID:  sessionID,
-		ObserverID: observerID,
-		PresetID:   req.PresetID,
-		AgentMode:  preset.AgentMode,
-		Phase:      executionPhase,
-		Status:     "started",
-		Message:    "Execution started successfully",
+		SessionID:           sessionID,
+		ObserverID:          observerID,
+		PresetID:            req.PresetID,
+		AgentMode:           preset.AgentMode,
+		Phase:               executionPhase,
+		Status:              "started",
+		Message:             "Execution started successfully",
+		ValidatedParameters: validatedParams,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -171,11 +230,11 @@ func (api *StreamingAPI) handleExecutePreset(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Launch execution in background
-	go api.executePresetInBackground(sessionID, observerID, preset, executionPhase)
+	go api.executePresetInBackground(sessionID, observerID, preset, executionPhase, &req)
 }
 
 // executePresetInBackground executes the preset in the background
-func (api *StreamingAPI) executePresetInBackground(sessionID, observerID string, preset *database.PresetQuery, executionPhase string) {
+func (api *StreamingAPI) executePresetInBackground(sessionID, observerID string, preset *database.PresetQuery, executionPhase string, req *ExecutePresetRequest) {
 	// Record start time
 	startTime := time.Now()
 
@@ -239,9 +298,9 @@ func (api *StreamingAPI) executePresetInBackground(sessionID, observerID string,
 
 	// Execute based on agent mode
 	if preset.AgentMode == "orchestrator" {
-		api.executeOrchestratorPreset(ctx, sessionID, observerID, preset, selectedServers, provider, model, llmConfig, traceID, tracer, startTime)
+		api.executeOrchestratorPreset(ctx, sessionID, observerID, preset, selectedServers, provider, model, llmConfig, traceID, tracer, startTime, req)
 	} else if preset.AgentMode == "workflow" {
-		api.executeWorkflowPreset(ctx, sessionID, observerID, preset, executionPhase, selectedServers, provider, model, llmConfig, traceID, tracer, startTime)
+		api.executeWorkflowPreset(ctx, sessionID, observerID, preset, executionPhase, selectedServers, provider, model, llmConfig, traceID, tracer, startTime, req)
 	}
 }
 
@@ -256,6 +315,7 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 	traceID observability.TraceID,
 	tracer observability.Tracer,
 	startTime time.Time,
+	req *ExecutePresetRequest,
 ) {
 	log.Printf("[EXTERNAL API] Starting orchestrator execution for session %s", sessionID)
 
@@ -276,17 +336,18 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 		chatDB:          api.chatDB,
 	}
 
-	// Create default selected options for external API
+	// Create selected options from user request
 	selectedOptions := &orchtypes.PlannerSelectedOptions{
 		Selections: []orchtypes.PlannerSelectedOption{
 			{
-				OptionID:    "execution_mode",
-				OptionLabel: "Execution Mode",
-				OptionValue: "default",
-				Group:       "execution",
+				OptionID:    req.OrchestratorExecutionMode.String(),
+				OptionLabel: req.OrchestratorExecutionMode.GetLabel(),
+				OptionValue: req.OrchestratorExecutionMode.String(),
+				Group:       "execution_strategy", // Correct group name matching PlannerOrchestrator.GetExecutionMode()
 			},
 		},
 	}
+	log.Printf("[EXTERNAL API] Using orchestrator execution mode: %s", req.OrchestratorExecutionMode.String())
 
 	// Create fresh orchestrator
 	orchestrator := orchtypes.NewPlannerOrchestrator(
@@ -397,6 +458,7 @@ func (api *StreamingAPI) executeWorkflowPreset(
 	traceID observability.TraceID,
 	tracer observability.Tracer,
 	startTime time.Time,
+	req *ExecutePresetRequest,
 ) {
 	log.Printf("[EXTERNAL API] Starting workflow execution for session %s (phase: %s)", sessionID, executionPhase)
 
@@ -482,14 +544,22 @@ func (api *StreamingAPI) executeWorkflowPreset(
 		api.orchestratorContextMux.Unlock()
 	}()
 
-	// Get workflow status and selected options from database
+	// Get workflow status and selected options from user request (with database fallback)
 	workflowStatus := executionPhase
 	var selectedOptions *database.WorkflowSelectedOptions
-	workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, preset.ID)
-	if err == nil && workflow != nil {
-		workflowStatus = workflow.WorkflowStatus
-		selectedOptions = workflow.SelectedOptions
-		log.Printf("[EXTERNAL API] Using workflow status from database: %s", workflowStatus)
+
+	// Use user-provided selected options first
+	if req.WorkflowSelectedOptions != nil {
+		selectedOptions = req.WorkflowSelectedOptions
+		log.Printf("[EXTERNAL API] Using workflow selected options from user request with %d selections", len(selectedOptions.Selections))
+	} else {
+		// Fallback to database if no user options provided
+		workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, preset.ID)
+		if err == nil && workflow != nil {
+			workflowStatus = workflow.WorkflowStatus
+			selectedOptions = workflow.SelectedOptions
+			log.Printf("[EXTERNAL API] Using workflow status from database: %s", workflowStatus)
+		}
 	}
 
 	// Generate unique workflow ID

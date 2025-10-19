@@ -220,14 +220,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     // Set the corresponding agent mode using centralized mapping
     const agentModeToSet = getAgentModeFromCategory(category) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
     setAgentMode(agentModeToSet)
-    
-    // Start a new chat when switching between simple/ReAct modes
-    // Use setTimeout to ensure the mode change is processed first
-    if (agentModeToSet === 'simple' || agentModeToSet === 'ReAct') {
-      setTimeout(() => {
-        handleNewChat()
-      }, 100) // Small delay to ensure state updates are processed
-    }
   }
 
   // Handle preset selection from overlay

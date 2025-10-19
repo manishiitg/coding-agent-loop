@@ -83,9 +83,11 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     // Set the agent mode based on the mode category
     const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
     
-    // Debug: Log the server selection
-    console.log('[PRESET_SELECTION] Creating preset with servers:', selectedServers)
-    console.log('[PRESET_SELECTION] Available servers:', enabledServers)
+    // Debug: Log the server selection (development only)
+    if (process.env.NODE_ENV === 'development') {
+      console.debug('[PRESET_SELECTION] Creating preset with servers:', selectedServers)
+      console.debug('[PRESET_SELECTION] Available servers:', enabledServers)
+    }
     
     try {
       // Create the preset and get the returned preset object directly

@@ -88,7 +88,7 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
                     <Clock className="h-4 w-4" />
                     Sequential Execution
                     <Badge variant="secondary" className="text-xs">
-                      Default
+                      Reliable
                     </Badge>
                   </Label>
                   <p className="text-sm text-muted-foreground ml-6">
@@ -134,8 +134,8 @@ export const OrchestratorModeHandler = forwardRef<OrchestratorModeHandlerRef, Or
                   <Label htmlFor="parallel" className="flex items-center gap-2 cursor-pointer">
                     <Zap className="h-4 w-4" />
                     Parallel Execution
-                    <Badge variant="outline" className="text-xs">
-                      Experimental
+                    <Badge variant="secondary" className="text-xs">
+                      Default
                     </Badge>
                   </Label>
                   <p className="text-sm text-muted-foreground ml-6">

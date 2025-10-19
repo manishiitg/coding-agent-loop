@@ -179,6 +179,7 @@ func (es *EventStore) RemoveObserver(observerID string) {
 
 	delete(es.events, observerID)
 	delete(es.lastIndex, observerID)
+	delete(es.eventCounters, observerID) // Clean up event counter to prevent memory leak
 }
 
 // GetActiveObservers returns all active observer IDs
@@ -219,6 +220,7 @@ func (es *EventStore) cleanupInactiveObservers() {
 		if len(events) == 0 {
 			delete(es.events, observerID)
 			delete(es.lastIndex, observerID)
+			delete(es.eventCounters, observerID) // Clean up event counter to prevent memory leak
 		}
 	}
 }

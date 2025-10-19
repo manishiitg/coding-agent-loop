@@ -13,11 +13,11 @@ type StructuredOutputEvent struct {
 // GetEventType returns the event type for StructuredOutputEvent
 func (e *StructuredOutputEvent) GetEventType() EventType {
 	switch e.EventType {
-	case "structured_output_start":
+	case string(StructuredOutputStart):
 		return StructuredOutputStart
-	case "structured_output_end":
+	case string(StructuredOutputEnd):
 		return StructuredOutputEnd
-	case "structured_output_error":
+	case string(StructuredOutputError):
 		return StructuredOutputError
 	default:
 		return StructuredOutputStart // Default fallback

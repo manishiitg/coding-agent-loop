@@ -34,11 +34,11 @@ func (em ExecutionMode) GetLabel() string {
 	case ParallelExecution:
 		return "Parallel Execution"
 	default:
-		return "Sequential Execution" // Default fallback
+		return "Parallel Execution" // Default fallback
 	}
 }
 
-// ParseExecutionMode parses a string into an ExecutionMode, returning SequentialExecution as default
+// ParseExecutionMode parses a string into an ExecutionMode, returning ParallelExecution as default
 func ParseExecutionMode(mode string) ExecutionMode {
 	switch mode {
 	case string(SequentialExecution):
@@ -46,7 +46,7 @@ func ParseExecutionMode(mode string) ExecutionMode {
 	case string(ParallelExecution):
 		return ParallelExecution
 	default:
-		return SequentialExecution // Default fallback
+		return ParallelExecution // Default fallback
 	}
 }
 

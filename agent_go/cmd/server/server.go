@@ -1119,8 +1119,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				log.Printf("[ORCHESTRATOR DEBUG] Using execution mode from request: %s", req.OrchestratorExecutionMode.String())
 			} else {
-				// Default to sequential execution if no mode specified
-				defaultMode := orchtypes.SequentialExecution
+				// Default to parallel execution if no mode specified
+				defaultMode := orchtypes.ParallelExecution
 				selectedOptions = &orchtypes.PlannerSelectedOptions{
 					Selections: []orchtypes.PlannerSelectedOption{
 						{

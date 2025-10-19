@@ -565,8 +565,8 @@ export const ChatInput = React.memo<ChatInputProps>(({
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => onSubmit(localQuery)}
-                            disabled={!observerId || !isRequiredFolderSelected}
+                            onClick={() => onSubmit(localQuery || activePreset?.query || '')}
+                            disabled={!observerId || !isRequiredFolderSelected || !(localQuery || activePreset?.query)}
                             className="px-2 py-0.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                           >
                             {getButtonText()}

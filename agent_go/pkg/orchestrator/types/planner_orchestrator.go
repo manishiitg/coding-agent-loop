@@ -93,6 +93,9 @@ type IndependentStepsSelectedEvent struct {
 	SelectedSteps       []ParallelStep `json:"selected_steps"`
 	SelectionCriteria   string         `json:"selection_criteria"`
 	Reasoning           string         `json:"reasoning"`
+	StepsCount          int            `json:"steps_count"`
+	ExecutionMode       string         `json:"execution_mode"`
+	PlanID              string         `json:"plan_id"`
 }
 
 // GetEventType returns the event type for IndependentStepsSelectedEvent
@@ -183,7 +186,7 @@ func (po *PlannerOrchestrator) InitializeAgents(ctx context.Context, provider, m
 	po.tracer = tracer
 
 	// Create base orchestrator
-	config := po.createAgentConfig("planner", "planner-orchestrator", 100, logger)
+	config := po.createAgentConfig(ctx, "planner", "planner-orchestrator", 100, logger)
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		config,
 		logger,
@@ -206,7 +209,7 @@ func (po *PlannerOrchestrator) InitializeAgents(ctx context.Context, provider, m
 }
 
 // setupAgent performs common agent setup tasks using shared utilities
-func (po *PlannerOrchestrator) setupAgent(agent agents.OrchestratorAgent, agentType, agentName string, agentEventBridge EventBridge) error {
+func (po *PlannerOrchestrator) setupAgent(ctx context.Context, agent agents.OrchestratorAgent, agentType, agentName string, agentEventBridge EventBridge) error {
 	// Create orchestrator config
 	config := &OrchestratorConfig{
 		Provider:        po.provider,
@@ -234,7 +237,7 @@ func (po *PlannerOrchestrator) setupAgent(agent agents.OrchestratorAgent, agentT
 }
 
 // createAgentConfig creates a generic agent configuration using shared utilities
-func (po *PlannerOrchestrator) createAgentConfig(agentType, agentName string, maxTurns int, logger utils.ExtendedLogger) *agents.OrchestratorAgentConfig {
+func (po *PlannerOrchestrator) createAgentConfig(ctx context.Context, agentType, agentName string, maxTurns int, logger utils.ExtendedLogger) *agents.OrchestratorAgentConfig {
 	config := &OrchestratorConfig{
 		Provider:        po.provider,
 		Model:           po.model,
@@ -393,7 +396,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Get next step decision from planning agent
 
 		// Create planning agent on-demand
-		planningAgent, err := po.createPlanningAgent()
+		planningAgent, err := po.createPlanningAgent(ctx)
 		if err != nil {
 			return "", fmt.Errorf("failed to create planning agent: %w", err)
 		}
@@ -431,7 +434,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		po.AgentTemplate.GetLogger().Infof("🚀 Executing step %d", currentStepIndex+1)
 
 		// Create execution agent on-demand
-		executionAgent, err := po.createDedicatedExecutionAgent(currentStepIndex)
+		executionAgent, err := po.createDedicatedExecutionAgent(ctx, currentStepIndex)
 		if err != nil {
 			po.AgentTemplate.GetLogger().Errorf("❌ Failed to create execution agent: %v", err)
 			emitOrchestratorError(err, "execution phase")
@@ -465,7 +468,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// ✅ VALIDATION PHASE - Validate this step's execution result immediately
 
 		// Create validation agent on-demand
-		validationAgent, err := po.createDedicatedValidationAgent(currentStepIndex)
+		validationAgent, err := po.createDedicatedValidationAgent(ctx, currentStepIndex)
 		if err != nil {
 			po.AgentTemplate.GetLogger().Errorf("❌ Failed to create validation agent: %v", err)
 			emitOrchestratorError(err, "validation phase")
@@ -504,7 +507,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// ✅ ORGANIZATION PHASE - Organize this step's results immediately
 
 		// Create organizer agent on-demand
-		organizerAgent, err := po.createOrganizerAgent()
+		organizerAgent, err := po.createOrganizerAgent(ctx)
 		if err != nil {
 			po.AgentTemplate.GetLogger().Errorf("❌ Failed to create organizer agent: %v", err)
 			emitOrchestratorError(err, "organization phase")
@@ -541,7 +544,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// ✅ REPORT GENERATION PHASE - Generate report for this iteration
 
 		// Create report agent on-demand
-		reportAgent, err := po.createReportAgent()
+		reportAgent, err := po.createReportAgent(ctx)
 		if err != nil {
 			po.AgentTemplate.GetLogger().Errorf("❌ Failed to create report agent: %v", err)
 			emitOrchestratorError(err, "report generation phase")
@@ -732,7 +735,7 @@ func (po *PlannerOrchestrator) getInitialPlan(ctx context.Context, objective str
 	po.AgentTemplate.GetLogger().Infof("📋 Getting initial plan from planning agent")
 
 	// Set orchestrator context for planning agent
-	planningAgent, err := po.createPlanningAgent()
+	planningAgent, err := po.createPlanningAgent(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create planning agent: %w", err)
 	}
@@ -763,7 +766,7 @@ func (po *PlannerOrchestrator) analyzeDependenciesWithStructuredOutput(ctx conte
 	po.AgentTemplate.GetLogger().Infof("🔍 Analyzing dependencies for parallel execution using structured output")
 
 	// Create plan breakdown agent on-demand
-	breakdownAgent, err := po.createPlanBreakdownAgent()
+	breakdownAgent, err := po.createPlanBreakdownAgent(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plan breakdown agent: %w", err)
 	}
@@ -896,6 +899,9 @@ func (po *PlannerOrchestrator) emitIndependentStepsSelectedEvent(ctx context.Con
 		SelectedSteps:       selectedSteps,
 		SelectionCriteria:   criteria,
 		Reasoning:           reasoning,
+		StepsCount:          len(selectedSteps),
+		ExecutionMode:       po.GetExecutionMode().String(),
+		PlanID:              fmt.Sprintf("plan_%d_%d", po.GetCurrentIteration(), time.Now().Unix()),
 	}
 
 	// Create unified event wrapper
@@ -995,7 +1001,7 @@ func (po *PlannerOrchestrator) executeStepsInParallel(ctx context.Context, steps
 // executeSingleStep executes a single step
 func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step ParallelStep, stepIndex int, allSteps []ParallelStep) (string, error) {
 	// Create dedicated execution agent for this step
-	executionAgent, err := po.createDedicatedExecutionAgent(stepIndex)
+	executionAgent, err := po.createDedicatedExecutionAgent(ctx, stepIndex)
 	if err != nil {
 		return "", fmt.Errorf("failed to create execution agent: %w", err)
 	}
@@ -1033,7 +1039,7 @@ func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step Paral
 // validateSingleStep validates a single step
 func (po *PlannerOrchestrator) validateSingleStep(ctx context.Context, step ParallelStep, executionResult string, stepIndex int) (string, error) {
 	// Create dedicated validation agent for this step
-	validationAgent, err := po.createDedicatedValidationAgent(stepIndex)
+	validationAgent, err := po.createDedicatedValidationAgent(ctx, stepIndex)
 	if err != nil {
 		return "", fmt.Errorf("failed to create validation agent: %w", err)
 	}
@@ -1060,9 +1066,9 @@ func (po *PlannerOrchestrator) validateSingleStep(ctx context.Context, step Para
 }
 
 // createDedicatedExecutionAgent creates a dedicated execution agent for parallel step execution
-func (po *PlannerOrchestrator) createDedicatedExecutionAgent(stepIndex int) (agents.OrchestratorAgent, error) {
+func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context, stepIndex int) (agents.OrchestratorAgent, error) {
 	agentName := fmt.Sprintf("parallel-execution-agent-step-%d", stepIndex+1)
-	executionConfig := po.createAgentConfig("parallel_execution", agentName, 100, po.AgentTemplate.GetLogger())
+	executionConfig := po.createAgentConfig(ctx, "parallel_execution", agentName, 100, po.AgentTemplate.GetLogger())
 
 	// Cast event bridge to the correct type
 	var eventBridge EventBridge
@@ -1070,9 +1076,9 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(stepIndex int) (age
 		eventBridge = bridge
 	}
 
-	executionAgent := agents.NewOrchestratorParallelExecutionAgent(context.Background(), executionConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
+	executionAgent := agents.NewOrchestratorParallelExecutionAgent(ctx, executionConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
 
-	if err := po.setupAgent(executionAgent, "parallel_execution", agentName, eventBridge); err != nil {
+	if err := po.setupAgent(ctx, executionAgent, "parallel_execution", agentName, eventBridge); err != nil {
 		return nil, fmt.Errorf("failed to setup parallel execution agent: %w", err)
 	}
 
@@ -1080,9 +1086,9 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(stepIndex int) (age
 }
 
 // createDedicatedValidationAgent creates a dedicated validation agent for parallel step validation
-func (po *PlannerOrchestrator) createDedicatedValidationAgent(stepIndex int) (agents.OrchestratorAgent, error) {
+func (po *PlannerOrchestrator) createDedicatedValidationAgent(ctx context.Context, stepIndex int) (agents.OrchestratorAgent, error) {
 	agentName := fmt.Sprintf("validation-agent-step-%d", stepIndex+1)
-	validationConfig := po.createAgentConfig("validation", agentName, 100, po.AgentTemplate.GetLogger())
+	validationConfig := po.createAgentConfig(ctx, "validation", agentName, 100, po.AgentTemplate.GetLogger())
 
 	// Cast event bridge to the correct type
 	var eventBridge EventBridge
@@ -1092,7 +1098,7 @@ func (po *PlannerOrchestrator) createDedicatedValidationAgent(stepIndex int) (ag
 
 	validationAgent := agents.NewOrchestratorValidationAgent(validationConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
 
-	if err := po.setupAgent(validationAgent, "validation", agentName, eventBridge); err != nil {
+	if err := po.setupAgent(ctx, validationAgent, "validation", agentName, eventBridge); err != nil {
 		return nil, fmt.Errorf("failed to setup validation agent: %w", err)
 	}
 
@@ -1100,8 +1106,8 @@ func (po *PlannerOrchestrator) createDedicatedValidationAgent(stepIndex int) (ag
 }
 
 // createPlanningAgent creates a planning agent on-demand
-func (po *PlannerOrchestrator) createPlanningAgent() (agents.OrchestratorAgent, error) {
-	planningConfig := po.createAgentConfig("planning", "planning-agent", 100, po.AgentTemplate.GetLogger())
+func (po *PlannerOrchestrator) createPlanningAgent(ctx context.Context) (agents.OrchestratorAgent, error) {
+	planningConfig := po.createAgentConfig(ctx, "planning", "planning-agent", 100, po.AgentTemplate.GetLogger())
 
 	// Cast event bridge to the correct type
 	var eventBridge EventBridge
@@ -1111,7 +1117,7 @@ func (po *PlannerOrchestrator) createPlanningAgent() (agents.OrchestratorAgent, 
 
 	planningAgent := agents.NewOrchestratorPlanningAgent(planningConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
 
-	if err := po.setupAgent(planningAgent, "planning", "planning agent", eventBridge); err != nil {
+	if err := po.setupAgent(ctx, planningAgent, "planning", "planning agent", eventBridge); err != nil {
 		return nil, fmt.Errorf("failed to setup planning agent: %w", err)
 	}
 
@@ -1119,8 +1125,8 @@ func (po *PlannerOrchestrator) createPlanningAgent() (agents.OrchestratorAgent, 
 }
 
 // createPlanBreakdownAgent creates a plan breakdown agent on-demand
-func (po *PlannerOrchestrator) createPlanBreakdownAgent() (agents.OrchestratorAgent, error) {
-	breakdownConfig := po.createAgentConfig("plan_breakdown", "plan-breakdown-agent", 100, po.AgentTemplate.GetLogger())
+func (po *PlannerOrchestrator) createPlanBreakdownAgent(ctx context.Context) (agents.OrchestratorAgent, error) {
+	breakdownConfig := po.createAgentConfig(ctx, "plan_breakdown", "plan-breakdown-agent", 100, po.AgentTemplate.GetLogger())
 
 	// Cast event bridge to the correct type
 	var eventBridge EventBridge
@@ -1130,7 +1136,7 @@ func (po *PlannerOrchestrator) createPlanBreakdownAgent() (agents.OrchestratorAg
 
 	breakdownAgent := agents.NewPlanBreakdownAgent(breakdownConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
 
-	if err := po.setupAgent(breakdownAgent, "plan_breakdown", "plan breakdown agent", eventBridge); err != nil {
+	if err := po.setupAgent(ctx, breakdownAgent, "plan_breakdown", "plan breakdown agent", eventBridge); err != nil {
 		return nil, fmt.Errorf("failed to setup plan breakdown agent: %w", err)
 	}
 
@@ -1138,8 +1144,8 @@ func (po *PlannerOrchestrator) createPlanBreakdownAgent() (agents.OrchestratorAg
 }
 
 // createOrganizerAgent creates an organizer agent on-demand
-func (po *PlannerOrchestrator) createOrganizerAgent() (agents.OrchestratorAgent, error) {
-	organizerConfig := po.createAgentConfig("plan_organizer", "plan-organizer-agent", 100, po.AgentTemplate.GetLogger())
+func (po *PlannerOrchestrator) createOrganizerAgent(ctx context.Context) (agents.OrchestratorAgent, error) {
+	organizerConfig := po.createAgentConfig(ctx, "plan_organizer", "plan-organizer-agent", 100, po.AgentTemplate.GetLogger())
 
 	// Cast event bridge to the correct type
 	var eventBridge EventBridge
@@ -1149,7 +1155,7 @@ func (po *PlannerOrchestrator) createOrganizerAgent() (agents.OrchestratorAgent,
 
 	organizerAgent := agents.NewPlanOrganizerAgent(organizerConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
 
-	if err := po.setupAgent(organizerAgent, "organizer", "organizer agent", eventBridge); err != nil {
+	if err := po.setupAgent(ctx, organizerAgent, "organizer", "organizer agent", eventBridge); err != nil {
 		return nil, fmt.Errorf("failed to setup organizer agent: %w", err)
 	}
 
@@ -1157,8 +1163,8 @@ func (po *PlannerOrchestrator) createOrganizerAgent() (agents.OrchestratorAgent,
 }
 
 // createReportAgent creates a report agent on-demand
-func (po *PlannerOrchestrator) createReportAgent() (agents.OrchestratorAgent, error) {
-	reportConfig := po.createAgentConfig("report_generation", "report-agent", 100, po.AgentTemplate.GetLogger())
+func (po *PlannerOrchestrator) createReportAgent(ctx context.Context) (agents.OrchestratorAgent, error) {
+	reportConfig := po.createAgentConfig(ctx, "report_generation", "report-agent", 100, po.AgentTemplate.GetLogger())
 
 	// Cast event bridge to the correct type
 	var eventBridge EventBridge
@@ -1168,7 +1174,7 @@ func (po *PlannerOrchestrator) createReportAgent() (agents.OrchestratorAgent, er
 
 	reportAgent := agents.NewOrchestratorReportAgent(reportConfig, po.AgentTemplate.GetLogger(), po.tracer, eventBridge)
 
-	if err := po.setupAgent(reportAgent, "report_generation", "report agent", eventBridge); err != nil {
+	if err := po.setupAgent(ctx, reportAgent, "report_generation", "report agent", eventBridge); err != nil {
 		return nil, fmt.Errorf("failed to setup report agent: %w", err)
 	}
 
@@ -1180,7 +1186,7 @@ func (po *PlannerOrchestrator) organizeParallelResults(ctx context.Context, resu
 	po.AgentTemplate.GetLogger().Infof("📊 Organizing parallel execution results using organizer agent")
 
 	// Create organizer agent on-demand
-	organizerAgent, err := po.createOrganizerAgent()
+	organizerAgent, err := po.createOrganizerAgent(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create organizer agent: %w", err)
 	}
@@ -1228,7 +1234,7 @@ func (po *PlannerOrchestrator) generateParallelReport(ctx context.Context, organ
 	po.AgentTemplate.GetLogger().Infof("📋 Generating parallel execution report using report agent")
 
 	// Create report agent on-demand
-	reportAgent, err := po.createReportAgent()
+	reportAgent, err := po.createReportAgent(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create report agent: %w", err)
 	}

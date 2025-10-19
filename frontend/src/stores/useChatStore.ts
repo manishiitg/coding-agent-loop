@@ -36,11 +36,27 @@ const cleanupOldEvents = (events: PollingEvent[]): PollingEvent[] => {
   const important = events.filter(shouldRetainEvent)
   const regular = events.filter(e => !shouldRetainEvent(e))
   
-  // Keep all important + latest regular events
-  const keepRegular = regular.slice(-(MAX_EVENTS - important.length))
+  // Trim important events if they exceed MAX_EVENTS
+  let trimmedImportant = important
+  if (important.length > MAX_EVENTS) {
+    // Keep only the newest MAX_EVENTS important events
+    trimmedImportant = important
+      .sort((a, b) => {
+        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+        return bTime - aTime // Sort newest first
+      })
+      .slice(0, MAX_EVENTS)
+  }
+  
+  // Calculate budget for regular events (clamped to 0)
+  const budget = Math.max(0, MAX_EVENTS - trimmedImportant.length)
+  
+  // Keep latest regular events within budget
+  const keepRegular = budget > 0 ? regular.slice(-budget) : []
   
   // Combine and sort by timestamp
-  return [...important, ...keepRegular].sort((a, b) => {
+  return [...trimmedImportant, ...keepRegular].sort((a, b) => {
     const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
     const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
     return aTime - bTime

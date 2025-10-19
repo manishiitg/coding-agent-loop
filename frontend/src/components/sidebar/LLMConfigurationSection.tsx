@@ -53,6 +53,10 @@ export default function LLMConfigurationSection({
     };
     setLlmConfig(newConfig);
     setShowCrossProvider(false);
+    
+    // Refresh available LLMs to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
   };
 
   // Handle model change
@@ -61,6 +65,10 @@ export default function LLMConfigurationSection({
       ...llmConfig,
       model_id,
     });
+    
+    // Refresh available LLMs to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
   };
 
   // Handle fallback models change
@@ -128,6 +136,10 @@ export default function LLMConfigurationSection({
     setCustomModels(newCustomModels);
     localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels));
     setCustomModelInput("");
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
   };
 
   // Handle removing custom model
@@ -135,6 +147,10 @@ export default function LLMConfigurationSection({
     const newCustomModels = customModels.filter(m => m !== model);
     setCustomModels(newCustomModels);
     localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels));
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
     
     // If the removed model was selected, reset to first available model
     if (llmConfig.model_id === model) {

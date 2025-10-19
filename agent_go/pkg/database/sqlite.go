@@ -127,7 +127,10 @@ func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req 
 		UPDATE chat_sessions
 		SET title = COALESCE(?, title),
 		    agent_mode = COALESCE(?, agent_mode),
-		    preset_query_id = COALESCE(?, preset_query_id),
+		    preset_query_id = CASE 
+		        WHEN ? = '' THEN NULL 
+		        ELSE COALESCE(?, preset_query_id) 
+		    END,
 		    status = COALESCE(?, status),
 		    completed_at = COALESCE(?, completed_at)
 		WHERE session_id = ?
@@ -137,7 +140,7 @@ func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req 
 	var session ChatSession
 	var agentModeStr *string
 	var presetQueryIDStr *string
-	err := s.db.QueryRowContext(ctx, query, req.Title, req.AgentMode, req.PresetQueryID, req.Status, req.CompletedAt, sessionID).Scan(
+	err := s.db.QueryRowContext(ctx, query, req.Title, req.AgentMode, req.PresetQueryID, req.PresetQueryID, req.Status, req.CompletedAt, sessionID).Scan(
 		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
 	)
 	if err != nil {
@@ -285,23 +288,17 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 
 // StoreEvent stores an event in the database
 func (s *SQLiteDB) StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error {
-	fmt.Printf("[DATABASE DEBUG] SQLiteDB.StoreEvent called - EventType: %s, SessionID: %s\n", event.Type, sessionID)
-
 	// Get chat session ID
 	chatSession, err := s.GetChatSession(ctx, sessionID)
 	if err != nil {
-		fmt.Printf("[DATABASE DEBUG] Failed to get chat session for %s: %v\n", sessionID, err)
 		return fmt.Errorf("failed to get chat session: %w", err)
 	}
-	fmt.Printf("[DATABASE DEBUG] Found chat session ID: %s for session: %s\n", chatSession.ID, sessionID)
 
 	// Convert event to JSON
 	eventData, err := json.Marshal(event)
 	if err != nil {
-		fmt.Printf("[DATABASE DEBUG] Failed to marshal event data: %v\n", err)
 		return fmt.Errorf("failed to marshal event data: %w", err)
 	}
-	fmt.Printf("[DATABASE DEBUG] Event data marshaled successfully, size: %d bytes\n", len(eventData))
 
 	query := `
 		INSERT INTO events (session_id, chat_session_id, event_type, timestamp, event_data)
@@ -310,11 +307,9 @@ func (s *SQLiteDB) StoreEvent(ctx context.Context, sessionID string, event *even
 
 	_, err = s.db.ExecContext(ctx, query, sessionID, chatSession.ID, event.Type, event.Timestamp, string(eventData))
 	if err != nil {
-		fmt.Printf("[DATABASE DEBUG] Failed to store event in database: %v\n", err)
 		return fmt.Errorf("failed to store event: %w", err)
 	}
 
-	fmt.Printf("[DATABASE DEBUG] Successfully stored event %s in database for session %s\n", event.Type, sessionID)
 	return nil
 }
 

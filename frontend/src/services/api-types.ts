@@ -38,7 +38,6 @@ export type OrchestratorExecutionMode = typeof EXECUTION_MODES[keyof typeof EXEC
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  servers?: string[]
   provider?: 'bedrock' | 'openai' | 'openrouter'
   model_id?: string
   temperature?: number

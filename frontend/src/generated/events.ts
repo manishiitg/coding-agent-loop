@@ -52,6 +52,7 @@ export interface UnifiedEventsCompleteSchema {
   orchestrator_agent_start?: OrchestratorAgentStartEvent;
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
+  request_human_feedback?: RequestHumanFeedbackEvent;
 }
 export interface ToolCallStartEvent {
   timestamp?: string;
@@ -1101,4 +1102,28 @@ export interface OrchestratorAgentErrorEvent {
   step_index?: number;
   iteration?: number;
   execution_mode?: string;
+}
+export interface RequestHumanFeedbackEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  objective?: string;
+  todo_list_markdown?: string;
+  workflow_id?: string;
+  request_id?: string;
+  verification_type?: string;
+  next_phase?: string;
+  title?: string;
+  action_label?: string;
+  action_description?: string;
 }

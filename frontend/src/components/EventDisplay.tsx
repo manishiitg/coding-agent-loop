@@ -4,23 +4,13 @@ import { Card, CardContent } from './ui/Card'
 import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores'
 
-interface EventDisplayProps {
-  // Callbacks only
-  onDismissUserMessage?: () => void
-  // onApproveWorkflow?: (requestId: string) => void
-}
-
 // Isolated event display component that can re-render without affecting input
-export const EventDisplay = React.memo<EventDisplayProps>(({ 
-  onDismissUserMessage
-}) => {
+export const EventDisplay = React.memo(() => {
   // Store subscriptions
   const {
     events,
     finalResponse,
     isCompleted,
-    currentUserMessage,
-    showUserMessage,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     isApprovingWorkflow: _isApproving
   } = useChatStore()
@@ -30,61 +20,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({
     // Events received
   }, [events])
 
-  const [isExpanded, setIsExpanded] = React.useState(false)
   return (
     <div className="space-y-4 min-w-0">
-      {/* User Message Display - Dismissible Sticky Header */}
-      {currentUserMessage && showUserMessage && (
-        <div className="sticky top-0 z-10 bg-white dark:bg-gray-900">
-          <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-md p-2 min-w-0 mx-2 my-1">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-bold text-indigo-700 dark:text-indigo-300 flex-shrink-0">👤</span>
-              <span className="text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-800 px-1.5 py-0.5 rounded-full">
-                📌
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className={`text-xs text-indigo-800 dark:text-indigo-200 break-words ${
-                  isExpanded 
-                    ? 'whitespace-pre-wrap' 
-                    : 'whitespace-nowrap truncate overflow-hidden'
-                }`}>
-                  {currentUserMessage}
-                </div>
-              </div>
-              <div className="flex items-center gap-1 flex-shrink-0">
-                {/* Expand/Collapse Message Button */}
-                <button
-                  onClick={() => setIsExpanded(!isExpanded)}
-                  className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors duration-200 p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
-                  title={isExpanded ? "Collapse message" : "Expand message"}
-                >
-                  <svg 
-                    className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} 
-                    fill="none" 
-                    stroke="currentColor" 
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                
-                {/* Dismiss Message Button */}
-                {onDismissUserMessage && (
-                  <button
-                    onClick={onDismissUserMessage}
-                    className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors duration-200 p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
-                    title="Dismiss message"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Event Display */}
       {events.length > 0 && (

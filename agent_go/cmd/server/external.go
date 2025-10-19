@@ -276,13 +276,23 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 		chatDB:          api.chatDB,
 	}
 
+	// Create default selected options for external API
+	selectedOptions := &orchtypes.PlannerSelectedOptions{
+		Selections: []orchtypes.PlannerSelectedOption{
+			{
+				OptionID:    "execution_mode",
+				OptionLabel: "Execution Mode",
+				OptionValue: "default",
+				Group:       "execution",
+			},
+		},
+	}
+
 	// Create fresh orchestrator
 	orchestrator := orchtypes.NewPlannerOrchestrator(
 		api.logger,
 		api.config.AgentMode,
-		api.config.StructuredOutputProvider,
-		api.config.StructuredOutputModel,
-		api.config.StructuredOutputTemp,
+		selectedOptions,
 	)
 
 	// Create custom tools (workspace + human tools)
@@ -335,7 +345,7 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 
 	// Load conversation history
 	api.conversationMux.RLock()
-	history, _ := api.conversationHistory[sessionID]
+	history := api.conversationHistory[sessionID]
 	api.conversationMux.RUnlock()
 
 	// Create cancellable context

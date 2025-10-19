@@ -46,6 +46,7 @@ func (e Event) MarshalJSON() ([]byte, error) {
 type EventStore struct {
 	events        map[string][]Event // observerID -> events
 	lastIndex     map[string]int     // observerID -> last event index
+	eventCounters map[string]int     // observerID -> event counter (persistent across messages)
 	mu            sync.RWMutex
 	maxEvents     int // Maximum events per observer
 	cleanupTicker *time.Ticker
@@ -57,6 +58,7 @@ func NewEventStore(maxEvents int) *EventStore {
 	store := &EventStore{
 		events:        make(map[string][]Event),
 		lastIndex:     make(map[string]int),
+		eventCounters: make(map[string]int),
 		maxEvents:     maxEvents,
 		cleanupTicker: time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
 		stopCh:        make(chan struct{}),
@@ -97,7 +99,23 @@ func (es *EventStore) InitializeObserver(observerID string) {
 	if _, exists := es.events[observerID]; !exists {
 		es.events[observerID] = make([]Event, 0)
 		es.lastIndex[observerID] = 0
+		es.eventCounters[observerID] = 0
 	}
+}
+
+// GetNextEventCounter gets and increments the event counter for an observer
+func (es *EventStore) GetNextEventCounter(observerID string) int {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Initialize counter if not exists
+	if _, exists := es.eventCounters[observerID]; !exists {
+		es.eventCounters[observerID] = 0
+	}
+
+	// Increment and return the counter
+	es.eventCounters[observerID]++
+	return es.eventCounters[observerID]
 }
 
 // GetEvents retrieves events for an observer since a specific index

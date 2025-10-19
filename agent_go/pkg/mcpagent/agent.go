@@ -864,9 +864,6 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 // EmitTypedEvent sends a typed event to all tracers AND all listeners
 func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) {
 
-	// Debug: Check event type assignment
-	a.Logger.Infof("🔧 DEBUG: EmitTypedEvent - EventData type: %T, GetEventType: %s", eventData, eventData.GetEventType())
-
 	// ✅ SET HIERARCHY FIELDS ON EVENT DATA FIRST (SINGLE SOURCE OF TRUTH)
 	// Use interface-based approach - works for ALL event types that embed BaseEventData
 	if baseEventData, ok := eventData.(interface {
@@ -881,9 +878,11 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 
 	// Debug: Check the created event type
 	a.Logger.Infof("🔧 DEBUG: Created event type: %s", event.Type)
+	a.Logger.Infof("🔧 DEBUG: Event TraceID: %s", event.TraceID)
 
 	// Generate a unique SpanID for this event
 	event.SpanID = fmt.Sprintf("span_%s_%d", string(eventData.GetEventType()), time.Now().UnixNano())
+	a.Logger.Infof("🔧 DEBUG: Generated SpanID: %s", event.SpanID)
 
 	// ✅ COPY HIERARCHY FIELDS FROM EVENT DATA TO WRAPPER (SINGLE SOURCE OF TRUTH)
 	// Get hierarchy fields from the event data (which we just set above)
@@ -942,9 +941,13 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 
 	// Send to all tracers (multiple tracer support)
 	// The streaming tracer will automatically forward events to subscribers
-	for _, tracer := range a.Tracers {
+	a.Logger.Infof("🔧 DEBUG: Sending event to %d tracers", len(a.Tracers))
+	for i, tracer := range a.Tracers {
+		a.Logger.Infof("🔧 DEBUG: Sending to tracer %d: %T", i, tracer)
 		if err := tracer.EmitEvent(event); err != nil {
 			a.Logger.Warnf("Failed to emit event to tracer %T: %v", tracer, err)
+		} else {
+			a.Logger.Infof("🔧 DEBUG: Successfully sent to tracer %T", tracer)
 		}
 	}
 
@@ -955,9 +958,13 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	copy(listeners, a.listeners)
 	a.mu.RUnlock()
 
-	for _, listener := range listeners {
+	a.Logger.Infof("🔧 DEBUG: Sending event to %d listeners", len(listeners))
+	for i, listener := range listeners {
+		a.Logger.Infof("🔧 DEBUG: Sending to listener %d: %T", i, listener)
 		if err := listener.HandleEvent(ctx, event); err != nil {
 			a.Logger.Warnf("Failed to emit event to listener %T: %v", listener, err)
+		} else {
+			a.Logger.Infof("🔧 DEBUG: Successfully sent to listener %T", listener)
 		}
 	}
 }

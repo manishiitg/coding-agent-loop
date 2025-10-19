@@ -14,11 +14,10 @@ import (
 
 // EventObserver implements AgentEventListener to capture agent events
 type EventObserver struct {
-	store        *EventStore
-	observerID   string
-	sessionID    string
-	eventCounter int
-	logger       utils.ExtendedLogger
+	store      *EventStore
+	observerID string
+	sessionID  string
+	logger     utils.ExtendedLogger
 }
 
 // NewEventObserver creates a new event observer
@@ -43,19 +42,14 @@ func NewEventObserverWithLogger(store *EventStore, observerID, sessionID string,
 
 // HandleEvent processes agent events and stores them in the event store
 func (eo *EventObserver) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	eo.eventCounter++
-
-	// Debug logging to see what events are being received
-	eo.logger.Infof("[OBSERVER DEBUG] Received event: %s (counter: %d)", event.Type, eo.eventCounter)
-
-	// Debug: Check event type assignment
-	eo.logger.Infof("🔧 DEBUG: Event type assignment - EventType: %s, String: %s", event.Type, string(event.Type))
+	// Get the next event counter from the store (persistent across messages)
+	eventCounter := eo.store.GetNextEventCounter(eo.observerID)
 
 	// Create the store event with only the original AgentEvent data
 	// Add a random suffix to ensure uniqueness even when multiple tracers send the same event
 	randomSuffix := fmt.Sprintf("%d", time.Now().UnixNano()%1000000)
 	storeEvent := Event{
-		ID:        fmt.Sprintf("%s_event_%d_%d_%s", eo.observerID, eo.eventCounter, event.Timestamp.UnixNano(), randomSuffix),
+		ID:        fmt.Sprintf("%s_event_%d_%d_%s", eo.observerID, eventCounter, event.Timestamp.UnixNano(), randomSuffix),
 		Type:      string(event.Type),
 		Timestamp: event.Timestamp,
 		SessionID: eo.sessionID,

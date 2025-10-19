@@ -71,6 +71,9 @@ type UnifiedEvent struct {
 	OrchestratorAgentStartEvent events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start"`
 	OrchestratorAgentEndEvent   events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end"`
 	OrchestratorAgentErrorEvent events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error"`
+
+	// Human Verification Events
+	RequestHumanFeedbackEvent events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
 }
 
 // PollingEvent represents the unified event structure for the frontend
@@ -140,6 +143,9 @@ type EventData struct {
 	OrchestratorAgentStart *events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start,omitempty"`
 	OrchestratorAgentEnd   *events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end,omitempty"`
 	OrchestratorAgentError *events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
+
+	// Human Verification Events
+	RequestHumanFeedbackEvent *events.RequestHumanFeedbackEvent `json:"request_human_feedback,omitempty"`
 }
 
 func writeSchema(filename string, v any) error {

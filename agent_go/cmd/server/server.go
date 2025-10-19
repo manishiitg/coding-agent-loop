@@ -304,9 +304,10 @@ type CrossProviderFallback struct {
 
 // QueryResponse represents an agent query response
 type QueryResponse struct {
-	QueryID string `json:"query_id"`
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
+	QueryID    string `json:"query_id"`
+	ObserverID string `json:"observer_id"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
 }
 
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
@@ -953,11 +954,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Create a fresh agent for each request
 	log.Printf("[LLM CONFIG DEBUG] Creating fresh agent for each request")
 
-	// Return immediate response with query ID
+	// Return immediate response with query ID and observer ID
 	response := QueryResponse{
-		QueryID: queryID,
-		Status:  "started",
-		Message: "Query processing started. Use polling API to get real-time updates.",
+		QueryID:    queryID,
+		ObserverID: observerID, // Include observer ID in response
+		Status:     "started",
+		Message:    "Query processing started. Use polling API to get real-time updates.",
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -2080,13 +2082,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// --- BEGIN: Update chat session status to completed ---
 		if chatSession != nil {
 			// Update session status to completed with completion timestamp
-			// Preserve the existing title and agent_mode
+			// Only update status and completed_at to avoid foreign key constraint issues
 			completedAt := time.Now()
 			updateReq := &database.UpdateChatSessionRequest{
-				Title:       chatSession.Title,     // Preserve existing title
-				AgentMode:   chatSession.AgentMode, // Preserve existing agent_mode
-				Status:      "completed",
-				CompletedAt: &completedAt,
+				Status:        "completed",
+				CompletedAt:   &completedAt,
+				PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 			}
 			_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
 			if err != nil {
@@ -2611,8 +2612,9 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 
 		log.Printf("[ACTIVE_SESSION] Updating database for session %s status to: %s", sessionID, status)
 		_, err := api.chatDB.UpdateChatSession(ctx, sessionID, &database.UpdateChatSessionRequest{
-			Status:      status,
-			CompletedAt: completedAt,
+			Status:        status,
+			CompletedAt:   completedAt,
+			PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 		})
 		if err != nil {
 			log.Printf("[ACTIVE_SESSION] Failed to update database for session %s: %v", sessionID, err)

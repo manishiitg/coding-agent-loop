@@ -161,6 +161,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     }
     
     setPrimaryConfig(primaryConfig)
+    
+    // Refresh available LLMs to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
   }
 
   // Handle save configuration
@@ -451,12 +455,20 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
     setCustomModels(newCustomModels)
     localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels))
     setCustomModelInput('')
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
   }
 
   const handleRemoveCustomModel = (model: string) => {
     const newCustomModels = customModels.filter(m => m !== model)
     setCustomModels(newCustomModels)
     localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels))
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
   }
 
   const allModels = [
@@ -737,11 +749,19 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
     if (newCustomModel.trim() && !allModels.includes(newCustomModel.trim())) {
       addCustomBedrockModel(newCustomModel.trim())
       setNewCustomModel('')
+      
+      // Refresh available LLMs in the store to sync with ChatInput
+      const { refreshAvailableLLMs } = useLLMStore.getState()
+      refreshAvailableLLMs()
     }
   }
   
   const handleRemoveCustomModel = (model: string) => {
     removeCustomBedrockModel(model)
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
   }
 
   return (

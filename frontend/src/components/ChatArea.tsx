@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
-import { agentApi, type AgentQueryRequest } from '../services/api'
+import debounce from 'lodash.debounce'
+import { agentApi } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
 import { EXECUTION_MODES } from '../services/api-types'
 import { EventModeProvider } from './events'
@@ -42,7 +43,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Store subscriptions
   const { 
     agentMode, 
-    currentQuery,
     setCurrentQuery,
     chatFileContext,
     clearFileContext,
@@ -52,18 +52,31 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   } = useAppStore()
   
   const { selectedModeCategory } = useModeStore()
-  const { getActivePreset, applyPreset, currentPresetServers, clearActivePreset } = usePresetApplication()
+  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers } = usePresetApplication()
   
   const { 
-    primaryConfig: llmConfig,
-    getCurrentLLMOption
+    primaryConfig: llmConfig
   } = useLLMStore()
   
   const { 
-    toolList: enabledTools,
-    enabledServers,
-    selectedServers: manualSelectedServers
+    toolList: allTools,
+    selectedServers
   } = useMCPStore()
+  
+  // Determine which servers to use based on agent mode
+  const effectiveServers = useMemo(() => {
+    // For workflow/deep-research modes, use preset servers
+    if (agentMode === 'workflow' || agentMode === 'orchestrator') {
+      return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
+    }
+    // For simple/ReAct modes, use manually selected servers
+    return selectedServers
+  }, [agentMode, currentPresetServers, selectedServers])
+  
+  // Filter tools to only include those from effective servers
+  const enabledTools = allTools.filter(tool => 
+    tool.server && effectiveServers.includes(tool.server)
+  )
   
   const {
     // Chat state
@@ -81,9 +94,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setLastEventCount,
     events,
     setEvents,
-    currentUserMessage,
-    setCurrentUserMessage,
-    setShowUserMessage,
     sessionId,
     setSessionId,
     setHasActiveChat,
@@ -92,7 +102,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     lastScrollTop,
     setLastScrollTop,
     finalResponse,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setFinalResponse: _setFinalResponse,
     setIsCompleted,
     isLoadingHistory,
@@ -139,7 +148,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   }, [agentMode, chatFileContext])
 
   // Use currentPresetServers from props (passed from App.tsx when preset is selected)
-  const primaryLLM = getCurrentLLMOption()
 
   // State for preset selection overlay
   const [showPresetSelection, setShowPresetSelection] = useState(false)
@@ -213,8 +221,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     const agentModeToSet = getAgentModeFromCategory(category) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
     setAgentMode(agentModeToSet)
     
-    // Start a new chat when switching modes
-    // Note: startNewChat will be handled by the parent component
+    // Start a new chat when switching between simple/ReAct modes
+    // Use setTimeout to ensure the mode change is processed first
+    if (agentModeToSet === 'simple' || agentModeToSet === 'ReAct') {
+      setTimeout(() => {
+        handleNewChat()
+      }, 100) // Small delay to ensure state updates are processed
+    }
   }
 
   // Handle preset selection from overlay
@@ -282,11 +295,41 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Orchestrator execution mode state
   const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.PARALLEL)
   
+  // Performance metrics tracking (dev mode only)
+  const [performanceMetrics, setPerformanceMetrics] = useState({
+    renderCount: 0,
+    lastRenderTime: 0,
+    memoryEstimate: 0
+  })
+  
   // Handle orchestrator execution mode change
   const handleOrchestratorExecutionModeChange = useCallback((mode: OrchestratorExecutionMode) => {
     setOrchestratorExecutionMode(mode)
   }, [])
   
+  // Track performance metrics when events change (dev mode only)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      const startTime = performance.now()
+      
+      // Calculate memory estimate (rough approximation)
+      const memoryEstimate = events.reduce((total, event) => {
+        return total + JSON.stringify(event).length * 2 // Rough estimate
+      }, 0)
+
+      const endTime = performance.now()
+      
+      setPerformanceMetrics(prev => ({
+        renderCount: prev.renderCount + 1,
+        lastRenderTime: endTime - startTime,
+        memoryEstimate: Math.round(memoryEstimate / 1024) // KB
+      }))
+    }
+  }, [events])
+  
+  // Track processed completion events to avoid stopping on old ones
+  const processedCompletionEventsRef = useRef<Set<string>>(new Set())
+
   // Selected preset folder state
   const lastEventIndexRef = useRef<number>(0)
   const totalEventsRef = useRef<number>(0)
@@ -348,10 +391,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Reset auto-scroll when starting new conversation
   useEffect(() => {
-    if (currentUserMessage && !isStreaming) {
+    if (events.length > 0 && !isStreaming) {
       setAutoScroll(true);
     }
-  }, [currentUserMessage, isStreaming, setAutoScroll]);
+  }, [events.length, isStreaming, setAutoScroll]);
 
   // Improved auto-scroll for new events
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -600,18 +643,40 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
   }, [chatSessionId, setObserverId, requiresNewChat, observerId])
 
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval)
-      }
-    }
-  }, [pollingInterval])
+  // Event batching for performance
+  const eventBatchRef = useRef<PollingEvent[]>([])
+  const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Debounced function to flush event batch
+  const flushEventBatch = useCallback(() => {
+    if (eventBatchRef.current.length === 0) return
+    
+    const batch = [...eventBatchRef.current]
+    eventBatchRef.current = []
+    
+    // Process the batch of events
+    setEvents((prevEvents: PollingEvent[]) => {
+      const updatedEvents = [...prevEvents, ...batch]
+      
+      // Trigger cleanup if threshold exceeded (handled by setEvents)
+      return updatedEvents
+    })
+    
+    // Update counters
+    setTotalEvents(totalEventsRef.current + batch.length)
+    setLastEventCount(batch.length)
+  }, [setEvents, setTotalEvents, setLastEventCount])
+  
+  // Create debounced flush function (100ms delay)
+  const debouncedFlush = useMemo(
+    () => debounce(flushEventBatch, 100),
+    [flushEventBatch]
+  )
 
   // Polling function to get events
   const pollEvents = useCallback(async () => {
     const currentLastEventIndex = lastEventIndexRef.current
+    
     if (!observerId) {
       return
     }
@@ -621,13 +686,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       
       if (response.events.length > 0) {
         
-        // Process events if we have any events (remove the lastEventIndex condition)
-        // The condition was preventing early events from being displayed
+        // Update last event index immediately
         setLastEventIndex(response.last_event_index)
-        setTotalEvents(totalEventsRef.current + response.events.length)
-        setLastEventCount(response.events.length)
         
-        // Add new events to the events array for rich UI display
+        // Add new events to batch for debounced processing
         const newEvents = response.events.filter(event => {
             // Debug: Log all tool_call_start events to see what we're getting
             if (event.type === 'tool_call_start') {
@@ -682,13 +744,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             return event.type !== 'user_message'
           })
           
-          setEvents((prevEvents: PollingEvent[]) => {
-            const updatedEvents = [...prevEvents, ...newEvents]
-            return updatedEvents
-          })
+    // Add events to batch instead of immediately processing
+    eventBatchRef.current.push(...newEvents)
+          
+          // Trigger debounced flush
+          debouncedFlush()
         
         // Check for completion events and stop polling if detected
         const completionEvents = response.events.filter((event: PollingEvent) => {
+          // Skip events we've already processed to avoid stopping on old completion events
+          if (processedCompletionEventsRef.current.has(event.id)) {
+            return false
+          }
+          
           // Completion detection based on agent mode
           if (agentMode === 'orchestrator') {
             // For Deep Search mode, only check Deep Search-specific events
@@ -702,6 +770,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           } else {
             // For simple and ReAct modes, check standard completion events
             return event.type === 'unified_completion' ||
+                   event.type === 'agent_end' ||
                    event.type === 'conversation_end' || 
                    event.type === 'conversation_error' ||
                    event.type === 'agent_error'
@@ -709,6 +778,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         })
         
         if (completionEvents.length > 0) {
+          // Mark these completion events as processed to avoid reprocessing them
+          completionEvents.forEach(event => {
+            processedCompletionEventsRef.current.add(event.id)
+          })
+          
+          // Force flush any pending events before stopping polling
+          if (eventBatchRef.current.length > 0) {
+            flushEventBatch()
+          }
           
           if (pollingInterval) {
             clearInterval(pollingInterval)
@@ -885,12 +963,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         console.error('[POLL] HTTP data:', axiosError.response?.data)
       }
     }
-  }, [observerId, pollingInterval, setPollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setLastEventIndex, setTotalEvents, setLastEventCount, setEvents, finalResponse, agentMode, setCurrentWorkflowPhase, currentWorkflowPhase])
+  }, [observerId, pollingInterval, setPollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setLastEventIndex, finalResponse, agentMode, setCurrentWorkflowPhase, currentWorkflowPhase, debouncedFlush, flushEventBatch])
 
 
   // Track if we're already processing to prevent infinite loops
   const processingRef = useRef<string | null>(null)
-
+  
+  // Cleanup polling on unmount
+  useEffect(() => {
+    const timeout = batchTimeoutRef.current
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval)
+      }
+      // Cleanup debounced function
+      debouncedFlush.cancel()
+      // Cleanup batch timeout if it exists
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+    }
+  }, [pollingInterval, debouncedFlush])
+  
   // Simple session state detection
   useEffect(() => {
     if (!chatSessionId) {
@@ -1093,8 +1187,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
   }, [pollingInterval, setPollingInterval, observerId, setIsStreaming])
 
-  const submitQuery = useCallback(async () => {
-    if (!currentQuery?.trim()) {
+  // Wrapper function to submit query with the current local query
+  const submitQueryWithQuery = useCallback(async (query: string) => {
+    if (!query?.trim()) {
       return
     }
 
@@ -1112,8 +1207,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
     // Add file context to the query for ALL agent types
     const queryWithContext = chatFileContext.length > 0 
-      ? `${currentQuery?.trim()}\n\n📁 Files in context: ${chatFileContext.map((file: { path: string }) => file.path).join(', ')}`
-      : currentQuery?.trim()
+      ? `${query.trim()}\n\n📁 Files in context: ${chatFileContext.map((file: { path: string }) => file.path).join(', ')}`
+      : query.trim()
     
     // Handle workflow mode - submit query directly to backend
     if (agentMode === 'workflow') {
@@ -1135,14 +1230,23 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
 
     // Use the query with file context that we prepared earlier
-    const query = queryWithContext
-    const enhancedQuery = query
+    const enhancedQuery = queryWithContext
     
-    // Store user message for display (show original query without file context)
-    setCurrentUserMessage(currentQuery?.trim() || '')
+    // Add user message as an event instead of floating popup
+    const userMessageEvent: PollingEvent = {
+      id: `user-message-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      type: 'user_message',
+      timestamp: new Date().toISOString(),
+      data: {
+        user_message: {
+          content: query.trim(),
+          timestamp: new Date().toISOString()
+        }
+      }
+    }
     
-    // Show user message when new query is submitted
-    setShowUserMessage(true)
+    // Add user message event to the events array
+    setEvents((prevEvents: PollingEvent[]) => [...prevEvents, userMessageEvent])
     
     setCurrentQuery('') // Clear the query text after submission
 
@@ -1154,144 +1258,89 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
     // Preserve the Final Result by adding it to events before clearing
     // Check both the current finalResponse state and any completion events in the events array
-    let resultToPreserve = finalResponse
+    const hasCompletionEvent = events.some(event => 
+      event.type === 'unified_completion' || event.type === 'agent_end'
+    )
     
-    // If no finalResponse in state, check if there are completion events in the events array
-    if (!resultToPreserve) {
-      // Get current events from store
-      const currentEvents = useChatStore.getState().events
-      const lastCompletionEvent = currentEvents
-        .filter((event: PollingEvent) => event.type === 'conversation_end')
-        .pop()
-      
-      if (lastCompletionEvent && lastCompletionEvent.data && typeof lastCompletionEvent.data === 'object' && 'result' in lastCompletionEvent.data) {
-        const result = (lastCompletionEvent.data as { result?: string }).result
-        if (result && typeof result === 'string') {
-          resultToPreserve = result
-        }
-      }
-    }
-    
-    if (resultToPreserve) {
-      const finalResultEvent: PollingEvent = {
-        id: `final-result-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: 'conversation_end',
+    if (finalResponse && !hasCompletionEvent) {
+      // Add the final response as a completion event if it's not already there
+      const completionEvent: PollingEvent = {
+        id: `completion-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'unified_completion',
         timestamp: new Date().toISOString(),
         data: {
-          conversation_end: {
-            result: resultToPreserve,
-            duration: 0,
-            turns: 1,
-            status: 'completed'
+          unified_completion: {
+            content: finalResponse,
+            timestamp: new Date().toISOString()
           }
-        }
+        } as PollingEvent['data']
       }
-      
-      // Add the final result to events so it's preserved in conversation history
-      setEvents((prevEvents: PollingEvent[]) => [...prevEvents, finalResultEvent])
+      setEvents((prevEvents: PollingEvent[]) => [...prevEvents, completionEvent])
     }
 
-    // Determine which servers to use for this query
-    // Determine which servers to use based on mode and selection
-    let serversToUse: string[]
-    
-    if (agentMode === 'simple' || agentMode === 'ReAct') {
-      // For Simple/ReAct modes, use manual selection if available, otherwise use all enabled servers
-      if (manualSelectedServers.length > 0) {
-        serversToUse = manualSelectedServers
-      } else {
-        serversToUse = enabledServers
-      }
-    } else {
-      // For Deep Search/Workflow modes, use preset servers if available, otherwise use all enabled servers
-      serversToUse = currentPresetServers.length > 0 ? currentPresetServers : enabledServers
-    }
+    // Clear the final response and completion state for the new query
+    _setFinalResponse('')
+    setIsCompleted(false)
+    setIsStreaming(true)
+    setHasActiveChat(true)
 
-    // Determine which LLM config to use for this query
-    let llmConfigToUse = llmConfig // Default to sidebar's llmConfig
-    
-    if ((agentMode === 'simple' || agentMode === 'ReAct') && primaryLLM) {
-      // For Simple/ReAct modes, use primaryLLM selection but preserve complete configuration
-      llmConfigToUse = {
-        ...llmConfig, // ✅ Preserve all existing configuration (fallbacks, cross-provider, etc.)
-        provider: primaryLLM.provider as "openrouter" | "bedrock" | "openai",
-        model_id: primaryLLM.model
-      }
-    }
+    // Reset event tracking for new query (preserve lastEventIndex for multi-turn chat)
+    setLastEventCount(0)
+    processedCompletionEventsRef.current.clear()
 
     try {
-
-      const request: AgentQueryRequest = {
+      // Submit query to backend
+      const response = await agentApi.startQuery({
         query: enhancedQuery,
         agent_mode: agentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
-        enabled_servers: serversToUse,
-        provider: llmConfigToUse.provider,
-        model_id: llmConfigToUse.model_id,
-        llm_config: llmConfigToUse,
+        enabled_servers: effectiveServers,
+        provider: llmConfig.provider,
+        model_id: llmConfig.model_id,
+        llm_config: llmConfig,
         preset_query_id: selectedWorkflowPreset || undefined,
-        // Add orchestrator execution mode for orchestrator mode
         orchestrator_execution_mode: agentMode === 'orchestrator' ? orchestratorExecutionMode : undefined,
-      }
-
-
-      // Start polling for events IMMEDIATELY when query is submitted
-      // This ensures we capture all events including early tool_call_start/end events
-      const interval = setInterval(pollEvents, 1000) // Poll every 1000ms (1 second) during streaming
-      setPollingInterval(interval)
-      
-      const response = await agentApi.startQuery(request)
-
-      // Handle observer ID from response (for workflow mode)
-      if (response.observer_id && response.observer_id !== observerId) {
-        setObserverId(response.observer_id)
-        // Update localStorage as well
-        localStorage.setItem('agent_observer_id', response.observer_id)
-      }
-
-      // Set session ID for guidance functionality
-      if (response.query_id) {
-        setSessionId(response.query_id)
-      }
+      })
 
       if (response.status === 'started' || response.status === 'workflow_started') {
-        // Set streaming to true immediately when query starts successfully
-        setIsStreaming(true)
-        setIsCompleted(false)
-        // Mark that there's an active chat session
-        setHasActiveChat(true)
-    } else {
-        console.error('[SUBMIT] Query failed:', response)
-        // Only reset streaming state if query fails to start
-        setIsStreaming(false)
-        setIsCompleted(false)
-        // Stop polling if query failed
-        if (interval) {
-          clearInterval(interval)
-          setPollingInterval(null)
+        // Update session ID for subsequent requests
+        if (response.query_id) {
+          setSessionId(response.query_id)
         }
+        
+        // Start polling for events
+        const interval = setInterval(pollEvents, 1000)
+        setPollingInterval(interval)
+      } else {
+        console.error('[SUBMIT] Backend error:', response)
+        setIsStreaming(false)
+        setHasActiveChat(false)
       }
     } catch (error) {
-      console.error('[SUBMIT] Error during query submission:', error)
-      // Only reset streaming state if query fails
+      console.error('[SUBMIT] Failed to submit query:', error)
       setIsStreaming(false)
-      setIsCompleted(false)
-      // Reset orchestrator mode selection to default on error
-      setOrchestratorExecutionMode(EXECUTION_MODES.PARALLEL)
+      setHasActiveChat(false)
+    }
+
+    // Reset orchestrator mode selection after submission
+    if (agentMode === 'orchestrator') {
       orchestratorModeHandlerRef.current?.resetSelection?.()
     }
-  }, [currentQuery, isStreaming, observerId, currentPresetServers, enabledServers, enabledTools, agentMode, chatFileContext, finalResponse, pollEvents, pollingInterval, setCurrentQuery, llmConfig, stopStreaming, isRequiredFolderSelected, selectedWorkflowPreset, manualSelectedServers, primaryLLM, setCurrentUserMessage, setEvents, setIsCompleted, setIsStreaming, setHasActiveChat, setObserverId, setPollingInterval, setSessionId, setShowUserMessage, orchestratorExecutionMode, setOrchestratorExecutionMode])
-
+  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setLastEventIndex, setSessionId, llmConfig, effectiveServers, enabledTools, orchestratorExecutionMode, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {
-    // Clear conversation history from backend first
+    // Clear conversation history from backend first (if observerId is available)
     if (observerId) {
       try {
         await agentApi.clearSession(observerId)
+        console.log('[NEW_CHAT] Successfully cleared session:', observerId)
       } catch (error) {
         console.error('[NEW_CHAT] Failed to clear session:', error)
+        // Continue with frontend reset even if backend clear fails
       }
+    } else {
+      console.log('[NEW_CHAT] No observerId available, skipping backend session clear')
     }
     
     // For workflow mode, preserve the selected preset but reset workflow phase
@@ -1307,9 +1356,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     // Reset frontend state
     resetChatState()
     
-        // Reset orchestrator mode selection to default
-        setOrchestratorExecutionMode('parallel_execution')
-    orchestratorModeHandlerRef.current?.resetSelection?.()
+    // Explicitly reset events and tracking for new chat
+    setEvents([])
+    setTotalEvents(0)
+    setLastEventCount(0)
+    setLastEventIndex(0)
+    processedCompletionEventsRef.current.clear()
     
     // Clear guidance state
     setSessionId(null)
@@ -1465,9 +1517,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay 
-              onDismissUserMessage={() => setShowUserMessage(false)}
-            />
+            <EventDisplay />
           </WorkflowModeHandler>
         ) : agentMode === 'orchestrator' ? (
           <OrchestratorModeHandler
@@ -1479,9 +1529,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay 
-              onDismissUserMessage={() => setShowUserMessage(false)}
-            />
+            <EventDisplay />
           </OrchestratorModeHandler>
         ) : (
           <>
@@ -1490,9 +1538,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay 
-              onDismissUserMessage={() => setShowUserMessage(false)}
-            />
+            <EventDisplay />
           </>
         )}
         </div>
@@ -1501,7 +1547,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       {/* Input Area - Completely isolated from event updates */}
       {!chatSessionId && (
         <ChatInput
-          onSubmit={submitQuery}
+          onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}
         />
@@ -1514,6 +1560,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
             <span>Streaming</span>
             <span>📊 {totalEvents} ({lastEventCount})</span>
+            
+            {/* Performance Metrics (Dev Mode Only) */}
+            {process.env.NODE_ENV === 'development' && (
+              <>
+                <span className="text-gray-500 dark:text-gray-400">|</span>
+                <span>Renders: {performanceMetrics.renderCount}</span>
+                <span>Memory: ~{performanceMetrics.memoryEstimate}KB</span>
+                <span>Render: {performanceMetrics.lastRenderTime.toFixed(1)}ms</span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1568,3 +1624,4 @@ const ChatArea = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 ChatArea.displayName = 'ChatArea'
 
 export default ChatArea
+

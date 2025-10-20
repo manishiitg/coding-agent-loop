@@ -42,11 +42,6 @@ func NewTodoValidationAgent(config *agents.OrchestratorAgentConfig, logger utils
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tva *TodoValidationAgent) GetBaseAgent() *agents.BaseAgent {
-	return tva.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (tva *TodoValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract required parameters
@@ -252,9 +247,4 @@ Focus on thorough validation using the execution outputs and providing actionabl
 	}
 
 	return result.String()
-}
-
-// GetPrompts returns nil since we use input processor
-func (tva *TodoValidationAgent) GetPrompts() interface{} {
-	return nil
 }

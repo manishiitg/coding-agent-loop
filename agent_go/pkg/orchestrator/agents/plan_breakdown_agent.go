@@ -37,11 +37,6 @@ func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.Extende
 	}
 }
 
-// Initialize initializes the plan breakdown agent (delegates to base)
-func (pba *PlanBreakdownAgent) Initialize(ctx context.Context) error {
-	return pba.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // ExecuteStructured executes the plan breakdown agent and returns structured output
 func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*BreakdownResponse, error) {
 	// Define the JSON schema for breakdown analysis
@@ -85,7 +80,7 @@ func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVa
 	}`
 
 	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := ExecuteStructured[BreakdownResponse](pba.BaseOrchestratorAgent, ctx, templateVars, pba.breakdownInputProcessor, conversationHistory, schema)
+	result, err := ExecuteStructuredWithInputProcessor[BreakdownResponse](pba.BaseOrchestratorAgent, ctx, templateVars, pba.breakdownInputProcessor, conversationHistory, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -132,19 +127,4 @@ type BreakdownStep struct {
 // BreakdownResponse represents the structured response from breakdown analysis
 type BreakdownResponse struct {
 	Steps []BreakdownStep `json:"steps"`
-}
-
-// GetAgentType returns the agent type
-func (pba *PlanBreakdownAgent) GetAgentType() AgentType {
-	return PlanBreakdownAgentType
-}
-
-// GetAgentName returns a human-readable name for the agent
-func (pba *PlanBreakdownAgent) GetAgentName() string {
-	return "Plan Breakdown Agent"
-}
-
-// GetAgentDescription returns a description of what this agent does
-func (pba *PlanBreakdownAgent) GetAgentDescription() string {
-	return "Analyzes execution plans and identifies independent steps that can be executed in parallel"
 }

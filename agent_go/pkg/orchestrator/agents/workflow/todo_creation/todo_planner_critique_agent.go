@@ -45,11 +45,6 @@ func NewTodoPlannerCritiqueAgent(config *agents.OrchestratorAgentConfig, logger 
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tpca *TodoPlannerCritiqueAgent) GetBaseAgent() *agents.BaseAgent {
-	return tpca.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (tpca *TodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract required parameters
@@ -270,9 +265,4 @@ Focus on verifying comprehensive iteration analysis, optimal method synthesis, a
 	}
 
 	return result.String()
-}
-
-// GetPrompts returns nil since we use input processor
-func (tpca *TodoPlannerCritiqueAgent) GetPrompts() interface{} {
-	return nil
 }

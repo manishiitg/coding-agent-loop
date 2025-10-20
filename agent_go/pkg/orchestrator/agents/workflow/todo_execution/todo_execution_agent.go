@@ -42,11 +42,6 @@ func NewTodoExecutionAgent(config *agents.OrchestratorAgentConfig, logger utils.
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tea *TodoExecutionAgent) GetBaseAgent() *agents.BaseAgent {
-	return tea.BaseOrchestratorAgent.BaseAgent()
-}
-
 // todoExecutionInputProcessor processes inputs specifically for todo execution
 func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[string]string) string {
 	// Create template data
@@ -276,11 +271,6 @@ Focus on executing as many incomplete todos as possible effectively and providin
 	}
 
 	return result.String()
-}
-
-// GetPrompts returns nil since we use input processor
-func (tea *TodoExecutionAgent) GetPrompts() interface{} {
-	return nil
 }
 
 // Execute implements the OrchestratorAgent interface

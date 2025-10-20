@@ -37,11 +37,6 @@ func NewOrchestratorParallelExecutionAgent(ctx context.Context, config *Orchestr
 	}
 }
 
-// Initialize initializes the parallel execution agent (delegates to base)
-func (pea *OrchestratorParallelExecutionAgent) Initialize(ctx context.Context) error {
-	return pea.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the parallel execution agent using the standard agent pattern
 func (pea *OrchestratorParallelExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
@@ -69,14 +64,4 @@ func (pea *OrchestratorParallelExecutionAgent) parallelExecutionInputProcessor(t
 	return result.String()
 }
 
-// GetType returns the agent type
-func (pea *OrchestratorParallelExecutionAgent) GetType() string {
-	return string(ParallelExecutionAgentType)
-}
-
 // Event system - now handled by unified events system
-
-// BaseAgent returns the underlying base agent for direct access
-func (pea *OrchestratorParallelExecutionAgent) BaseAgent() *BaseAgent {
-	return pea.baseAgent
-}

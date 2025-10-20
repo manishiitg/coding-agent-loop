@@ -42,26 +42,6 @@ func NewTodoRefinePlannerAgent(config *agents.OrchestratorAgentConfig, logger ut
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (trpa *TodoRefinePlannerAgent) GetBaseAgent() *agents.BaseAgent {
-	return trpa.BaseOrchestratorAgent.BaseAgent()
-}
-
-// GetType implements the OrchestratorAgent interface
-func (trpa *TodoRefinePlannerAgent) GetType() string {
-	return string(agents.TodoRefinePlannerAgentType)
-}
-
-// Initialize implements the OrchestratorAgent interface
-func (trpa *TodoRefinePlannerAgent) Initialize(ctx context.Context) error {
-	return trpa.BaseOrchestratorAgent.Initialize(ctx)
-}
-
-// Close implements the OrchestratorAgent interface
-func (trpa *TodoRefinePlannerAgent) Close() error {
-	return trpa.BaseOrchestratorAgent.Close()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (trpa *TodoRefinePlannerAgent) Execute(ctx context.Context, templateVars map[string]string, messages []llms.MessageContent) (string, error) {
 	// Extract objective from template variables
@@ -232,16 +212,4 @@ Begin the analysis and refinement process now.`
 	}
 
 	return result.String()
-}
-
-// GetPrompt returns the actual prompt used by this agent
-func (trpa *TodoRefinePlannerAgent) GetPrompt(objective, critiqueFeedback string) string {
-	// Prepare template variables
-	templateVars := map[string]string{
-		"Objective":        objective,
-		"CritiqueFeedback": critiqueFeedback,
-	}
-
-	// Call the input processor to get the actual prompt
-	return trpa.todoRefinePlannerInputProcessor(templateVars)
 }

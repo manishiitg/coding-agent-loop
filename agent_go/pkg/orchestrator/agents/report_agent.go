@@ -37,11 +37,6 @@ func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.Ex
 	}
 }
 
-// Initialize initializes the report agent (delegates to base)
-func (ra *OrchestratorReportAgent) Initialize(ctx context.Context) error {
-	return ra.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the report agent with report-specific input processing
 func (ra *OrchestratorReportAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	return ra.ExecuteWithInputProcessor(ctx, templateVars, ra.reportInputProcessor, conversationHistory)
@@ -66,6 +61,3 @@ func (ra *OrchestratorReportAgent) reportInputProcessor(templateVars map[string]
 
 	return result.String()
 }
-
-// All other methods (GetType, GetConfig, Close, BaseAgent, GetBaseAgent, createLLM)
-// are now inherited from BaseOrchestratorAgent

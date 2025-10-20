@@ -43,11 +43,6 @@ func NewWorkspaceUpdateAgent(config *agents.OrchestratorAgentConfig, logger util
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (wua *WorkspaceUpdateAgent) GetBaseAgent() *agents.BaseAgent {
-	return wua.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (wua *WorkspaceUpdateAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract required parameters
@@ -223,9 +218,4 @@ Focus on maintaining a clean, organized, and up-to-date workspace with proper to
 	}
 
 	return result.String()
-}
-
-// GetPrompts returns nil since we use input processor
-func (wua *WorkspaceUpdateAgent) GetPrompts() interface{} {
-	return nil
 }

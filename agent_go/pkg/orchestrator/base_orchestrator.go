@@ -144,10 +144,9 @@ func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective:     objective,
-		AgentsCount:   agentsCount,
-		ServersCount:  len(bo.selectedServers),
-		ExecutionMode: executionMode,
+		Objective:    objective,
+		AgentsCount:  agentsCount,
+		ServersCount: len(bo.selectedServers),
 	}
 
 	bo.emitEvent(ctx, events.OrchestratorStart, eventData)
@@ -162,65 +161,36 @@ func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, 
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective:     objective,
-		Result:        result,
-		Status:        status,
-		Duration:      duration,
-		ExecutionMode: executionMode,
+		Objective: objective,
+		Result:    result,
+		Status:    status,
+		Duration:  duration,
 	}
 
 	bo.emitEvent(ctx, events.OrchestratorEnd, eventData)
 }
 
-// EmitAgentStart emits an agent start event
-func (bo *BaseOrchestrator) EmitAgentStart(ctx context.Context, agentType, agentName, objective string, stepIndex, iteration int, templateVars map[string]string, executionMode string) {
-	bo.GetLogger().Infof("📤 Emitting agent start event: %s", agentName)
+// EmitUnifiedCompletionEvent emits a unified completion event
+func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agentType, agentMode, question, finalResult, status string, turns int) {
+	bo.GetLogger().Infof("📤 Emitting unified completion event: %s", status)
 
-	eventData := &events.OrchestratorAgentStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		AgentType:     agentType,
-		AgentName:     agentName,
-		Objective:     objective,
-		InputData:     templateVars,
-		ModelID:       bo.llmConfig.ModelID,
-		Provider:      bo.llmConfig.Provider,
-		ServersCount:  len(bo.selectedServers),
-		MaxTurns:      bo.maxTurns,
-		StepIndex:     stepIndex,
-		Iteration:     iteration,
-		ExecutionMode: executionMode,
+	duration := time.Since(bo.startTime)
+	completionEventData := events.NewUnifiedCompletionEvent(
+		agentType,
+		agentMode,
+		question,
+		finalResult,
+		status,
+		duration,
+		turns,
+	)
+
+	agentEvent := events.NewAgentEvent(completionEventData)
+
+	// Emit through event bridge directly
+	if err := bo.contextAwareBridge.HandleEvent(ctx, agentEvent); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to emit unified completion event: %v", err)
 	}
-
-	bo.emitEvent(ctx, events.OrchestratorAgentStart, eventData)
-}
-
-// EmitAgentEnd emits an agent end event
-func (bo *BaseOrchestrator) EmitAgentEnd(ctx context.Context, agentType, agentName, objective, result string, stepIndex, iteration int, duration time.Duration, executionMode string) {
-	bo.GetLogger().Infof("📤 Emitting agent end event: %s", agentName)
-
-	eventData := &events.OrchestratorAgentEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		AgentType:     agentType,
-		AgentName:     agentName,
-		Objective:     objective,
-		InputData:     make(map[string]string), // Empty - input data is captured in start event
-		Result:        result,
-		Success:       true, // Assume success unless explicitly set otherwise
-		Duration:      duration,
-		ModelID:       bo.llmConfig.ModelID,
-		Provider:      bo.llmConfig.Provider,
-		ServersCount:  len(bo.selectedServers),
-		MaxTurns:      bo.maxTurns,
-		StepIndex:     stepIndex,
-		Iteration:     iteration,
-		ExecutionMode: executionMode,
-	}
-
-	bo.emitEvent(ctx, events.OrchestratorAgentEnd, eventData)
 }
 
 // RegisterWorkspaceTools registers workspace tools with a sub-agent

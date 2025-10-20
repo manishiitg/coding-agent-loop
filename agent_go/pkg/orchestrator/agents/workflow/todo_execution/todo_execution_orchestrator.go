@@ -67,7 +67,6 @@ func NewTodoExecutionOrchestrator(
 // ExecuteTodos orchestrates the multi-agent todo execution process
 func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objective, workspacePath, runOption string) (string, error) {
 	teo.GetLogger().Infof("🚀 Starting multi-agent todo execution for objective: %s", objective)
-	teo.GetLogger().Infof("📁 Using workspace path: %s", workspacePath)
 
 	// Set objective and workspace path directly
 	teo.SetObjective(objective)
@@ -116,14 +115,10 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 
 // runExecutionPhase executes todos using the execution agent
 func (teo *TodoExecutionOrchestrator) runExecutionPhase(ctx context.Context, runOption string) (string, error) {
-	teo.GetLogger().Infof("🚀 Creating execution agent")
-
 	executionAgent, err := teo.createExecutionAgent("execution", 0, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create execution agent: %w", err)
 	}
-
-	teo.GetLogger().Infof("🚀 Executing todos with run option: %s", runOption)
 
 	// Prepare template variables for Execute method
 	templateVars := map[string]string{
@@ -137,20 +132,16 @@ func (teo *TodoExecutionOrchestrator) runExecutionPhase(ctx context.Context, run
 		return "", fmt.Errorf("execution failed: %w", err)
 	}
 
-	teo.GetLogger().Infof("✅ Execution phase completed: %d characters", len(executionResult))
 	return executionResult, nil
 }
 
 // runValidationPhase validates execution results using the validation agent
 func (teo *TodoExecutionOrchestrator) runValidationPhase(ctx context.Context, executionResult string) (string, error) {
-	teo.GetLogger().Infof("🔍 Creating validation agent")
-
 	validationAgent, err := teo.createValidationAgent("validation", 1, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create validation agent: %w", err)
 	}
 
-	teo.GetLogger().Infof("🔍 Validating execution results")
 	validationTemplateVars := map[string]string{
 		"Objective":       teo.GetObjective(),
 		"WorkspacePath":   teo.GetWorkspacePath(),
@@ -161,20 +152,16 @@ func (teo *TodoExecutionOrchestrator) runValidationPhase(ctx context.Context, ex
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
 
-	teo.GetLogger().Infof("✅ Validation phase completed: %d characters", len(validationResult))
 	return validationResult, nil
 }
 
 // runWorkspaceUpdatePhase updates workspace using the workspace agent
 func (teo *TodoExecutionOrchestrator) runWorkspaceUpdatePhase(ctx context.Context, executionResult, validationResult string) (string, error) {
-	teo.GetLogger().Infof("📁 Creating workspace update agent")
-
 	workspaceAgent, err := teo.createWorkspaceAgent("workspace", 2, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create workspace agent: %w", err)
 	}
 
-	teo.GetLogger().Infof("📁 Updating workspace with execution and validation results")
 	workspaceTemplateVars := map[string]string{
 		"Objective":        teo.GetObjective(),
 		"WorkspacePath":    teo.GetWorkspacePath(),
@@ -186,7 +173,6 @@ func (teo *TodoExecutionOrchestrator) runWorkspaceUpdatePhase(ctx context.Contex
 		return "", fmt.Errorf("workspace update failed: %w", err)
 	}
 
-	teo.GetLogger().Infof("✅ Workspace update phase completed: %d characters", len(workspaceResult))
 	return workspaceResult, nil
 }
 
@@ -212,8 +198,6 @@ func (teo *TodoExecutionOrchestrator) createConditionalLLM() (*llm.ConditionalLL
 
 // checkCompletion uses conditional logic to determine if all todos are completed
 func (teo *TodoExecutionOrchestrator) checkCompletion(ctx context.Context, workspaceResult string) (bool, string, error) {
-	teo.GetLogger().Infof("🎯 Checking todo completion status using conditional logic")
-
 	// Create conditional LLM on-demand
 	conditionalLLM, err := teo.createConditionalLLM()
 	if err != nil {
@@ -232,7 +216,6 @@ func (teo *TodoExecutionOrchestrator) checkCompletion(ctx context.Context, works
 		return false, "Conditional decision failed: " + err.Error(), err
 	}
 
-	teo.GetLogger().Infof("🎯 Conditional logic result: %t - %s", result.GetResult(), result.Reason)
 	return result.GetResult(), result.Reason, nil
 }
 

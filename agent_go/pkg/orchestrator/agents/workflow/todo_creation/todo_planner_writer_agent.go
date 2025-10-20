@@ -46,11 +46,6 @@ func NewTodoPlannerWriterAgent(config *agents.OrchestratorAgentConfig, logger ut
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tpwa *TodoPlannerWriterAgent) GetBaseAgent() *agents.BaseAgent {
-	return tpwa.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (tpwa *TodoPlannerWriterAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract variables from template variables

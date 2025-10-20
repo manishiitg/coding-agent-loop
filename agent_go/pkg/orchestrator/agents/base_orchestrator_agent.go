@@ -105,13 +105,12 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// ExecuteStructured executes the agent with structured output and proper event emission
-func ExecuteStructured[T any](boa *BaseOrchestratorAgent, ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent, schema string) (T, error) {
+// ExecuteStructuredWithInputProcessor executes the agent with structured output and proper event emission
+func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent, schema string) (T, error) {
 	startTime := time.Now()
 
-	// Auto-emit agent start event with agent-specific execution type
-	executionType := fmt.Sprintf("%s_structured_execution", boa.agentType)
-	boa.emitAgentStartEvent(ctx, templateVars, executionType)
+	// Auto-emit agent start event
+	boa.emitAgentStartEvent(ctx, templateVars)
 
 	// Process inputs using the provided processor function
 	userMessage := inputProcessor(templateVars)
@@ -132,7 +131,7 @@ func ExecuteStructured[T any](boa *BaseOrchestratorAgent, ctx context.Context, t
 	} else {
 		resultStr = fmt.Sprintf("Generated %s structured output", boa.agentType)
 	}
-	boa.emitAgentEndEvent(ctx, templateVars, resultStr, err, duration, executionType)
+	boa.emitAgentEndEvent(ctx, templateVars, resultStr, err, duration)
 
 	if err != nil {
 		var zero T
@@ -147,7 +146,7 @@ func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context,
 	startTime := time.Now()
 
 	// Auto-emit agent start event
-	boa.emitAgentStartEvent(ctx, templateVars, "sequential_execution")
+	boa.emitAgentStartEvent(ctx, templateVars)
 
 	// Starting orchestrator agent execution
 
@@ -163,7 +162,7 @@ func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context,
 	duration := time.Since(startTime)
 
 	// Auto-emit agent end event
-	boa.emitAgentEndEvent(ctx, templateVars, result, err, duration, "sequential_execution")
+	boa.emitAgentEndEvent(ctx, templateVars, result, err, duration)
 
 	if err != nil {
 		boa.logger.Errorf("❌ Base Orchestrator Agent (%s) execution failed: %v", boa.agentType, err)
@@ -237,8 +236,8 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 }
 
 // emitAgentStartEvent emits an agent start event automatically
-func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string, executionMode string) {
-	boa.logger.Infof("🔍 emitAgentStartEvent called for agent type: %s, executionMode: %s", boa.agentType, executionMode)
+func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string) {
+	boa.logger.Infof("🔍 emitAgentStartEvent called for agent type: %s", boa.agentType)
 
 	if boa.orchestratorContext == nil {
 		boa.logger.Warnf("⚠️ Orchestrator context is nil - skipping agent start event emission for %s", boa.agentType)
@@ -252,24 +251,23 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		AgentType:     string(boa.agentType),
-		AgentName:     boa.orchestratorContext.AgentName,
-		Objective:     boa.orchestratorContext.Objective,
-		InputData:     templateVars,
-		ModelID:       boa.config.Model,
-		Provider:      boa.config.Provider,
-		ServersCount:  len(boa.config.ServerNames),
-		MaxTurns:      boa.config.MaxTurns,
-		StepIndex:     boa.orchestratorContext.StepIndex,
-		Iteration:     boa.orchestratorContext.Iteration,
-		ExecutionMode: executionMode,
+		AgentType:    string(boa.agentType),
+		AgentName:    boa.orchestratorContext.AgentName,
+		Objective:    boa.orchestratorContext.Objective,
+		InputData:    templateVars,
+		ModelID:      boa.config.Model,
+		Provider:     boa.config.Provider,
+		ServersCount: len(boa.config.ServerNames),
+		MaxTurns:     boa.config.MaxTurns,
+		StepIndex:    boa.orchestratorContext.StepIndex,
+		Iteration:    boa.orchestratorContext.Iteration,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentStart, eventData)
 }
 
 // emitAgentEndEvent emits an agent end event automatically
-func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templateVars map[string]string, result string, err error, duration time.Duration, executionMode string) {
+func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templateVars map[string]string, result string, err error, duration time.Duration) {
 	if boa.orchestratorContext == nil {
 		return // No context available yet
 	}
@@ -283,20 +281,19 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templat
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		AgentType:     string(boa.agentType),
-		AgentName:     boa.orchestratorContext.AgentName,
-		Objective:     boa.orchestratorContext.Objective,
-		InputData:     templateVars,
-		Result:        result,
-		Success:       success,
-		Duration:      duration,
-		ModelID:       boa.config.Model,
-		Provider:      boa.config.Provider,
-		ServersCount:  len(boa.config.ServerNames),
-		MaxTurns:      boa.config.MaxTurns,
-		StepIndex:     boa.orchestratorContext.StepIndex,
-		Iteration:     boa.orchestratorContext.Iteration,
-		ExecutionMode: executionMode,
+		AgentType:    string(boa.agentType),
+		AgentName:    boa.orchestratorContext.AgentName,
+		Objective:    boa.orchestratorContext.Objective,
+		InputData:    templateVars,
+		Result:       result,
+		Success:      success,
+		Duration:     duration,
+		ModelID:      boa.config.Model,
+		Provider:     boa.config.Provider,
+		ServersCount: len(boa.config.ServerNames),
+		MaxTurns:     boa.config.MaxTurns,
+		StepIndex:    boa.orchestratorContext.StepIndex,
+		Iteration:    boa.orchestratorContext.Iteration,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentEnd, eventData)

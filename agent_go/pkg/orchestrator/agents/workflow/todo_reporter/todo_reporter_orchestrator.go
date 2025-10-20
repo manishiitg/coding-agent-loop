@@ -67,7 +67,6 @@ func NewTodoReporterOrchestrator(
 // ExecuteReportGeneration orchestrates the iterative report generation process
 func (tro *TodoReporterOrchestrator) ExecuteReportGeneration(ctx context.Context, objective, workspacePath string) (string, error) {
 	tro.GetLogger().Infof("📊 Starting iterative report generation for objective: %s", objective)
-	tro.GetLogger().Infof("📁 Using workspace path: %s", workspacePath)
 
 	// Set objective and workspace path directly
 	tro.SetObjective(objective)
@@ -106,31 +105,22 @@ func (tro *TodoReporterOrchestrator) ExecuteReportGeneration(ctx context.Context
 		}
 
 		// Step 3: Check if more improvement is needed
-		needsMoreWork, improvementReason, err := tro.checkImprovementNeeded(ctx, critiqueResult)
+		needsMoreWork, _, err := tro.checkImprovementNeeded(ctx, critiqueResult)
 		if err != nil {
 			tro.GetLogger().Warnf("⚠️ Report improvement check failed: %v", err)
 			needsMoreWork = true
-			improvementReason = "Improvement check failed: " + err.Error()
 		}
-
-		tro.GetLogger().Infof("📊 Report iteration %d improvement check: needs_more=%t, reason=%s", iteration, needsMoreWork, improvementReason)
 
 		// Store the current report result
 		finalReportResult = reportResult
 
 		// If critique is satisfied, exit the loop
 		if !needsMoreWork {
-			tro.GetLogger().Infof("✅ Report generation iteration %d: Critique satisfied, report complete", iteration)
 			break
 		}
 
 		// Store critique result for next iteration
 		previousCritiqueResult = critiqueResult
-
-		// If this is the last iteration, log warning
-		if iteration == maxIterations {
-			tro.GetLogger().Warnf("⚠️ Max report refinement iterations (%d) reached, returning last result", maxIterations)
-		}
 	}
 
 	duration := time.Since(tro.GetStartTime())
@@ -141,8 +131,6 @@ func (tro *TodoReporterOrchestrator) ExecuteReportGeneration(ctx context.Context
 
 // runReportGenerationPhase runs a single report generation iteration using the proper agent pattern
 func (tro *TodoReporterOrchestrator) runReportGenerationPhase(ctx context.Context, objective, previousCritiqueResult string, iteration int) (string, error) {
-	tro.GetLogger().Infof("📊 Running report generation phase iteration %d", iteration)
-
 	// Create ReportGenerationAgent for report generation
 	reportAgent, err := tro.createReportAgent("report_generation", 0, iteration)
 	if err != nil {
@@ -162,14 +150,11 @@ func (tro *TodoReporterOrchestrator) runReportGenerationPhase(ctx context.Contex
 		return "", fmt.Errorf("report generation execution failed: %v", err)
 	}
 
-	tro.GetLogger().Infof("✅ Report generation phase completed: %d characters", len(reportResult))
 	return reportResult, nil
 }
 
 // runCritiquePhase runs a single critique iteration using the proper agent pattern
 func (tro *TodoReporterOrchestrator) runCritiquePhase(ctx context.Context, objective, inputData, inputPrompt string, iteration int) (string, error) {
-	tro.GetLogger().Infof("🔍 Running critique phase iteration %d", iteration)
-
 	// Create DataCritiqueAgent for critique
 	critiqueAgent, err := tro.createCritiqueAgent("critique", 0, iteration)
 	if err != nil {
@@ -191,7 +176,6 @@ func (tro *TodoReporterOrchestrator) runCritiquePhase(ctx context.Context, objec
 		return "", fmt.Errorf("critique execution failed: %v", err)
 	}
 
-	tro.GetLogger().Infof("✅ Critique phase iteration %d completed: %d characters", iteration, len(critiqueResult))
 	return critiqueResult, nil
 }
 
@@ -217,8 +201,6 @@ func (tro *TodoReporterOrchestrator) createConditionalLLM() (*llm.ConditionalLLM
 
 // checkImprovementNeeded uses conditional logic to determine if there's room for more improvement
 func (tro *TodoReporterOrchestrator) checkImprovementNeeded(ctx context.Context, critiqueResult string) (bool, string, error) {
-	tro.GetLogger().Infof("🎯 Checking if more improvement is needed based on critique")
-
 	// Create conditional LLM on-demand
 	conditionalLLM, err := tro.createConditionalLLM()
 	if err != nil {
@@ -246,7 +228,6 @@ If the critique identifies ANY of these critical issues that would benefit from 
 		return false, "Improvement check failed: " + err.Error(), err
 	}
 
-	tro.GetLogger().Infof("🎯 Improvement check result: %t - %s", result.GetResult(), result.Reason)
 	return result.GetResult(), result.Reason, nil
 }
 

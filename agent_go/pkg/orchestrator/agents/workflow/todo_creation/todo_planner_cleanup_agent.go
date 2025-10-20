@@ -40,11 +40,6 @@ func NewTodoPlannerCleanupAgent(config *agents.OrchestratorAgentConfig, logger u
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tpca *TodoPlannerCleanupAgent) GetBaseAgent() *agents.BaseAgent {
-	return tpca.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (tpca *TodoPlannerCleanupAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract workspace path from template variables

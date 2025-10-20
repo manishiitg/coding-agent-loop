@@ -39,11 +39,6 @@ func NewPlanOrganizerAgent(config *OrchestratorAgentConfig, logger utils.Extende
 	}
 }
 
-// Initialize initializes the plan organizer agent (delegates to base)
-func (poa *PlanOrganizerAgent) Initialize(ctx context.Context) error {
-	return poa.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the plan organizer agent with organizer-specific input processing
 func (poa *PlanOrganizerAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	return poa.ExecuteWithInputProcessor(ctx, templateVars, poa.organizerInputProcessor, conversationHistory)
@@ -69,13 +64,4 @@ func (poa *PlanOrganizerAgent) organizerInputProcessor(templateVars map[string]s
 	return result.String()
 }
 
-// GetType returns the agent type
-func (poa *PlanOrganizerAgent) GetType() string {
-	return string(PlanOrganizerAgentType)
-}
-
 // Event system - now handled by unified events system
-// BaseAgent returns the underlying base agent for direct access
-func (poa *PlanOrganizerAgent) BaseAgent() *BaseAgent {
-	return poa.baseAgent
-}

@@ -61,6 +61,27 @@ func extractWorkspacePathFromObjective(objective string) string {
 	return ""
 }
 
+// createCustomTools creates workspace and human tools for orchestrator/workflow agents
+func createCustomTools() ([]llms.Tool, map[string]interface{}) {
+	// Create workspace and human tools for orchestrator/workflow agents
+	workspaceTools := virtualtools.CreateWorkspaceTools()
+	workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+	humanTools := virtualtools.CreateHumanTools()
+	humanExecutors := virtualtools.CreateHumanToolExecutors()
+
+	// Combine workspace and human tools
+	allTools := append(workspaceTools, humanTools...)
+	allExecutors := make(map[string]interface{})
+	for name, executor := range workspaceExecutors {
+		allExecutors[name] = executor
+	}
+	for name, executor := range humanExecutors {
+		allExecutors[name] = executor
+	}
+
+	return allTools, allExecutors
+}
+
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
 	Use:   "server",
@@ -1073,20 +1094,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// TODO: Memory tools removed from orchestrator - only needed for individual React agents
 			// memoryTools := virtualtools.CreateMemoryTools()
 			// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-			workspaceTools := virtualtools.CreateWorkspaceTools()
-			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-			humanTools := virtualtools.CreateHumanTools()
-			humanExecutors := virtualtools.CreateHumanToolExecutors()
-
-			// Combine workspace and human tools for orchestrator agents
-			allTools := append(workspaceTools, humanTools...)
-			allExecutors := make(map[string]interface{})
-			for name, executor := range workspaceExecutors {
-				allExecutors[name] = executor
-			}
-			for name, executor := range humanExecutors {
-				allExecutors[name] = executor
-			}
+			allTools, allExecutors := createCustomTools()
 
 			// Create standardized orchestrator instance with full configuration
 			var err error
@@ -1115,7 +1123,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[ORCHESTRATOR DEBUG] Successfully created standardized orchestrator for session %s", sessionID)
 			}
 
-			log.Printf("[ORCHESTRATOR DEBUG] Custom tools (%d workspace + %d human = %d total) passed during construction", len(workspaceTools), len(humanTools), len(allTools))
+			log.Printf("[ORCHESTRATOR DEBUG] Custom tools (%d total) passed during construction", len(allTools))
 
 			if err != nil {
 
@@ -1173,29 +1181,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}()
 
 				log.Printf("[ORCHESTRATOR DEBUG] Starting asynchronous orchestrator execution for query %s", queryID)
-
-				// Emit orchestrator start event
-				orchestratorStartEvent := &unifiedevents.OrchestratorStartEvent{
-					BaseEventData: unifiedevents.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Objective:     req.Query,
-					AgentsCount:   5, // planning, execution, validation, organizer, report generation
-					ServersCount:  len(selectedServers),
-					Configuration: fmt.Sprintf("Provider: %s, Model: %s", req.Provider, req.ModelID),
-					ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
-				}
-
-				// Create unified event wrapper
-				unifiedEvent := &unifiedevents.AgentEvent{
-					Type:      unifiedevents.OrchestratorStart,
-					Timestamp: time.Now(),
-					Data:      orchestratorStartEvent,
-				}
-
-				// Emit through the bridge
-				orchestratorAgentEventBridge.HandleEvent(orchestratorCtx, unifiedEvent)
-				log.Printf("[ORCHESTRATOR DEBUG] Emitted orchestrator start event")
 
 				// Extract workspace path from objective
 				workspacePath := extractWorkspacePathFromObjective(req.Query)
@@ -1294,60 +1279,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					"status": "completed",
 				})
 
-				// Emit orchestrator end event
-				duration := time.Since(startTime)
-				status := "completed"
-				errorMsg := ""
-
-				orchestratorEndEvent := &unifiedevents.OrchestratorEndEvent{
-					BaseEventData: unifiedevents.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Objective:     req.Query,
-					Result:        result,
-					Duration:      duration,
-					Status:        status,
-					Error:         errorMsg,
-					ExecutionMode: string(req.OrchestratorExecutionMode), // Use the execution mode from the request
-				}
-
-				// Create unified event wrapper
-				unifiedEvent = &unifiedevents.AgentEvent{
-					Type:      unifiedevents.OrchestratorEnd,
-					Timestamp: time.Now(),
-					Data:      orchestratorEndEvent,
-				}
-
-				// Emit through the bridge
-				orchestratorAgentEventBridge.HandleEvent(orchestratorCtx, unifiedEvent)
-				log.Printf("[ORCHESTRATOR DEBUG] Emitted orchestrator end event")
-
-				// Emit server-level completion event for orchestrator mode
-				completionEventData := unifiedevents.NewUnifiedCompletionEvent(
-					"orchestrator",        // agentType
-					"orchestrator",        // agentMode
-					req.Query,             // question
-					result,                // finalResult
-					"completed",           // status
-					time.Since(startTime), // duration
-					1,                     // turns
-				)
-
-				// Log the completion event data length for debugging
-				log.Printf("[ORCHESTRATOR DEBUG] Unified completion event final_result length: %d characters", len(result))
-
-				agentEvent := unifiedevents.NewAgentEvent(completionEventData)
-				agentEvent.SessionID = observerID
-
-				serverCompletionEvent := events.Event{
-					ID:        fmt.Sprintf("server_completion_%s_%d", queryID, time.Now().UnixNano()),
-					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
-					Timestamp: time.Now(),
-					Data:      agentEvent,
-					SessionID: observerID,
-				}
-				api.eventStore.AddEvent(observerID, serverCompletionEvent)
-				log.Printf("[SERVER DEBUG] Emitted orchestrator server completion event for query %s", queryID)
+				// Orchestrator completion events are now handled by the orchestrator itself
+				log.Printf("[ORCHESTRATOR DEBUG] Orchestrator execution completed for query %s", queryID)
 
 				log.Printf("[ORCHESTRATOR DEBUG] Asynchronous orchestrator execution completed for query %s", queryID)
 			}()
@@ -1440,20 +1373,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// TODO: Memory tools removed from workflow - only needed for individual React agents
 			// memoryTools := virtualtools.CreateMemoryTools()
 			// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-			workspaceTools := virtualtools.CreateWorkspaceTools()
-			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-			humanTools := virtualtools.CreateHumanTools()
-			humanExecutors := virtualtools.CreateHumanToolExecutors()
-
-			// Combine workspace and human tools for workflow agents
-			allTools := append(workspaceTools, humanTools...)
-			allExecutors := make(map[string]interface{})
-			for name, executor := range workspaceExecutors {
-				allExecutors[name] = executor
-			}
-			for name, executor := range humanExecutors {
-				allExecutors[name] = executor
-			}
+			allTools, allExecutors := createCustomTools()
 
 			// Create workflow orchestrator for this request
 			workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
@@ -1479,7 +1399,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			log.Printf("[WORKFLOW DEBUG] Created workflow orchestrator with %d custom tools (%d workspace + %d human)", len(allTools), len(workspaceTools), len(humanTools))
+			log.Printf("[WORKFLOW DEBUG] Created workflow orchestrator with %d custom tools", len(allTools))
 
 			// Store workflow orchestrator for guidance injection
 			api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
@@ -1585,6 +1505,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					})
 				} else {
 					log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
+					// Workflow completion events are now handled by the workflow orchestrator itself
 				}
 			}()
 
@@ -1659,116 +1580,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add React-specific instructions and virtual tools only for React agents
 			if agentConfig.AgentMode == mcpagent.ReActAgent {
 				underlyingAgent.AppendSystemPrompt(GetReactAgentInstructions())
-
-				// Register memory tools for React agents (commented out - memory API not running)
-				// memoryTools := virtualtools.CreateMemoryTools()
-				// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-
-				// for _, tool := range memoryTools {
-				// 	if executor, exists := memoryExecutors[tool.Function.Name]; exists {
-				// 		// Type assert parameters to map[string]interface{}
-				// 		params, ok := tool.Function.Parameters.(map[string]interface{})
-				// 		if !ok {
-				// 			log.Printf("[MEMORY TOOLS] Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-				// 			continue
-				// 		}
-
-				// 		underlyingAgent.RegisterCustomTool(
-				// 			tool.Function.Name,
-				// 			tool.Function.Description,
-				// 			params,
-				// 			executor,
-				// 		)
-				// 	}
-				// }
-
-				// Register workspace and human tools for all agents (both Simple and ReAct)
-				workspaceTools := virtualtools.CreateWorkspaceTools()
-				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-				humanTools := virtualtools.CreateHumanTools()
-				humanExecutors := virtualtools.CreateHumanToolExecutors()
-
-				// Register workspace tools
-				for _, tool := range workspaceTools {
-					if executor, exists := workspaceExecutors[tool.Function.Name]; exists {
-						// Type assert parameters to map[string]interface{}
-						params, ok := tool.Function.Parameters.(map[string]interface{})
-						if !ok {
-							log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-							continue
-						}
-
-						underlyingAgent.RegisterCustomTool(
-							tool.Function.Name,
-							tool.Function.Description,
-							params,
-							executor,
-						)
-					}
-				}
-
-				// Register human tools
-				for _, tool := range humanTools {
-					if executor, exists := humanExecutors[tool.Function.Name]; exists {
-						// Type assert parameters to map[string]interface{}
-						params, ok := tool.Function.Parameters.(map[string]interface{})
-						if !ok {
-							log.Printf("[HUMAN TOOLS] Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-							continue
-						}
-
-						underlyingAgent.RegisterCustomTool(
-							tool.Function.Name,
-							tool.Function.Description,
-							params,
-							executor,
-						)
-					}
-				}
-			} else {
-				// Register workspace and human tools for Simple agents too
-				workspaceTools := virtualtools.CreateWorkspaceTools()
-				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-				humanTools := virtualtools.CreateHumanTools()
-				humanExecutors := virtualtools.CreateHumanToolExecutors()
-
-				// Register workspace tools
-				for _, tool := range workspaceTools {
-					if executor, exists := workspaceExecutors[tool.Function.Name]; exists {
-						// Type assert parameters to map[string]interface{}
-						params, ok := tool.Function.Parameters.(map[string]interface{})
-						if !ok {
-							log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-							continue
-						}
-
-						underlyingAgent.RegisterCustomTool(
-							tool.Function.Name,
-							tool.Function.Description,
-							params,
-							executor,
-						)
-					}
-				}
-
-				// Register human tools
-				for _, tool := range humanTools {
-					if executor, exists := humanExecutors[tool.Function.Name]; exists {
-						// Type assert parameters to map[string]interface{}
-						params, ok := tool.Function.Parameters.(map[string]interface{})
-						if !ok {
-							log.Printf("[HUMAN TOOLS] Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-							continue
-						}
-
-						underlyingAgent.RegisterCustomTool(
-							tool.Function.Name,
-							tool.Function.Description,
-							params,
-							executor,
-						)
-					}
-				}
 			}
 		}
 

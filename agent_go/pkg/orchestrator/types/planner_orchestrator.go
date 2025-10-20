@@ -306,7 +306,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Execute the current step
 
 		// Create execution agent on-demand
-		executionAgent, err := po.createDedicatedExecutionAgent(ctx, currentStepIndex)
+		executionAgent, err := po.createDedicatedExecutionAgent(ctx, currentStepIndex, iteration)
 		if err != nil {
 			po.GetLogger().Errorf("❌ Failed to create execution agent: %v", err)
 			emitOrchestratorError(err, "execution phase")
@@ -496,6 +496,11 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 
 	po.GetLogger().Infof("🎉 Sequential Planner Orchestrator Flow completed successfully after %d iterations!", len(planningResults))
 
+	// Emit orchestrator completion events
+	executionMode := po.GetExecutionMode().String()
+	po.EmitOrchestratorEnd(ctx, objective, finalResult, "completed", "", executionMode)
+	po.EmitUnifiedCompletionEvent(ctx, "planner", "planner", objective, finalResult, "completed", len(planningResults))
+
 	return finalResult, nil
 }
 
@@ -565,6 +570,11 @@ func (po *PlannerOrchestrator) executeParallel(ctx context.Context, objective st
 		emitOrchestratorError(err, "parallel report generation")
 		return "", fmt.Errorf("failed to generate parallel report: %w", err)
 	}
+
+	// Emit orchestrator completion events
+	executionMode := po.GetExecutionMode().String()
+	po.EmitOrchestratorEnd(ctx, objective, finalReport, "completed", "", executionMode)
+	po.EmitUnifiedCompletionEvent(ctx, "planner", "planner", objective, finalReport, "completed", len(parallelResults))
 
 	return finalReport, nil
 }
@@ -833,7 +843,7 @@ func (po *PlannerOrchestrator) executeStepsInParallel(ctx context.Context, steps
 // executeSingleStep executes a single step
 func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step ParallelStep, stepIndex int, allSteps []ParallelStep) (string, error) {
 	// Create dedicated execution agent for this step
-	executionAgent, err := po.createDedicatedExecutionAgent(ctx, stepIndex)
+	executionAgent, err := po.createDedicatedExecutionAgent(ctx, stepIndex, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create execution agent: %w", err)
 	}
@@ -889,30 +899,54 @@ func (po *PlannerOrchestrator) validateSingleStep(ctx context.Context, step Para
 	return validationResult, nil
 }
 
-// createDedicatedExecutionAgent creates a dedicated execution agent for parallel step execution
-func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context, stepIndex int) (agents.OrchestratorAgent, error) {
-	agentName := fmt.Sprintf("parallel-execution-agent-step-%d", stepIndex+1)
+// createDedicatedExecutionAgent creates a dedicated execution agent based on execution mode
+func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
+	// Check execution mode to determine which agent to create
+	if po.IsParallelMode() {
+		// Use parallel execution agent for parallel mode
+		agentName := fmt.Sprintf("parallel-execution-agent-step-%d", stepIndex+1)
 
-	// Use standardized agent creation and setup
-	agent, err := po.CreateAndSetupStandardAgent(
-		"parallel_execution",
-		agentName,
-		"parallel_execution", // phase
-		stepIndex,            // step
-		0,                    // iteration
-		po.GetMaxTurns(),     // maxTurns
-		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
-			return agents.NewOrchestratorParallelExecutionAgent(context.Background(), config, logger, tracer, eventBridge)
-		},
-		po.WorkspaceTools,
-		po.WorkspaceToolExecutors,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create parallel execution agent: %w", err)
+		agent, err := po.CreateAndSetupStandardAgent(
+			"parallel_execution",
+			agentName,
+			"parallel_execution", // phase
+			stepIndex,            // step
+			iteration,            // iteration
+			po.GetMaxTurns(),     // maxTurns
+			agents.OutputFormatStructured,
+			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+				return agents.NewOrchestratorParallelExecutionAgent(context.Background(), config, logger, tracer, eventBridge)
+			},
+			po.WorkspaceTools,
+			po.WorkspaceToolExecutors,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create parallel execution agent: %w", err)
+		}
+		return agent, nil
+	} else {
+		// Use regular execution agent for sequential mode
+		agentName := fmt.Sprintf("execution-agent-step-%d", stepIndex+1)
+
+		agent, err := po.CreateAndSetupStandardAgent(
+			"execution",
+			agentName,
+			"sequential_execution", // phase
+			stepIndex,              // step
+			iteration,              // iteration
+			po.GetMaxTurns(),       // maxTurns
+			agents.OutputFormatStructured,
+			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+				return agents.NewOrchestratorExecutionAgent(context.Background(), config, logger, tracer, eventBridge)
+			},
+			po.WorkspaceTools,
+			po.WorkspaceToolExecutors,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create execution agent: %w", err)
+		}
+		return agent, nil
 	}
-
-	return agent, nil
 }
 
 // createDedicatedValidationAgent creates a dedicated validation agent for parallel step validation

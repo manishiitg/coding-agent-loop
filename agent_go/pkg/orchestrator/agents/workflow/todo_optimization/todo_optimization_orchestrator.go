@@ -65,7 +65,6 @@ func NewTodoOptimizationOrchestrator(
 // ExecuteRefinement orchestrates the iterative refinement process
 func (too *TodoOptimizationOrchestrator) ExecuteRefinement(ctx context.Context, objective, workspacePath string) (string, error) {
 	too.GetLogger().Infof("🔄 Starting iterative refinement for objective: %s", objective)
-	too.GetLogger().Infof("📁 Using workspace path: %s", workspacePath)
 
 	// Set objective and workspace path directly
 	too.SetObjective(objective)
@@ -77,7 +76,7 @@ func (too *TodoOptimizationOrchestrator) ExecuteRefinement(ctx context.Context, 
 	// Iterative refinement loop
 	var previousCritiqueResult string
 	for iteration := 1; iteration <= maxIterations; iteration++ {
-		too.GetLogger().Infof("🔄 Refinement iteration %d/%d", iteration, maxIterations)
+		too.GetLogger().Infof("🔄 Iteration %d/%d: Refining todo list...", iteration, maxIterations)
 
 		// Step 1: Refine the todo list (use previous critique result for improvement)
 		refinementResult, err := too.runRefinementPhase(ctx, objective, previousCritiqueResult, iteration)
@@ -95,31 +94,22 @@ func (too *TodoOptimizationOrchestrator) ExecuteRefinement(ctx context.Context, 
 		}
 
 		// Step 3: Check if there's room for more improvement
-		needsMoreImprovement, improvementReason, err := too.checkImprovementNeeded(ctx, critiqueResult)
+		needsMoreImprovement, _, err := too.checkImprovementNeeded(ctx, critiqueResult)
 		if err != nil {
 			too.GetLogger().Warnf("⚠️ Improvement check failed: %v", err)
 			needsMoreImprovement = true
-			improvementReason = "Improvement check failed: " + err.Error()
 		}
-
-		too.GetLogger().Infof("🎯 Iteration %d improvement check: needs_more=%t, reason=%s", iteration, needsMoreImprovement, improvementReason)
 
 		// Store the current refinement result
 		finalRefinementResult = refinementResult
 
 		// If critique is satisfied, exit the loop
 		if !needsMoreImprovement {
-			too.GetLogger().Infof("✅ Refinement iteration %d: Critique satisfied, refinement complete", iteration)
 			break
 		}
 
 		// Store critique result for next iteration
 		previousCritiqueResult = critiqueResult
-
-		// If this is the last iteration, log warning
-		if iteration == maxIterations {
-			too.GetLogger().Warnf("⚠️ Max refinement iterations (%d) reached, returning last result", maxIterations)
-		}
 	}
 
 	duration := time.Since(too.GetStartTime())
@@ -130,8 +120,6 @@ func (too *TodoOptimizationOrchestrator) ExecuteRefinement(ctx context.Context, 
 
 // runRefinementPhase runs a single refinement iteration using the proper agent pattern
 func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context, objective, previousCritiqueResult string, iteration int) (string, error) {
-	too.GetLogger().Infof("🔧 Running refinement phase iteration %d", iteration)
-
 	// Create TodoRefinePlannerAgent for refinement
 	refineAgent, err := too.createRefineAgent("refinement", 0, iteration)
 	if err != nil {
@@ -152,14 +140,11 @@ func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context,
 		return "", fmt.Errorf("refinement execution failed: %v", err)
 	}
 
-	too.GetLogger().Infof("✅ Refinement phase iteration %d completed: %d characters", iteration, len(refinementResult))
 	return refinementResult, nil
 }
 
 // runCritiquePhase runs a single critique iteration using the proper agent pattern
 func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, objective, inputData, inputPrompt string, iteration int) (string, error) {
-	too.GetLogger().Infof("🔍 Running critique phase iteration %d", iteration)
-
 	// Create DataCritiqueAgent for critique
 	critiqueAgent, err := too.createCritiqueAgent("critique", 1, iteration)
 	if err != nil {
@@ -181,7 +166,6 @@ func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, o
 		return "", fmt.Errorf("critique execution failed: %v", err)
 	}
 
-	too.GetLogger().Infof("✅ Critique phase iteration %d completed: %d characters", iteration, len(critiqueResult))
 	return critiqueResult, nil
 }
 
@@ -207,8 +191,6 @@ func (too *TodoOptimizationOrchestrator) createConditionalLLM() (*llm.Conditiona
 
 // checkImprovementNeeded uses conditional logic to determine if there's room for more improvement
 func (too *TodoOptimizationOrchestrator) checkImprovementNeeded(ctx context.Context, critiqueResult string) (bool, string, error) {
-	too.GetLogger().Infof("🎯 Checking if more improvement is needed based on critique")
-
 	// Create conditional LLM on-demand
 	conditionalLLM, err := too.createConditionalLLM()
 	if err != nil {
@@ -236,7 +218,6 @@ If the critique identifies ANY of these critical issues that would benefit from 
 		return false, "Improvement check failed: " + err.Error(), err
 	}
 
-	too.GetLogger().Infof("🎯 Improvement check result: %t - %s", result.GetResult(), result.Reason)
 	return result.GetResult(), result.Reason, nil
 }
 
@@ -301,9 +282,4 @@ func (too *TodoOptimizationOrchestrator) Execute(ctx context.Context, objective 
 
 	// Call the existing ExecuteRefinement method
 	return too.ExecuteRefinement(ctx, objective, workspacePath)
-}
-
-// GetType returns the orchestrator type
-func (too *TodoOptimizationOrchestrator) GetType() string {
-	return "todo_optimization"
 }

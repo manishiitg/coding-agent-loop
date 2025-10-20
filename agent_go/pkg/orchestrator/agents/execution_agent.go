@@ -37,11 +37,6 @@ func NewOrchestratorExecutionAgent(ctx context.Context, config *OrchestratorAgen
 	}
 }
 
-// Initialize initializes the execution agent (delegates to base)
-func (ea *OrchestratorExecutionAgent) Initialize(ctx context.Context) error {
-	return ea.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the execution agent with execution-specific input processing
 func (ea *OrchestratorExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	return ea.ExecuteWithInputProcessor(ctx, templateVars, ea.executionInputProcessor, conversationHistory)
@@ -67,14 +62,4 @@ func (ea *OrchestratorExecutionAgent) executionInputProcessor(templateVars map[s
 	return result.String()
 }
 
-// GetType returns the agent type
-func (ea *OrchestratorExecutionAgent) GetType() string {
-	return string(ExecutionAgentType)
-}
-
 // Event system - now handled by unified events system
-
-// BaseAgent returns the underlying base agent for direct access
-func (ea *OrchestratorExecutionAgent) BaseAgent() *BaseAgent {
-	return ea.baseAgent
-}

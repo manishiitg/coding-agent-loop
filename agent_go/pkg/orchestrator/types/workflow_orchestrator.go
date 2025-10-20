@@ -264,6 +264,10 @@ func (wo *WorkflowOrchestrator) executeFlow(
 			wo.GetLogger().Warnf("⚠️ Failed to emit refinement verification request: %v", err)
 		}
 
+		// Emit orchestrator completion events
+		wo.EmitOrchestratorEnd(ctx, objective, refinementResult, "completed", "", "workflow_execution")
+		wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, refinementResult, "completed", 1)
+
 		return refinementResult, nil
 
 	case database.WorkflowStatusPostVerification:
@@ -306,7 +310,13 @@ func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective strin
 		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
 	}
 
-	return fmt.Sprintf("Planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown)), nil
+	planningResult := fmt.Sprintf("Planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
+
+	// Emit orchestrator completion events
+	wo.EmitOrchestratorEnd(ctx, objective, planningResult, "completed", "", "workflow_execution")
+	wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, planningResult, "completed", 1)
+
+	return planningResult, nil
 }
 
 // runExecution runs the execution phase of the workflow
@@ -338,6 +348,10 @@ func (wo *WorkflowOrchestrator) runExecution(ctx context.Context, objective stri
 		"Please review the execution results and choose to refine the plan if needed."); err != nil {
 		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
 	}
+
+	// Emit orchestrator completion events
+	wo.EmitOrchestratorEnd(ctx, objective, executionResult, "completed", "", "workflow_execution")
+	wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, executionResult, "completed", 1)
 
 	return executionResult, nil
 }

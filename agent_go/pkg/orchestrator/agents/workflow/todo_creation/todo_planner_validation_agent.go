@@ -41,11 +41,6 @@ func NewTodoPlannerValidationAgent(config *agents.OrchestratorAgentConfig, logge
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tpva *TodoPlannerValidationAgent) GetBaseAgent() *agents.BaseAgent {
-	return tpva.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (tpva *TodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract execution result and workspace path from template variables

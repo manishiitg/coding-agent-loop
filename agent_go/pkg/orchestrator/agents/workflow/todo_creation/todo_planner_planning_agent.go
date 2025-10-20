@@ -45,11 +45,6 @@ func NewTodoPlannerPlanningAgent(config *agents.OrchestratorAgentConfig, logger 
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tppa *TodoPlannerPlanningAgent) GetBaseAgent() *agents.BaseAgent {
-	return tppa.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (tppa *TodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract variables from template variables

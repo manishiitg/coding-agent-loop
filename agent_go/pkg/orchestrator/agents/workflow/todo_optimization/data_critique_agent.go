@@ -44,11 +44,6 @@ func NewDataCritiqueAgent(config *agents.OrchestratorAgentConfig, logger utils.E
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (dca *DataCritiqueAgent) GetBaseAgent() *agents.BaseAgent {
-	return dca.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (dca *DataCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract required parameters
@@ -368,9 +363,4 @@ Focus on providing constructive, specific feedback that will help improve the da
 	}
 
 	return result.String()
-}
-
-// GetPrompts returns nil since we use input processor
-func (dca *DataCritiqueAgent) GetPrompts() interface{} {
-	return nil
 }

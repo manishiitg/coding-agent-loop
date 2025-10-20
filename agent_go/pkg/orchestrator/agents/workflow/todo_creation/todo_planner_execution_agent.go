@@ -41,11 +41,6 @@ func NewTodoPlannerExecutionAgent(config *agents.OrchestratorAgentConfig, logger
 	}
 }
 
-// GetBaseAgent implements the OrchestratorAgent interface
-func (tpea *TodoPlannerExecutionAgent) GetBaseAgent() *agents.BaseAgent {
-	return tpea.BaseOrchestratorAgent.BaseAgent()
-}
-
 // Execute implements the OrchestratorAgent interface
 func (tpea *TodoPlannerExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract plan and workspace path from template variables

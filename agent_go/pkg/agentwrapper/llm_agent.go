@@ -683,9 +683,8 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 
 	// Add cross-provider fallback models if configured
 	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.CrossProviderFallback.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Infof("Added cross-provider fallback models for %s: %v", config.CrossProviderFallback.Provider, crossProviderFallbacks)
+		fallbackModels = append(fallbackModels, config.CrossProviderFallback.Models...)
+		logger.Infof("Added cross-provider fallback models for %s: %v", config.CrossProviderFallback.Provider, config.CrossProviderFallback.Models)
 	} else {
 		// Add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)

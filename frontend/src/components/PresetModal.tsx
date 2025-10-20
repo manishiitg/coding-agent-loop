@@ -40,14 +40,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
 
-  // Store subscriptions
-  const { 
-    primaryConfig, 
-    availableLLMs, 
-    getCurrentLLMOption, 
-    setPrimaryConfig,
-    refreshAvailableLLMs 
-  } = useLLMStore();
+  // Store subscriptions - using selectors for stable references
+  const primaryConfig = useLLMStore(state => state.primaryConfig);
+  const availableLLMs = useLLMStore(state => state.availableLLMs);
+  const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
+  const setPrimaryConfig = useLLMStore(state => state.setPrimaryConfig);
+  const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
 
   // Calculate effective agent mode that always honors fixedAgentMode when provided
   const effectiveAgentMode = fixedAgentMode || agentMode;
@@ -105,13 +103,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     }
   }, [editingPreset, fixedAgentMode, primaryConfig]);
 
-  const handleServerToggle = (server: string) => {
+  const handleServerToggle = useCallback((server: string) => {
     setSelectedServers(prev => 
       prev.includes(server)
         ? prev.filter(s => s !== server)
         : [...prev, server]
     );
-  };
+  }, []);
 
   const handleSelectFolders = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -131,7 +129,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     setSelectedFolder(null);
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (label.trim() && query.trim()) {
       if ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder) {
@@ -142,7 +140,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       onSave(label.trim(), query.trim(), selectedServers, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
       onClose();
     }
-  };
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, llmConfig, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -156,19 +154,22 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       document.addEventListener('keydown', handleEscape);
       return () => document.removeEventListener('keydown', handleEscape);
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose]);
+
+  // Memoized backdrop click handler
+  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
+    // Only close if clicking on the backdrop, not on the card
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  }, [onClose]);
 
   if (!isOpen) return null;
 
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      onClick={(e) => {
-        // Only close if clicking on the backdrop, not on the card
-        if (e.target === e.currentTarget) {
-          onClose();
-        }
-      }}
+      onClick={handleBackdropClick}
     >
       <Card 
         className="w-full max-w-6xl mx-4 p-6 max-h-[90vh] overflow-y-auto"
@@ -417,5 +418,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     </div>
   );
 });
+
+PresetModal.displayName = 'PresetModal';
 
 export default PresetModal;

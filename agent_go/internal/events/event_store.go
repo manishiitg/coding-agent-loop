@@ -2,7 +2,6 @@ package events
 
 import (
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -133,16 +132,10 @@ func (es *EventStore) GetEvents(observerID string, sinceIndex int) ([]Event, int
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
-	fmt.Printf("[EVENT STORE DEBUG] GetEvents called with observerID='%s', sinceIndex=%d\n", observerID, sinceIndex)
-	fmt.Printf("[EVENT STORE DEBUG] Available observers: %v\n", es.getObserverKeys())
-
 	events, exists := es.events[observerID]
 	if !exists {
-		fmt.Printf("[EVENT STORE DEBUG] Observer '%s' not found\n", observerID)
 		return []Event{}, 0, false
 	}
-
-	fmt.Printf("[EVENT STORE DEBUG] Found %d events for observer '%s'\n", len(events), observerID)
 
 	// If sinceIndex is beyond our events, return empty but with correct last index
 	if sinceIndex >= len(events) {

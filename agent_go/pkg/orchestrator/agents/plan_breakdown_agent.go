@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 
 	"github.com/tmc/langchaingo/llms"
@@ -20,7 +21,7 @@ type PlanBreakdownAgent struct {
 }
 
 // NewPlanBreakdownAgent creates a new plan breakdown agent
-func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *PlanBreakdownAgent {
+func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *PlanBreakdownAgent {
 	breakdownPrompts := prompts.NewPlanBreakdownPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(

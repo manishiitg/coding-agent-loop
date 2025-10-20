@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from './ui/Button';
 import { usePresetManagement, usePresetApplication } from '../stores/useGlobalPresetStore';
 import PresetModal from './PresetModal';
@@ -111,6 +111,11 @@ interface PresetQueriesProps {
       }, 100);
     }
   };
+
+  // Memoized callback for closing the modal
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+  }, []);
 
   const handleSavePreset = async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
     if (editingPreset) {
@@ -285,7 +290,7 @@ interface PresetQueriesProps {
       {/* Preset Modal */}
       <PresetModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={handleCloseModal}
         onSave={handleSavePreset}
         editingPreset={editingPreset}
         availableServers={availableServers}

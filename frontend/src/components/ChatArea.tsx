@@ -674,12 +674,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
 
     try {
-      console.log(`[POLLING] Requesting events for observer '${observerId}' since index ${currentLastEventIndex}`)
       const response = await agentApi.getEvents(observerId, currentLastEventIndex)
-      console.log(`[POLLING] Received ${response.events.length} events from API`)
 
       if (response.events.length > 0) {
-        console.log(`[POLLING] Event types received:`, response.events.map(e => e.type))
         
         // Update last event index immediately
         setLastEventIndex(response.last_event_index)

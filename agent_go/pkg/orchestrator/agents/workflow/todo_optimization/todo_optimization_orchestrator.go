@@ -7,6 +7,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/llm"
@@ -32,15 +33,13 @@ func NewTodoOptimizationOrchestrator(
 	maxTurns int,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
-	eventBridge orchestrator.EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
 ) (*TodoOptimizationOrchestrator, error) {
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
-		tracer,
 		eventBridge,
-		agents.TodoOptimizationAgentType,
 		orchestrator.OrchestratorTypeWorkflow,
 		provider,
 		model,
@@ -225,14 +224,13 @@ If the critique identifies ANY of these critical issues that would benefit from 
 func (too *TodoOptimizationOrchestrator) createRefineAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := too.CreateAndSetupStandardAgent(
-		"todo_optimization_refine",
 		"refine-agent",
 		phase,
 		step,
 		iteration,
 		too.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoRefinePlannerAgent(config, logger, tracer, eventBridge)
 		},
 		too.WorkspaceTools,
@@ -248,14 +246,13 @@ func (too *TodoOptimizationOrchestrator) createRefineAgent(phase string, step, i
 func (too *TodoOptimizationOrchestrator) createCritiqueAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := too.CreateAndSetupStandardAgent(
-		"todo_optimization_critique",
 		"critique-agent",
 		phase,
 		step,
 		iteration,
 		too.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewDataCritiqueAgent(config, logger, tracer, eventBridge)
 		},
 		too.WorkspaceTools,

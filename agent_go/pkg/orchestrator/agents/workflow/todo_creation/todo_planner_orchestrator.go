@@ -7,6 +7,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/llm"
@@ -32,7 +33,7 @@ func NewTodoPlannerOrchestrator(
 	maxTurns int,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
-	eventBridge orchestrator.EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
 ) (*TodoPlannerOrchestrator, error) {
@@ -40,9 +41,7 @@ func NewTodoPlannerOrchestrator(
 	// Create base workflow orchestrator
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
-		tracer,
 		eventBridge,
-		agents.TodoPlannerAgentType,
 		orchestrator.OrchestratorTypeWorkflow,
 		provider,
 		model,
@@ -269,7 +268,7 @@ func (tpo *TodoPlannerOrchestrator) runValidationPhase(ctx context.Context, plan
 
 // runWriterPhase creates optimal todo list based on plan and execution experience using strategy
 func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResult, executionResult, validationResult, critiqueResult string, iteration int, strategy IterationStrategy) (string, error) {
-	writerAgent, err := tpo.createWriterAgent("writer", 0, iteration)
+	writerAgent, err := tpo.createWriterAgent("writing", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create writer agent: %w", err)
 	}
@@ -414,14 +413,13 @@ Consider:
 func (tpo *TodoPlannerOrchestrator) createPlanningAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
-		"todo_planner_planning",
 		"planning-agent",
 		phase,
 		step,
 		iteration,
 		tpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoPlannerPlanningAgent(config, logger, tracer, eventBridge)
 		},
 		tpo.WorkspaceTools,
@@ -437,14 +435,13 @@ func (tpo *TodoPlannerOrchestrator) createPlanningAgent(phase string, step, iter
 func (tpo *TodoPlannerOrchestrator) createExecutionAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
-		"todo_planner_execution",
 		"execution-agent",
 		phase,
 		step,
 		iteration,
 		tpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoPlannerExecutionAgent(config, logger, tracer, eventBridge)
 		},
 		tpo.WorkspaceTools,
@@ -460,14 +457,13 @@ func (tpo *TodoPlannerOrchestrator) createExecutionAgent(phase string, step, ite
 func (tpo *TodoPlannerOrchestrator) createValidationAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
-		"todo_planner_validation",
 		"validation-agent",
 		phase,
 		step,
 		iteration,
 		tpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoPlannerValidationAgent(config, logger, tracer, eventBridge)
 		},
 		tpo.WorkspaceTools,
@@ -483,14 +479,13 @@ func (tpo *TodoPlannerOrchestrator) createValidationAgent(phase string, step, it
 func (tpo *TodoPlannerOrchestrator) createWriterAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
-		"todo_planner_writer",
 		"writer-agent",
 		phase,
 		step,
 		iteration,
 		tpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoPlannerWriterAgent(config, logger, tracer, eventBridge)
 		},
 		tpo.WorkspaceTools,
@@ -506,14 +501,13 @@ func (tpo *TodoPlannerOrchestrator) createWriterAgent(phase string, step, iterat
 func (tpo *TodoPlannerOrchestrator) createCleanupAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
-		"todo_planner_cleanup",
 		"cleanup-agent",
 		phase,
 		step,
 		iteration,
 		tpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoPlannerCleanupAgent(config, logger, tracer, eventBridge)
 		},
 		tpo.WorkspaceTools,
@@ -529,14 +523,13 @@ func (tpo *TodoPlannerOrchestrator) createCleanupAgent(phase string, step, itera
 func (tpo *TodoPlannerOrchestrator) createCritiqueAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
-		"todo_planner_critique",
 		"critique-agent",
 		phase,
 		step,
 		iteration,
 		tpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoPlannerCritiqueAgent(config, logger, tracer, eventBridge)
 		},
 		tpo.WorkspaceTools,

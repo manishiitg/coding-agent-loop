@@ -153,15 +153,9 @@ func CreateEventEmitter(
 			Data:      data,
 		}
 
-		// Emit through event bridge - cast to the proper interface
-		if bridge, ok := eventBridge.(interface {
-			HandleEvent(context.Context, *events.AgentEvent) error
-		}); ok {
-			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-				logger.Warnf("⚠️ Failed to emit %s LLM event: %v", llmType, err)
-			}
-		} else {
-			logger.Warnf("⚠️ Event bridge does not implement HandleEvent method: %T", eventBridge)
+		// Emit through event bridge
+		if err := eventBridge.HandleEvent(ctx, agentEvent); err != nil {
+			logger.Warnf("⚠️ Failed to emit %s LLM event: %v", llmType, err)
 		}
 	}
 }

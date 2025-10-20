@@ -161,6 +161,18 @@ export const ChatInput = React.memo<ChatInputProps>(({
     return null
   }, [agentMode, activePresetIds, customPresets, predefinedPresets])
 
+  // Consolidated query selection logic
+  const queryToSubmit = useMemo(() => {
+    return (agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset 
+      ? activePreset.query 
+      : localQuery
+  }, [agentMode, activePreset, localQuery])
+
+  // Guard to prevent submission before observer is ready
+  const canSubmit = useMemo(() => {
+    return queryToSubmit?.trim() && !isStreaming && observerId
+  }, [queryToSubmit, isStreaming, observerId])
+
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
@@ -230,15 +242,10 @@ export const ChatInput = React.memo<ChatInputProps>(({
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
-      // For workflow/orchestrator mode with preset, use preset query
-      // For other modes, use localQuery
-      const queryToSubmit = (agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset 
-        ? activePreset.query 
-        : localQuery
       
-      if (queryToSubmit?.trim() && !isStreaming) {
-        // Clear local state immediately for UI responsiveness (only for non-preset modes)
-        if (agentMode !== 'workflow' && agentMode !== 'orchestrator') {
+      if (canSubmit) {
+        // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
+        if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
           setLocalQuery('')
         }
         // Call onSubmit with the query directly - no global state coordination needed!
@@ -261,25 +268,20 @@ export const ChatInput = React.memo<ChatInputProps>(({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, isStreaming, onSubmit, showFileDialog, agentMode, activePreset])
+  }, [localQuery, onSubmit, showFileDialog, agentMode, observerId, canSubmit, queryToSubmit])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
-    // For workflow/orchestrator mode with preset, use preset query
-    // For other modes, use localQuery
-    const queryToSubmit = (agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset 
-      ? activePreset.query 
-      : localQuery
     
-    if (queryToSubmit?.trim() && !isStreaming && isRequiredFolderSelected) {
-      // Clear local state immediately for UI responsiveness (only for non-preset modes)
-      if (agentMode !== 'workflow' && agentMode !== 'orchestrator') {
+    if (canSubmit && isRequiredFolderSelected) {
+      // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
+      if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
         setLocalQuery('')
       }
       // Call onSubmit with the query directly - no global state coordination needed!
       onSubmit(queryToSubmit)
     }
-  }, [localQuery, isStreaming, onSubmit, isRequiredFolderSelected, agentMode, activePreset])
+  }, [canSubmit, isRequiredFolderSelected, agentMode, observerId, queryToSubmit, onSubmit])
 
   // File selection handlers
   const handleFileSelect = useCallback((file: PlannerFile) => {
@@ -416,14 +418,16 @@ export const ChatInput = React.memo<ChatInputProps>(({
   // Check if deep research mode requires preset selection
   const isDeepResearchReady = agentMode !== 'orchestrator' || (getActivePreset('deep-research') && isRequiredFolderSelected)
   
-  // For workflow/orchestrator mode with preset, we don't need localQuery to be non-empty
-  // For other modes, we need localQuery to be non-empty
-  const hasValidQuery = (agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset 
-    ? true // Preset provides the query
-    : localQuery?.trim() // Need user input for other modes
+  // Preset modes require a non-empty preset query; chat modes require non-empty local input
+  const hasValidQuery =
+    (agentMode === 'workflow' || agentMode === 'orchestrator')
+      ? Boolean(activePreset?.query?.trim())
+      : Boolean(localQuery?.trim())
   
-  // Debug the submit button disable condition
-  const submitButtonDisabled = !hasValidQuery || !observerId || !isRequiredFolderSelected || !isWorkflowReady || !isDeepResearchReady
+  const readyForMode =
+    agentMode === 'workflow' ? isWorkflowReady :
+    agentMode === 'orchestrator' ? isDeepResearchReady : true
+  const submitButtonDisabled = !hasValidQuery || !observerId || !readyForMode
   
 
   // Memoized placeholder to prevent re-computation
@@ -587,20 +591,16 @@ export const ChatInput = React.memo<ChatInputProps>(({
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-<<<<<<< HEAD
-                            onClick={() => onSubmit(localQuery || activePreset?.query || '')}
-                            disabled={!observerId || !isRequiredFolderSelected || !(localQuery || activePreset?.query)}
-=======
                             onClick={() => {
-                              // For workflow/orchestrator mode with preset, use preset query
-                              // For other modes, use localQuery
-                              const queryToSubmit = (agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset 
-                                ? activePreset.query 
-                                : localQuery
-                              onSubmit(queryToSubmit)
+                              if (canSubmit) {
+                                // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
+                                if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
+                                  setLocalQuery('')
+                                }
+                                onSubmit(queryToSubmit)
+                              }
                             }}
                             disabled={!observerId || !isRequiredFolderSelected}
->>>>>>> 98249df (Major orchestrator refactoring with event bridges and LLM components)
                             className="px-2 py-0.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                           >
                             {getButtonText()}

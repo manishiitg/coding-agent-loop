@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,19 +30,87 @@ type ExecutePresetRequest struct {
 	Phase                     string                            `json:"phase,omitempty"`                       // Optional: for workflow mode
 	OrchestratorExecutionMode orchtypes.ExecutionMode           `json:"orchestrator_execution_mode,omitempty"` // Required for orchestrator mode
 	WorkflowSelectedOptions   *database.WorkflowSelectedOptions `json:"workflow_selected_options,omitempty"`   // Required for workflow mode
+	WorkspacePath             string                            `json:"workspace_path,omitempty"`              // Optional: workspace path override
 }
 
 // ExecutePresetResponse represents the response for preset execution
 type ExecutePresetResponse struct {
-	SessionID  string `json:"session_id"`
-	ObserverID string `json:"observer_id"`
-	PresetID   string `json:"preset_id"`
-	AgentMode  string `json:"agent_mode"`
-	Phase      string `json:"phase,omitempty"`
-	Status     string `json:"status"`
-	Message    string `json:"message"`
-	// Add validation info
+	SessionID           string                 `json:"session_id"`
+	ObserverID          string                 `json:"observer_id"`
+	PresetID            string                 `json:"preset_id"`
+	AgentMode           string                 `json:"agent_mode"`
+	Phase               string                 `json:"phase,omitempty"`
+	Status              string                 `json:"status"`
+	Message             string                 `json:"message"`
 	ValidatedParameters map[string]interface{} `json:"validated_parameters,omitempty"`
+}
+
+// --- WORKSPACE PATH RESOLUTION ---
+
+// resolveWorkspacePath resolves the workspace path with proper fallback order and validation
+// Priority order: requestPath > presetPath > defaultPath > "./Tasks" (final fallback)
+func resolveWorkspacePath(requestPath, presetPath, defaultPath string) string {
+	// Priority 1: Request workspace path (if provided and valid)
+	if requestPath != "" {
+		if validatedPath := validateAndSanitizePath(requestPath); validatedPath != "" {
+			log.Printf("[WORKSPACE] Using request workspace path: %s", validatedPath)
+			return validatedPath
+		}
+		log.Printf("[WORKSPACE] Request workspace path invalid, falling back: %s", requestPath)
+	}
+
+	// Priority 2: Preset selected folder (if provided and valid)
+	if presetPath != "" {
+		if validatedPath := validateAndSanitizePath(presetPath); validatedPath != "" {
+			log.Printf("[WORKSPACE] Using preset workspace path: %s", validatedPath)
+			return validatedPath
+		}
+		log.Printf("[WORKSPACE] Preset workspace path invalid, falling back: %s", presetPath)
+	}
+
+	// Priority 3: Server default workspace root (if valid)
+	if defaultPath != "" {
+		if validatedPath := validateAndSanitizePath(defaultPath); validatedPath != "" {
+			log.Printf("[WORKSPACE] Using server default workspace path: %s", validatedPath)
+			return validatedPath
+		}
+		log.Printf("[WORKSPACE] Server default workspace path invalid, falling back: %s", defaultPath)
+	}
+
+	// Priority 4: Final fallback
+	finalFallback := "./Tasks"
+	log.Printf("[WORKSPACE] Using final fallback workspace path: %s", finalFallback)
+	return finalFallback
+}
+
+// validateAndSanitizePath validates and sanitizes a workspace path
+func validateAndSanitizePath(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	// Clean the path to remove any path traversal attempts
+	cleanPath := filepath.Clean(path)
+
+	// Check for path traversal attempts (e.g., "../", "..\\")
+	if strings.Contains(cleanPath, "..") {
+		log.Printf("[WORKSPACE] Path traversal attempt detected, rejecting: %s", path)
+		return ""
+	}
+
+	// Ensure the path is not empty after cleaning
+	if cleanPath == "" || cleanPath == "." {
+		return ""
+	}
+
+	// Convert to absolute path for consistency
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		log.Printf("[WORKSPACE] Failed to resolve absolute path: %s, error: %v", cleanPath, err)
+		return ""
+	}
+
+	return absPath
 }
 
 // CancelExecutionRequest represents a request to cancel an execution
@@ -364,15 +433,13 @@ func (api *StreamingAPI) executeOrchestratorPreset(
 
 	// Create fresh orchestrator
 	orchestrator, err := orchtypes.NewPlannerOrchestrator(
-		ctx,
 		provider,
 		model,
-		api.configPath,
+		api.mcpConfigPath,
 		api.temperature,
 		"orchestrator",
 		api.workspaceRoot,
 		api.logger,
-		api.internalLLM,
 		orchestratorAgentEventBridge,
 		tracer,
 		selectedServers,
@@ -474,14 +541,12 @@ func (api *StreamingAPI) executeWorkflowPreset(
 
 	// Create workflow orchestrator
 	workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
-		ctx,
 		provider,
 		model,
 		api.mcpConfigPath,
 		api.temperature,
 		"workflow",
 		api.logger,
-		api.internalLLM,
 		workflowEventBridge,
 		tracer,
 		selectedServers,
@@ -529,8 +594,8 @@ func (api *StreamingAPI) executeWorkflowPreset(
 		}
 	}
 
-	// Set workspace path
-	workflowWorkspacePath := "default_workspace" // Use default workspace path
+	// Resolve workspace path with proper fallback order and validation
+	workflowWorkspacePath := resolveWorkspacePath(req.WorkspacePath, preset.SelectedFolder, api.workspaceRoot)
 
 	// Prepare options for the Execute method
 	workflowOptions := map[string]interface{}{

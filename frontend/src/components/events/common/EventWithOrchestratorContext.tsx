@@ -19,13 +19,7 @@ export const EventWithOrchestratorContext: React.FC<EventWithOrchestratorContext
   metadata, 
   className = "" 
 }) => {
-  // Debug: Log metadata to see if it's being passed correctly
-  React.useEffect(() => {
-    if (metadata) {
-      console.log('EventWithOrchestratorContext - metadata received:', metadata);
-    }
-  }, [metadata]);
-
+  
   return (
     <div className={className}>
       {/* Automatically add orchestrator context if metadata exists */}

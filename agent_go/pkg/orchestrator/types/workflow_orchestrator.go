@@ -11,8 +11,8 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/events"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_execution"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_optimization"
@@ -188,15 +188,13 @@ type TodoVerificationResponse struct {
 
 // NewWorkflowOrchestrator creates a new workflow orchestrator
 func NewWorkflowOrchestrator(
-	ctx context.Context,
 	provider string,
 	model string,
 	mcpConfigPath string,
 	temperature float64,
 	agentMode string,
 	logger utils.ExtendedLogger,
-	llm llms.Model,
-	eventBridge orchestrator.EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 	tracer observability.Tracer,
 	selectedServers []string,
 	customTools []llms.Tool,
@@ -208,9 +206,7 @@ func NewWorkflowOrchestrator(
 	// Create base orchestrator
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
-		tracer,
 		eventBridge,
-		agents.WorkflowOrchestratorAgentType,
 		orchestrator.OrchestratorTypeWorkflow,
 		provider,
 		model,

@@ -49,12 +49,15 @@ func NewStructuredOutputLLMWithEventBridge(
 // GenerateStructuredOutput generates structured output using provided prompt and schema
 func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prompt, schema string) (string, error) {
 	startTime := time.Now()
+	correlationID := fmt.Sprintf("struct-output-%d", startTime.UnixNano())
 
 	// Emit start event
 	if s.GetEventEmitter() != nil {
 		startEventData := &events.StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
-				Timestamp: startTime,
+				Timestamp:     startTime,
+				CorrelationID: correlationID,
+				Component:     "llm",
 			},
 			Operation: "generate_structured_output",
 			EventType: "structured_output_start",
@@ -77,7 +80,9 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 		if s.GetEventEmitter() != nil {
 			errorEventData := &events.StructuredOutputEvent{
 				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
+					Timestamp:     time.Now(),
+					CorrelationID: correlationID,
+					Component:     "llm",
 				},
 				Operation: "generate_structured_output",
 				EventType: "structured_output_error",
@@ -94,7 +99,10 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 	if s.GetEventEmitter() != nil {
 		endEventData := &events.StructuredOutputEvent{
 			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
+				Timestamp:     time.Now(),
+				IsEndEvent:    true,
+				CorrelationID: correlationID,
+				Component:     "llm",
 			},
 			Operation: "generate_structured_output",
 			EventType: "structured_output_end",
@@ -115,6 +123,3 @@ func ParseGenericStructuredResponse(jsonOutput string) (*GenericStructuredRespon
 	}
 	return &response, nil
 }
-
-// CreateStructuredOutputLLMWithEventBridge creates a structured output LLM with event bridge integration
-// Note: This function is now provided by BaseLLM for consistency

@@ -25,12 +25,12 @@ type BaseEventBridge struct {
 	SessionID       string // Session ID for database storage
 	Logger          utils.ExtendedLogger
 	ChatDB          database.Database // Add database reference for chat history storage
-	BridgeName      string // Name of the bridge (used for logging and ID prefix)
+	BridgeName      string            // Name of the bridge (used for logging and ID prefix)
 }
 
 // HandleEvent processes events and converts them to server events
 func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.AgentEvent) error {
-	b.Logger.Infof("[%s EVENT BRIDGE] Processing %s event: %s", b.BridgeName, b.BridgeName, event.Type)
+	b.Logger.Infof("[%s EVENT BRIDGE] Processing %s event: %s", b.BridgeName, event.Type, event.Type)
 
 	// Create server event with typed AgentEvent data directly - no conversion needed!
 	serverEvent := events.Event{

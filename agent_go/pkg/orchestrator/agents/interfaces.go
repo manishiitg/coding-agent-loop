@@ -89,7 +89,7 @@ type CrossProviderFallback struct {
 }
 
 // NewOrchestratorAgentConfig creates a new agent configuration with minimal defaults
-func NewOrchestratorAgentConfig(agentType, name string) *OrchestratorAgentConfig {
+func NewOrchestratorAgentConfig(name string) *OrchestratorAgentConfig {
 	return &OrchestratorAgentConfig{
 		Provider:    "", // Must be set by caller
 		Model:       "", // Must be set by caller
@@ -109,8 +109,8 @@ func NewOrchestratorAgentConfig(agentType, name string) *OrchestratorAgentConfig
 }
 
 // LoadOrchestratorAgentConfigFromEnv creates a new agent configuration with values from environment variables
-func LoadOrchestratorAgentConfigFromEnv(agentType, name string) *OrchestratorAgentConfig {
-	config := NewOrchestratorAgentConfig(agentType, name)
+func LoadOrchestratorAgentConfigFromEnv(name string) *OrchestratorAgentConfig {
+	config := NewOrchestratorAgentConfig(name)
 
 	// Load from environment variables if available
 	if provider := os.Getenv("ORCHESTRATOR_PROVIDER"); provider != "" {

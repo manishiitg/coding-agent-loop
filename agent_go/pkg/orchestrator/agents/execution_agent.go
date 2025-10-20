@@ -10,6 +10,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 )
 
@@ -20,7 +21,7 @@ type OrchestratorExecutionAgent struct {
 }
 
 // NewOrchestratorExecutionAgent creates a new execution agent
-func NewOrchestratorExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *OrchestratorExecutionAgent {
+func NewOrchestratorExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *OrchestratorExecutionAgent {
 	executionPrompts := prompts.NewExecutionPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(

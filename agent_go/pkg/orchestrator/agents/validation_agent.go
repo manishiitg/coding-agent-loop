@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 
 	"github.com/tmc/langchaingo/llms"
@@ -20,7 +21,7 @@ type OrchestratorValidationAgent struct {
 }
 
 // NewOrchestratorValidationAgent creates a new validation agent
-func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge EventBridge) *OrchestratorValidationAgent {
+func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *OrchestratorValidationAgent {
 	validationPrompts := prompts.NewValidationPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(

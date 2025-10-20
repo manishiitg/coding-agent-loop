@@ -60,51 +60,61 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	c.logger.Infof("🔍 ContextAwareBridge: Received event %s", event.Type)
+	c.logger.Debugf("🔍 ContextAwareBridge: Received event %s", event.Type)
 
-	// Add orchestrator context to the event if we have context
+	// Copy orchestrator context while holding read lock
 	c.mu.RLock()
-	c.logger.Infof("🔍 DEBUG: currentPhase = '%s', event.Type = %s, event.Data type = %T", c.currentPhase, event.Type, event.Data)
+	currentPhase := c.currentPhase
+	currentStep := c.currentStep
+	currentIteration := c.currentIteration
+	currentAgentName := c.currentAgentName
+	c.mu.RUnlock()
 
-	if c.currentPhase != "" {
-		c.logger.Infof("🔍 ContextAwareBridge: Processing event %s with phase %s", event.Type, c.currentPhase)
+	// Early return if no current phase
+	if currentPhase == "" {
+		c.logger.Debugf("🔍 DEBUG: Skipping metadata addition - no currentPhase set")
+	} else {
+		c.logger.Debugf("🔍 ContextAwareBridge: Processing event %s with phase %s", event.Type, currentPhase)
 
 		// Add orchestrator context to metadata
 		// We need to check if the event data has a BaseEventData field
-		c.logger.Infof("🔍 DEBUG: About to check type assertion for event.Data of type %T", event.Data)
+		c.logger.Debugf("🔍 DEBUG: About to check type assertion for event.Data of type %T", event.Data)
 
 		if eventData, ok := event.Data.(interface {
 			GetBaseEventData() *events.BaseEventData
 		}); ok {
-			c.logger.Infof("🔍 DEBUG: Type assertion succeeded for %T", eventData)
+			c.logger.Debugf("🔍 DEBUG: Type assertion succeeded for %T", eventData)
 			baseData := eventData.GetBaseEventData()
-			c.logger.Infof("🔍 DEBUG: Got BaseEventData, Metadata = %v", baseData.Metadata)
 
-			if baseData.Metadata == nil {
-				baseData.Metadata = make(map[string]interface{})
-				c.logger.Infof("🔍 DEBUG: Created new metadata map")
+			// Nil check before accessing Metadata
+			if baseData == nil {
+				c.logger.Warnf("⚠️ ContextAwareBridge: GetBaseEventData returned nil for event %s", event.Type)
+			} else {
+				c.logger.Debugf("🔍 DEBUG: Got BaseEventData, metadata present: %t", baseData.Metadata != nil)
+
+				if baseData.Metadata == nil {
+					baseData.Metadata = make(map[string]any)
+					c.logger.Debugf("🔍 DEBUG: Created new metadata map")
+				}
+				baseData.Metadata["orchestrator_phase"] = currentPhase
+				baseData.Metadata["orchestrator_step"] = currentStep
+				baseData.Metadata["orchestrator_iteration"] = currentIteration
+				baseData.Metadata["orchestrator_agent_name"] = currentAgentName
+
+				c.logger.Debugf("✅ ContextAwareBridge: Added metadata to event %s, metadata keys count: %d", event.Type, len(baseData.Metadata))
 			}
-			baseData.Metadata["orchestrator_phase"] = c.currentPhase
-			baseData.Metadata["orchestrator_step"] = c.currentStep
-			baseData.Metadata["orchestrator_iteration"] = c.currentIteration
-			baseData.Metadata["orchestrator_agent_name"] = c.currentAgentName
-
-			c.logger.Infof("✅ ContextAwareBridge: Added metadata to event %s, metadata = %v", event.Type, baseData.Metadata)
 		} else {
 			c.logger.Warnf("⚠️ ContextAwareBridge: Event data %T does not have GetBaseEventData method", event.Data)
 		}
-	} else {
-		c.logger.Infof("🔍 DEBUG: Skipping metadata addition - no currentPhase set")
 	}
-	c.mu.RUnlock()
 
 	// Forward to underlying bridge
-	c.logger.Infof("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type)
+	c.logger.Debugf("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type)
 	err := c.underlyingBridge.HandleEvent(ctx, event)
 	if err != nil {
 		c.logger.Warnf("⚠️ ContextAwareBridge: Error forwarding event %s: %v", event.Type, err)
 	} else {
-		c.logger.Infof("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type)
+		c.logger.Debugf("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type)
 	}
 	return err
 }

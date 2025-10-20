@@ -53,10 +53,9 @@ func extractWorkspacePathFromObjective(objective string) string {
 		// Find the end of the workspace path (typically before a newline or end of string)
 		end := strings.Index(objective[start:], "\n")
 		if end == -1 {
-			// No newline found, use the rest of the string
-			return objective[start:]
+			return strings.TrimSpace(objective[start:])
 		}
-		return objective[start : start+end]
+		return strings.TrimSpace(objective[start : start+end])
 	}
 	return ""
 }
@@ -193,7 +192,6 @@ type StreamingAPI struct {
 	toolStatus    map[string]ToolStatus
 	enabledTools  map[string][]string // queryID/sessionID -> enabled tool names
 	toolStatusMux sync.RWMutex
-	configPath    string
 	mcpConfig     *mcpclient.MCPConfig
 
 	// Background tool discovery
@@ -481,7 +479,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		internalLLM:                  internalLLM,
 		toolStatus:                   make(map[string]ToolStatus),
 		enabledTools:                 make(map[string][]string),
-		configPath:                   configPath,
 		mcpConfig:                    mcpConfig,
 		logger:                       createServerLogger(),
 		// Initialize background discovery fields
@@ -1098,16 +1095,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Create standardized orchestrator instance with full configuration
 			var err error
-			orchestrator, err := orchtypes.NewPlannerOrchestrator(
-				streamCtx,                    // ctx
+			planOrch, err := orchtypes.NewPlannerOrchestrator(
 				orchestratorProvider,         // provider
 				orchestratorModel,            // model
-				api.configPath,               // mcpConfigPath
+				api.mcpConfigPath,            // mcpConfigPath
 				temperature,                  // temperature
 				api.config.AgentMode,         // agentMode
 				api.workspaceRoot,            // workspaceRoot
 				api.logger,                   // logger
-				api.internalLLM,              // llm
 				orchestratorAgentEventBridge, // eventBridge
 				tracer,                       // tracer
 				selectedServers,              // selectedServers
@@ -1160,7 +1155,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Store planner orchestrator for guidance injection
-			api.storePlannerOrchestrator(sessionID, orchestrator)
+			api.storePlannerOrchestrator(sessionID, planOrch)
 
 			// Create a cancellable context for orchestrator execution using background context
 			// This prevents the orchestrator from being cancelled when the HTTP request ends
@@ -1186,13 +1181,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workspacePath := extractWorkspacePathFromObjective(req.Query)
 				if workspacePath == "" {
 					log.Printf("[ORCHESTRATOR ERROR] Workspace path not found in objective for query %s", queryID)
-					workspacePath = "default_workspace" // fallback, though this shouldn't happen
+					sendError("Workspace path not found in objective. Please ensure the objective contains a valid workspace path.", true)
+					return
 				}
 
 				// Execute orchestrator flow with conversation history using cancellable context
 				// The orchestrator will automatically continue from restored state if available
 				log.Printf("[ORCHESTRATOR DEBUG] Starting orchestrator execution for query %s with workspace: %s", queryID, workspacePath)
-				result, err := orchestrator.Execute(orchestratorCtx, req.Query, workspacePath, nil)
+				result, err := planOrch.Execute(orchestratorCtx, req.Query, workspacePath, nil)
 
 				// Check for orchestrator execution error
 				if err != nil {
@@ -1377,14 +1373,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Create workflow orchestrator for this request
 			workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
-				streamCtx,           // ctx
 				finalProvider,       // provider
 				finalModelID,        // model
 				api.mcpConfigPath,   // mcpConfigPath
 				api.temperature,     // temperature
 				"workflow",          // agentMode
 				api.logger,          // logger
-				api.internalLLM,     // llm
 				workflowEventBridge, // eventBridge
 				tracer,              // tracer
 				selectedServers,     // selectedServers
@@ -1527,7 +1521,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		agentConfig := agent.LLMAgentConfig{
 			Name:               sessionID,
 			ServerName:         serverList, // Use full server list, not just first one
-			ConfigPath:         api.configPath,
+			ConfigPath:         api.mcpConfigPath,
 			Provider:           llm.Provider(finalProvider),
 			ModelID:            finalModelID,
 			Temperature:        req.Temperature,
@@ -1607,11 +1601,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[DATABASE DEBUG] Added in-memory event observer for session %s", sessionID)
 			underlyingAgent.AddEventListener(dbEventObserver)
 			log.Printf("[DATABASE DEBUG] Added database event observer for session %s", sessionID)
-			log.Printf("[POLLING DEBUG] Added event observer %s for session %s (new agent) - connected to underlying MCP agent", observerID, sessionID)
-			log.Printf("[POLLING DEBUG] Added database event observer for session %s - events will be stored in database", sessionID)
 		} else {
 			log.Printf("[DATABASE DEBUG] ERROR: Underlying MCP agent is nil for session %s", sessionID)
-			log.Printf("[POLLING DEBUG] Warning: Cannot add event observer - underlying MCP agent is nil")
 		}
 
 		// --- BEGIN: Load conversation history and accumulate for streaming ---

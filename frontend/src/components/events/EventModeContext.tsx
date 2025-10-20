@@ -44,38 +44,28 @@ export const EventModeProvider: React.FC<{ children: ReactNode }> = ({ children 
   const { agentMode } = useAppStore();
 
   const shouldShowEvent = useCallback((eventType: string): boolean => {
-    console.log(`[EVENT MODE] Checking event '${eventType}' in mode '${mode}' with agentMode '${agentMode}'`)
-
     if (mode === 'advanced') {
-      console.log(`[EVENT MODE] Advanced mode: showing all events`)
       return true; // Show all events in advanced mode
     }
 
     if (mode === 'orchestrator') {
       // In Deep Search mode, only show Deep Search-specific events
       const shouldShow = ORCHESTRATOR_MODE_EVENTS.has(eventType);
-      console.log(`[EVENT MODE] Orchestrator mode: ${shouldShow ? 'showing' : 'hiding'} event '${eventType}'`)
       return shouldShow;
     }
 
     if (mode === 'workflow') {
       // In workflow mode, only show workflow-specific events
       const shouldShow = WORKFLOW_MODE_EVENTS.has(eventType);
-      console.log(`[EVENT MODE] Workflow mode: ${shouldShow ? 'showing' : 'hiding'} event '${eventType}'`)
       return shouldShow;
     }
 
     // In basic mode, show all events EXCEPT the ones in ADVANCED_MODE_EVENTS
     const shouldShow = !ADVANCED_MODE_EVENTS.has(eventType);
-    console.log(`[EVENT MODE] Basic mode: ${shouldShow ? 'showing' : 'hiding'} event '${eventType}'`)
     return shouldShow;
   }, [mode, agentMode]);
 
   // Expose global function for event mode cycling with conditional logic
-  // Debug logging for current mode
-  React.useEffect(() => {
-    console.log(`[EVENT MODE] Current event mode: '${mode}', agent mode: '${agentMode}'`)
-  }, [mode, agentMode]);
 
   React.useEffect(() => {
     // Expose global function for event mode cycling

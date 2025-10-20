@@ -40,9 +40,7 @@ func NewTodoReporterOrchestrator(
 ) (*TodoReporterOrchestrator, error) {
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
-		tracer,
 		eventBridge,
-		agents.TodoReporterAgentType,
 		orchestrator.OrchestratorTypeWorkflow,
 		provider,
 		model,
@@ -235,14 +233,13 @@ If the critique identifies ANY of these critical issues that would benefit from 
 func (tro *TodoReporterOrchestrator) createReportAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := tro.CreateAndSetupStandardAgent(
-		"todo_reporter_report",
 		"report-agent",
 		phase,
 		step,
 		iteration,
 		tro.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return todo_optimization.NewReportGenerationAgent(config, logger, tracer, eventBridge)
 		},
 		tro.WorkspaceTools,
@@ -258,14 +255,13 @@ func (tro *TodoReporterOrchestrator) createReportAgent(phase string, step, itera
 func (tro *TodoReporterOrchestrator) createCritiqueAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := tro.CreateAndSetupStandardAgent(
-		"todo_reporter_critique",
 		"critique-agent",
 		phase,
 		step,
 		iteration,
 		tro.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return todo_optimization.NewDataCritiqueAgent(config, logger, tracer, eventBridge)
 		},
 		tro.WorkspaceTools,
@@ -279,13 +275,7 @@ func (tro *TodoReporterOrchestrator) createCritiqueAgent(phase string, step, ite
 }
 
 // Execute implements the Orchestrator interface
-func (tro *TodoReporterOrchestrator) Execute(ctx context.Context, objective string, options map[string]interface{}) (string, error) {
-	// Extract workspace path from options
-	workspacePath := ""
-	if wp, ok := options["workspacePath"].(string); ok && wp != "" {
-		workspacePath = wp
-	}
-
+func (tro *TodoReporterOrchestrator) Execute(ctx context.Context, objective, workspacePath string, options map[string]interface{}) (string, error) {
 	// Call the existing ExecuteReportGeneration method
 	return tro.ExecuteReportGeneration(ctx, objective, workspacePath)
 }

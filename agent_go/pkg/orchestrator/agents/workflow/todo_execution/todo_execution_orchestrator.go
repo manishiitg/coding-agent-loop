@@ -7,6 +7,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/llm"
@@ -32,7 +33,7 @@ func NewTodoExecutionOrchestrator(
 	maxTurns int,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
-	eventBridge orchestrator.EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
 ) (*TodoExecutionOrchestrator, error) {
@@ -40,9 +41,7 @@ func NewTodoExecutionOrchestrator(
 	// Create base workflow orchestrator
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
-		tracer,
 		eventBridge,
-		agents.TodoExecutionAgentType,
 		orchestrator.OrchestratorTypeWorkflow,
 		provider,
 		model,
@@ -269,13 +268,12 @@ func (teo *TodoExecutionOrchestrator) createExecutionAgent(phase string, step, i
 	// Use combined standardized agent creation and setup
 	agent, err := teo.CreateAndSetupStandardAgent(
 		"todo_execution",
-		"execution-agent",
 		phase,
 		step,
 		iteration,
 		teo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoExecutionAgent(config, logger, tracer, eventBridge)
 		},
 		teo.WorkspaceTools,
@@ -291,14 +289,13 @@ func (teo *TodoExecutionOrchestrator) createExecutionAgent(phase string, step, i
 func (teo *TodoExecutionOrchestrator) createValidationAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := teo.CreateAndSetupStandardAgent(
-		"todo_validation",
 		"validation-agent",
 		phase,
 		step,
 		iteration,
 		teo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoValidationAgent(config, logger, tracer, eventBridge)
 		},
 		teo.WorkspaceTools,
@@ -314,14 +311,13 @@ func (teo *TodoExecutionOrchestrator) createValidationAgent(phase string, step, 
 func (teo *TodoExecutionOrchestrator) createWorkspaceAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := teo.CreateAndSetupStandardAgent(
-		"workspace_update",
 		"workspace-agent",
 		phase,
 		step,
 		iteration,
 		teo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkspaceUpdateAgent(config, logger, tracer, eventBridge)
 		},
 		teo.WorkspaceTools,

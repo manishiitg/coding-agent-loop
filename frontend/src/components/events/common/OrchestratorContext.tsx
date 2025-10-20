@@ -11,13 +11,7 @@ export const OrchestratorContext: React.FC<OrchestratorContextProps> = ({
   metadata, 
   className = "" 
 }) => {
-  // Debug: Log metadata to see what's being received
-  React.useEffect(() => {
-    console.log('OrchestratorContext - metadata received:', metadata);
-  }, [metadata]);
-
   if (!metadata) {
-    console.log('OrchestratorContext - no metadata provided');
     return null;
   }
 
@@ -26,15 +20,7 @@ export const OrchestratorContext: React.FC<OrchestratorContextProps> = ({
   const iteration = metadata.orchestrator_iteration as number;
   const agentName = metadata.orchestrator_agent_name as string;
 
-  console.log('OrchestratorContext - extracted values:', {
-    orchestratorPhase,
-    step,
-    iteration,
-    agentName
-  });
-
   if (!orchestratorPhase) {
-    console.log('OrchestratorContext - no orchestrator_phase found');
     return null;
   }
 

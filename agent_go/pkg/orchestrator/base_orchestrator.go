@@ -14,11 +14,6 @@ import (
 	"github.com/tmc/langchaingo/llms"
 )
 
-// EventBridge defines the interface for event bridges
-type EventBridge interface {
-	mcpagent.AgentEventListener
-}
-
 // Orchestrator defines the common interface for all orchestrators
 type Orchestrator interface {
 	// Execute performs the orchestration logic
@@ -78,9 +73,7 @@ type BaseOrchestrator struct {
 // NewBaseOrchestrator creates a new unified base orchestrator
 func NewBaseOrchestrator(
 	logger utils.ExtendedLogger,
-	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
-	agentType agents.AgentType,
 	orchestratorType OrchestratorType,
 	provider string,
 	model string,
@@ -240,7 +233,7 @@ func (bo *BaseOrchestrator) RegisterWorkspaceTools(agent agents.OrchestratorAgen
 }
 
 // ConnectAgentToEventBridge connects a sub-agent to the event bridge for proper event forwarding
-func (bo *BaseOrchestrator) ConnectAgentToEventBridge(agent agents.OrchestratorAgent, phase string) error {
+func (bo *BaseOrchestrator) ConnectAgentToEventBridge(agent agents.OrchestratorAgent, phase string, step, iteration int) error {
 	// Get the base agent from the sub-agent
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
@@ -257,14 +250,14 @@ func (bo *BaseOrchestrator) ConnectAgentToEventBridge(agent agents.OrchestratorA
 	// This ensures proper context isolation per agent
 	agentContextBridge := NewContextAwareEventBridge(bo.contextAwareBridge, bo.GetLogger())
 
-	// Use agent type as the context name
-	agentType := agent.GetType()
+	// Get agent name for context display
+	baseAgentName := baseAgent.GetName()
 
-	agentContextBridge.SetOrchestratorContext("init", 0, 0, agentType)
+	agentContextBridge.SetOrchestratorContext(phase, step, iteration, baseAgentName)
 
 	// Connect the dedicated bridge to receive agent events
 	mcpAgent.AddEventListener(agentContextBridge)
-	bo.GetLogger().Infof("🔗 Dedicated context-aware bridge connected to %s", phase)
+	bo.GetLogger().Infof("🔗 Dedicated context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
 
 	// Note: StartAgentSession is now handled at orchestrator level to avoid duplicate events
 	bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
@@ -359,33 +352,32 @@ func (bo *BaseOrchestrator) GetType() string {
 	return string(bo.orchestratorType)
 }
 
-// CreateStandardAgentConfig creates a standardized agent configuration using shared utilities
-// NOTE: This method is exposed for internal orchestrator use. For standard agent creation,
+// CreateStandardAgentConfig creates a standardized agent configuration
 // use CreateAndSetupStandardAgent instead which combines configuration and setup.
-func (bo *BaseOrchestrator) CreateStandardAgentConfig(agentType, agentName string, maxTurns int, outputFormat agents.OutputFormat) *agents.OrchestratorAgentConfig {
-	return bo.createAgentConfigWithLLM(agentType, agentName, maxTurns, outputFormat, bo.GetLLMConfig())
+func (bo *BaseOrchestrator) CreateStandardAgentConfig(agentName string, maxTurns int, outputFormat agents.OutputFormat) *agents.OrchestratorAgentConfig {
+	return bo.createAgentConfigWithLLM(agentName, maxTurns, outputFormat, bo.GetLLMConfig())
 }
 
 // createAgentConfigWithLLM creates a generic agent configuration with detailed LLM config
-func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentType, agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
-	config := agents.NewOrchestratorAgentConfig(agentType, agentName)
+func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
+	config := agents.NewOrchestratorAgentConfig(agentName)
 
 	// Use detailed LLM configuration from frontend if available
 	llmProvider := bo.GetProvider()
 	llmModel := bo.GetModel()
-	// Temperature is always 0.0 for all agents
-	llmTemp := 0.0
+	// Use orchestrator-configured temperature unless an agent must override explicitly
+	llmTemp := bo.GetTemperature()
 
 	if llmConfig != nil {
 		llmProvider = llmConfig.Provider
 		llmModel = llmConfig.ModelID
 		bo.GetLogger().Infof("🔧 Using detailed LLM config for %s agent - Provider: %s, Model: %s",
-			agentType, llmProvider, llmModel)
+			agentName, llmProvider, llmModel)
 	}
 
 	config.Provider = llmProvider
 	config.Model = llmModel
-	config.Temperature = llmTemp // Always 0.0
+	config.Temperature = llmTemp // Uses orchestrator-configured temperature
 	config.MCPConfigPath = bo.GetMCPConfigPath()
 	config.MaxTurns = maxTurns
 	config.ToolChoice = "auto"
@@ -408,37 +400,34 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentType, agentName string
 
 // CreateAndSetupStandardAgent creates and sets up an agent with standardized configuration
 func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
-	agentType, agentName string,
+	agentName string,
 	phase string,
 	step, iteration int,
 	maxTurns int,
 	outputFormat agents.OutputFormat,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, EventBridge) agents.OrchestratorAgent,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
-	// Create standardized agent configuration
-	config := bo.CreateStandardAgentConfig(agentType, agentName, maxTurns, outputFormat)
+	// Create standardized agent configuration using agentName as agentType
+	config := bo.CreateStandardAgentConfig(agentName, maxTurns, outputFormat)
 
 	// Create agent using provided factory function
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
 	// Setup agent with tools and event bridge
 	if eventBridge := bo.GetContextAwareBridge(); eventBridge != nil {
-		if bridge, ok := eventBridge.(EventBridge); ok {
-			if err := bo.SetupStandardAgent(
-				agent,
-				agentType,
-				agentName,
-				phase,
-				step,
-				iteration,
-				customTools,
-				customToolExecutors,
-				bridge,
-			); err != nil {
-				return nil, fmt.Errorf("failed to setup %s agent: %w", agentName, err)
-			}
+		if err := bo.SetupStandardAgent(
+			agent,
+			agentName,
+			phase,
+			step,
+			iteration,
+			customTools,
+			customToolExecutors,
+			eventBridge,
+		); err != nil {
+			return nil, fmt.Errorf("failed to setup %s agent: %w", agentName, err)
 		}
 	}
 
@@ -450,16 +439,15 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 // use CreateAndSetupStandardAgent instead which combines configuration and setup.
 func (bo *BaseOrchestrator) SetupStandardAgent(
 	agent agents.OrchestratorAgent,
-	agentType, agentName string,
+	agentName string,
 	phase string,
 	step, iteration int,
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
-	eventBridge EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 ) error {
 	return bo.setupAgent(
 		agent,
-		agentType,
 		agentName,
 		phase,
 		step,
@@ -473,12 +461,12 @@ func (bo *BaseOrchestrator) SetupStandardAgent(
 // setupAgent performs common agent setup tasks
 func (bo *BaseOrchestrator) setupAgent(
 	agent agents.OrchestratorAgent,
-	agentType, agentName string,
+	agentName string,
 	phase string,
 	step, iteration int,
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
-	eventBridge EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 ) error {
 	ctx := context.Background()
 	if err := agent.Initialize(ctx); err != nil {
@@ -501,35 +489,9 @@ func (bo *BaseOrchestrator) setupAgent(
 			} else {
 				bo.GetLogger().Infof("✅ baseAgent.Agent() returned non-nil for %s", agentName)
 
-				// Create a context-aware event bridge for this sub-agent
-				contextAwareBridge := NewContextAwareEventBridge(eventBridge, bo.GetLogger())
-				contextAwareBridge.SetOrchestratorContext(phase, step, iteration, agentName)
-
-				// Connect the event bridge to receive detailed agent events
-				mcpAgent.AddEventListener(contextAwareBridge)
-				bo.GetLogger().Infof("✅ Context-aware bridge connected to %s", agentName)
-
-				// CRITICAL FIX: Update the agent's event bridge to use the context-aware bridge
-				// This ensures orchestrator-level events also get context metadata
-				if baseOrchestratorAgent, ok := agent.(interface {
-					SetEventBridge(bridge interface{})
-				}); ok {
-					baseOrchestratorAgent.SetEventBridge(contextAwareBridge)
-					bo.GetLogger().Infof("✅ Updated agent event bridge to context-aware bridge for %s", agentName)
-				} else {
-					bo.GetLogger().Warnf("⚠️ Agent %s does not support SetEventBridge method", agentName)
-				}
-
-				// Check if the agent has streaming capability
-				if mcpAgent.HasStreamingCapability() {
-					bo.GetLogger().Infof("✅ Agent %s has streaming capability", agentName)
-				} else {
-					bo.GetLogger().Warnf("⚠️ Agent %s does not have streaming capability", agentName)
-				}
-
-				// 🔗 CRITICAL: Also connect agent to orchestrator's main event bridge
+				// 🔗 Connect agent to orchestrator's main event bridge
 				// This ensures ALL agents are connected to the shared orchestrator bridge
-				if err := bo.ConnectAgentToEventBridge(agent, agentName); err != nil {
+				if err := bo.ConnectAgentToEventBridge(agent, phase, step, iteration); err != nil {
 					bo.GetLogger().Warnf("⚠️ Failed to connect %s to orchestrator event bridge: %v", agentName, err)
 				} else {
 					bo.GetLogger().Infof("🔗 Agent %s connected to orchestrator's main event bridge", agentName)

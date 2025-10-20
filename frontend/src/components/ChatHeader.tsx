@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { MessageCircle, Search, Workflow, Settings, ExternalLink } from 'lucide-react'
 import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
@@ -76,7 +76,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
 
   // Preset click handler - now uses the global store
-  const handlePresetClick = (preset: CustomPreset | PredefinedPreset) => {
+  const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
     const result = applyPreset(preset, selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
     
     if (result.success) {
@@ -84,7 +84,40 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     } else {
       console.error('Failed to apply preset:', result.error)
     }
-  }
+  }, [applyPreset, selectedModeCategory]);
+
+  // Memoized callbacks for PresetModal
+  const handleClosePresetModal = useCallback(() => {
+    setShowPresetModal(false)
+    setEditingPreset(null)
+  }, [])
+
+  const handleSavePreset = useCallback(async (
+    label: string, 
+    query: string, 
+    selectedServers?: string[], 
+    agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', 
+    selectedFolder?: PlannerFile, 
+    llmConfig?: PresetLLMConfig
+  ) => {
+    try {
+      if (editingPreset) {
+        // Editing existing preset - use the existing agent mode
+        await updatePreset(editingPreset.id, label, query, selectedServers, editingPreset.agentMode, selectedFolder, llmConfig)
+      } else {
+        // Creating new preset - allow agent mode selection
+        const newPreset = await addPreset(label, query, selectedServers, agentMode, selectedFolder, llmConfig)
+        // Apply the new preset immediately
+        if (newPreset) {
+          handlePresetClick(newPreset)
+        }
+      }
+      setShowPresetModal(false)
+      setEditingPreset(null)
+    } catch (error) {
+      console.error('Failed to save preset:', error)
+    }
+  }, [editingPreset, updatePreset, addPreset, handlePresetClick])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -405,29 +438,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       {/* Preset Modal */}
       <PresetModal
         isOpen={showPresetModal}
-        onClose={() => {
-          setShowPresetModal(false)
-          setEditingPreset(null)
-        }}
-        onSave={async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
-          try {
-            if (editingPreset) {
-              // Editing existing preset - use the existing agent mode
-              await updatePreset(editingPreset.id, label, query, selectedServers, editingPreset.agentMode, selectedFolder, llmConfig)
-            } else {
-              // Creating new preset - allow agent mode selection
-              const newPreset = await addPreset(label, query, selectedServers, agentMode, selectedFolder, llmConfig)
-              // Apply the new preset immediately
-              if (newPreset) {
-                handlePresetClick(newPreset)
-              }
-            }
-            setShowPresetModal(false)
-            setEditingPreset(null)
-          } catch (error) {
-            console.error('Failed to save preset:', error)
-          }
-        }}
+        onClose={handleClosePresetModal}
+        onSave={handleSavePreset}
         editingPreset={editingPreset}
         availableServers={enabledServers}
         hideAgentModeSelection={!!editingPreset}

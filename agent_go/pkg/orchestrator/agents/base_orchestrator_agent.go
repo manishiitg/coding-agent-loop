@@ -14,11 +14,6 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 )
 
-// EventBridge defines the interface for event handling in orchestrator agents
-type EventBridge interface {
-	mcpagent.AgentEventListener
-}
-
 // OrchestratorContext holds context information for event emission
 type OrchestratorContext struct {
 	StepIndex int
@@ -35,8 +30,8 @@ type BaseOrchestratorAgent struct {
 	tracer              observability.Tracer
 	agentType           AgentType
 	systemPrompt        string
-	eventBridge         EventBridge          // Event bridge for auto events
-	orchestratorContext *OrchestratorContext // Context info for events
+	eventBridge         mcpagent.AgentEventListener // Event bridge for auto events
+	orchestratorContext *OrchestratorContext        // Context info for events
 }
 
 // NewBaseOrchestratorAgentWithEventBridge creates a new base orchestrator agent with event bridge
@@ -45,7 +40,7 @@ func NewBaseOrchestratorAgentWithEventBridge(
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
 	agentType AgentType,
-	eventBridge EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 ) *BaseOrchestratorAgent {
 	return &BaseOrchestratorAgent{
 		config:              config,
@@ -202,7 +197,7 @@ func (boa *BaseOrchestratorAgent) GetBaseAgent() *BaseAgent {
 }
 
 // SetEventBridge sets the event bridge for the agent
-func (boa *BaseOrchestratorAgent) SetEventBridge(bridge EventBridge) {
+func (boa *BaseOrchestratorAgent) SetEventBridge(bridge mcpagent.AgentEventListener) {
 	boa.eventBridge = bridge
 }
 

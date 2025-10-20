@@ -10,6 +10,7 @@ import (
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/llm"
@@ -136,7 +137,6 @@ type PlannerOrchestrator struct {
 
 // NewPlannerOrchestrator creates a new planner orchestrator with full configuration
 func NewPlannerOrchestrator(
-	ctx context.Context,
 	provider string,
 	model string,
 	mcpConfigPath string,
@@ -144,8 +144,7 @@ func NewPlannerOrchestrator(
 	agentMode string,
 	workspaceRoot string,
 	logger utils.ExtendedLogger,
-	llm llms.Model,
-	eventBridge orchestrator.EventBridge,
+	eventBridge mcpagent.AgentEventListener,
 	tracer observability.Tracer,
 	selectedServers []string,
 	selectedOptions *PlannerSelectedOptions,
@@ -158,9 +157,7 @@ func NewPlannerOrchestrator(
 	// Create base orchestrator
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
-		tracer,
 		eventBridge,
-		agents.PlannerOrchestratorAgentType,
 		orchestrator.OrchestratorTypePlanner,
 		provider,
 		model,
@@ -907,14 +904,13 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context
 		agentName := fmt.Sprintf("parallel-execution-agent-step-%d", stepIndex+1)
 
 		agent, err := po.CreateAndSetupStandardAgent(
-			"parallel_execution",
 			agentName,
 			"parallel_execution", // phase
 			stepIndex,            // step
 			iteration,            // iteration
 			po.GetMaxTurns(),     // maxTurns
 			agents.OutputFormatStructured,
-			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 				return agents.NewOrchestratorParallelExecutionAgent(context.Background(), config, logger, tracer, eventBridge)
 			},
 			po.WorkspaceTools,
@@ -929,14 +925,13 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context
 		agentName := fmt.Sprintf("execution-agent-step-%d", stepIndex+1)
 
 		agent, err := po.CreateAndSetupStandardAgent(
-			"execution",
 			agentName,
 			"sequential_execution", // phase
 			stepIndex,              // step
 			iteration,              // iteration
 			po.GetMaxTurns(),       // maxTurns
 			agents.OutputFormatStructured,
-			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 				return agents.NewOrchestratorExecutionAgent(context.Background(), config, logger, tracer, eventBridge)
 			},
 			po.WorkspaceTools,
@@ -955,14 +950,13 @@ func (po *PlannerOrchestrator) createDedicatedValidationAgent(ctx context.Contex
 
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
-		"validation",
 		agentName,
 		"parallel_validation", // phase
 		stepIndex,             // step
 		0,                     // iteration
 		po.GetMaxTurns(),      // maxTurns
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return agents.NewOrchestratorValidationAgent(config, logger, tracer, eventBridge)
 		},
 		po.WorkspaceTools,
@@ -979,14 +973,13 @@ func (po *PlannerOrchestrator) createDedicatedValidationAgent(ctx context.Contex
 func (po *PlannerOrchestrator) createPlanningAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
-		"planning",
 		"planning-agent",
 		"planning",       // phase
 		stepIndex,        // step
 		iteration,        // iteration
 		po.GetMaxTurns(), // maxTurns
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return agents.NewOrchestratorPlanningAgent(config, logger, tracer, eventBridge)
 		},
 		po.WorkspaceTools,
@@ -1003,14 +996,13 @@ func (po *PlannerOrchestrator) createPlanningAgent(ctx context.Context, stepInde
 func (po *PlannerOrchestrator) createPlanBreakdownAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
-		"plan_breakdown",
 		"plan-breakdown-agent",
 		"plan_breakdown", // phase
 		stepIndex,        // step
 		iteration,        // iteration
 		po.GetMaxTurns(), // maxTurns
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return agents.NewPlanBreakdownAgent(config, logger, tracer, eventBridge)
 		},
 		po.WorkspaceTools,
@@ -1027,14 +1019,13 @@ func (po *PlannerOrchestrator) createPlanBreakdownAgent(ctx context.Context, ste
 func (po *PlannerOrchestrator) createOrganizerAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
-		"plan_organizer",
 		"plan-organizer-agent",
 		"plan_organizer", // phase
 		stepIndex,        // step
 		iteration,        // iteration
 		po.GetMaxTurns(), // maxTurns
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return agents.NewPlanOrganizerAgent(config, logger, tracer, eventBridge)
 		},
 		po.WorkspaceTools,
@@ -1051,14 +1042,13 @@ func (po *PlannerOrchestrator) createOrganizerAgent(ctx context.Context, stepInd
 func (po *PlannerOrchestrator) createReportAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
-		"report_generation",
 		"report-agent",
 		"report_generation", // phase
 		stepIndex,           // step
 		iteration,           // iteration
 		po.GetMaxTurns(),    // maxTurns
 		agents.OutputFormatStructured,
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge orchestrator.EventBridge) agents.OrchestratorAgent {
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return agents.NewOrchestratorReportAgent(config, logger, tracer, eventBridge)
 		},
 		po.WorkspaceTools,
@@ -1196,7 +1186,7 @@ func (po *PlannerOrchestrator) GetExecutionMode() ExecutionMode {
 			}
 		}
 	}
-	return SequentialExecution // default
+	return ParallelExecution // default
 }
 
 // IsParallelMode returns true if the orchestrator is in parallel mode
@@ -1267,7 +1257,7 @@ func (po *PlannerOrchestrator) Execute(ctx context.Context, objective string, wo
 }
 
 // executeFlow executes the orchestrator flow with conversation history and event bridge
-func (po *PlannerOrchestrator) executeFlow(ctx context.Context, objective string, conversationHistory []llms.MessageContent, eventBridge orchestrator.EventBridge) (string, error) {
+func (po *PlannerOrchestrator) executeFlow(ctx context.Context, objective string, conversationHistory []llms.MessageContent, eventBridge mcpagent.AgentEventListener) (string, error) {
 	// Set conversation history
 	po.conversationHistory = conversationHistory
 

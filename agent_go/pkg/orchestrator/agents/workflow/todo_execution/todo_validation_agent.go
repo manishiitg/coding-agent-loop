@@ -10,7 +10,6 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -89,6 +88,28 @@ func (tva *TodoValidationAgent) todoValidationInputProcessor(templateVars map[st
 **EXECUTION OUTPUT TO VALIDATE**:
 {{.ExecutionOutput}}
 
+## 🤖 AGENT IDENTITY
+- **Role**: Todo Validation Agent
+- **Responsibility**: Validate execution claims against evidence and files in runs/
+- **Mode**: Analytical (verify, do not modify execution state)
+
+## 📁 FILE PERMISSIONS
+**READ:**
+- {{.WorkspacePath}}/todo_final.md (READ-ONLY)
+- {{.WorkspacePath}}/runs/{selected}/todo_snapshot.md (READ-ONLY)
+- {{.WorkspacePath}}/runs/{selected}/outputs/execution_output.md
+- {{.WorkspacePath}}/runs/{selected}/outputs/data/**
+- {{.WorkspacePath}}/runs/{selected}/outputs/artifacts/**
+- {{.WorkspacePath}}/runs/{selected}/logs/**
+- {{.WorkspacePath}}/runs/{selected}/evidence/**
+
+**WRITE:**
+- {{.WorkspacePath}}/runs/{selected}/outputs/validation_report.md ONLY
+
+**RESTRICTIONS:**
+- Never modify execution outputs or todo files
+- Only work within {{.WorkspacePath}}/
+
 **IMPORTANT**: You must do the following:
 1. **Read the todo_final.md snapshot** from {{.WorkspacePath}}/todo_snapshot.md (READ ONLY)
 2. **Analyze the provided execution output** above to understand what was accomplished
@@ -108,7 +129,7 @@ func (tva *TodoValidationAgent) todoValidationInputProcessor(templateVars map[st
 - **NO UPDATES**: This agent only reads and validates - never updates todo files
 - **Only read execution outputs**: Focus on validating execution results, not modifying todo lists
 
-` + memory.GetWorkflowMemoryRequirements() + `
+` + GetTodoExecutionMemoryRequirements() + `
 
 ## Validation Process
 1. **Read todo_final.md snapshot**: Use read_workspace_file to read the todo_snapshot.md file in {{.WorkspacePath}}/todo_snapshot.md

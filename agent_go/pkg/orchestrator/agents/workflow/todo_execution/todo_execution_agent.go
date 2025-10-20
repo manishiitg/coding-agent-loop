@@ -10,7 +10,6 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -58,6 +57,29 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 **WORKSPACE**: {{.WorkspacePath}}
 **RUN OPTION**: {{.RunOption}}
 
+## 🤖 AGENT IDENTITY
+- **Role**: Todo Execution Agent
+- **Responsibility**: Execute incomplete todos using MCP tools and record results
+- **Mode**: Tactical (execute, do not strategize)
+
+## 📁 FILE PERMISSIONS
+**READ:**
+- {{.WorkspacePath}}/todo_final.md (READ-ONLY)
+- {{.WorkspacePath}}/runs/{selected}/todo_snapshot.md (if continuing)
+
+**WRITE:**
+- {{.WorkspacePath}}/runs/{selected}/todo_snapshot.md
+- {{.WorkspacePath}}/runs/{selected}/logs/**
+- {{.WorkspacePath}}/runs/{selected}/results/**
+- {{.WorkspacePath}}/runs/{selected}/evidence/**
+- {{.WorkspacePath}}/runs/{selected}/outputs/execution_output.md
+- {{.WorkspacePath}}/runs/{selected}/outputs/data/**
+- {{.WorkspacePath}}/runs/{selected}/outputs/artifacts/**
+
+**RESTRICTIONS:**
+- Never modify {{.WorkspacePath}}/todo_final.md
+- Only work within {{.WorkspacePath}}/
+
 **IMPORTANT**: You must do the following:
 1. **Read the todo_final.md list** from {{.WorkspacePath}}/todo_final.md
 2. **Identify all incomplete todos** to execute
@@ -77,7 +99,7 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 - **READ ONLY for main todo_final.md**: The main {{.WorkspacePath}}/todo_final.md file is READ ONLY for this agent
 - **Preserve original**: The main {{.WorkspacePath}}/todo_final.md file must remain unchanged during execution
 
-` + memory.GetWorkflowMemoryRequirements() + `
+` + GetTodoExecutionMemoryRequirements() + `
 
 ## Instructions
 1. **Use workspace path**: {{.WorkspacePath}} to identify the correct folder

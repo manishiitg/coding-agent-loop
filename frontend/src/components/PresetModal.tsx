@@ -44,29 +44,20 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const primaryConfig = useLLMStore(state => state.primaryConfig);
   const availableLLMs = useLLMStore(state => state.availableLLMs);
   const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
-  const setPrimaryConfig = useLLMStore(state => state.setPrimaryConfig);
   const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
 
   // Calculate effective agent mode that always honors fixedAgentMode when provided
   const effectiveAgentMode = fixedAgentMode || agentMode;
 
-  // LLM selection handler
+  // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
-    // Update the primary config in the store
-    setPrimaryConfig({
-      ...primaryConfig,
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
-      model_id: llm.model
-    });
-    
-    // Update the local LLM config state
     setLlmConfig({
       provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
       model_id: llm.model
     });
-  }, [primaryConfig, setPrimaryConfig]);
+  }, []);
 
-  // Convert preset LLM config to LLMOption for display
+  // Get current LLM option for display
   const currentLLMOption = useMemo(() => {
     if (llmConfig) {
       // Find the matching LLM option from available LLMs
@@ -136,7 +127,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         alert('Folder selection is required for Deep Search and workflow presets');
         return;
       }
-      console.log('[PRESET MODAL] Saving preset with llmConfig:', llmConfig);
+      // Use the local LLM config (either from editing preset or user selection)
       onSave(label.trim(), query.trim(), selectedServers, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
       onClose();
     }
@@ -246,17 +237,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <div className="space-y-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                        Primary LLM
+                        Select LLM for this preset
                       </label>
-                              <LLMSelectionDropdown
-                                availableLLMs={availableLLMs}
-                                selectedLLM={currentLLMOption}
-                                onLLMSelect={handleLLMSelect}
-                                onRefresh={refreshAvailableLLMs}
-                                disabled={false}
-                                inModal={true}
-                                openDirection="down"
-                              />
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={currentLLMOption}
+                        onLLMSelect={handleLLMSelect}
+                        onRefresh={refreshAvailableLLMs}
+                        disabled={false}
+                        inModal={true}
+                        openDirection="down"
+                      />
                     </div>
                     <div className="text-xs text-gray-500">
                       This preset will use the selected LLM configuration

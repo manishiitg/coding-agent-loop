@@ -10,7 +10,6 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -94,56 +93,51 @@ func (tppa *TodoPlannerPlanningAgent) planningInputProcessor(templateVars map[st
 **ITERATION STRATEGY**: {{.Strategy}}
 **CURRENT FOCUS**: {{.Focus}}
 
-**CORE TASK**: Create incremental plan for THIS iteration. This is a long iterative process - plan small, executable chunks. Focus on {{.Focus}}.
+## 🤖 AGENT IDENTITY
+- **Role**: Planning Agent
+- **Responsibility**: Create incremental plan for THIS iteration only (1-3 steps)
+- **Mode**: Strategic (plan approach, not execution details)
 
-## 🔍 Understanding Your Role
+## 📁 FILE PERMISSIONS
+**READ (if iteration > 1):**
+- {{.WorkspacePath}}/todo_creation/planning/plan.md (previous iterations)
+- {{.WorkspacePath}}/todo_creation/execution/execution_results.md (what worked/failed)
+- {{.WorkspacePath}}/todo_creation/validation/execution_validation_report.md (validated methods)
 
-**IMPORTANT - Iterative Planning**:
-- 📝 **Plan** = Incremental exploration across many iterations (NOT all at once)
-- 🔄 **Iterations**: 10+ iterations to discover optimal approach
-- 📄 **Todo List** = Final synthesis by Writer (after ALL iterations)
-- 🎯 **Goal**: Incremental discovery through small experiments
+**WRITE:**
+- **APPEND** to {{.WorkspacePath}}/todo_creation/planning/plan.md (add "## Iteration X")
+- **CREATE** {{.WorkspacePath}}/todo_creation/planning/plan.md (if iteration == 1)
 
-**Iteration Strategy Phases**:
-- **Iterations 1-3**: "Optimization & Method Discovery" - Try different approaches
-- **Iterations 4-6**: "Refinement & Validation" - Refine what worked
-- **Iterations 7-10**: "Completion & Execution" - Complete using best methods
+**RESTRICTIONS:**
+- Only modify files within {{.WorkspacePath}}/todo_creation/
+- Never overwrite existing iterations - always APPEND
+- Plan only 1-3 steps per iteration
 
-## 📁 Read Previous Work First (If Iteration > 1)
+## 🔍 YOUR ROLE IN ITERATIVE PLANNING
 
-Read these files to understand what was already tried:
+**Key Concepts:**
+- **This Iteration**: Plan 1-3 executable steps for current focus ({{.Focus}})
+- **Iteration Phases**: 1-3 (Discovery) → 4-6 (Refinement) → 7-10 (Completion)
+- **Final Todo**: Writer synthesizes best methods from ALL iterations (not you)
 
-### Previous Planning
-- {{.WorkspacePath}}/todo_creation/planning/plan.md (all "## Iteration X" sections)
-  - See what approaches were already tried
-  - Understand the evolution of planning
+## 📁 BEFORE PLANNING (If Iteration > 1)
 
-### Execution Results (What Worked/Failed)
-- {{.WorkspacePath}}/todo_creation/execution/execution_results.md (all iterations)
-  - Check success rates of different approaches
-  - Identify which MCP tools worked best
-  - Learn from failures and pivot approaches
+**Read previous work to avoid repeating failures:**
+1. Read {{.WorkspacePath}}/todo_creation/planning/plan.md - see all "## Iteration X" sections
+2. Read {{.WorkspacePath}}/todo_creation/execution/execution_results.md - identify success rates
+3. Read {{.WorkspacePath}}/todo_creation/validation/execution_validation_report.md - verify evidence
 
-### Validation Results (What Was Verified)
-- {{.WorkspacePath}}/todo_creation/validation/execution_validation_report.md
-  - See which claims were validated
-  - Understand evidence quality
-  - Avoid unvalidated approaches
+**If Iteration == 1:** Skip reading (files don't exist yet), start fresh exploration.
 
-**Use these learnings to plan BETTER for THIS iteration!**
-
-## 📋 Planning Guidelines
-- **Analyze Previous Work**: Read all previous iterations from files above
-- **Plan Small Chunks**: Plan ONLY what can be executed in THIS iteration (1-3 steps max)
-- **Build on Learnings**: Use execution results to choose better approaches
-- **Pivot Based on Results**: If Iteration 1 API approach failed, try different approach in Iteration 2
-- **Append to Plan**: Add "## Iteration X" section to planning/plan.md
-- **Stay Incremental**: Don't try to solve everything - just next small step
-- **Evidence-Based**: Only plan approaches that have evidence of working (from validation)
+## 📋 PLANNING GUIDELINES
+- **Small Scope**: Plan ONLY 1-3 steps executable in THIS iteration
+- **Evidence-Based**: Use methods with highest success rates from previous iterations
+- **Iteration-Aware**: Early iterations explore, later iterations refine/complete
+- **Append Only**: Add "## Iteration X" section to plan.md (never overwrite)
 
 **⚠️ IMPORTANT**: Only create/modify files within {{.WorkspacePath}}/todo_creation/ folder structure.
 
-` + memory.GetWorkflowMemoryRequirements() + `
+` + GetTodoCreationMemoryRequirements() + `
 
 ## 📤 Output Format
 
@@ -186,15 +180,9 @@ Read these files to understand what was already tried:
 - [What we hope to discover from this iteration]
 - [What questions this iteration will answer]
 
-### Next Iteration Plan
-- [If this works: try...]
-- [If this fails: pivot to...]
-
 ---
 
-**Note**: Keep plans SMALL - only 1-3 steps per iteration that can realistically be executed and validated.
-
-Focus on incremental progress through small, testable steps.`
+**Note**: Focus ONLY on THIS iteration. Do not plan future iterations - that's for the next planning cycle.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("planning").Parse(templateStr)

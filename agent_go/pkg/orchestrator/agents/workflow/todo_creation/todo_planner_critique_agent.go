@@ -10,7 +10,6 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -98,159 +97,120 @@ func (tpca *TodoPlannerCritiqueAgent) todoPlannerCritiqueInputProcessor(template
 	// Define the template
 	templateStr := `## 🎯 PRIMARY TASK - EVALUATE FINAL TODO LIST SYNTHESIS
 
-You are a todo planner critique agent. Evaluate if the FINAL todo list properly synthesizes learnings from ALL iterations.
-
 **OBJECTIVE**: {{.Objective}}
 **ITERATION**: {{.Iteration}}
 **WORKSPACE**: {{.WorkspacePath}}
 
-## 🎯 Understanding What You're Evaluating
+## 🤖 AGENT IDENTITY
+- **Role**: Critique Agent
+- **Responsibility**: Evaluate todo list synthesis quality with quantitative scoring
+- **Mode**: Analytical (verify synthesis completeness, provide stop signal)
 
-**IMPORTANT - Evaluation Context**:
-- 🔄 **10+ Iterations** = Long discovery process with multiple approaches
-- 📝 **Planning History** = Multiple "## Iteration X" sections in plan.md
-- 🧪 **Execution History** = Multiple "## Iteration X" sections in execution_results.md
-- ✅ **Validation History** = Validation reports across iterations
-- 📄 **Todo List** = Writer synthesized BEST methods from ALL iterations
-- **YOUR JOB** = Verify synthesis is comprehensive and optimal
+## 📁 FILE PERMISSIONS
+**READ:**
+- {{.WorkspacePath}}/todo_creation/todo.md (final todo to critique)
+- {{.WorkspacePath}}/todo_creation/iteration_analysis.md (verify synthesis)
+- {{.WorkspacePath}}/todo_creation/planning/plan.md (count iterations)
+- {{.WorkspacePath}}/todo_creation/execution/execution_results.md (verify best methods)
+- {{.WorkspacePath}}/todo_creation/validation/execution_validation_report.md (evidence quality)
 
-## 📁 Read Context Files First
+**WRITE:**
+- Returns critique report directly (no file writes)
 
-Read these files to understand ALL iteration history:
+**RESTRICTIONS:**
+- READ-ONLY agent - does not modify any files
+- Must provide quantitative scores and clear STOP_ITERATIONS signal
 
-### Planning & Execution History
-- {{.WorkspacePath}}/todo_creation/planning/plan.md (READ ALL "## Iteration X" sections)
-- {{.WorkspacePath}}/todo_creation/execution/execution_results.md (READ ALL "## Iteration X" sections)
-- {{.WorkspacePath}}/todo_creation/execution/completed_steps.md
-- {{.WorkspacePath}}/todo_creation/execution/evidence/
+## 🔍 QUANTITATIVE EVALUATION PROCESS
 
-### Validation History & Final Todo
-- {{.WorkspacePath}}/todo_creation/validation/execution_validation_report.md (ALL validations)
-- {{.WorkspacePath}}/todo_creation/todo.md (final synthesized todo)
+**1. Count Iteration References:**
+- Read todo.md and count references to "Iteration X"
+- Minimum required: At least {{.Iteration}} iterations should be referenced
+- Use regex_search to count: search for "Iteration [0-9]+" pattern
 
-## ❓ Core Evaluation Questions
+**2. Verify Best Method Selection:**
+- Read execution_results.md to see success rates
+- Check if todo.md uses methods with highest success rates
+- Cross-reference with validation reports
 
-### 1. Synthesis Quality
-- Did Writer read ALL "## Iteration X" sections from plan.md?
-- Did Writer read ALL "## Iteration X" sections from execution_results.md?
-- Is the todo list based on learnings from ALL iterations (not just latest)?
-- Were all approaches tried across iterations properly compared?
+**3. Calculate Scores (/100):**
+- Synthesis Completeness: 40 points
+- Method Selection: 30 points
+- Actionability: 30 points
 
-### 2. Method Selection
-- Did Writer identify methods with HIGHEST success rates across iterations?
-- Are selected methods backed by evidence from execution history?
-- Were failed methods (from early iterations) properly excluded?
-- Is the selection justified by comparing iteration results?
-
-### 3. Objective Coverage
-- Does the synthesized todo list cover ALL objective requirements?
-- Are there missing elements or gaps?
-- Is the scope complete?
-
-### 4. Step Quality
-- Are steps using proven MCP tools from successful iterations?
-- Are steps clear, specific, and reproducible?
-- Do steps reflect learnings from failed iterations (avoiding mistakes)?
-- Are dependencies clearly defined?
-
-### 5. Iteration Learning
-- Does todo reflect evolution across iterations (improvement over time)?
-- Were insights from validation integrated?
-- Are there patterns from multiple iterations incorporated?
-- Is this better than any single iteration's approach?
-
-` + memory.GetWorkflowMemoryRequirements() + `
+` + GetTodoCreationMemoryRequirements() + `
 
 ## 📤 Output Format
-**Return clean markdown only, not JSON**
 
-# Final Todo List Assessment Report - Iteration Synthesis
+# Critique Report - Iteration {{.Iteration}}
 
-## 📊 Assessment Scores
+## 📊 QUANTITATIVE SCORES
 
-### Synthesis Quality: [High/Medium/Low]
-- **All Iterations Read**: Did Writer analyze ALL "## Iteration X" sections?
-- **Comprehensive Analysis**: [Yes/No - All planning + execution history reviewed?]
-- **Iteration Comparison**: Were methods compared across iterations?
-- **Confidence**: [High/Medium/Low]
+**TOTAL SCORE: [X]/100**
 
-### Method Selection: [High/Medium/Low]
-- **Best Methods Selected**: Highest success rates from iterations?
-- **Evidence-Backed**: Selection justified by iteration results?
-- **Failed Methods Excluded**: Early failed approaches not included?
-- **Selection Quality**: [Strong/Moderate/Weak]
+### 1. Synthesis Completeness: [X]/40
+- **Iteration References**: Found [N] / {{.Iteration}} iterations in todo.md
+  - 40pts: All {{.Iteration}} iterations referenced
+  - 30pts: 70%+ iterations referenced
+  - 20pts: 50%+ iterations referenced
+  - 0pts: <50% iterations referenced
+- **Actual Score**: [X]/40
 
-### Objective Coverage: [High/Medium/Low]
-- **Coverage**: Does todo address all requirements?
-- **Missing Elements**: [None/Minor/Major gaps]
-- **Scope**: [Complete/Mostly Complete/Incomplete]
+### 2. Method Selection: [X]/30
+- **Best Method Used**: [Yes/No] - Uses method with highest success rate?
+- **Evidence**: Success rate from execution_results.md = [%]
+  - 30pts: Uses method with highest success rate + validation
+  - 15pts: Uses method from recent iterations only
+  - 0pts: Uses unvalidated methods
+- **Actual Score**: [X]/30
 
-### Step Quality: [High/Medium/Low]
-- **Proven MCP Tools**: Uses tools from successful iterations?
-- **Clarity**: Clear and specific?
-- **Reproducibility**: Consistently executable?
-- **Learning Integration**: Avoids mistakes from failed iterations?
+### 3. Actionability: [X]/30
+- **Steps with Complete Fields**: [N] / [Total]
+  - 30pts: All steps have: What, How, Success, Dependencies
+  - 15pts: Most steps (70%+) have required fields
+  - 0pts: Many steps missing critical fields
+- **Actual Score**: [X]/30
 
-### Iteration Learning: [High/Medium/Low]
-- **Evolution**: Shows improvement over iterations?
-- **Pattern Recognition**: Incorporates patterns from multiple iterations?
-- **Better Than Single**: Superior to any single iteration?
-- **Validation Integration**: Includes validation insights?
+---
 
-## 🔍 Key Findings
+## 🔍 KEY FINDINGS
 
-### 📚 Iteration History Analysis
-- **Total Iterations Analyzed**: [Number from files]
-- **Planning Iterations Found**: [Count from plan.md]
-- **Execution Iterations Found**: [Count from execution_results.md]
-- **Validation Iterations Found**: [Count from validation report]
+### Iteration References Found
+- Counted [N] iteration references in todo.md
+- Expected: At least {{.Iteration}} references
+- Status: [PASS/FAIL]
 
-### 🏆 Method Selection Analysis
-- **Iteration 1**: [Method tried, success rate]
-- **Iteration 2**: [Method tried, success rate]
-- **Iteration X**: [Method tried, success rate]
-- **Winner Selected**: [Which iteration's method was chosen for todo?]
-- **Correct Choice**: [Yes/No - Is this the best from all iterations?]
+### Method Selection
+- Best method from execution_results.md: [Method name, success rate %]
+- Method used in todo.md: [Method name]
+- Match: [Yes/No]
 
-### ✅ Strengths
-[What aspects are well done]
+### Critical Issues
+1. [Most critical issue if score < 80]
+2. [Second issue]
 
-### ⚠️ Coverage Gaps
-[Missing or incomplete aspects]
+---
 
-### 📝 Step Quality Issues
-[Steps that are unclear or hard to reproduce]
+## 💡 RECOMMENDATIONS
 
-### 🔧 Optimization Issues
-[Claims lacking evidence or suboptimal approaches]
+**If score >= 80:** Todo list is production-ready.
+**If score < 80:** Address these issues before proceeding:
+- [Specific improvement needed]
+- [Second improvement]
 
-### ❓ Approach Selection Concerns
-[If wrong approach was selected or selection not justified]
+---
 
-## 💡 Recommendations
+## 🚦 STOP SIGNAL
 
-### Priority Improvements
-1. [Most critical issue to address]
-2. [Second priority]
-3. [Third priority]
+**STOP_ITERATIONS**: [Yes/No]
+**Reason**: [One sentence - why stop or continue]
 
-### Specific Actions
-- **Coverage**: [How to address gaps]
-- **Quality**: [How to improve steps]
-- **Optimization**: [How to verify claims]
-- **Execution**: [How to complete gaps]
+**If Yes (score >= 80):** Todo list synthesis is complete and production-ready.
+**If No (score < 80):** [What needs improvement in next iteration]
 
-## ✅ Final Assessment
-- **All Iterations Analyzed**: [Yes/No]
-- **Best Methods Selected**: [Yes/No - Highest success rates from iterations?]
-- **Synthesis Quality**: [High/Medium/Low]
-- **Complete Coverage**: [Yes/No]
-- **Reproducible Steps**: [Yes/No]
-- **Iteration Learning Applied**: [Yes/No]
-- **Production Ready**: [Yes/No]
-- **Reason**: [Brief explanation - focus on synthesis quality and iteration-based selection]
+---
 
-Focus on verifying comprehensive iteration analysis, optimal method synthesis, and production readiness based on ALL iteration history.`
+Focus on quantitative verification and clear stop/continue signal.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("todoPlannerCritique").Parse(templateStr)

@@ -10,7 +10,6 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -62,77 +61,88 @@ func (tpca *TodoPlannerCleanupAgent) cleanupInputProcessor(templateVars map[stri
 	}
 
 	// Define the template
-	templateStr := `## PRIMARY TASK - CLEAN UP WORKSPACE & SYNC TO GITHUB
+	templateStr := `## PRIMARY TASK - CLEAN UP WORKSPACE
 
 **WORKSPACE**: {{.WorkspacePath}}
 
-**CORE TASK**: Clean up the planning workspace, organize files for the execution phase, and sync all changes to GitHub.
+## 🤖 AGENT IDENTITY
+- **Role**: Cleanup Agent
+- **Responsibility**: Organize workspace, move final todo, archive intermediate files
+- **Mode**: Tactical (file operations, optional GitHub sync)
 
-## Cleanup Strategy
-- **Check GitHub Status**: Use get_workspace_github_status to check current sync status
-- **Review Planning Files**: Check what files were created
-- **Move Final Todo**: Move the final todo.md from todo_creation/ to main workspace root
-- **Archive Intermediate Files**: Store planning artifacts in archived folder
-- **Prepare for Execution**: Set up workspace for execution phase
-- **Sync to GitHub**: Use sync_workspace_to_github to commit and push all changes
+## 📁 FILE PERMISSIONS
+**READ:**
+- {{.WorkspacePath}}/todo_creation/ (all files to decide what to archive)
 
-## Critical File Handling
-**FINAL TODO FILE**: 
-- **Source**: {{.WorkspacePath}}/todo_creation/todo.md
-- **Destination**: {{.WorkspacePath}}/todo_final.md
-- **Action**: Use move_workspace_file to move the final todo list to main workspace root
-- **Purpose**: Make todo list accessible for execution phase
+**WRITE:**
+- **MOVE** {{.WorkspacePath}}/todo_creation/todo.md → {{.WorkspacePath}}/todo_final.md
+- **CREATE** {{.WorkspacePath}}/todo_creation/cleanup/archived/ (archive folder)
+- **MOVE** intermediate files to archived/
+- **CREATE** {{.WorkspacePath}}/todo_creation/cleanup/cleanup_report.md
 
-**INTERMEDIATE FILES**:
-- **Archive Location**: {{.WorkspacePath}}/todo_creation/cleanup/archived/
-- **Files to Archive**: Planning drafts, execution logs, validation reports, critique reports
-- **Purpose**: Preserve planning artifacts while keeping workspace clean
+**GITHUB (OPTIONAL):**
+- Use get_workspace_github_status (if available)
+- Use sync_workspace_to_github (if available and status shows changes)
 
-## Workspace Updates
-Create/update files in {{.WorkspacePath}}/todo_creation/cleanup/:
-- **cleanup_report.md**: Summary of cleanup actions and sync status
-- **archived/**: Archived planning files (intermediate files only)
+**RESTRICTIONS:**
+- DO NOT archive todo.md or todo_final.md (these are production files)
+- Only archive intermediate planning files
 
-**⚠️ IMPORTANT**: 
-- Move final todo.md to main workspace root as todo_final.md ({{.WorkspacePath}}/todo_final.md)
-- Only archive intermediate/planning files, not the final todo list
-- Only create, update, or modify files within {{.WorkspacePath}}/todo_creation/ folder structure for cleanup reports
+## 🔧 CLEANUP STEPS
 
-## GitHub Sync Process
-1. **Check Status**: Use get_workspace_github_status to see pending changes
-2. **Perform Cleanup**: Organize and archive files as needed
-3. **Sync Changes**: Use sync_workspace_to_github with commit message "Cleanup planning workspace - organized files for execution phase"
-4. **Verify Sync**: Confirm all changes were successfully pushed to GitHub
+**1. Move Final Todo to Main Workspace:**
+- Source: {{.WorkspacePath}}/todo_creation/todo.md
+- Destination: {{.WorkspacePath}}/todo_final.md
+- Tool: move_workspace_file
 
-` + memory.GetWorkflowMemoryRequirements() + `
+**2. Archive Intermediate Files (Pattern-Based):**
+Archive these patterns to {{.WorkspacePath}}/todo_creation/cleanup/archived/:
+- planning/*.md (all planning iterations)
+- execution/*.md (execution results, completed_steps)
+- validation/*.md (validation reports)
+- execution/evidence/* (evidence files)
+- iteration_analysis.md (writer's comparison)
+
+**3. Optional GitHub Sync:**
+IF get_workspace_github_status tool exists:
+  - Check status
+  - IF changes detected: sync_workspace_to_github with message "Cleanup planning workspace"
+  - ELSE: skip sync
+
+IF tool doesn't exist: Skip GitHub sync (report "GitHub tools not available")
+
+` + GetTodoCreationMemoryRequirements() + `
 
 ## Output Format
 # Cleanup Report
 
-## Cleanup Summary
-[What was cleaned up and organized]
+## Actions Performed
 
-## Final Todo File Movement
+### 1. Final Todo Movement
 - **Source**: {{.WorkspacePath}}/todo_creation/todo.md
 - **Destination**: {{.WorkspacePath}}/todo_final.md
-- **Status**: [Confirmation that final todo was moved to main workspace root as todo_final.md]
+- **Status**: [MOVED/FAILED]
 
-## Files Preserved
-[Important files that were kept in main workspace]
+### 2. Files Archived
+[List files moved to {{.WorkspacePath}}/todo_creation/cleanup/archived/]
+- planning/plan.md → archived/
+- execution/execution_results.md → archived/
+- [etc...]
 
-## Files Archived
-[Intermediate files that were moved to archive folder]
+### 3. GitHub Sync (Optional)
+- **Tool Available**: [Yes/No]
+- **Changes Detected**: [Yes/No]
+- **Sync Status**: [SYNCED/SKIPPED/FAILED]
+- **Commit Message**: [If synced]
 
-## GitHub Sync Status
-[Sync status before and after cleanup]
+## Summary
+- **Todo Final Location**: {{.WorkspacePath}}/todo_final.md
+- **Archived Files**: [Count]
+- **Workspace Status**: [Ready for execution]
 
-## Workspace Status
-[Current state of the workspace - final todo accessible at root level as todo_final.md]
+---
 
-## Sync Confirmation
-[Confirmation that all changes were synced to GitHub]
-
-Focus on creating a clean, organized workspace ready for the execution phase with the final todo list accessible at the main workspace root as todo_final.md and ensuring all changes are properly synced to GitHub.`
+Focus on file organization and optional GitHub sync.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("cleanup").Parse(templateStr)

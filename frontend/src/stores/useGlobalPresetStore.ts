@@ -196,13 +196,12 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selected_folder: selectedFolder?.filepath
           }
           
-          // Only include llm_config if it has a value
+          // Include LLM config if provided
           if (llmConfig) {
             request.llm_config = llmConfig
           }
           
           console.log('[PRESET] Creating preset with request:', request)
-          console.log('[PRESET] LLM Config:', llmConfig)
           
           const response = await agentApi.createPresetQuery(request)
           
@@ -238,13 +237,12 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selected_folder: selectedFolder?.filepath
           }
           
-          // Only include llm_config if it has a value
+          // Include LLM config if provided
           if (llmConfig) {
             request.llm_config = llmConfig
           }
           
           console.log('[PRESET] Updating preset with request:', request)
-          console.log('[PRESET] LLM Config:', llmConfig)
           
           await agentApi.updatePresetQuery(id, request)
           

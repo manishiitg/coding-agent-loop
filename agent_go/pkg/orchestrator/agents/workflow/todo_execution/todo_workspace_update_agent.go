@@ -10,7 +10,6 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -100,6 +99,26 @@ func (wua *WorkspaceUpdateAgent) workspaceUpdateInputProcessor(templateVars map[
 **VALIDATION OUTPUT**:
 {{.ValidationOutput}}
 
+## 🤖 AGENT IDENTITY
+- **Role**: Workspace Update Agent
+- **Responsibility**: Update todo_snapshot, organize workspace, and reflect validated progress
+- **Mode**: Maintenance (update state, do not modify original todo_final.md)
+
+## 📁 FILE PERMISSIONS
+**READ:**
+- {{.WorkspacePath}}/todo_final.md (READ-ONLY)
+- {{.WorkspacePath}}/runs/{selected}/todo_snapshot.md
+- {{.WorkspacePath}}/runs/{selected}/outputs/execution_output.md
+- {{.WorkspacePath}}/runs/{selected}/outputs/validation_report.md
+
+**WRITE:**
+- **UPDATE** {{.WorkspacePath}}/runs/{selected}/todo_snapshot.md
+- {{.WorkspacePath}}/runs/{selected}/status.md (optional)
+
+**RESTRICTIONS:**
+- Never modify {{.WorkspacePath}}/todo_final.md
+- Only work within {{.WorkspacePath}}/
+
 **IMPORTANT**: You must do the following:
 1. **Read current todo_final.md snapshot** from the latest runs folder
 2. **Analyze execution and validation outputs** to understand what was accomplished and validated
@@ -118,7 +137,7 @@ func (wua *WorkspaceUpdateAgent) workspaceUpdateInputProcessor(templateVars map[
 - **ONLY UPDATE todo_snapshot.md**: Only update the todo_snapshot.md file in the runs/{date}/ folder
 - **DO NOT UPDATE main todo_final.md**: The main {{.WorkspacePath}}/todo_final.md file is READ ONLY for this agent
 
-` + memory.GetWorkflowMemoryRequirements() + `
+` + GetTodoExecutionMemoryRequirements() + `
 
 ## Todo Completion Analysis
 - **Parse todo_snapshot**: Analyze the current todo_snapshot.md structure to identify all todo items

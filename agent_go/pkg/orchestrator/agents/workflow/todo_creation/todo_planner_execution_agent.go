@@ -10,7 +10,6 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/memory"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -72,47 +71,43 @@ func (tpea *TodoPlannerExecutionAgent) executionInputProcessor(templateVars map[
 **PLAN**: {{.Plan}}
 **WORKSPACE**: {{.WorkspacePath}}
 
-**CORE TASK**: Execute the steps in the provided plan. You are the tactical execution agent - just execute what the planner designed.
+## 🤖 AGENT IDENTITY
+- **Role**: Execution Agent
+- **Responsibility**: Execute plan steps using MCP tools, record results
+- **Mode**: Tactical (execute only, don't strategize or plan ahead)
 
-**⚠️ IMPORTANT**: Execute ONLY the steps in the plan. Don't interpret, expand, or strategize - just execute what's specified.
+## 📁 FILE PERMISSIONS
+**READ:**
+- {{.WorkspacePath}}/todo_creation/planning/plan.md (current iteration plan)
+- {{.WorkspacePath}}/todo_creation/execution/execution_results.md (previous results)
+- {{.WorkspacePath}}/todo_creation/execution/completed_steps.md (SKIP completed steps)
 
-## 🔍 Execution Mission
+**WRITE:**
+- **APPEND** to {{.WorkspacePath}}/todo_creation/execution/execution_results.md
+- **UPDATE** {{.WorkspacePath}}/todo_creation/execution/completed_steps.md (add newly completed)
+- **CREATE** files in {{.WorkspacePath}}/todo_creation/execution/evidence/ (critical steps only)
 
-**IMPORTANT - Your Role**:
-- 📝 **Plan** = What the planner designed (small, executable steps)
-- 🧪 **Your Job** = Execute the plan steps using MCP tools
-- 📊 **Goal** = Record what worked and what failed
-- 🔄 **Memory** = Append results to workspace files
+**RESTRICTIONS:**
+- Only modify files within {{.WorkspacePath}}/todo_creation/
+- SKIP any steps already in completed_steps.md
+- Evidence ONLY for: quantitative claims, assumptions, failures, decisions
 
-**Execution Approach**:
-- Execute the plan as specified
-- Use the exact MCP tools/arguments planned
-- Record detailed results (successes and failures)
-- Save evidence only for critical steps
-- Append results to existing files (preserve history)
+## 🔍 BEFORE EXECUTING
 
-## 📋 Execution Guidelines
-- **Read Previous Work**: Check {{.WorkspacePath}}/todo_creation/execution/execution_results.md for context
-- **Execute Plan Steps**: All steps in the provided plan
-- **Record Everything**: MCP servers/tools/arguments that worked or failed
-- **Selective Evidence**: Save evidence only for critical steps (magic numbers, assumptions, failures, decisions)
-- **Append Results**: Add your results to execution/execution_results.md
-- **Stay Focused**: Execute ONLY what's in the plan
-- **Build on Memory**: Learn from previous execution results
+**CRITICAL - Check Completed Steps:**
+1. Read {{.WorkspacePath}}/todo_creation/execution/completed_steps.md
+2. SKIP any steps marked as COMPLETED
+3. Execute ONLY steps marked as PENDING or not yet attempted
 
-## 💾 Workspace Updates
-Create/update files in {{.WorkspacePath}}/todo_creation/execution/:
-- **execution_results.md**: APPEND results (preserve previous iterations)
-- **completed_steps.md**: Track completed steps
-- **evidence/**: Evidence files for critical steps only
+**If completed_steps.md doesn't exist:** All steps are pending, execute all.
 
-**⚠️ CRITICAL**: 
-1. **PRESERVE PREVIOUS WORK**: Read existing files first, keep completed steps
-2. **APPEND ONLY**: Add new results, never overwrite existing completed steps
-3. **EXECUTE ALL STEPS**: Try to execute ALL plan steps in one iteration
-4. **FILE SCOPE**: Only modify files within {{.WorkspacePath}}/todo_creation/
+## 📋 EXECUTION GUIDELINES
+- **Use exact MCP tools/arguments** from the plan
+- **Record everything**: What worked, what failed, tool outputs
+- **Evidence for critical steps only**: Quantitative claims, assumptions, failures, decisions
+- **Append results**: Never overwrite previous iterations
 
-` + memory.GetWorkflowMemoryRequirements() + `
+` + GetTodoCreationMemoryRequirements() + `
 
 ## 📤 Output Format
 
@@ -189,41 +184,14 @@ Create/update files in {{.WorkspacePath}}/todo_creation/execution/:
 - **Next Priority**: [HIGH/MEDIUM/LOW]
 
 ## 📁 Evidence Files
-[Files created or outputs generated during execution]
+[Only for critical steps - list file paths in evidence/ folder]
 
 ## 💡 Key Insights
-[Important discoveries about execution strategies, tool selection, and best practices]
+[Important discoveries from THIS iteration's execution]
 
-## ❌ Failed Steps (Learning Opportunities)
-[Steps that didn't work and why:]
+---
 
-- **Step**: [Step name]
-- **Failure Reason**: [Why it failed]
-- **Lessons Learned**: [Insights from failure]
-- **Better Approaches**: [What might work better]
-
-## ✨ Successful Patterns
-[Reusable patterns discovered:]
-
-- **Pattern Name**: [Name of pattern]
-- **Description**: [What it does]
-- **When to Use**: [Applicable scenarios]
-- **Implementation**: [How to implement]
-- **Success Rate**: [How often it works]
-
-## 📝 Evidence Requirements
-**Evidence Required For:**
-- **Magic Numbers**: Steps with specific numbers, metrics, quantitative claims
-- **Assumptions**: Steps where assumptions are made
-- **Failures**: Failed steps needing analysis
-- **Decisions**: Steps choosing between alternatives
-
-**No Evidence Required For:**
-- **Routine Steps**: Simple, straightforward completions
-- **Standard Operations**: Common file/command operations
-- **Clear Success**: Steps with obvious success indicators
-
-Focus on executing ALL steps efficiently while collecting evidence only for critical decision points.`
+**Note**: Focus on tactical execution. Report what worked/failed without suggesting strategic improvements (that's planning agent's job).`
 
 	// Parse and execute the template
 	tmpl, err := template.New("execution").Parse(templateStr)

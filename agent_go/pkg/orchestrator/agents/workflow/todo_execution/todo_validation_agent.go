@@ -95,8 +95,8 @@ func (tva *TodoValidationAgent) todoValidationInputProcessor(templateVars map[st
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- {{.WorkspacePath}}/todo_final.md (READ-ONLY)
-- {{.WorkspacePath}}/runs/{selected}/todo_snapshot.md (READ-ONLY)
+- {{.WorkspacePath}}/todo_snapshot.md (READ-ONLY)
+- {{.WorkspacePath}}/todo_snapshot.md (READ-ONLY)
 - {{.WorkspacePath}}/runs/{selected}/outputs/execution_output.md
 - {{.WorkspacePath}}/runs/{selected}/outputs/data/**
 - {{.WorkspacePath}}/runs/{selected}/outputs/artifacts/**

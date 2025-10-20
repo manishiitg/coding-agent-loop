@@ -129,7 +129,7 @@ func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context,
 	templateVars := map[string]string{
 		"Objective":        objective,
 		"WorkspacePath":    too.GetWorkspacePath(),
-		"iteration":        fmt.Sprintf("%d", iteration),
+		"Iteration":        fmt.Sprintf("%d", iteration),
 		"CritiqueFeedback": previousCritiqueResult,
 	}
 
@@ -152,11 +152,11 @@ func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, o
 
 	// Prepare template variables
 	templateVars := map[string]string{
-		"objective":          objective,
-		"input_data":         inputData,
-		"input_prompt":       inputPrompt,
-		"refinement_history": "No refinement history available for first iteration",
-		"iteration":          fmt.Sprintf("%d", iteration),
+		"Objective":         objective,
+		"InputData":         inputData,
+		"InputPrompt":       inputPrompt,
+		"RefinementHistory": "No refinement history available for first iteration",
+		"Iteration":         fmt.Sprintf("%d", iteration),
 	}
 
 	// Execute critique using the DataCritiqueAgent

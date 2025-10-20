@@ -563,10 +563,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
 
-	// External API routes (for external systems - curl, Postman, etc.)
-	apiRouter.HandleFunc("/external/execute", api.handleExecutePreset).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/external/cancel", api.handleCancelExecution).Methods("POST", "OPTIONS")
-
 	// Static file serving (for frontend)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 

@@ -46,7 +46,6 @@ const (
 	DataCritiqueAgentType      AgentType = "data_critique"       // Critiques any input data for factual accuracy and analytical quality
 	ReportGenerationAgentType  AgentType = "report_generation"   // Generates comprehensive reports from workflow execution
 	TodoOptimizationAgentType  AgentType = "todo_optimization"   // Orchestrates optimization processes (refinement, critique, reports)
-	TodoReporterAgentType      AgentType = "todo_reporter"       // Orchestrates report generation processes
 
 	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
 	TodoPlannerPlanningAgentType   AgentType = "todo_planner_planning"   // Creates step-wise plan from objective

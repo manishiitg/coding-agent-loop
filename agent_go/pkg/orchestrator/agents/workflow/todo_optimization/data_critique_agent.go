@@ -47,28 +47,28 @@ func NewDataCritiqueAgent(config *agents.OrchestratorAgentConfig, logger utils.E
 // Execute implements the OrchestratorAgent interface
 func (dca *DataCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract required parameters
-	objective, ok := templateVars["objective"]
+	objective, ok := templateVars["Objective"]
 	if !ok {
 		objective = "No objective provided"
 	}
 
-	inputData, ok := templateVars["input_data"]
+	inputData, ok := templateVars["InputData"]
 	if !ok {
 		inputData = "No input data provided"
 	}
 
-	inputPrompt, ok := templateVars["input_prompt"]
+	inputPrompt, ok := templateVars["InputPrompt"]
 	if !ok {
 		inputPrompt = "No input prompt provided"
 	}
 
-	refinementHistory, ok := templateVars["refinement_history"]
+	refinementHistory, ok := templateVars["RefinementHistory"]
 	if !ok {
 		refinementHistory = "No refinement history provided"
 	}
 
 	iteration := 1
-	if iterStr, ok := templateVars["iteration"]; ok {
+	if iterStr, ok := templateVars["Iteration"]; ok {
 		var iter int
 		if _, err := fmt.Sscanf(iterStr, "%d", &iter); err == nil {
 			iteration = iter
@@ -77,11 +77,11 @@ func (dca *DataCritiqueAgent) Execute(ctx context.Context, templateVars map[stri
 
 	// Prepare template variables
 	critiqueTemplateVars := map[string]string{
-		"objective":          objective,
-		"input_data":         inputData,
-		"input_prompt":       inputPrompt,
-		"refinement_history": refinementHistory,
-		"iteration":          fmt.Sprintf("%d", iteration),
+		"Objective":         objective,
+		"InputData":         inputData,
+		"InputPrompt":       inputPrompt,
+		"RefinementHistory": refinementHistory,
+		"Iteration":         fmt.Sprintf("%d", iteration),
 	}
 
 	// Execute using input processor
@@ -92,13 +92,13 @@ func (dca *DataCritiqueAgent) Execute(ctx context.Context, templateVars map[stri
 func (dca *DataCritiqueAgent) dataCritiqueInputProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := DataCritiqueTemplate{
-		Objective:         templateVars["objective"],
-		InputData:         templateVars["input_data"],
-		InputPrompt:       templateVars["input_prompt"],
-		RefinementHistory: templateVars["refinement_history"],
+		Objective:         templateVars["Objective"],
+		InputData:         templateVars["InputData"],
+		InputPrompt:       templateVars["InputPrompt"],
+		RefinementHistory: templateVars["RefinementHistory"],
 		Iteration: func() int {
 			var iter int
-			if _, err := fmt.Sscanf(templateVars["iteration"], "%d", &iter); err == nil {
+			if _, err := fmt.Sscanf(templateVars["Iteration"], "%d", &iter); err == nil {
 				return iter
 			}
 			return 1

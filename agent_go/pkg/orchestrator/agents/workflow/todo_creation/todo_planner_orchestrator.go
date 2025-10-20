@@ -321,9 +321,9 @@ func (tpo *TodoPlannerOrchestrator) runTodoListCritiquePhase(ctx context.Context
 
 	// Prepare template variables for TodoPlannerCritiqueAgent
 	templateVars := map[string]string{
-		"objective":      objective,
-		"iteration":      fmt.Sprintf("%d", iteration),
-		"workspace_path": tpo.GetWorkspacePath(),
+		"Objective":     objective,
+		"Iteration":     fmt.Sprintf("%d", iteration),
+		"WorkspacePath": tpo.GetWorkspacePath(),
 	}
 
 	// Execute todo list critique

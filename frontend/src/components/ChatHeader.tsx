@@ -49,7 +49,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onModeSelect
 }) => {
   const { selectedModeCategory } = useModeStore()
-  const { enabledServers } = useMCPStore()
+  const enabledServers = useMCPStore(state => state.enabledServers)
   
   // Use the new global preset store
   const { 

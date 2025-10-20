@@ -47,18 +47,18 @@ func NewTodoPlannerCritiqueAgent(config *agents.OrchestratorAgentConfig, logger 
 // Execute implements the OrchestratorAgent interface
 func (tpca *TodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
 	// Extract required parameters
-	objective, ok := templateVars["objective"]
+	objective, ok := templateVars["Objective"]
 	if !ok {
 		objective = "No objective provided"
 	}
 
-	workspacePath, ok := templateVars["workspace_path"]
+	workspacePath, ok := templateVars["WorkspacePath"]
 	if !ok {
 		workspacePath = "No workspace path provided"
 	}
 
 	iteration := 1
-	if iterStr, ok := templateVars["iteration"]; ok {
+	if iterStr, ok := templateVars["Iteration"]; ok {
 		var iter int
 		if _, err := fmt.Sscanf(iterStr, "%d", &iter); err == nil {
 			iteration = iter
@@ -67,9 +67,9 @@ func (tpca *TodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars 
 
 	// Prepare template variables
 	critiqueTemplateVars := map[string]string{
-		"objective":      objective,
-		"iteration":      fmt.Sprintf("%d", iteration),
-		"workspace_path": workspacePath,
+		"Objective":     objective,
+		"Iteration":     fmt.Sprintf("%d", iteration),
+		"WorkspacePath": workspacePath,
 	}
 
 	// Execute using input processor
@@ -80,14 +80,14 @@ func (tpca *TodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars 
 func (tpca *TodoPlannerCritiqueAgent) todoPlannerCritiqueInputProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := TodoPlannerCritiqueTemplate{
-		Objective:         templateVars["objective"],
-		InputData:         templateVars["input_data"],
-		InputPrompt:       templateVars["input_prompt"],
-		RefinementHistory: templateVars["refinement_history"],
-		WorkspacePath:     templateVars["workspace_path"],
+		Objective:         templateVars["Objective"],
+		InputData:         templateVars["InputData"],
+		InputPrompt:       templateVars["InputPrompt"],
+		RefinementHistory: templateVars["RefinementHistory"],
+		WorkspacePath:     templateVars["WorkspacePath"],
 		Iteration: func() int {
 			var iter int
-			if _, err := fmt.Sscanf(templateVars["iteration"], "%d", &iter); err == nil {
+			if _, err := fmt.Sscanf(templateVars["Iteration"], "%d", &iter); err == nil {
 				return iter
 			}
 			return 1

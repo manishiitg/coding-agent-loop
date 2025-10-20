@@ -18,6 +18,7 @@ import (
 type TodoPlannerValidationTemplate struct {
 	ExecutionResult string
 	WorkspacePath   string
+	Iteration       string
 }
 
 // TodoPlannerValidationAgent validates execution results and assesses quality
@@ -51,6 +52,7 @@ func (tpva *TodoPlannerValidationAgent) Execute(ctx context.Context, templateVar
 	validationTemplateVars := map[string]string{
 		"ExecutionResult": executionResult,
 		"WorkspacePath":   workspacePath,
+		"Iteration":       templateVars["Iteration"],
 	}
 
 	// Execute using input processor
@@ -63,6 +65,7 @@ func (tpva *TodoPlannerValidationAgent) validationInputProcessor(templateVars ma
 	templateData := TodoPlannerValidationTemplate{
 		ExecutionResult: templateVars["ExecutionResult"],
 		WorkspacePath:   templateVars["WorkspacePath"],
+		Iteration:       templateVars["Iteration"],
 	}
 
 	// Define the template

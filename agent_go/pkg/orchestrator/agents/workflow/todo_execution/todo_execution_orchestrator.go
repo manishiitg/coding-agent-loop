@@ -342,7 +342,7 @@ func (teo *TodoExecutionOrchestrator) Execute(ctx context.Context, objective str
 
 	// Extract run option from options
 	runOption := "create_new_runs_always" // default
-	if ro, ok := options["runOption"].(string); ok && ro != "" {
+	if ro, ok := options["RunOption"].(string); ok && ro != "" {
 		runOption = ro
 	}
 

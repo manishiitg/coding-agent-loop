@@ -56,6 +56,9 @@ func (tpwa *TodoPlannerWriterAgent) Execute(ctx context.Context, templateVars ma
 	critiqueResult := templateVars["CritiqueResult"]
 	workspacePath := templateVars["WorkspacePath"]
 	totalIterations := templateVars["TotalIterations"]
+	if strings.TrimSpace(totalIterations) == "" {
+		totalIterations = "1"
+	}
 
 	// Prepare template variables
 	writerTemplateVars := map[string]string{
@@ -75,6 +78,10 @@ func (tpwa *TodoPlannerWriterAgent) Execute(ctx context.Context, templateVars ma
 // writerInputProcessor processes inputs specifically for todo list creation
 func (tpwa *TodoPlannerWriterAgent) writerInputProcessor(templateVars map[string]string) string {
 	// Create template data
+	totalIterationsForTemplate := templateVars["TotalIterations"]
+	if strings.TrimSpace(totalIterationsForTemplate) == "" {
+		totalIterationsForTemplate = "1"
+	}
 	templateData := TodoPlannerWriterTemplate{
 		Objective:        templateVars["Objective"],
 		PlanResult:       templateVars["PlanResult"],
@@ -82,7 +89,7 @@ func (tpwa *TodoPlannerWriterAgent) writerInputProcessor(templateVars map[string
 		ValidationResult: templateVars["ValidationResult"],
 		CritiqueResult:   templateVars["CritiqueResult"],
 		WorkspacePath:    templateVars["WorkspacePath"],
-		TotalIterations:  templateVars["TotalIterations"],
+		TotalIterations:  totalIterationsForTemplate,
 	}
 
 	// Define the template

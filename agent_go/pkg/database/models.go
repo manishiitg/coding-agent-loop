@@ -10,10 +10,9 @@ import (
 
 // Workflow status constants
 const (
-	WorkflowStatusPreVerification                  = "pre-verification"
-	WorkflowStatusPostVerification                 = "post-verification"
-	WorkflowStatusPostVerificationTodoRefinement   = "post-verification-todo-refinement"
-	WorkflowStatusPostVerificationReportGeneration = "post-verification-report-generation"
+	WorkflowStatusPreVerification                = "pre-verification"
+	WorkflowStatusPostVerification               = "post-verification"
+	WorkflowStatusPostVerificationTodoRefinement = "post-verification-todo-refinement"
 )
 
 // Agent mode constants

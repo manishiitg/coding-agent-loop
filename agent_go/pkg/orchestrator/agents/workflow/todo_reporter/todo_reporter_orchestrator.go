@@ -130,7 +130,7 @@ func (tro *TodoReporterOrchestrator) ExecuteReportGeneration(ctx context.Context
 // runReportGenerationPhase runs a single report generation iteration using the proper agent pattern
 func (tro *TodoReporterOrchestrator) runReportGenerationPhase(ctx context.Context, objective, previousCritiqueResult string, iteration int) (string, error) {
 	// Create ReportGenerationAgent for report generation
-	reportAgent, err := tro.createReportAgent("report_generation", 0, iteration)
+	reportAgent, err := tro.createReportAgent(ctx, "report_generation", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create report generation agent: %w", err)
 	}
@@ -154,7 +154,7 @@ func (tro *TodoReporterOrchestrator) runReportGenerationPhase(ctx context.Contex
 // runCritiquePhase runs a single critique iteration using the proper agent pattern
 func (tro *TodoReporterOrchestrator) runCritiquePhase(ctx context.Context, objective, inputData, inputPrompt string, iteration int) (string, error) {
 	// Create DataCritiqueAgent for critique
-	critiqueAgent, err := tro.createCritiqueAgent("critique", 0, iteration)
+	critiqueAgent, err := tro.createCritiqueAgent(ctx, "critique", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create critique agent: %w", err)
 	}
@@ -230,9 +230,10 @@ If the critique identifies ANY of these critical issues that would benefit from 
 }
 
 // Agent creation methods
-func (tro *TodoReporterOrchestrator) createReportAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tro *TodoReporterOrchestrator) createReportAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := tro.CreateAndSetupStandardAgent(
+		ctx,
 		"report-agent",
 		phase,
 		step,
@@ -252,9 +253,10 @@ func (tro *TodoReporterOrchestrator) createReportAgent(phase string, step, itera
 	return agent, nil
 }
 
-func (tro *TodoReporterOrchestrator) createCritiqueAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tro *TodoReporterOrchestrator) createCritiqueAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := tro.CreateAndSetupStandardAgent(
+		ctx,
 		"critique-agent",
 		phase,
 		step,

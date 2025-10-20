@@ -120,7 +120,7 @@ func (too *TodoOptimizationOrchestrator) ExecuteRefinement(ctx context.Context, 
 // runRefinementPhase runs a single refinement iteration using the proper agent pattern
 func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context, objective, previousCritiqueResult string, iteration int) (string, error) {
 	// Create TodoRefinePlannerAgent for refinement
-	refineAgent, err := too.createRefineAgent("refinement", 0, iteration)
+	refineAgent, err := too.createRefineAgent(ctx, "refinement", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create refine agent: %w", err)
 	}
@@ -145,7 +145,7 @@ func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context,
 // runCritiquePhase runs a single critique iteration using the proper agent pattern
 func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, objective, inputData, inputPrompt string, iteration int) (string, error) {
 	// Create DataCritiqueAgent for critique
-	critiqueAgent, err := too.createCritiqueAgent("critique", 1, iteration)
+	critiqueAgent, err := too.createCritiqueAgent(ctx, "critique", 1, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create critique agent: %w", err)
 	}
@@ -221,9 +221,10 @@ If the critique identifies ANY of these critical issues that would benefit from 
 }
 
 // Agent creation methods
-func (too *TodoOptimizationOrchestrator) createRefineAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (too *TodoOptimizationOrchestrator) createRefineAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := too.CreateAndSetupStandardAgent(
+		ctx,
 		"refine-agent",
 		phase,
 		step,
@@ -243,9 +244,10 @@ func (too *TodoOptimizationOrchestrator) createRefineAgent(phase string, step, i
 	return agent, nil
 }
 
-func (too *TodoOptimizationOrchestrator) createCritiqueAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (too *TodoOptimizationOrchestrator) createCritiqueAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := too.CreateAndSetupStandardAgent(
+		ctx,
 		"critique-agent",
 		phase,
 		step,

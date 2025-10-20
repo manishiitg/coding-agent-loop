@@ -189,7 +189,7 @@ func (tpo *TodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, previo
 		}
 
 		// Create fresh planning agent with proper context
-		planningAgent, err := tpo.createPlanningAgent("planning", 0, iteration)
+		planningAgent, err := tpo.createPlanningAgent(ctx, "planning", 0, iteration)
 		if err != nil {
 			return "", fmt.Errorf("failed to create planning agent: %w", err)
 		}
@@ -210,7 +210,7 @@ func (tpo *TodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, previo
 		}
 
 		// Create fresh planning agent with proper context
-		planningAgent, err := tpo.createPlanningAgent("planning", 0, iteration)
+		planningAgent, err := tpo.createPlanningAgent(ctx, "planning", 0, iteration)
 		if err != nil {
 			return "", fmt.Errorf("failed to create planning agent: %w", err)
 		}
@@ -225,7 +225,7 @@ func (tpo *TodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, previo
 
 // runExecutionPhase executes the plan for the current iteration based on strategy
 func (tpo *TodoPlannerOrchestrator) runExecutionPhase(ctx context.Context, plan string, iteration int, strategy IterationStrategy) (string, error) {
-	executionAgent, err := tpo.createExecutionAgent("execution", 0, iteration)
+	executionAgent, err := tpo.createExecutionAgent(ctx, "execution", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create execution agent: %w", err)
 	}
@@ -247,7 +247,7 @@ func (tpo *TodoPlannerOrchestrator) runExecutionPhase(ctx context.Context, plan 
 
 // runValidationPhase validates the execution results for the current iteration based on strategy
 func (tpo *TodoPlannerOrchestrator) runValidationPhase(ctx context.Context, plan string, iteration int, executionResult string, strategy IterationStrategy) (string, error) {
-	validationAgent, err := tpo.createValidationAgent("validation", 0, iteration)
+	validationAgent, err := tpo.createValidationAgent(ctx, "validation", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create validation agent: %w", err)
 	}
@@ -268,7 +268,7 @@ func (tpo *TodoPlannerOrchestrator) runValidationPhase(ctx context.Context, plan
 
 // runWriterPhase creates optimal todo list based on plan and execution experience using strategy
 func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResult, executionResult, validationResult, critiqueResult string, iteration int, strategy IterationStrategy) (string, error) {
-	writerAgent, err := tpo.createWriterAgent("writing", 0, iteration)
+	writerAgent, err := tpo.createWriterAgent(ctx, "writing", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create writer agent: %w", err)
 	}
@@ -295,7 +295,7 @@ func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResu
 
 // runCleanupPhase cleans up the planning workspace
 func (tpo *TodoPlannerOrchestrator) runCleanupPhase(ctx context.Context) (string, error) {
-	cleanupAgent, err := tpo.createCleanupAgent("cleanup", 0, 0)
+	cleanupAgent, err := tpo.createCleanupAgent(ctx, "cleanup", 0, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create cleanup agent: %w", err)
 	}
@@ -314,7 +314,7 @@ func (tpo *TodoPlannerOrchestrator) runCleanupPhase(ctx context.Context) (string
 
 // runTodoListCritiquePhase critiques the todo list quality and reproducibility
 func (tpo *TodoPlannerOrchestrator) runTodoListCritiquePhase(ctx context.Context, objective string, iteration int) (string, error) {
-	critiqueAgent, err := tpo.createCritiqueAgent("critique", 0, iteration)
+	critiqueAgent, err := tpo.createCritiqueAgent(ctx, "critique", 0, iteration)
 	if err != nil {
 		return "", fmt.Errorf("failed to create critique agent: %w", err)
 	}
@@ -410,9 +410,10 @@ Consider:
 }
 
 // Agent creation methods
-func (tpo *TodoPlannerOrchestrator) createPlanningAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tpo *TodoPlannerOrchestrator) createPlanningAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
+		ctx,
 		"planning-agent",
 		phase,
 		step,
@@ -432,9 +433,10 @@ func (tpo *TodoPlannerOrchestrator) createPlanningAgent(phase string, step, iter
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createExecutionAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tpo *TodoPlannerOrchestrator) createExecutionAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
+		ctx,
 		"execution-agent",
 		phase,
 		step,
@@ -454,9 +456,10 @@ func (tpo *TodoPlannerOrchestrator) createExecutionAgent(phase string, step, ite
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createValidationAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tpo *TodoPlannerOrchestrator) createValidationAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
+		ctx,
 		"validation-agent",
 		phase,
 		step,
@@ -476,9 +479,10 @@ func (tpo *TodoPlannerOrchestrator) createValidationAgent(phase string, step, it
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createWriterAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tpo *TodoPlannerOrchestrator) createWriterAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
+		ctx,
 		"writer-agent",
 		phase,
 		step,
@@ -498,9 +502,10 @@ func (tpo *TodoPlannerOrchestrator) createWriterAgent(phase string, step, iterat
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createCleanupAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tpo *TodoPlannerOrchestrator) createCleanupAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
+		ctx,
 		"cleanup-agent",
 		phase,
 		step,
@@ -520,9 +525,10 @@ func (tpo *TodoPlannerOrchestrator) createCleanupAgent(phase string, step, itera
 	return agent, nil
 }
 
-func (tpo *TodoPlannerOrchestrator) createCritiqueAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (tpo *TodoPlannerOrchestrator) createCritiqueAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Create fresh agent for each execution with proper context
 	agent, err := tpo.CreateAndSetupStandardAgent(
+		ctx,
 		"critique-agent",
 		phase,
 		step,

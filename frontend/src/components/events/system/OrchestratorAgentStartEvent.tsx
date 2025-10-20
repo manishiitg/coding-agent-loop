@@ -17,6 +17,15 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const hasInputData = event.input_data && Object.keys(event.input_data).length > 0;
   const hasExpandableContent = hasInputData || event.plan_id || event.step_index !== undefined || event.iteration !== undefined;
 
+  const getLabel = () => {
+    const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (t === 'planning') return 'Planning Agent'
+    if (t === 'execution') return 'Execution Agent'
+    if (t === 'validation') return 'Validation Agent'
+    if (t === 'organizer') return 'Organizer Agent'
+    return 'Agent'
+  }
+
   return (
     <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
       {/* Header with single-line layout */}
@@ -25,7 +34,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
-              Deep Search Agent Started: {event.agent_name}{' '}
+              {getLabel()} Started: {event.agent_name}{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
                 {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}

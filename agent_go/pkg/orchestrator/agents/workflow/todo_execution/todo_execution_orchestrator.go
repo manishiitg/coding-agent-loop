@@ -114,7 +114,7 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 
 // runExecutionPhase executes todos using the execution agent
 func (teo *TodoExecutionOrchestrator) runExecutionPhase(ctx context.Context, runOption string) (string, error) {
-	executionAgent, err := teo.createExecutionAgent("execution", 0, 0)
+	executionAgent, err := teo.createExecutionAgent(ctx, "execution", 0, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create execution agent: %w", err)
 	}
@@ -136,7 +136,7 @@ func (teo *TodoExecutionOrchestrator) runExecutionPhase(ctx context.Context, run
 
 // runValidationPhase validates execution results using the validation agent
 func (teo *TodoExecutionOrchestrator) runValidationPhase(ctx context.Context, executionResult string) (string, error) {
-	validationAgent, err := teo.createValidationAgent("validation", 1, 0)
+	validationAgent, err := teo.createValidationAgent(ctx, "validation", 1, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create validation agent: %w", err)
 	}
@@ -156,7 +156,7 @@ func (teo *TodoExecutionOrchestrator) runValidationPhase(ctx context.Context, ex
 
 // runWorkspaceUpdatePhase updates workspace using the workspace agent
 func (teo *TodoExecutionOrchestrator) runWorkspaceUpdatePhase(ctx context.Context, executionResult, validationResult string) (string, error) {
-	workspaceAgent, err := teo.createWorkspaceAgent("workspace", 2, 0)
+	workspaceAgent, err := teo.createWorkspaceAgent(ctx, "workspace", 2, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to create workspace agent: %w", err)
 	}
@@ -264,9 +264,10 @@ Focus on executing as many incomplete todos as possible effectively and providin
 }
 
 // Agent creation methods
-func (teo *TodoExecutionOrchestrator) createExecutionAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (teo *TodoExecutionOrchestrator) createExecutionAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := teo.CreateAndSetupStandardAgent(
+		ctx,
 		"todo_execution",
 		phase,
 		step,
@@ -286,9 +287,10 @@ func (teo *TodoExecutionOrchestrator) createExecutionAgent(phase string, step, i
 	return agent, nil
 }
 
-func (teo *TodoExecutionOrchestrator) createValidationAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := teo.CreateAndSetupStandardAgent(
+		ctx,
 		"validation-agent",
 		phase,
 		step,
@@ -308,9 +310,10 @@ func (teo *TodoExecutionOrchestrator) createValidationAgent(phase string, step, 
 	return agent, nil
 }
 
-func (teo *TodoExecutionOrchestrator) createWorkspaceAgent(phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+func (teo *TodoExecutionOrchestrator) createWorkspaceAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	// Use combined standardized agent creation and setup
 	agent, err := teo.CreateAndSetupStandardAgent(
+		ctx,
 		"workspace-agent",
 		phase,
 		step,

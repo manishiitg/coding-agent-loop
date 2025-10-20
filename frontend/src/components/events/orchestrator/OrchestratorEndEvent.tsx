@@ -24,6 +24,13 @@ export const OrchestratorEndEventDisplay: React.FC<OrchestratorEndEventDisplayPr
     return '🏁';
   };
 
+  const getLabel = () => {
+    const t = (event as unknown as { orchestrator_type?: string })?.orchestrator_type
+    if (t === 'planner') return 'Planner Orchestrator'
+    if (t === 'workflow') return 'Workflow Orchestrator'
+    return 'Orchestrator'
+  }
+
   return (
     <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
       {/* Header with single-line layout */}
@@ -32,7 +39,7 @@ export const OrchestratorEndEventDisplay: React.FC<OrchestratorEndEventDisplayPr
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
-              {getStatusIcon()} Deep Search Completed{' '}
+              {getStatusIcon()} {getLabel()} Completed{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Status: {event.status} | Duration: {formatDuration(event.duration || 0)}
                 {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}

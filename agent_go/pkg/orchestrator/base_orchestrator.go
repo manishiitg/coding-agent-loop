@@ -137,9 +137,11 @@ func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective:    objective,
-		AgentsCount:  agentsCount,
-		ServersCount: len(bo.selectedServers),
+		Objective:        objective,
+		AgentsCount:      agentsCount,
+		ServersCount:     len(bo.selectedServers),
+		OrchestratorType: bo.GetType(),
+		ExecutionMode:    executionMode,
 	}
 
 	bo.emitEvent(ctx, events.OrchestratorStart, eventData)
@@ -154,10 +156,12 @@ func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, 
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective: objective,
-		Result:    result,
-		Status:    status,
-		Duration:  duration,
+		Objective:        objective,
+		Result:           result,
+		Status:           status,
+		Duration:         duration,
+		OrchestratorType: bo.GetType(),
+		ExecutionMode:    executionMode,
 	}
 
 	bo.emitEvent(ctx, events.OrchestratorEnd, eventData)
@@ -186,84 +190,8 @@ func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agen
 	}
 }
 
-// RegisterWorkspaceTools registers workspace tools with a sub-agent
-func (bo *BaseOrchestrator) RegisterWorkspaceTools(agent agents.OrchestratorAgent) error {
-	// Add nil check to prevent panic
-	if bo == nil {
-		return fmt.Errorf("BaseOrchestrator is nil")
-	}
-
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return fmt.Errorf("agent has no base agent")
-	}
-
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return fmt.Errorf("base agent has no MCP agent")
-	}
-
-	bo.GetLogger().Infof("🔧 Registering %d workspace tools for %s agent", len(bo.WorkspaceTools), agent.GetType())
-
-	for _, tool := range bo.WorkspaceTools {
-		if executor, exists := bo.WorkspaceToolExecutors[tool.Function.Name]; exists {
-			// Type assert parameters to map[string]interface{}
-			params, ok := tool.Function.Parameters.(map[string]interface{})
-			if !ok {
-				bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-				continue
-			}
-
-			// Type assert executor to function type
-			if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-				mcpAgent.RegisterCustomTool(
-					tool.Function.Name,
-					tool.Function.Description,
-					params,
-					toolExecutor,
-				)
-			} else {
-				bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
-			}
-		}
-	}
-
-	bo.GetLogger().Infof("✅ All workspace tools registered for %s agent", agent.GetType())
-	return nil
-}
-
 // ConnectAgentToEventBridge connects a sub-agent to the event bridge for proper event forwarding
-func (bo *BaseOrchestrator) ConnectAgentToEventBridge(agent agents.OrchestratorAgent, phase string, step, iteration int) error {
-	// Get the base agent from the sub-agent
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return fmt.Errorf("agent has no BaseAgent")
-	}
-
-	// Get the MCP agent from the base agent
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return fmt.Errorf("base agent has no MCP agent")
-	}
-
-	// Create a dedicated context-aware bridge for this agent connection
-	// This ensures proper context isolation per agent
-	agentContextBridge := NewContextAwareEventBridge(bo.contextAwareBridge, bo.GetLogger())
-
-	// Get agent name for context display
-	baseAgentName := baseAgent.GetName()
-
-	agentContextBridge.SetOrchestratorContext(phase, step, iteration, baseAgentName)
-
-	// Connect the dedicated bridge to receive agent events
-	mcpAgent.AddEventListener(agentContextBridge)
-	bo.GetLogger().Infof("🔗 Dedicated context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
-
-	// Note: StartAgentSession is now handled at orchestrator level to avoid duplicate events
-	bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
-
-	return nil
-}
+// ConnectAgentToEventBridge removed: logic now inlined in CreateAndSetupStandardAgent
 
 // GetStartTime returns the start time
 func (bo *BaseOrchestrator) GetStartTime() time.Time {
@@ -400,6 +328,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 
 // CreateAndSetupStandardAgent creates and sets up an agent with standardized configuration
 func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
+	ctx context.Context,
 	agentName string,
 	phase string,
 	step, iteration int,
@@ -415,128 +344,72 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	// Create agent using provided factory function
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
-	// Setup agent with tools and event bridge
-	if eventBridge := bo.GetContextAwareBridge(); eventBridge != nil {
-		if err := bo.SetupStandardAgent(
-			agent,
-			agentName,
-			phase,
-			step,
-			iteration,
-			customTools,
-			customToolExecutors,
-			eventBridge,
-		); err != nil {
-			return nil, fmt.Errorf("failed to setup %s agent: %w", agentName, err)
+	// Initialize and setup agent (inlined from setupAgent)
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
+	}
+
+	// Validate essentials and connect event bridge
+	eventBridge := bo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+	}
+
+	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+	}
+
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+	}
+
+	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
+	baseAgentName := baseAgent.GetName()
+	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
+		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		mcpAgent.AddEventListener(cab)
+		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+	} else {
+		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+	}
+
+	// Register custom tools
+	if customTools != nil && customToolExecutors != nil {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+
+		for _, tool := range customTools {
+			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+				// Type assert parameters to map[string]interface{}
+				params, ok := tool.Function.Parameters.(map[string]interface{})
+				if !ok {
+					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					continue
+				}
+
+				// Type assert executor to function type
+				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+					mcpAgent.RegisterCustomTool(
+						tool.Function.Name,
+						tool.Function.Description,
+						params,
+						toolExecutor,
+					)
+				} else {
+					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+				}
+			}
 		}
+
+		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
 	}
 
 	return agent, nil
 }
 
-// SetupStandardAgent performs standardized agent setup with event bridge and tools
-// NOTE: This method is exposed for internal orchestrator use. For standard agent creation,
-// use CreateAndSetupStandardAgent instead which combines configuration and setup.
-func (bo *BaseOrchestrator) SetupStandardAgent(
-	agent agents.OrchestratorAgent,
-	agentName string,
-	phase string,
-	step, iteration int,
-	customTools []llms.Tool,
-	customToolExecutors map[string]interface{},
-	eventBridge mcpagent.AgentEventListener,
-) error {
-	return bo.setupAgent(
-		agent,
-		agentName,
-		phase,
-		step,
-		iteration,
-		customTools,
-		customToolExecutors,
-		eventBridge,
-	)
-}
+// SetupStandardAgent removed: setup is now performed inline in CreateAndSetupStandardAgent
 
-// setupAgent performs common agent setup tasks
-func (bo *BaseOrchestrator) setupAgent(
-	agent agents.OrchestratorAgent,
-	agentName string,
-	phase string,
-	step, iteration int,
-	customTools []llms.Tool,
-	customToolExecutors map[string]interface{},
-	eventBridge mcpagent.AgentEventListener,
-) error {
-	ctx := context.Background()
-	if err := agent.Initialize(ctx); err != nil {
-		return fmt.Errorf("failed to initialize %s: %w", agentName, err)
-	}
-
-	// Connect event bridge and emit actual agent events
-	if eventBridge != nil {
-		bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
-
-		baseAgent := agent.GetBaseAgent()
-		if baseAgent == nil {
-			bo.GetLogger().Infof("ℹ️ Agent %s is a pure orchestrator (no BaseAgent) - skipping agent event connection", agentName)
-		} else {
-			bo.GetLogger().Infof("✅ GetBaseAgent() returned non-nil for %s", agentName)
-
-			mcpAgent := baseAgent.Agent()
-			if mcpAgent == nil {
-				bo.GetLogger().Warnf("⚠️ baseAgent.Agent() returned nil for %s", agentName)
-			} else {
-				bo.GetLogger().Infof("✅ baseAgent.Agent() returned non-nil for %s", agentName)
-
-				// 🔗 Connect agent to orchestrator's main event bridge
-				// This ensures ALL agents are connected to the shared orchestrator bridge
-				if err := bo.ConnectAgentToEventBridge(agent, phase, step, iteration); err != nil {
-					bo.GetLogger().Warnf("⚠️ Failed to connect %s to orchestrator event bridge: %v", agentName, err)
-				} else {
-					bo.GetLogger().Infof("🔗 Agent %s connected to orchestrator's main event bridge", agentName)
-				}
-			}
-		}
-	}
-
-	// Register custom tools
-	if customTools != nil && customToolExecutors != nil {
-		if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
-			if mcpAgent := baseAgent.Agent(); mcpAgent != nil {
-				bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
-
-				for _, tool := range customTools {
-					if executor, exists := customToolExecutors[tool.Function.Name]; exists {
-						// Type assert parameters to map[string]interface{}
-						params, ok := tool.Function.Parameters.(map[string]interface{})
-						if !ok {
-							bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-							continue
-						}
-
-						// Type assert executor to function type
-						if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-							mcpAgent.RegisterCustomTool(
-								tool.Function.Name,
-								tool.Function.Description,
-								params,
-								toolExecutor,
-							)
-						} else {
-							bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
-						}
-					}
-				}
-
-				bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
-			} else {
-				bo.GetLogger().Warnf("⚠️ %s base agent has no MCP agent", agentName)
-			}
-		} else {
-			bo.GetLogger().Warnf("⚠️ %s has no base agent", agentName)
-		}
-	}
-
-	return nil
-}
+// setupAgent removed: logic is now inlined in CreateAndSetupStandardAgent

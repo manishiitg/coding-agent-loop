@@ -18,6 +18,15 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
     return new Date(timestamp).toLocaleTimeString();
   };
 
+  const getLabel = () => {
+    const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (t === 'planning') return 'Planning Agent'
+    if (t === 'execution') return 'Execution Agent'
+    if (t === 'validation') return 'Validation Agent'
+    if (t === 'organizer') return 'Organizer Agent'
+    return 'Agent'
+  }
+
   return (
     <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
       {/* Header with single-line layout */}
@@ -26,7 +35,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
-              Deep Search Agent Completed: {event.agent_name}{' '}
+              {getLabel()} Completed: {event.agent_name}{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Duration: {formatDuration(event.duration)}
                 {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}

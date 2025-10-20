@@ -1692,10 +1692,12 @@ func NewUnifiedCompletionEventWithError(agentType, agentMode, question, errorMsg
 // Orchestrator Events
 type OrchestratorStartEvent struct {
 	BaseEventData
-	Objective     string `json:"objective"`
-	AgentsCount   int    `json:"agents_count"`
-	ServersCount  int    `json:"servers_count"`
-	Configuration string `json:"configuration,omitempty"`
+	Objective        string `json:"objective"`
+	AgentsCount      int    `json:"agents_count"`
+	ServersCount     int    `json:"servers_count"`
+	Configuration    string `json:"configuration,omitempty"`
+	OrchestratorType string `json:"orchestrator_type,omitempty"`
+	ExecutionMode    string `json:"execution_mode,omitempty"`
 }
 
 func (e *OrchestratorStartEvent) GetEventType() EventType {
@@ -1704,11 +1706,13 @@ func (e *OrchestratorStartEvent) GetEventType() EventType {
 
 type OrchestratorEndEvent struct {
 	BaseEventData
-	Objective string        `json:"objective"`
-	Result    string        `json:"result"`
-	Duration  time.Duration `json:"duration"`
-	Status    string        `json:"status"`
-	Error     string        `json:"error,omitempty"`
+	Objective        string        `json:"objective"`
+	Result           string        `json:"result"`
+	Duration         time.Duration `json:"duration"`
+	Status           string        `json:"status"`
+	Error            string        `json:"error,omitempty"`
+	OrchestratorType string        `json:"orchestrator_type,omitempty"`
+	ExecutionMode    string        `json:"execution_mode,omitempty"`
 }
 
 func (e *OrchestratorEndEvent) GetEventType() EventType {
@@ -1717,9 +1721,11 @@ func (e *OrchestratorEndEvent) GetEventType() EventType {
 
 type OrchestratorErrorEvent struct {
 	BaseEventData
-	Context  string        `json:"context"`
-	Error    string        `json:"error"`
-	Duration time.Duration `json:"duration"`
+	Context          string        `json:"context"`
+	Error            string        `json:"error"`
+	Duration         time.Duration `json:"duration"`
+	OrchestratorType string        `json:"orchestrator_type,omitempty"`
+	ExecutionMode    string        `json:"execution_mode,omitempty"`
 }
 
 func (e *OrchestratorErrorEvent) GetEventType() EventType {

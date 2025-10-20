@@ -195,9 +195,11 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
 			},
-			Context:  context,
-			Error:    err.Error(),
-			Duration: duration,
+			Context:          context,
+			Error:            err.Error(),
+			Duration:         duration,
+			OrchestratorType: po.GetType(),
+			ExecutionMode:    po.GetExecutionMode().String(),
 		}
 
 		// Create unified event wrapper
@@ -511,9 +513,11 @@ func (po *PlannerOrchestrator) executeParallel(ctx context.Context, objective st
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
 			},
-			Context:  context,
-			Error:    err.Error(),
-			Duration: duration,
+			Context:          context,
+			Error:            err.Error(),
+			Duration:         duration,
+			OrchestratorType: po.GetType(),
+			ExecutionMode:    po.GetExecutionMode().String(),
 		}
 
 		// Create unified event wrapper
@@ -904,6 +908,7 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context
 		agentName := fmt.Sprintf("parallel-execution-agent-step-%d", stepIndex+1)
 
 		agent, err := po.CreateAndSetupStandardAgent(
+			ctx,
 			agentName,
 			"parallel_execution", // phase
 			stepIndex,            // step
@@ -925,6 +930,7 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context
 		agentName := fmt.Sprintf("execution-agent-step-%d", stepIndex+1)
 
 		agent, err := po.CreateAndSetupStandardAgent(
+			ctx,
 			agentName,
 			"sequential_execution", // phase
 			stepIndex,              // step
@@ -950,6 +956,7 @@ func (po *PlannerOrchestrator) createDedicatedValidationAgent(ctx context.Contex
 
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
+		ctx,
 		agentName,
 		"parallel_validation", // phase
 		stepIndex,             // step
@@ -973,6 +980,7 @@ func (po *PlannerOrchestrator) createDedicatedValidationAgent(ctx context.Contex
 func (po *PlannerOrchestrator) createPlanningAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
+		ctx,
 		"planning-agent",
 		"planning",       // phase
 		stepIndex,        // step
@@ -996,6 +1004,7 @@ func (po *PlannerOrchestrator) createPlanningAgent(ctx context.Context, stepInde
 func (po *PlannerOrchestrator) createPlanBreakdownAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
+		ctx,
 		"plan-breakdown-agent",
 		"plan_breakdown", // phase
 		stepIndex,        // step
@@ -1019,6 +1028,7 @@ func (po *PlannerOrchestrator) createPlanBreakdownAgent(ctx context.Context, ste
 func (po *PlannerOrchestrator) createOrganizerAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
+		ctx,
 		"plan-organizer-agent",
 		"plan_organizer", // phase
 		stepIndex,        // step
@@ -1042,6 +1052,7 @@ func (po *PlannerOrchestrator) createOrganizerAgent(ctx context.Context, stepInd
 func (po *PlannerOrchestrator) createReportAgent(ctx context.Context, stepIndex, iteration int) (agents.OrchestratorAgent, error) {
 	// Use standardized agent creation and setup
 	agent, err := po.CreateAndSetupStandardAgent(
+		ctx,
 		"report-agent",
 		"report_generation", // phase
 		stepIndex,           // step

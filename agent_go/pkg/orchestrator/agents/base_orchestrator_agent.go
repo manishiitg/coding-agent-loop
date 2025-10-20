@@ -15,23 +15,17 @@ import (
 )
 
 // OrchestratorContext holds context information for event emission
-type OrchestratorContext struct {
-	StepIndex int
-	Iteration int
-	Objective string
-	AgentName string
-}
+// Removed: OrchestratorContext and related context-specific fields are now handled by the context-aware bridge.
 
 // BaseOrchestratorAgent provides common functionality for all orchestrator agents
 type BaseOrchestratorAgent struct {
-	config              *OrchestratorAgentConfig
-	logger              utils.ExtendedLogger
-	baseAgent           *BaseAgent // set during init
-	tracer              observability.Tracer
-	agentType           AgentType
-	systemPrompt        string
-	eventBridge         mcpagent.AgentEventListener // Event bridge for auto events
-	orchestratorContext *OrchestratorContext        // Context info for events
+	config       *OrchestratorAgentConfig
+	logger       utils.ExtendedLogger
+	baseAgent    *BaseAgent // set during init
+	tracer       observability.Tracer
+	agentType    AgentType
+	systemPrompt string
+	eventBridge  mcpagent.AgentEventListener // Event bridge for auto events
 }
 
 // NewBaseOrchestratorAgentWithEventBridge creates a new base orchestrator agent with event bridge
@@ -43,13 +37,12 @@ func NewBaseOrchestratorAgentWithEventBridge(
 	eventBridge mcpagent.AgentEventListener,
 ) *BaseOrchestratorAgent {
 	return &BaseOrchestratorAgent{
-		config:              config,
-		logger:              logger,
-		tracer:              tracer,
-		agentType:           agentType,
-		systemPrompt:        "", // Not used for base orchestrator
-		eventBridge:         eventBridge,
-		orchestratorContext: nil, // Will be set dynamically
+		config:       config,
+		logger:       logger,
+		tracer:       tracer,
+		agentType:    agentType,
+		systemPrompt: "", // Not used for base orchestrator
+		eventBridge:  eventBridge,
 	}
 }
 
@@ -234,28 +227,22 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string) {
 	boa.logger.Infof("🔍 emitAgentStartEvent called for agent type: %s", boa.agentType)
 
-	if boa.orchestratorContext == nil {
-		boa.logger.Warnf("⚠️ Orchestrator context is nil - skipping agent start event emission for %s", boa.agentType)
-		return // No context available yet
+	agentName := string(boa.agentType)
+	if boa.baseAgent != nil {
+		agentName = boa.baseAgent.GetName()
 	}
-
-	boa.logger.Infof("✅ Orchestrator context available - AgentName: %s, StepIndex: %d, Iteration: %d",
-		boa.orchestratorContext.AgentName, boa.orchestratorContext.StepIndex, boa.orchestratorContext.Iteration)
 
 	eventData := &events.OrchestratorAgentStartEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		AgentType:    string(boa.agentType),
-		AgentName:    boa.orchestratorContext.AgentName,
-		Objective:    boa.orchestratorContext.Objective,
+		AgentName:    agentName,
 		InputData:    templateVars,
 		ModelID:      boa.config.Model,
 		Provider:     boa.config.Provider,
 		ServersCount: len(boa.config.ServerNames),
 		MaxTurns:     boa.config.MaxTurns,
-		StepIndex:    boa.orchestratorContext.StepIndex,
-		Iteration:    boa.orchestratorContext.Iteration,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentStart, eventData)
@@ -263,13 +250,9 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 
 // emitAgentEndEvent emits an agent end event automatically
 func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templateVars map[string]string, result string, err error, duration time.Duration) {
-	if boa.orchestratorContext == nil {
-		return // No context available yet
-	}
-
-	success := err == nil
-	if !success {
-		result = err.Error()
+	agentName := string(boa.agentType)
+	if boa.baseAgent != nil {
+		agentName = boa.baseAgent.GetName()
 	}
 
 	eventData := &events.OrchestratorAgentEndEvent{
@@ -277,18 +260,14 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templat
 			Timestamp: time.Now(),
 		},
 		AgentType:    string(boa.agentType),
-		AgentName:    boa.orchestratorContext.AgentName,
-		Objective:    boa.orchestratorContext.Objective,
+		AgentName:    agentName,
 		InputData:    templateVars,
 		Result:       result,
-		Success:      success,
 		Duration:     duration,
 		ModelID:      boa.config.Model,
 		Provider:     boa.config.Provider,
 		ServersCount: len(boa.config.ServerNames),
 		MaxTurns:     boa.config.MaxTurns,
-		StepIndex:    boa.orchestratorContext.StepIndex,
-		Iteration:    boa.orchestratorContext.Iteration,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentEnd, eventData)

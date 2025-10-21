@@ -178,7 +178,6 @@ type StreamingAPI struct {
 	mcpConfigPath string
 	temperature   float64
 	workspaceRoot string
-	eventBridge   interface{}
 
 	// Active session tracking for page refresh recovery
 	activeSessions    map[string]*ActiveSessionInfo
@@ -475,7 +474,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		mcpConfigPath:                configPath,
 		temperature:                  config.Temperature,
 		workspaceRoot:                "./Tasks",
-		eventBridge:                  nil, // Will be set per request
 		internalLLM:                  internalLLM,
 		toolStatus:                   make(map[string]ToolStatus),
 		enabledTools:                 make(map[string][]string),
@@ -870,6 +868,240 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Create a fresh agent for each request
 	log.Printf("[LLM CONFIG DEBUG] Creating fresh agent for each request")
+
+	// Create fresh agent for this request
+	// Use LLM configuration from request if provided, otherwise use request defaults
+	var finalProvider string
+	var finalModelID string
+	var fallbackModels []string
+	var crossProviderFallback *agent.CrossProviderFallback
+
+	if req.LLMConfig != nil {
+		// Use LLM configuration from frontend
+		finalProvider = req.LLMConfig.Provider
+		finalModelID = req.LLMConfig.ModelID
+		fallbackModels = req.LLMConfig.FallbackModels
+
+		// Only set cross-provider fallback if it's not nil
+		if req.LLMConfig.CrossProviderFallback != nil {
+			crossProviderFallback = &agent.CrossProviderFallback{
+				Provider: req.LLMConfig.CrossProviderFallback.Provider,
+				Models:   req.LLMConfig.CrossProviderFallback.Models,
+			}
+		}
+		log.Printf("[LLM CONFIG DEBUG] Using detailed LLM config from request - Provider: %s, Model: %s, Fallbacks: %v, CrossProvider: %+v",
+			finalProvider, finalModelID, fallbackModels, crossProviderFallback)
+	} else {
+		// Fall back to request defaults
+		finalProvider = req.Provider
+		finalModelID = req.ModelID
+		log.Printf("[LLM CONFIG DEBUG] Using request defaults - Provider: %s, Model: %s", finalProvider, finalModelID)
+	}
+
+	// Handle workflow mode - use workflow orchestrator
+	if req.AgentMode == "workflow" {
+		log.Printf("[WORKFLOW DEBUG] Starting workflow for session %s", sessionID)
+
+		// Check if preset_id is provided and workflow is approved
+		if req.PresetQueryID != "" {
+			log.Printf("[WORKFLOW CHECK] Checking workflow approval status for preset_id: %s", req.PresetQueryID)
+
+			// Get workflow from database to check approval status
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, req.PresetQueryID)
+			if err != nil {
+				log.Printf("[WORKFLOW CHECK ERROR] Workflow not found for preset_id %s: %v", req.PresetQueryID, err)
+				// Continue with planning phase if workflow not found
+			} else {
+				log.Printf("[WORKFLOW CHECK] Found workflow: workflowStatus=%s", workflow.WorkflowStatus)
+
+				// If workflow is approved, proceed with execution using user's query
+				if workflow.WorkflowStatus == database.WorkflowStatusPostVerification {
+					log.Printf("[WORKFLOW CHECK] Workflow is approved - proceeding with execution using user query: %s", req.Query)
+				} else {
+					log.Printf("[WORKFLOW CHECK] Workflow is not approved yet - proceeding with planning phase")
+				}
+			}
+		}
+
+		log.Printf("[WORKFLOW DEBUG] Workflow mode requested for query %s - using workflow orchestrator", queryID)
+		log.Printf("[WORKFLOW DEBUG] Current observerID: '%s', sessionID: '%s'", observerID, sessionID)
+		log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
+
+		// Observer ID is now required - should have been set above
+		if observerID == "" {
+			http.Error(w, "X-Observer-ID header is required for workflow mode. Please register an observer first using /api/observer/register", http.StatusBadRequest)
+			return
+		}
+		log.Printf("[WORKFLOW DEBUG] Using observer %s for workflow session %s", observerID, sessionID)
+
+		// Create workflow event bridge for event emission
+		workflowEventBridge := &eventbridge.WorkflowEventBridge{
+			BaseEventBridge: &eventbridge.BaseEventBridge{
+				EventStore:      api.eventStore,
+				ObserverManager: api.observerManager,
+				ObserverID:      observerID,
+				SessionID:       sessionID,
+				Logger:          api.logger,
+				ChatDB:          api.chatDB,
+				BridgeName:      "workflow",
+			},
+		}
+
+		// Create custom tools for workflow agents (workspace tools + human tools)
+		// Workflow agents can be Simple or ReAct agents, tools are registered based on mode
+		// TODO: Memory tools removed from workflow - only needed for individual React agents
+		// memoryTools := virtualtools.CreateMemoryTools()
+		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
+		allTools, allExecutors := createCustomTools()
+
+		// Create workflow orchestrator for this request
+		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
+			req.Provider,        // provider
+			req.ModelID,         // model
+			api.mcpConfigPath,   // mcpConfigPath
+			api.temperature,     // temperature
+			"workflow",          // agentMode
+			api.logger,          // logger
+			workflowEventBridge, // eventBridge
+			tracer,              // tracer
+			selectedServers,     // selectedServers
+			allTools,            // customTools
+			allExecutors,        // customToolExecutors
+			req.LLMConfig,       // llmConfig
+			req.MaxTurns,        // maxTurns
+		)
+		if err != nil {
+			log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to create workflow orchestrator: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("[WORKFLOW DEBUG] Created workflow orchestrator with %d custom tools", len(allTools))
+
+		// Store workflow orchestrator for guidance injection
+		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
+
+		// Create a cancellable context for workflow execution using background context
+		// This prevents the workflow from being cancelled when the HTTP request ends
+		workflowCtx, workflowCancel := context.WithCancel(context.Background())
+
+		// Add debug logging for context creation
+		log.Printf("[WORKFLOW DEBUG] Created workflow context: %p, parent: %p", workflowCtx, context.Background())
+		log.Printf("[WORKFLOW DEBUG] Context error check: %v", workflowCtx.Err())
+
+		// Store the cancel function for potential cancellation
+		api.orchestratorContextMux.Lock()
+		api.orchestratorContexts[sessionID] = workflowCancel
+		api.orchestratorContextMux.Unlock()
+
+		// Return immediate response with query ID and observer ID
+		response := QueryResponse{
+			QueryID:    queryID,
+			ObserverID: observerID, // Include observer ID in response
+			Status:     "started",
+			Message:    "Query processing started. Use polling API to get real-time updates.",
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Execute workflow asynchronously
+		go func() {
+			defer func() {
+				// Clean up the cancel function when done
+				api.orchestratorContextMux.Lock()
+				delete(api.orchestratorContexts, sessionID)
+				api.orchestratorContextMux.Unlock()
+
+				// Note: Observer cleanup is handled by session management
+				// Don't remove observer immediately to allow frontend polling
+				log.Printf("[WORKFLOW DEBUG] Workflow completed, observer %s will be cleaned up by session management", observerID)
+			}()
+
+			log.Printf("[WORKFLOW DEBUG] Starting asynchronous workflow execution for query %s", queryID)
+
+			// Add debug logging for context before execution
+			log.Printf("[WORKFLOW DEBUG] Context before execution: %p, error: %v", workflowCtx, workflowCtx.Err())
+			deadline, hasDeadline := workflowCtx.Deadline()
+			log.Printf("[WORKFLOW DEBUG] Context deadline: %v, hasDeadline: %v", deadline, hasDeadline)
+			log.Printf("[WORKFLOW DEBUG] Context done: %v", workflowCtx.Done())
+
+			// Check database for workflow approval status if preset_id is provided
+			workflowStatus := database.WorkflowStatusPreVerification // Default status
+			var selectedOptions *database.WorkflowSelectedOptions
+			if req.PresetQueryID != "" {
+				// Check workflow approval status from database
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, req.PresetQueryID)
+				if err == nil {
+					workflowStatus = workflow.WorkflowStatus
+					selectedOptions = workflow.SelectedOptions
+					log.Printf("[WORKFLOW CHECK] Database check: workflowStatus=%s", workflowStatus)
+					if selectedOptions != nil {
+						log.Printf("[WORKFLOW CHECK] Found selected options: %+v", selectedOptions)
+					} else {
+						log.Printf("[WORKFLOW CHECK] No selected options found")
+					}
+				} else {
+					log.Printf("[WORKFLOW CHECK] Could not check database: %v", err)
+				}
+			}
+
+			log.Printf("[WORKFLOW EXECUTION] Executing workflow with status: %s", workflowStatus)
+
+			// Extract workspace path from objective
+			workflowWorkspacePath := extractWorkspacePathFromObjective(req.Query)
+			if workflowWorkspacePath == "" {
+				log.Printf("[WORKFLOW ERROR] Workspace path not found in objective for query %s", queryID)
+				workflowWorkspacePath = "default_workspace" // fallback
+			}
+
+			// Prepare options for the Execute method
+			workflowOptions := map[string]interface{}{
+				"workflowStatus":  workflowStatus,  // Current workflow status
+				"selectedOptions": selectedOptions, // Pass selected options from database
+			}
+
+			// Execute workflow with the query
+			log.Printf("[WORKFLOW DEBUG] Starting workflow execution for query %s with workspace: %s", queryID, workflowWorkspacePath)
+			_, err := workflowOrchestrator.Execute(
+				workflowCtx,
+				req.Query,
+				workflowWorkspacePath,
+				workflowOptions,
+			)
+			if err != nil {
+				log.Printf("[WORKFLOW ERROR] Workflow execution failed for query %s: %v", queryID, err)
+				// Send error event
+				errorData := map[string]interface{}{
+					"error":    err.Error(),
+					"query_id": queryID,
+				}
+				api.eventStore.AddEvent(observerID, events.Event{
+					ID:        fmt.Sprintf("workflow_error_%s_%d", queryID, time.Now().UnixNano()),
+					Type:      "workflow_error",
+					Timestamp: time.Now(),
+					Data: &unifiedevents.AgentEvent{
+						Type:      "workflow_error",
+						Timestamp: time.Now(),
+						Data: &unifiedevents.GenericEventData{
+							Data: errorData,
+						},
+					},
+					SessionID: observerID,
+				})
+			} else {
+				log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
+				// Workflow completion events are now handled by the workflow orchestrator itself
+			}
+		}()
+		return
+	}
 
 	// Return immediate response with query ID and observer ID
 	response := QueryResponse{
@@ -1277,239 +1509,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[ORCHESTRATOR DEBUG] Asynchronous orchestrator execution completed for query %s", queryID)
 			}()
 
-			return
-		}
-
-		// Create fresh agent for this request
-		// Use LLM configuration from request if provided, otherwise use request defaults
-		var finalProvider string
-		var finalModelID string
-		var fallbackModels []string
-		var crossProviderFallback *agent.CrossProviderFallback
-
-		if req.LLMConfig != nil {
-			// Use LLM configuration from frontend
-			finalProvider = req.LLMConfig.Provider
-			finalModelID = req.LLMConfig.ModelID
-			fallbackModels = req.LLMConfig.FallbackModels
-
-			// Only set cross-provider fallback if it's not nil
-			if req.LLMConfig.CrossProviderFallback != nil {
-				crossProviderFallback = &agent.CrossProviderFallback{
-					Provider: req.LLMConfig.CrossProviderFallback.Provider,
-					Models:   req.LLMConfig.CrossProviderFallback.Models,
-				}
-			}
-			log.Printf("[LLM CONFIG DEBUG] Using detailed LLM config from request - Provider: %s, Model: %s, Fallbacks: %v, CrossProvider: %+v",
-				finalProvider, finalModelID, fallbackModels, crossProviderFallback)
-		} else {
-			// Fall back to request defaults
-			finalProvider = req.Provider
-			finalModelID = req.ModelID
-			log.Printf("[LLM CONFIG DEBUG] Using request defaults - Provider: %s, Model: %s", finalProvider, finalModelID)
-		}
-
-		// Handle workflow mode - use workflow orchestrator
-		if req.AgentMode == "workflow" {
-			log.Printf("[WORKFLOW DEBUG] Starting workflow for session %s", sessionID)
-
-			// Check if preset_id is provided and workflow is approved
-			if req.PresetQueryID != "" {
-				log.Printf("[WORKFLOW CHECK] Checking workflow approval status for preset_id: %s", req.PresetQueryID)
-
-				// Get workflow from database to check approval status
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, req.PresetQueryID)
-				if err != nil {
-					log.Printf("[WORKFLOW CHECK ERROR] Workflow not found for preset_id %s: %v", req.PresetQueryID, err)
-					// Continue with planning phase if workflow not found
-				} else {
-					log.Printf("[WORKFLOW CHECK] Found workflow: workflowStatus=%s", workflow.WorkflowStatus)
-
-					// If workflow is approved, proceed with execution using user's query
-					if workflow.WorkflowStatus == database.WorkflowStatusPostVerification {
-						log.Printf("[WORKFLOW CHECK] Workflow is approved - proceeding with execution using user query: %s", req.Query)
-					} else {
-						log.Printf("[WORKFLOW CHECK] Workflow is not approved yet - proceeding with planning phase")
-					}
-				}
-			}
-
-			log.Printf("[WORKFLOW DEBUG] Workflow mode requested for query %s - using workflow orchestrator", queryID)
-			log.Printf("[WORKFLOW DEBUG] Current observerID: '%s', sessionID: '%s'", observerID, sessionID)
-			log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
-
-			// Observer ID is now required - should have been set above
-			if observerID == "" {
-				http.Error(w, "X-Observer-ID header is required for workflow mode. Please register an observer first using /api/observer/register", http.StatusBadRequest)
-				return
-			}
-			log.Printf("[WORKFLOW DEBUG] Using observer %s for workflow session %s", observerID, sessionID)
-
-			// Create workflow event bridge for event emission
-			workflowEventBridge := &eventbridge.WorkflowEventBridge{
-				BaseEventBridge: &eventbridge.BaseEventBridge{
-					EventStore:      api.eventStore,
-					ObserverManager: api.observerManager,
-					ObserverID:      observerID,
-					SessionID:       sessionID,
-					Logger:          api.logger,
-					ChatDB:          api.chatDB,
-					BridgeName:      "workflow",
-				},
-			}
-
-			// Create custom tools for workflow agents (workspace tools + human tools)
-			// Workflow agents can be Simple or ReAct agents, tools are registered based on mode
-			// TODO: Memory tools removed from workflow - only needed for individual React agents
-			// memoryTools := virtualtools.CreateMemoryTools()
-			// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-			allTools, allExecutors := createCustomTools()
-
-			// Create workflow orchestrator for this request
-			workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
-				finalProvider,       // provider
-				finalModelID,        // model
-				api.mcpConfigPath,   // mcpConfigPath
-				api.temperature,     // temperature
-				"workflow",          // agentMode
-				api.logger,          // logger
-				workflowEventBridge, // eventBridge
-				tracer,              // tracer
-				selectedServers,     // selectedServers
-				allTools,            // customTools
-				allExecutors,        // customToolExecutors
-				req.LLMConfig,       // llmConfig
-				req.MaxTurns,        // maxTurns
-			)
-			if err != nil {
-				log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %v", err)
-				http.Error(w, fmt.Sprintf("Failed to create workflow orchestrator: %v", err), http.StatusInternalServerError)
-				return
-			}
-
-			log.Printf("[WORKFLOW DEBUG] Created workflow orchestrator with %d custom tools", len(allTools))
-
-			// Store workflow orchestrator for guidance injection
-			api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
-
-			// Create a cancellable context for workflow execution using background context
-			// This prevents the workflow from being cancelled when the HTTP request ends
-			workflowCtx, workflowCancel := context.WithCancel(context.Background())
-
-			// Add debug logging for context creation
-			log.Printf("[WORKFLOW DEBUG] Created workflow context: %p, parent: %p", workflowCtx, context.Background())
-			log.Printf("[WORKFLOW DEBUG] Context error check: %v", workflowCtx.Err())
-
-			// Store the cancel function for potential cancellation
-			api.orchestratorContextMux.Lock()
-			api.orchestratorContexts[sessionID] = workflowCancel
-			api.orchestratorContextMux.Unlock()
-
-			// Execute workflow asynchronously
-			go func() {
-				defer func() {
-					// Clean up the cancel function when done
-					api.orchestratorContextMux.Lock()
-					delete(api.orchestratorContexts, sessionID)
-					api.orchestratorContextMux.Unlock()
-
-					// Note: Observer cleanup is handled by session management
-					// Don't remove observer immediately to allow frontend polling
-					log.Printf("[WORKFLOW DEBUG] Workflow completed, observer %s will be cleaned up by session management", observerID)
-				}()
-
-				log.Printf("[WORKFLOW DEBUG] Starting asynchronous workflow execution for query %s", queryID)
-
-				// Add debug logging for context before execution
-				log.Printf("[WORKFLOW DEBUG] Context before execution: %p, error: %v", workflowCtx, workflowCtx.Err())
-				deadline, hasDeadline := workflowCtx.Deadline()
-				log.Printf("[WORKFLOW DEBUG] Context deadline: %v, hasDeadline: %v", deadline, hasDeadline)
-				log.Printf("[WORKFLOW DEBUG] Context done: %v", workflowCtx.Done())
-
-				// Check database for workflow approval status if preset_id is provided
-				workflowStatus := database.WorkflowStatusPreVerification // Default status
-				var selectedOptions *database.WorkflowSelectedOptions
-				if req.PresetQueryID != "" {
-					// Check workflow approval status from database
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, req.PresetQueryID)
-					if err == nil {
-						workflowStatus = workflow.WorkflowStatus
-						selectedOptions = workflow.SelectedOptions
-						log.Printf("[WORKFLOW CHECK] Database check: workflowStatus=%s", workflowStatus)
-						if selectedOptions != nil {
-							log.Printf("[WORKFLOW CHECK] Found selected options: %+v", selectedOptions)
-						} else {
-							log.Printf("[WORKFLOW CHECK] No selected options found")
-						}
-					} else {
-						log.Printf("[WORKFLOW CHECK] Could not check database: %v", err)
-					}
-				}
-
-				log.Printf("[WORKFLOW EXECUTION] Executing workflow with status: %s", workflowStatus)
-
-				// Extract workspace path from objective
-				workflowWorkspacePath := extractWorkspacePathFromObjective(req.Query)
-				if workflowWorkspacePath == "" {
-					log.Printf("[WORKFLOW ERROR] Workspace path not found in objective for query %s", queryID)
-					workflowWorkspacePath = "default_workspace" // fallback
-				}
-
-				// Prepare options for the Execute method
-				workflowOptions := map[string]interface{}{
-					"workflowStatus":  workflowStatus,  // Current workflow status
-					"selectedOptions": selectedOptions, // Pass selected options from database
-				}
-
-				// Execute workflow with the query
-				log.Printf("[WORKFLOW DEBUG] Starting workflow execution for query %s with workspace: %s", queryID, workflowWorkspacePath)
-				_, err := workflowOrchestrator.Execute(
-					workflowCtx,
-					req.Query,
-					workflowWorkspacePath,
-					workflowOptions,
-				)
-				if err != nil {
-					log.Printf("[WORKFLOW ERROR] Workflow execution failed for query %s: %v", queryID, err)
-					// Send error event
-					errorData := map[string]interface{}{
-						"error":    err.Error(),
-						"query_id": queryID,
-					}
-					api.eventStore.AddEvent(observerID, events.Event{
-						ID:        fmt.Sprintf("workflow_error_%s_%d", queryID, time.Now().UnixNano()),
-						Type:      "workflow_error",
-						Timestamp: time.Now(),
-						Data: &unifiedevents.AgentEvent{
-							Type:      "workflow_error",
-							Timestamp: time.Now(),
-							Data: &unifiedevents.GenericEventData{
-								Data: errorData,
-							},
-						},
-						SessionID: observerID,
-					})
-				} else {
-					log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
-					// Workflow completion events are now handled by the workflow orchestrator itself
-				}
-			}()
-
-			// Return immediately with observer info
-			response := map[string]interface{}{
-				"query_id":    queryID,
-				"observer_id": observerID,
-				"session_id":  sessionID,
-				"status":      "workflow_started",
-				"message":     "Workflow execution started",
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(response)
 			return
 		}
 

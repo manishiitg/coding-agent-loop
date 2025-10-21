@@ -256,6 +256,7 @@ func (tpo *TodoPlannerOrchestrator) runValidationPhase(ctx context.Context, plan
 	validationTemplateVars := map[string]string{
 		"ExecutionResult": executionResult,
 		"WorkspacePath":   tpo.GetWorkspacePath(),
+		"Iteration":       fmt.Sprintf("%d", iteration),
 	}
 
 	validationResult, err := validationAgent.Execute(ctx, validationTemplateVars, nil)
@@ -365,7 +366,7 @@ func (tpo *TodoPlannerOrchestrator) checkObjectiveAchievement(ctx context.Contex
 	}
 
 	// Prepare context for objective achievement assessment based on iteration strategy
-	context := fmt.Sprintf(`Objective: %s
+	assessmentContext := fmt.Sprintf(`Objective: %s
 
 Plan:
 %s
@@ -399,7 +400,7 @@ Consider:
 		strategy.Name, strategy.StoppingCriteria, strategy.StoppingCriteria)
 
 	// Use conditional LLM to make the decision
-	result, err := conditionalLLM.Decide(ctx, context, question, 0, 0)
+	result, err := conditionalLLM.Decide(ctx, assessmentContext, question, 0, 0)
 
 	if err != nil {
 		tpo.GetLogger().Errorf("❌ Conditional LLM decision failed: %v", err)

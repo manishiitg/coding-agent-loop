@@ -1681,9 +1681,6 @@
         },
         "iteration": {
           "type": "integer"
-        },
-        "execution_mode": {
-          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1760,9 +1757,6 @@
         },
         "iteration": {
           "type": "integer"
-        },
-        "execution_mode": {
-          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1839,9 +1833,6 @@
         },
         "iteration": {
           "type": "integer"
-        },
-        "execution_mode": {
-          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1898,6 +1889,9 @@
         "error": {
           "type": "string"
         },
+        "orchestrator_type": {
+          "type": "string"
+        },
         "execution_mode": {
           "type": "string"
         }
@@ -1949,6 +1943,9 @@
         },
         "duration": {
           "type": "integer"
+        },
+        "orchestrator_type": {
+          "type": "string"
         },
         "execution_mode": {
           "type": "string"
@@ -2003,6 +2000,9 @@
           "type": "integer"
         },
         "configuration": {
+          "type": "string"
+        },
+        "orchestrator_type": {
           "type": "string"
         },
         "execution_mode": {

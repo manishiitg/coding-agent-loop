@@ -169,6 +169,9 @@ const (
 	// Parallel execution events
 	IndependentStepsSelected EventType = "independent_steps_selected"
 
+	// Todo planning events
+	TodoStepsExtracted EventType = "todo_steps_extracted"
+
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"
 	RequestHumanFeedback      EventType = "request_human_feedback"
@@ -233,7 +236,7 @@ func GetComponentFromEventType(eventType EventType) string {
 		eventType == OrchestratorAgentStart || eventType == OrchestratorAgentEnd || eventType == OrchestratorAgentError ||
 		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
 		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
-		eventType == IndependentStepsSelected:
+		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted:
 		return "orchestrator"
 	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError ||
 		eventType == ReActReasoningStart || eventType == ReActReasoningStep ||

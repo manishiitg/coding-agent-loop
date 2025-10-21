@@ -309,7 +309,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.MCPConfigPath = bo.GetMCPConfigPath()
 	config.MaxTurns = maxTurns
 	config.ToolChoice = "auto"
-	config.CacheOnly = true // Use cache-only mode for smart routing optimization
+	config.CacheOnly = false // Allow fresh connections when cache is not available
 	config.ServerNames = bo.GetSelectedServers()
 	config.Mode = agents.AgentMode(bo.GetAgentMode())
 	config.OutputFormat = outputFormat

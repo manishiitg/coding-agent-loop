@@ -66,6 +66,8 @@ func (tppa *TodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars 
 		"WorkspacePath": workspacePath,
 		"Strategy":      strategy,
 		"Focus":         focus,
+		"Iteration":     templateVars["Iteration"],
+		"MaxIterations": templateVars["MaxIterations"],
 	}
 
 	// Execute using input processor

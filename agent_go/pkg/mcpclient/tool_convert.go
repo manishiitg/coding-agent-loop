@@ -16,17 +16,88 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llms.Tool, error) {
 	llmTools := make([]llms.Tool, len(mcpTools))
 
 	for i, tool := range mcpTools {
+		// Convert ToolArgumentsSchema to proper JSON Schema
+		schema := map[string]interface{}{
+			"type": tool.InputSchema.Type,
+		}
+
+		// Only add properties if they exist and are not empty
+		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
+			schema["properties"] = tool.InputSchema.Properties
+		} else {
+			schema["properties"] = map[string]interface{}{}
+		}
+
+		// Only add required if they exist and are not empty
+		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
+			schema["required"] = tool.InputSchema.Required
+		} else {
+			schema["required"] = []string{}
+		}
+
+		// Add additional properties restriction for better validation
+		schema["additionalProperties"] = false
+
 		llmTools[i] = llms.Tool{
 			Type: "function",
 			Function: &llms.FunctionDefinition{
 				Name:        tool.Name,
 				Description: tool.Description,
-				Parameters:  tool.InputSchema, // MCP uses JSON Schema, which Bedrock accepts directly
+				Parameters:  schema, // Now properly formatted JSON Schema
 			},
 		}
 	}
 
 	return llmTools, nil
+}
+
+// ToolDetailsAsLLM converts ToolDetail structs to langchaingo llms.Tool format
+// This is used when we have ToolDetail objects (e.g., from cache) that need to be converted to LLM tools
+func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llms.Tool, error) {
+	llmTools := make([]llms.Tool, len(toolDetails))
+
+	for i, toolDetail := range toolDetails {
+		// Convert ToolDetail to proper JSON Schema format
+		schema := map[string]interface{}{
+			"type": "object",
+		}
+
+		// Only add properties if they exist and are not empty
+		if toolDetail.Parameters != nil && len(toolDetail.Parameters) > 0 {
+			schema["properties"] = toolDetail.Parameters
+		} else {
+			schema["properties"] = map[string]interface{}{}
+		}
+
+		// Only add required if they exist and are not empty
+		if len(toolDetail.Required) > 0 {
+			schema["required"] = toolDetail.Required
+		} else {
+			schema["required"] = []string{}
+		}
+
+		// Add additional properties restriction for better validation
+		schema["additionalProperties"] = false
+
+		llmTools[i] = llms.Tool{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        toolDetail.Name,
+				Description: toolDetail.Description,
+				Parameters:  schema, // Now properly formatted JSON Schema
+			},
+		}
+	}
+
+	return llmTools, nil
+}
+
+// ToolDetail represents detailed information about a single tool
+type ToolDetail struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+	Required    []string               `json:"required,omitempty"`
 }
 
 // ToolResultAsString converts a tool result to a string representation

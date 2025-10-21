@@ -67,9 +67,12 @@ func (tpca *TodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars 
 
 	// Prepare template variables
 	critiqueTemplateVars := map[string]string{
-		"Objective":     objective,
-		"Iteration":     fmt.Sprintf("%d", iteration),
-		"WorkspacePath": workspacePath,
+		"Objective":         objective,
+		"InputData":         templateVars["InputData"],
+		"InputPrompt":       templateVars["InputPrompt"],
+		"RefinementHistory": templateVars["RefinementHistory"],
+		"Iteration":         fmt.Sprintf("%d", iteration),
+		"WorkspacePath":     workspacePath,
 	}
 
 	// Execute using input processor

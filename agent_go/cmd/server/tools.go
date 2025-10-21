@@ -18,24 +18,16 @@ import (
 
 // --- TOOL MANAGEMENT TYPES ---
 
-// ToolDetail represents detailed information about a single tool
-type ToolDetail struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Parameters  map[string]interface{} `json:"parameters"`
-	Required    []string               `json:"required,omitempty"`
-}
-
 // ToolStatus represents the status of a tool
 type ToolStatus struct {
-	Name          string       `json:"name"`
-	Server        string       `json:"server"`
-	Status        string       `json:"status"` // "ok", "loading", or "error"
-	Error         string       `json:"error,omitempty"`
-	Description   string       `json:"description,omitempty"`
-	ToolsEnabled  int          `json:"toolsEnabled"`
-	FunctionNames []string     `json:"function_names"`
-	Tools         []ToolDetail `json:"tools,omitempty"` // Only populated for detailed requests
+	Name          string                 `json:"name"`
+	Server        string                 `json:"server"`
+	Status        string                 `json:"status"` // "ok", "loading", or "error"
+	Error         string                 `json:"error,omitempty"`
+	Description   string                 `json:"description,omitempty"`
+	ToolsEnabled  int                    `json:"toolsEnabled"`
+	FunctionNames []string               `json:"function_names"`
+	Tools         []mcpclient.ToolDetail `json:"tools,omitempty"` // Only populated for detailed requests
 }
 
 // SetEnabledToolsRequest represents a request to set enabled tools
@@ -182,7 +174,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	serverTools := api.extractServerTools(result.Tools, result.ToolToServer, serverName)
 
 	// Convert to detailed format
-	toolDetails := make([]ToolDetail, 0, len(serverTools))
+	toolDetails := make([]mcpclient.ToolDetail, 0, len(serverTools))
 	functionNames := make([]string, 0, len(serverTools))
 
 	for _, tool := range serverTools {
@@ -190,7 +182,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 		if tool.Function != nil {
 			functionNames = append(functionNames, tool.Function.Name)
 
-			toolDetail := ToolDetail{
+			toolDetail := mcpclient.ToolDetail{
 				Name:        tool.Function.Name,
 				Description: tool.Function.Description,
 				Parameters:  make(map[string]interface{}),
@@ -490,14 +482,14 @@ func (api *StreamingAPI) initializeToolCache() {
 // convertCacheEntryToToolStatus converts a mcpcache.CacheEntry to ToolStatus
 func (api *StreamingAPI) convertCacheEntryToToolStatus(entry *mcpcache.CacheEntry) ToolStatus {
 	functionNames := make([]string, 0, len(entry.Tools))
-	toolDetails := make([]ToolDetail, 0, len(entry.Tools))
+	toolDetails := make([]mcpclient.ToolDetail, 0, len(entry.Tools))
 
 	for _, tool := range entry.Tools {
 		// llms.Tool has a Function field that contains the actual tool information
 		if tool.Function != nil {
 			functionNames = append(functionNames, tool.Function.Name)
 
-			toolDetail := ToolDetail{
+			toolDetail := mcpclient.ToolDetail{
 				Name:        tool.Function.Name,
 				Description: tool.Function.Description,
 				Parameters:  make(map[string]interface{}),
@@ -548,30 +540,25 @@ func (api *StreamingAPI) convertCacheEntryToToolStatus(entry *mcpcache.CacheEntr
 
 // convertToolStatusToCacheEntry converts a ToolStatus to mcpcache.CacheEntry
 func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, serverName string) *mcpcache.CacheEntry {
-	// Convert ToolDetail back to llms.Tool format
-	llmTools := make([]llms.Tool, 0, len(toolStatus.Tools))
-
-	for _, toolDetail := range toolStatus.Tools {
-		// Create the parameters schema
-		parameters := map[string]interface{}{
-			"type":       "object",
-			"properties": toolDetail.Parameters,
+	// Convert ToolDetail to llms.Tool format using the centralized conversion function
+	llmTools, err := mcpclient.ToolDetailsAsLLM(toolStatus.Tools)
+	if err != nil {
+		api.logger.Errorf("Failed to convert tool details to LLM tools: %v", err)
+		// Return empty cache entry on error
+		return &mcpcache.CacheEntry{
+			ServerName:   serverName,
+			Tools:        []llms.Tool{},
+			Prompts:      []mcp.Prompt{},
+			Resources:    []mcp.Resource{},
+			SystemPrompt: "",
+			CreatedAt:    time.Now(),
+			LastAccessed: time.Now(),
+			TTLMinutes:   30,
+			Protocol:     "unknown",
+			ServerInfo:   make(map[string]interface{}),
+			IsValid:      false,
+			ErrorMessage: fmt.Sprintf("Tool conversion error: %v", err),
 		}
-
-		if len(toolDetail.Required) > 0 {
-			parameters["required"] = toolDetail.Required
-		}
-
-		llmTool := llms.Tool{
-			Type: "function",
-			Function: &llms.FunctionDefinition{
-				Name:        toolDetail.Name,
-				Description: toolDetail.Description,
-				Parameters:  parameters,
-			},
-		}
-
-		llmTools = append(llmTools, llmTool)
 	}
 
 	// Create cache entry

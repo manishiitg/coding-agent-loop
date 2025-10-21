@@ -1044,12 +1044,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKFLOW CHECK] Database check: workflowStatus=%s", workflowStatus)
 					if selectedOptions != nil {
 						log.Printf("[WORKFLOW CHECK] Found selected options: %+v", selectedOptions)
+						log.Printf("[WORKFLOW CHECK] Selected options details - PhaseID: %s, Selections count: %d", selectedOptions.PhaseID, len(selectedOptions.Selections))
+						for i, selection := range selectedOptions.Selections {
+							log.Printf("[WORKFLOW CHECK] Selection[%d] - Group: %s, OptionID: %s, OptionLabel: %s", i, selection.Group, selection.OptionID, selection.OptionLabel)
+						}
 					} else {
 						log.Printf("[WORKFLOW CHECK] No selected options found")
 					}
 				} else {
 					log.Printf("[WORKFLOW CHECK] Could not check database: %v", err)
 				}
+			} else {
+				log.Printf("[WORKFLOW CHECK] No preset_query_id provided, using default workflowStatus: %s", workflowStatus)
 			}
 
 			log.Printf("[WORKFLOW EXECUTION] Executing workflow with status: %s", workflowStatus)
@@ -1065,6 +1071,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workflowOptions := map[string]interface{}{
 				"workflowStatus":  workflowStatus,  // Current workflow status
 				"selectedOptions": selectedOptions, // Pass selected options from database
+			}
+
+			log.Printf("[WORKFLOW EXECUTION DEBUG] About to call workflowOrchestrator.Execute")
+			log.Printf("[WORKFLOW EXECUTION DEBUG] workflowOptions: %+v", workflowOptions)
+			log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions type: %T", selectedOptions)
+			if selectedOptions != nil {
+				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.PhaseID: %s", selectedOptions.PhaseID)
+				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.Selections count: %d", len(selectedOptions.Selections))
 			}
 
 			// Execute workflow with the query

@@ -2979,6 +2979,70 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "TodoStepsExtractedEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "total_steps_extracted": {
+          "type": "integer"
+        },
+        "extracted_steps": {
+          "items": {
+            "$ref": "#/$defs/TodoStep"
+          },
+          "type": "array"
+        },
+        "extraction_method": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TodoStep": {
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     }
   },
   "properties": {
@@ -3122,6 +3186,9 @@
     },
     "request_human_feedback": {
       "$ref": "#/$defs/RequestHumanFeedbackEvent"
+    },
+    "todo_steps_extracted": {
+      "$ref": "#/$defs/TodoStepsExtractedEvent"
     }
   },
   "additionalProperties": false,

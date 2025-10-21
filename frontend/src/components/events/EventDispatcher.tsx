@@ -133,7 +133,8 @@ import {
   OrchestratorAgentStartEventDisplay,
   OrchestratorAgentEndEventDisplay,
   OrchestratorAgentErrorEventDisplay,
-  IndependentStepsSelectedEventDisplay
+  IndependentStepsSelectedEventDisplay,
+  TodoStepsExtractedEventDisplay
 } from './orchestrator'
 
 import {
@@ -364,6 +365,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
     // Independent Steps Events
     case 'independent_steps_selected':
       return <IndependentStepsSelectedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+
+    // Todo Steps Events
+    case 'todo_steps_extracted':
+      return <TodoStepsExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
 
     // Default case for unknown event types
     default:

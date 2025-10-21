@@ -53,6 +53,7 @@ export interface UnifiedEventsCompleteSchema {
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
+  todo_steps_extracted?: TodoStepsExtractedEvent;
 }
 export interface ToolCallStartEvent {
   timestamp?: string;
@@ -1126,4 +1127,26 @@ export interface RequestHumanFeedbackEvent {
   title?: string;
   action_label?: string;
   action_description?: string;
+}
+export interface TodoStepsExtractedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  total_steps_extracted?: number;
+  extracted_steps?: TodoStep[];
+  extraction_method?: string;
+}
+export interface TodoStep {
+  title?: string;
+  description?: string;
 }

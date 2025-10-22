@@ -6,8 +6,9 @@ import './EventHierarchy.css';
 
 interface EventHierarchyProps {
   events: PollingEvent[];
-  // onApproveWorkflow?: (requestId: string) => void
-  // isApproving?: boolean  // Loading state for approve button
+  onApproveWorkflow?: (requestId: string) => void
+  onSubmitFeedback?: (requestId: string, feedback: string) => void
+  isApproving?: boolean  // Loading state for approve button
 }
 
 interface EventNode {
@@ -17,7 +18,7 @@ interface EventNode {
   isExpanded: boolean;
 }
 
-export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events }) => {
+export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, isApproving }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const parentRef = useRef<HTMLDivElement>(null);
   
@@ -146,6 +147,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
             <div className="event-details">
               <EventDispatcher 
                 event={event} 
+                onApproveWorkflow={onApproveWorkflow}
+                onSubmitFeedback={onSubmitFeedback}
+                isApproving={isApproving}
               />
             </div>
           </div>

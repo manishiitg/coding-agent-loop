@@ -39,7 +39,7 @@ func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.Ex
 }
 
 // Execute executes the report agent with report-specific input processing
-func (ra *OrchestratorReportAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (ra *OrchestratorReportAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	return ra.ExecuteWithInputProcessor(ctx, templateVars, ra.reportInputProcessor, conversationHistory)
 }
 

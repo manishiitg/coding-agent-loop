@@ -41,7 +41,7 @@ func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgent
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract variables from template variables
 	objective := templateVars["Objective"]
 	workspacePath := templateVars["WorkspacePath"]
@@ -52,8 +52,14 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Conte
 		"WorkspacePath": workspacePath,
 	}
 
-	// Execute using input processor
-	return hctppa.ExecuteWithInputProcessor(ctx, planningTemplateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory)
+	// Create template data for validation
+	templateData := HumanControlledTodoPlannerPlanningTemplate{
+		Objective:     objective,
+		WorkspacePath: workspacePath,
+	}
+
+	// Execute using template validation
+	return hctppa.ExecuteWithTemplateValidation(ctx, planningTemplateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory, templateData)
 }
 
 // humanControlledPlanningInputProcessor processes inputs specifically for fast, simplified planning
@@ -73,18 +79,17 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningIn
 ## 🤖 AGENT IDENTITY
 - **Role**: Planning Agent
 - **Responsibility**: Create a comprehensive plan to execute the objective
-- **Mode**: Direct and focused (create actionable plan quickly)
 
 ## 📁 FILE PERMISSIONS
 **READ (if files exist):**
-- {{.WorkspacePath}}/todo_creation_human/planning/plan.md (previous work - learn from existing plans)
-- {{.WorkspacePath}}/todo_creation_human/execution/execution_results.md (what worked - learn from execution results)
+- {{.WorkspacePath}}/planning/plan.md (previous work - learn from existing plans)
+- {{.WorkspacePath}}/execution/execution_results.md (what worked - learn from execution results)
 
 **WRITE:**
-- **CREATE** {{.WorkspacePath}}/todo_creation_human/planning/plan.md (create new plan)
+- **CREATE** {{.WorkspacePath}}/planning/plan.md (create new plan)
 
 **RESTRICTIONS:**
-- Only modify files within {{.WorkspacePath}}/todo_creation_human/
+- Only modify files within {{.WorkspacePath}}/
 - Focus on creating actionable steps to achieve the objective
 - Learn from existing plans and execution results to create a better plan
 
@@ -94,11 +99,27 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningIn
 - **Avoid Failures**: Learn from failed attempts and avoid repeating mistakes
 - **Comprehensive Scope**: Create complete plan to achieve objective
 - **Actionable Steps**: Each step should be concrete and executable
-- **MCP Tools**: Use available MCP tools effectively
 - **Clear Success Criteria**: Define how to verify each step worked
 - **Logical Order**: Steps should follow logical sequence
+- **Focus on Strategy**: Plan what needs to be done, not how to do it (execution details will be handled by execution agents)
 
-**⚠️ IMPORTANT**: Only create/modify files within {{.WorkspacePath}}/todo_creation_human/ folder structure.
+## 🤖 MULTI-AGENT SYSTEM AWARENESS
+**Important**: Different steps in this plan may be executed by different agents. Each agent will have access to workspace memory and context sharing capabilities.
+
+### **Cross-Agent Context Sharing**
+- **Memory Access**: Agents executing steps will have access to workspace memory for reading and writing context
+- **Context Continuity**: Each step should reference relevant context files from previous steps
+- **Shared Context**: Use relative file paths to reference context created by other agents
+- **Documentation**: Each step should document its context and findings for subsequent agents
+
+### **Inter-Agent Coordination Guidelines**
+- **Read Previous Work**: Steps should reference context files from previous steps using relative paths
+- **Share Context**: Document step findings and context in workspace files for other agents
+- **Context Dependencies**: Specify which context files each step depends on using RELATIVE PATHS ONLY
+- **Memory Persistence**: Use workspace files to maintain context across different agent executions
+- **Path Format**: Use relative paths like ` + "`../execution/step_1_context.md`" + ` or ` + "`./planning/plan.md`" + ` - NEVER use full absolute paths
+
+**⚠️ IMPORTANT**: Only create/modify files within {{.WorkspacePath}}/ folder structure.
 
         ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -124,43 +145,38 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningIn
 
 #### Step 1: [First step name]
 - **Description**: [What to do - detailed and clear]
-- **MCP Server**: [Server to use]
-- **MCP Tool**: [Tool name]
-- **Tool Arguments**: [Specific arguments]
 - **Success Criteria**: [How to verify it worked]
 - **Why This Step**: [How it contributes to the objective]
+- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_1_context.md" - only if this step depends on previous work]
+- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_1_context.md" - only if this step creates context for other steps]
 
 #### Step 2: [Second step name]
 - **Description**: [What to do]
-- **MCP Server**: [Server]
-- **MCP Tool**: [Tool]
-- **Tool Arguments**: [Arguments]
 - **Success Criteria**: [Verification]
 - **Why This Step**: [Contribution to objective]
+- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_1_context.md" - only if this step depends on previous work]
+- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_2_context.md" - only if this step creates context for other steps]
 
 #### Step 3: [Third step name]
 - **Description**: [What to do]
-- **MCP Server**: [Server]
-- **MCP Tool**: [Tool]
-- **Tool Arguments**: [Arguments]
 - **Success Criteria**: [Verification]
 - **Why This Step**: [Contribution to objective]
+- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_2_context.md" - only if this step depends on previous work]
+- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_3_context.md" - only if this step creates context for other steps]
 
 #### Step 4: [Fourth step name - if needed]
 - **Description**: [What to do]
-- **MCP Server**: [Server]
-- **MCP Tool**: [Tool]
-- **Tool Arguments**: [Arguments]
 - **Success Criteria**: [Verification]
 - **Why This Step**: [Contribution to objective]
+- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_3_context.md" - only if this step depends on previous work]
+- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_4_context.md" - only if this step creates context for other steps]
 
 #### Step 5: [Fifth step name - if needed]
 - **Description**: [What to do]
-- **MCP Server**: [Server]
-- **MCP Tool**: [Tool]
-- **Tool Arguments**: [Arguments]
 - **Success Criteria**: [Verification]
 - **Why This Step**: [Contribution to objective]
+- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_4_context.md" - only if this step depends on previous work]
+- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_5_context.md" - only if this step creates context for other steps]
 
 ### Expected Outcome
 - [What the complete plan should achieve]
@@ -169,7 +185,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningIn
 
 ---
 
-**Note**: Focus on creating a clear, actionable plan to execute the objective. Each step should be concrete and contribute directly to achieving the goal.`
+**Note**: Focus on creating a clear, actionable plan to execute the objective. Each step should be concrete and contribute directly to achieving the goal. Remember that different steps may be executed by different agents, so include context dependencies and outputs to ensure proper coordination and memory sharing across the multi-agent system.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_planning").Parse(templateStr)

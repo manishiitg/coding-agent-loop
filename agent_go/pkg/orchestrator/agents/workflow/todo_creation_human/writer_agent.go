@@ -42,7 +42,7 @@ func NewHumanControlledTodoPlannerWriterAgent(config *agents.OrchestratorAgentCo
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract variables from template variables
 	// Human-controlled writer - synthesizes from single execution for todo list creation
 	objective := templateVars["Objective"]
@@ -59,8 +59,15 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context
 		"TotalIterations": totalIterations,
 	}
 
-	// Execute using input processor
-	return hctpwa.ExecuteWithInputProcessor(ctx, writerTemplateVars, hctpwa.humanControlledWriterInputProcessor, conversationHistory)
+	// Create template data for validation
+	templateData := HumanControlledTodoPlannerWriterTemplate{
+		Objective:       objective,
+		WorkspacePath:   workspacePath,
+		TotalIterations: totalIterations,
+	}
+
+	// Execute using template validation
+	return hctpwa.ExecuteWithTemplateValidation(ctx, writerTemplateVars, hctpwa.humanControlledWriterInputProcessor, conversationHistory, templateData)
 }
 
 // humanControlledWriterInputProcessor processes inputs specifically for human-controlled todo list creation
@@ -89,11 +96,11 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- {{.WorkspacePath}}/todo_creation_human/planning/plan.md (plan)
-- {{.WorkspacePath}}/todo_creation_human/execution/step_*_execution_results.md (all step execution results)
-- {{.WorkspacePath}}/todo_creation_human/execution/completed_steps.md (completed work)
-- {{.WorkspacePath}}/todo_creation_human/execution/evidence/ (evidence)
-- {{.WorkspacePath}}/todo_creation_human/validation/step_*_validation_report.md (all step validation reports)
+- {{.WorkspacePath}}/planning/plan.md (plan)
+- {{.WorkspacePath}}/execution/step_*_execution_results.md (all step execution results)
+- {{.WorkspacePath}}/execution/completed_steps.md (completed work)
+- {{.WorkspacePath}}/execution/evidence/ (evidence)
+- {{.WorkspacePath}}/validation/step_*_validation_report.md (all step validation reports)
 
 **WRITE:**
 - **CREATE** {{.WorkspacePath}}/todo_final.md (final todo list)

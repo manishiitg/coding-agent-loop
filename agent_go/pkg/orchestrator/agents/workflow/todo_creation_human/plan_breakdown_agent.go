@@ -36,8 +36,12 @@ func NewHumanControlledPlanBreakdownAgent(config *agents.OrchestratorAgentConfig
 
 // TodoStep represents a todo step in the breakdown analysis
 type TodoStep struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	SuccessCriteria     string   `json:"success_criteria"`
+	WhyThisStep         string   `json:"why_this_step"`
+	ContextDependencies []string `json:"context_dependencies"`
+	ContextOutput       string   `json:"context_output"`
 }
 
 // BreakdownResponse represents the structured response from breakdown analysis
@@ -63,9 +67,28 @@ func (hcpba *HumanControlledPlanBreakdownAgent) ExecuteStructured(ctx context.Co
 						"description": {
 							"type": "string",
 							"description": "Detailed description of what this step accomplishes"
+						},
+						"success_criteria": {
+							"type": "string",
+							"description": "How to verify this step was completed successfully"
+						},
+						"why_this_step": {
+							"type": "string",
+							"description": "How this step contributes to achieving the objective"
+						},
+						"context_dependencies": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "List of context files from previous steps that this step depends on"
+						},
+						"context_output": {
+							"type": "string",
+							"description": "What context file this step will create for other agents"
 						}
 					},
-					"required": ["title", "description"]
+					"required": ["title", "description", "success_criteria", "why_this_step"]
 				}
 			}
 		},
@@ -82,7 +105,7 @@ func (hcpba *HumanControlledPlanBreakdownAgent) ExecuteStructured(ctx context.Co
 }
 
 // Execute executes the plan breakdown agent using the standard agent pattern
-func (hcpba *HumanControlledPlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (hcpba *HumanControlledPlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
 	return hcpba.ExecuteWithInputProcessor(ctx, templateVars, hcpba.breakdownInputProcessor, conversationHistory)
@@ -97,32 +120,17 @@ func (hcpba *HumanControlledPlanBreakdownAgent) breakdownInputProcessor(template
 	}
 
 	// Define the template for plan breakdown
-	templateStr := `## 🔍 PRIMARY TASK - BREAK DOWN PLAN INTO SINGLE-GO EXECUTABLE STEPS
+	templateStr := `## 🔍 PRIMARY TASK - Convert the plan into a list of steps
 
 **OBJECTIVE**: {{.Objective}}
 **WORKSPACE**: {{.WorkspacePath}}
-
-## 🤖 AGENT IDENTITY
-- **Role**: Plan Breakdown Agent
-- **Responsibility**: Break down the high-level plan into steps that can be executed in a single go by the LLM
-- **Mode**: JSON-structured step creation with logical flow
 
 ## 📁 FILE PERMISSIONS
 **READ:**
 - {{.WorkspacePath}}/todo_creation_human/planning/plan.md (plan to analyze)
 
-**RESTRICTIONS:**
-- Focus on creating steps that make logical sense for single-go execution
-- Each step should be a complete, executable unit of work
-- Return structured JSON response only (no file creation)
-
 ## 📋 BREAKDOWN GUIDELINES
-- **Create Executable Steps**: Each step should be a complete, self-contained task that can be executed in one go
-- **Logical Sequence**: Steps should follow a logical order and flow naturally from one to the next
-- **Single-Go Execution**: Each step should be designed for the LLM to complete fully without needing to break it down further
-- **Clear Boundaries**: Each step should have clear start and end points
-- **Actionable Tasks**: Focus on concrete, actionable tasks rather than abstract concepts
-- **Complete Work Units**: Each step should represent a meaningful unit of work that produces a tangible result
+- Breakdown the plan into steps
 
 ## 📤 Output Format
 
@@ -133,12 +141,26 @@ Analyze the planning result and break it down into executable steps. Return a JS
 The response should be a JSON object with a steps array. Each step should have:
 - title: Short, clear title for the todo step
 - description: Detailed description of what this step accomplishes
+- success_criteria: How to verify this step was completed successfully
+- why_this_step: How this step contributes to achieving the objective
+- context_dependencies: Array of context files from previous steps that this step depends on (OPTIONAL - RELATIVE PATHS ONLY)
+- context_output: Single string - what context file this step will create for other agents (OPTIONAL - RELATIVE PATH ONLY - NOT AN ARRAY)
 
-Requirements:
-- Each step should be a complete, logical unit of work
-- Steps should be executable in a single go by the LLM
-- Focus on logical flow and executable completeness
-- Return only the JSON structure, no additional text or formatting`
+Example JSON structure:
+` + "```json" + `
+{
+  "steps": [
+    {
+      "title": "Step 1 Title",
+      "description": "Step 1 description",
+      "success_criteria": "How to verify completion",
+      "why_this_step": "Why this step is needed",
+      "context_dependencies": ["../execution/step_0_context.md"],
+      "context_output": "./execution/step_1_context.md"
+    }
+  ]
+}
+` + "```" + ``
 
 	// Parse and execute the template
 	tmpl, err := template.New("breakdown").Parse(templateStr)

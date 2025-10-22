@@ -134,7 +134,7 @@ func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context,
 	}
 
 	// Execute refinement using the TodoRefinePlannerAgent
-	refinementResult, err := refineAgent.Execute(ctx, templateVars, nil)
+	refinementResult, _, err := refineAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("refinement execution failed: %v", err)
 	}
@@ -160,7 +160,7 @@ func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, o
 	}
 
 	// Execute critique using the DataCritiqueAgent
-	critiqueResult, err := critiqueAgent.Execute(ctx, templateVars, nil)
+	critiqueResult, _, err := critiqueAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("critique execution failed: %v", err)
 	}

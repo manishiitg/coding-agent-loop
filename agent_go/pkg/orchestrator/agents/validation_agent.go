@@ -39,7 +39,7 @@ func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger util
 }
 
 // Execute executes the validation agent with validation-specific input processing
-func (va *OrchestratorValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (va *OrchestratorValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	return va.ExecuteWithInputProcessor(ctx, templateVars, va.validationInputProcessor, conversationHistory)
 }
 

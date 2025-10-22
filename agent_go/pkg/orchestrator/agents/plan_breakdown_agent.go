@@ -90,7 +90,7 @@ func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVa
 }
 
 // Execute executes the plan breakdown agent using the standard agent pattern
-func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
 	return pba.ExecuteWithInputProcessor(ctx, templateVars, pba.breakdownInputProcessor, conversationHistory)

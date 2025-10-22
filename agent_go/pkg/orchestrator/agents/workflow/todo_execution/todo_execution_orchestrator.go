@@ -126,7 +126,7 @@ func (teo *TodoExecutionOrchestrator) runExecutionPhase(ctx context.Context, run
 		"RunOption":     runOption,
 	}
 
-	executionResult, err := executionAgent.Execute(ctx, templateVars, nil)
+	executionResult, _, err := executionAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("execution failed: %w", err)
 	}
@@ -146,7 +146,7 @@ func (teo *TodoExecutionOrchestrator) runValidationPhase(ctx context.Context, ex
 		"WorkspacePath":   teo.GetWorkspacePath(),
 		"ExecutionOutput": executionResult,
 	}
-	validationResult, err := validationAgent.Execute(ctx, validationTemplateVars, nil)
+	validationResult, _, err := validationAgent.Execute(ctx, validationTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
@@ -167,7 +167,7 @@ func (teo *TodoExecutionOrchestrator) runWorkspaceUpdatePhase(ctx context.Contex
 		"ExecutionOutput":  executionResult,
 		"ValidationOutput": validationResult,
 	}
-	workspaceResult, err := workspaceAgent.Execute(ctx, workspaceTemplateVars, nil)
+	workspaceResult, _, err := workspaceAgent.Execute(ctx, workspaceTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("workspace update failed: %w", err)
 	}

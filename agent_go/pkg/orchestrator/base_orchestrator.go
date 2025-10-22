@@ -3,8 +3,10 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -286,6 +288,18 @@ func (bo *BaseOrchestrator) CreateStandardAgentConfig(agentName string, maxTurns
 	return bo.createAgentConfigWithLLM(agentName, maxTurns, outputFormat, bo.GetLLMConfig())
 }
 
+// CreateStandardAgentConfigWithCustomServers creates a standardized agent configuration with custom MCP servers
+// This allows specific agents to override the default MCP server list
+func (bo *BaseOrchestrator) CreateStandardAgentConfigWithCustomServers(agentName string, maxTurns int, outputFormat agents.OutputFormat, customServers []string) *agents.OrchestratorAgentConfig {
+	config := bo.createAgentConfigWithLLM(agentName, maxTurns, outputFormat, bo.GetLLMConfig())
+
+	// Override the server names with custom servers
+	config.ServerNames = customServers
+
+	bo.GetLogger().Infof("🔧 Created agent config for %s with custom MCP servers: %v", agentName, customServers)
+	return config
+}
+
 // createAgentConfigWithLLM creates a generic agent configuration with detailed LLM config
 func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
 	config := agents.NewOrchestratorAgentConfig(agentName)
@@ -410,6 +424,161 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	return agent, nil
 }
 
+// CreateAndSetupStandardAgentWithCustomServers creates and sets up an agent with custom MCP servers
+// This allows specific agents to override the default MCP server list
+func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
+	ctx context.Context,
+	agentName string,
+	phase string,
+	step, iteration int,
+	maxTurns int,
+	outputFormat agents.OutputFormat,
+	customServers []string,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	customTools []llms.Tool,
+	customToolExecutors map[string]interface{},
+) (agents.OrchestratorAgent, error) {
+	// Create standardized agent configuration with custom servers
+	config := bo.CreateStandardAgentConfigWithCustomServers(agentName, maxTurns, outputFormat, customServers)
+
+	// Create agent using provided factory function
+	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
+
+	// Initialize and setup agent (inlined from setupAgent)
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
+	}
+
+	// Validate essentials and connect event bridge
+	eventBridge := bo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+	}
+
+	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+	}
+
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+	}
+
+	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
+	baseAgentName := baseAgent.GetName()
+	if cab, ok := eventBridge.(interface {
+		SetOrchestratorContext(phase string, step, iteration int, agentName string)
+	}); ok {
+		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		mcpAgent.AddEventListener(eventBridge)
+		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+	} else {
+		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+	}
+
+	// Register custom tools
+	if customTools != nil && customToolExecutors != nil {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+
+		for _, tool := range customTools {
+			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+				// Type assert parameters to map[string]interface{}
+				params, ok := tool.Function.Parameters.(map[string]interface{})
+				if !ok {
+					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					continue
+				}
+
+				// Type assert executor to function type
+				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+					mcpAgent.RegisterCustomTool(
+						tool.Function.Name,
+						tool.Function.Description,
+						params,
+						toolExecutor,
+					)
+				} else {
+					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+				}
+			}
+		}
+
+		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+	}
+
+	return agent, nil
+}
+
 // SetupStandardAgent removed: setup is now performed inline in CreateAndSetupStandardAgent
 
 // setupAgent removed: logic is now inlined in CreateAndSetupStandardAgent
+
+// RequestHumanFeedback is a common function for requesting human feedback with blocking behavior
+// Returns: (approved bool, feedback string, error)
+func (bo *BaseOrchestrator) RequestHumanFeedback(
+	ctx context.Context,
+	requestID string,
+	question string,
+	context string,
+	sessionID string,
+	workflowID string,
+) (bool, string, error) {
+	bo.GetLogger().Infof("🤔 Requesting human feedback: %s", question)
+
+	// Emit human feedback request event
+	feedbackEvent := &events.BlockingHumanFeedbackEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Question:      question,
+		AllowFeedback: true,
+		Context:       context,
+		SessionID:     sessionID,
+		WorkflowID:    workflowID,
+		RequestID:     requestID,
+	}
+
+	// Emit the event using the public method
+	agentEvent := &events.AgentEvent{
+		Type:      events.BlockingHumanFeedback,
+		Timestamp: time.Now(),
+		Data:      feedbackEvent,
+	}
+
+	// Use the context-aware bridge to emit the event
+	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to emit human feedback event: %v", err)
+	}
+
+	// Use HumanFeedbackStore to wait for response
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+
+	// Create feedback request (this registers it in the store)
+	if err := feedbackStore.CreateRequest(requestID, question); err != nil {
+		return false, "", fmt.Errorf("failed to create feedback request: %w", err)
+	}
+
+	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for human response (timeout: 10 minutes)...")
+
+	// BLOCKING CALL - waits here until response or timeout
+	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
+	if err != nil {
+		return false, "", fmt.Errorf("timeout waiting for human feedback: %w", err)
+	}
+
+	bo.GetLogger().Infof("▶️ Orchestrator resumed with human response: %s", response)
+
+	// Parse response
+	// Expected format: "Approve" or feedback text for revision
+	if strings.TrimSpace(response) == "Approve" {
+		bo.GetLogger().Infof("✅ User approved via button, continuing")
+		return true, "", nil
+	}
+
+	// Default: treat as feedback for revision
+	bo.GetLogger().Infof("🔄 User provided feedback: %s", response)
+	return false, response, nil
+}

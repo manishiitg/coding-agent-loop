@@ -202,6 +202,13 @@ func GetCachedOrFreshConnection(
 	var servers []string
 	if serverName == "all" || serverName == "" {
 		servers = config.ListServers()
+	} else if serverName == "NO_SERVERS" {
+		// Special case: no servers should be connected
+		servers = []string{}
+		logger.Info("🔍 No servers requested - pure LLM reasoning mode", map[string]interface{}{
+			"server_count": 0,
+			"servers":      []string{},
+		})
 	} else {
 		// Handle comma-separated server names
 		requestedServers := strings.Split(serverName, ",")
@@ -221,6 +228,31 @@ func GetCachedOrFreshConnection(
 		"server_count": len(servers),
 		"servers":      servers,
 	})
+
+	// Handle special case: no servers requested (pure LLM reasoning)
+	if len(servers) == 0 {
+		logger.Info("✅ No servers requested - returning empty connection result", map[string]interface{}{
+			"server_count": 0,
+			"tools_count":  0,
+			"cache_used":   true,
+		})
+
+		// Return empty result for pure LLM reasoning
+		result.CacheUsed = true
+		result.CacheKey = "NO_SERVERS"
+		result.FreshFallback = false
+		result.CacheOnlyMode = cacheOnly
+
+		// Set empty collections (but preserve workspace tools)
+		result.Clients = make(map[string]mcpclient.ClientInterface)
+		result.ToolToServer = make(map[string]string)
+		// Note: result.Tools is intentionally left empty - workspace tools are added separately
+		result.Prompts = make(map[string][]mcp.Prompt)
+		result.Resources = make(map[string][]mcp.Resource)
+		// Note: result.SystemPrompt is intentionally left empty - agent will get proper system prompt from agent creation
+
+		return result, nil
+	}
 
 	// Try to get data from cache for each server
 	allFromCache := true

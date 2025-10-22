@@ -21,6 +21,7 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     'conversation_end',
     'workflow_end',
     'request_human_feedback',
+    'blocking_human_feedback',
     'orchestrator_end',
     'agent_end',
     'workflow_start'

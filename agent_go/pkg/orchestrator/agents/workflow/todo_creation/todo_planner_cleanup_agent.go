@@ -40,7 +40,7 @@ func NewTodoPlannerCleanupAgent(config *agents.OrchestratorAgentConfig, logger u
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tpca *TodoPlannerCleanupAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tpca *TodoPlannerCleanupAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract workspace path from template variables
 	workspacePath := templateVars["WorkspacePath"]
 

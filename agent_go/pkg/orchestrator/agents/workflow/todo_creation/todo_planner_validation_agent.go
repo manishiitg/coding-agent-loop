@@ -42,7 +42,7 @@ func NewTodoPlannerValidationAgent(config *agents.OrchestratorAgentConfig, logge
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tpva *TodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tpva *TodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract execution result and workspace path from template variables
 	// Validation agent is tactical - just validates execution results with evidence
 	executionResult := templateVars["ExecutionResult"]

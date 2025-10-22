@@ -43,7 +43,7 @@ func NewWorkspaceUpdateAgent(config *agents.OrchestratorAgentConfig, logger util
 }
 
 // Execute implements the OrchestratorAgent interface
-func (wua *WorkspaceUpdateAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (wua *WorkspaceUpdateAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract required parameters
 	objective, ok := templateVars["Objective"]
 	if !ok {

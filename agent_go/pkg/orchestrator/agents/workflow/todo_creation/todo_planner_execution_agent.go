@@ -41,7 +41,7 @@ func NewTodoPlannerExecutionAgent(config *agents.OrchestratorAgentConfig, logger
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tpea *TodoPlannerExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tpea *TodoPlannerExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract plan and workspace path from template variables
 	// Execution agent is tactical - just executes the plan without strategic context
 	plan := templateVars["Plan"]

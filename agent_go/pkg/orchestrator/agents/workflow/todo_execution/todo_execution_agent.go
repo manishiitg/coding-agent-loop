@@ -296,7 +296,7 @@ Focus on executing as many incomplete todos as possible effectively and providin
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tea *TodoExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tea *TodoExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Execute using input processor
 	return tea.ExecuteWithInputProcessor(ctx, templateVars, tea.todoExecutionInputProcessor, conversationHistory)
 }

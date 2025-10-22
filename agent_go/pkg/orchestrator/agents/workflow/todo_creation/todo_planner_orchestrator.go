@@ -194,7 +194,7 @@ func (tpo *TodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, previo
 			return "", fmt.Errorf("failed to create planning agent: %w", err)
 		}
 
-		planResult, err := planningAgent.Execute(ctx, planningTemplateVars, nil)
+		planResult, _, err := planningAgent.Execute(ctx, planningTemplateVars, nil)
 		if err != nil {
 			return "", fmt.Errorf("planning failed: %w", err)
 		}
@@ -215,7 +215,7 @@ func (tpo *TodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, previo
 			return "", fmt.Errorf("failed to create planning agent: %w", err)
 		}
 
-		planResult, err := planningAgent.Execute(ctx, planningTemplateVars, nil)
+		planResult, _, err := planningAgent.Execute(ctx, planningTemplateVars, nil)
 		if err != nil {
 			return "", fmt.Errorf("plan refinement failed: %w", err)
 		}
@@ -237,7 +237,7 @@ func (tpo *TodoPlannerOrchestrator) runExecutionPhase(ctx context.Context, plan 
 		"WorkspacePath": tpo.GetWorkspacePath(),
 	}
 
-	executionResult, err := executionAgent.Execute(ctx, templateVars, nil)
+	executionResult, _, err := executionAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("execution failed: %w", err)
 	}
@@ -259,7 +259,7 @@ func (tpo *TodoPlannerOrchestrator) runValidationPhase(ctx context.Context, plan
 		"Iteration":       fmt.Sprintf("%d", iteration),
 	}
 
-	validationResult, err := validationAgent.Execute(ctx, validationTemplateVars, nil)
+	validationResult, _, err := validationAgent.Execute(ctx, validationTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
@@ -286,7 +286,7 @@ func (tpo *TodoPlannerOrchestrator) runWriterPhase(ctx context.Context, planResu
 		"TotalIterations":  fmt.Sprintf("%d", iteration),
 	}
 
-	todoListResult, err := writerAgent.Execute(ctx, writerTemplateVars, nil)
+	todoListResult, _, err := writerAgent.Execute(ctx, writerTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("todo list creation failed: %w", err)
 	}
@@ -305,7 +305,7 @@ func (tpo *TodoPlannerOrchestrator) runCleanupPhase(ctx context.Context) (string
 		"WorkspacePath": tpo.GetWorkspacePath(),
 	}
 
-	cleanupResult, err := cleanupAgent.Execute(ctx, cleanupTemplateVars, nil)
+	cleanupResult, _, err := cleanupAgent.Execute(ctx, cleanupTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("cleanup failed: %w", err)
 	}
@@ -328,7 +328,7 @@ func (tpo *TodoPlannerOrchestrator) runTodoListCritiquePhase(ctx context.Context
 	}
 
 	// Execute todo list critique
-	critiqueResult, err := critiqueAgent.Execute(ctx, templateVars, nil)
+	critiqueResult, _, err := critiqueAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("todo list critique failed: %w", err)
 	}

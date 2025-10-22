@@ -1828,3 +1828,17 @@ type RequestHumanFeedbackEvent struct {
 func (e *RequestHumanFeedbackEvent) GetEventType() EventType {
 	return RequestHumanFeedback
 }
+
+type BlockingHumanFeedbackEvent struct {
+	BaseEventData
+	Question      string `json:"question"`       // Question to ask user
+	AllowFeedback bool   `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
+	Context       string `json:"context"`        // Additional context (e.g., validation results)
+	SessionID     string `json:"session_id"`
+	WorkflowID    string `json:"workflow_id"`
+	RequestID     string `json:"request_id"` // Unique ID for this feedback request
+}
+
+func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {
+	return BlockingHumanFeedback
+}

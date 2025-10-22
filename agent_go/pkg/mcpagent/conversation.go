@@ -1203,6 +1203,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 					// NEW: End agent session for hierarchy tracking
 					a.EndAgentSession(ctx)
 
+					// Append the final response to messages array for consistency
+					if choice.Content != "" {
+						assistantMessage := llms.MessageContent{
+							Role:  llms.ChatMessageTypeAI,
+							Parts: []llms.ContentPart{llms.TextContent{Text: choice.Content}},
+						}
+						messages = append(messages, assistantMessage)
+					}
+
 					// Return the FULL reasoning process, not just the final answer
 					return choice.Content, messages, nil
 				} else {
@@ -1229,6 +1238,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 				// NEW: End agent session for hierarchy tracking
 				a.EndAgentSession(ctx)
+
+				// Append the final response to messages array for consistency
+				if choice.Content != "" {
+					assistantMessage := llms.MessageContent{
+						Role:  llms.ChatMessageTypeAI,
+						Parts: []llms.ContentPart{llms.TextContent{Text: choice.Content}},
+					}
+					messages = append(messages, assistantMessage)
+				}
 
 				return choice.Content, messages, nil
 			}
@@ -1317,6 +1335,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 			// NEW: End agent session for hierarchy tracking
 			a.EndAgentSession(ctx)
 
+			// Append the final response to messages array for consistency
+			if lastResponse != "" {
+				assistantMessage := llms.MessageContent{
+					Role:  llms.ChatMessageTypeAI,
+					Parts: []llms.ContentPart{llms.TextContent{Text: lastResponse}},
+				}
+				messages = append(messages, assistantMessage)
+			}
+
 			return lastResponse, messages, nil
 		}
 		logger.Infof("[AGENT TRACE] AskWithHistory: exiting with no final answer after %d turns.", a.MaxTurns)
@@ -1370,6 +1397,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 			// NEW: End agent session for hierarchy tracking
 			a.EndAgentSession(ctx)
 
+			// Append the final response to messages array for consistency
+			if finalChoice.Content != "" {
+				assistantMessage := llms.MessageContent{
+					Role:  llms.ChatMessageTypeAI,
+					Parts: []llms.ContentPart{llms.TextContent{Text: finalChoice.Content}},
+				}
+				messages = append(messages, assistantMessage)
+			}
+
 			// Return the FULL reasoning process, not just the final answer
 			return finalChoice.Content, messages, nil
 		}
@@ -1392,6 +1428,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 	// NEW: End agent session for hierarchy tracking
 	a.EndAgentSession(ctx)
+
+	// Append the final response to messages array for consistency
+	if finalChoice.Content != "" {
+		assistantMessage := llms.MessageContent{
+			Role:  llms.ChatMessageTypeAI,
+			Parts: []llms.ContentPart{llms.TextContent{Text: finalChoice.Content}},
+		}
+		messages = append(messages, assistantMessage)
+	}
 
 	return finalChoice.Content, messages, nil
 }

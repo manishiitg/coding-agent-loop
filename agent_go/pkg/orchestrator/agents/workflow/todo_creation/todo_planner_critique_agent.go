@@ -45,7 +45,7 @@ func NewTodoPlannerCritiqueAgent(config *agents.OrchestratorAgentConfig, logger 
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tpca *TodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tpca *TodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract required parameters
 	objective, ok := templateVars["Objective"]
 	if !ok {

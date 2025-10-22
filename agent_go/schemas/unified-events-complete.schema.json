@@ -2076,6 +2076,61 @@
       "additionalProperties": false,
       "type": "object"
     },
+          "BlockingHumanFeedbackEvent": {
+            "properties": {
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "trace_id": {
+                "type": "string"
+              },
+              "span_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "type": "string"
+              },
+              "parent_id": {
+                "type": "string"
+              },
+              "is_end_event": {
+                "type": "boolean"
+              },
+              "correlation_id": {
+                "type": "string"
+              },
+              "hierarchy_level": {
+                "type": "integer"
+              },
+              "session_id": {
+                "type": "string"
+              },
+              "component": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object"
+              },
+              "question": {
+                "type": "string"
+              },
+              "allow_feedback": {
+                "type": "boolean"
+              },
+              "context": {
+                "type": "string"
+              },
+              "workflow_id": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
     "SerializedMessage": {
       "properties": {
         "role": {
@@ -3039,6 +3094,21 @@
         },
         "description": {
           "type": "string"
+        },
+        "success_criteria": {
+          "type": "string"
+        },
+        "why_this_step": {
+          "type": "string"
+        },
+        "context_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "context_output": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -3186,6 +3256,9 @@
     },
     "request_human_feedback": {
       "$ref": "#/$defs/RequestHumanFeedbackEvent"
+    },
+    "blocking_human_feedback": {
+      "$ref": "#/$defs/BlockingHumanFeedbackEvent"
     },
     "todo_steps_extracted": {
       "$ref": "#/$defs/TodoStepsExtractedEvent"

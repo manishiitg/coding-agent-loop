@@ -42,7 +42,7 @@ func NewTodoValidationAgent(config *agents.OrchestratorAgentConfig, logger utils
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tva *TodoValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tva *TodoValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract required parameters
 	objective, ok := templateVars["Objective"]
 	if !ok {

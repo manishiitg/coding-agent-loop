@@ -282,7 +282,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 
 		// Use Execute method to get structured response from planning agent with guidance
 		planningTemplateVars["Objective"] = objective
-		planningResult, err := planningAgent.Execute(ctx, planningTemplateVars, po.conversationHistory)
+		planningResult, _, err := planningAgent.Execute(ctx, planningTemplateVars, po.conversationHistory)
 
 		if err != nil {
 			po.GetLogger().Errorf("❌ Planning failed: %v", err)
@@ -320,7 +320,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 			"WorkspacePath": po.GetWorkspacePath(),
 		}
 
-		executionResult, err := executionAgent.Execute(ctx, executionTemplateVars, po.conversationHistory)
+		executionResult, _, err := executionAgent.Execute(ctx, executionTemplateVars, po.conversationHistory)
 
 		if err != nil {
 			po.GetLogger().Errorf("❌ Execution failed for step %d: %v", currentStepIndex+1, err)
@@ -349,7 +349,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 			"WorkspacePath":    po.GetWorkspacePath(),
 		}
 
-		stepValidationResult, err := validationAgent.Execute(ctx, validationTemplateVars, po.conversationHistory)
+		stepValidationResult, _, err := validationAgent.Execute(ctx, validationTemplateVars, po.conversationHistory)
 
 		if err != nil {
 			po.GetLogger().Errorf("❌ Validation failed for step %d: %v", currentStepIndex+1, err)
@@ -384,7 +384,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Set orchestrator context for organizer agent
 		// Context is now handled automatically during agent creation
 
-		stepOrganizationResult, err := organizerAgent.Execute(ctx, organizationTemplateVars, po.conversationHistory)
+		stepOrganizationResult, _, err := organizerAgent.Execute(ctx, organizationTemplateVars, po.conversationHistory)
 
 		if err != nil {
 			po.GetLogger().Errorf("❌ Step %d organization failed: %v", currentStepIndex+1, err)
@@ -416,7 +416,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Set orchestrator context for report agent
 		// Context is now handled automatically during agent creation
 
-		reportResult, err := reportAgent.Execute(ctx, reportTemplateVars, po.conversationHistory)
+		reportResult, _, err := reportAgent.Execute(ctx, reportTemplateVars, po.conversationHistory)
 
 		if err != nil {
 			po.GetLogger().Errorf("❌ Step %d report generation failed: %v", currentStepIndex+1, err)
@@ -601,7 +601,7 @@ func (po *PlannerOrchestrator) getInitialPlan(ctx context.Context, objective str
 	}
 
 	// Execute planning agent
-	planningResult, err := planningAgent.Execute(ctx, planningTemplateVars, po.conversationHistory)
+	planningResult, _, err := planningAgent.Execute(ctx, planningTemplateVars, po.conversationHistory)
 	if err != nil {
 		return "", fmt.Errorf("planning agent failed: %w", err)
 	}
@@ -867,7 +867,7 @@ func (po *PlannerOrchestrator) executeSingleStep(ctx context.Context, step Paral
 	}
 
 	// Execute the step
-	executionResult, err := executionAgent.Execute(ctx, executionTemplateVars, po.conversationHistory)
+	executionResult, _, err := executionAgent.Execute(ctx, executionTemplateVars, po.conversationHistory)
 	if err != nil {
 		return "", fmt.Errorf("execution failed: %w", err)
 	}
@@ -892,7 +892,7 @@ func (po *PlannerOrchestrator) validateSingleStep(ctx context.Context, step Para
 	}
 
 	// Validate the step
-	validationResult, err := validationAgent.Execute(ctx, validationTemplateVars, po.conversationHistory)
+	validationResult, _, err := validationAgent.Execute(ctx, validationTemplateVars, po.conversationHistory)
 	if err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
@@ -1092,7 +1092,7 @@ func (po *PlannerOrchestrator) organizeParallelResults(ctx context.Context, resu
 	}
 
 	// Organize the results using organizer agent
-	organizedResult, err := organizerAgent.Execute(ctx, organizerTemplateVars, po.conversationHistory)
+	organizedResult, _, err := organizerAgent.Execute(ctx, organizerTemplateVars, po.conversationHistory)
 	if err != nil {
 		return "", fmt.Errorf("parallel organization failed: %w", err)
 	}
@@ -1139,7 +1139,7 @@ func (po *PlannerOrchestrator) generateParallelReport(ctx context.Context, organ
 	}
 
 	// Generate the report using report agent
-	finalReport, err := reportAgent.Execute(ctx, reportTemplateVars, po.conversationHistory)
+	finalReport, _, err := reportAgent.Execute(ctx, reportTemplateVars, po.conversationHistory)
 	if err != nil {
 		return "", fmt.Errorf("parallel report generation failed: %w", err)
 	}

@@ -168,17 +168,19 @@ import {
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
-import type { RequestHumanFeedbackEvent } from '../../generated/events'
+import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
+import type { RequestHumanFeedbackEvent, BlockingHumanFeedbackEvent } from '../../generated/events'
 
 
 interface EventDispatcherProps {
   event: PollingEvent
   mode?: 'compact' | 'detailed'
   onApproveWorkflow?: (requestId: string) => void
+  onSubmitFeedback?: (requestId: string, feedback: string) => void
   isApproving?: boolean  // Loading state for approve button
 }
 
-export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, isApproving }) => {
+export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, onSubmitFeedback, isApproving }) => {
   if (!event.type || !event.data) {
     return (
       <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
@@ -298,6 +300,26 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
         isApproving={isApproving}
       />
 
+    case 'blocking_human_feedback':
+      return <BlockingHumanFeedbackDisplay 
+        event={{
+          type: event.type,
+          data: {
+            ...extractEventData<BlockingHumanFeedbackEvent>(event.data),
+            question: extractEventData<BlockingHumanFeedbackEvent>(event.data).question || 'Do you want to continue?',
+            allow_feedback: extractEventData<BlockingHumanFeedbackEvent>(event.data).allow_feedback || false,
+            context: extractEventData<BlockingHumanFeedbackEvent>(event.data).context || '',
+            session_id: extractEventData<BlockingHumanFeedbackEvent>(event.data).session_id || '',
+            workflow_id: extractEventData<BlockingHumanFeedbackEvent>(event.data).workflow_id || '',
+            request_id: extractEventData<BlockingHumanFeedbackEvent>(event.data).request_id || `request_${Date.now()}`
+          },
+          timestamp: event.timestamp || new Date().toISOString()
+        }} 
+        onApprove={onApproveWorkflow || (() => {})}
+        onSubmitFeedback={onSubmitFeedback}
+        isApproving={isApproving}
+      />
+
     // Workflow Events
     case 'workflow_start':
       return <WorkflowStartEvent event={extractEventData<{workflow_id?: string, objective?: string, message?: string, timestamp?: number}>(event.data)} />
@@ -394,9 +416,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
 // Event list component for displaying multiple events
 export const EventList: React.FC<{ 
   events: PollingEvent[]
-  // onApproveWorkflow?: (requestId: string) => void
-  // isApproving?: boolean  // Loading state for approve button
-}> = React.memo(({ events }) => {
+  onApproveWorkflow?: (requestId: string) => void
+  onSubmitFeedback?: (requestId: string, feedback: string) => void
+  isApproving?: boolean  // Loading state for approve button
+}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, isApproving }) => {
   const { shouldShowEvent, mode } = useEventMode()
   
   // Filter events based on current mode (basic/advanced) - memoized
@@ -427,5 +450,8 @@ export const EventList: React.FC<{
   
   return <EventHierarchy 
     events={filteredEvents} 
+    onApproveWorkflow={onApproveWorkflow}
+    onSubmitFeedback={onSubmitFeedback}
+    isApproving={isApproving}
   />
 }) 

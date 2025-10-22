@@ -175,6 +175,7 @@ const (
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"
 	RequestHumanFeedback      EventType = "request_human_feedback"
+	BlockingHumanFeedback     EventType = "blocking_human_feedback"
 )
 
 // Unified Event structure with hierarchy support

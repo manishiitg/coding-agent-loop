@@ -43,7 +43,7 @@ func NewTodoRefinePlannerAgent(config *agents.OrchestratorAgentConfig, logger ut
 }
 
 // Execute implements the OrchestratorAgent interface
-func (trpa *TodoRefinePlannerAgent) Execute(ctx context.Context, templateVars map[string]string, messages []llms.MessageContent) (string, error) {
+func (trpa *TodoRefinePlannerAgent) Execute(ctx context.Context, templateVars map[string]string, messages []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract objective from template variables
 	objective, ok := templateVars["Objective"]
 	if !ok {

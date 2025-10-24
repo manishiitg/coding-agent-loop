@@ -88,6 +88,7 @@ func (es *EventStore) AddEvent(observerID string, event Event) {
 	if len(es.events[observerID]) > es.maxEvents {
 		es.events[observerID] = es.events[observerID][len(es.events[observerID])-es.maxEvents:]
 	}
+
 }
 
 // InitializeObserver creates an empty event list for an observer

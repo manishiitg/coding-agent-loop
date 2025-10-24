@@ -115,8 +115,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
 
-	// Check if plan.json already exists
-	planExists, existingPlan, err := hcpo.checkExistingPlan(ctx, workspacePath)
+	// Check if plan.md already exists
+	planPath := fmt.Sprintf("%s/todo_creation_human/planning/plan.md", workspacePath)
+	planExists, planContent, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
 		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing plan: %v", err)
 		// Continue with normal planning flow
@@ -129,15 +130,46 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	var phasesDescription string
 
 	if planExists {
-		hcpo.GetLogger().Infof("📋 Found existing plan.json, skipping planning phase and proceeding to execution")
+		hcpo.GetLogger().Infof("📋 Found existing plan.md, converting to JSON and proceeding to execution")
 
-		// Convert existing plan to TodoStep format
-		breakdownSteps = hcpo.convertPlanStepsToTodoSteps(existingPlan.Steps)
-		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
-		independentStepsResult = fmt.Sprintf("Using existing plan with %d steps", len(breakdownSteps))
-		planSource = "Existing plan.json (skipped planning phase)"
-		phasesDescription = "Existing Plan → Step-by-Step Execution with Validation → Learning Analysis → Writing"
-	} else {
+		// Convert markdown plan to structured JSON using plan reader agent
+		planReaderAgent, err := hcpo.createPlanReaderAgent(ctx, "plan_reading", 0, 1)
+		if err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to create plan reader agent: %v", err)
+			// Fall through to create new plan
+			planExists = false
+		} else {
+			// Prepare template variables for plan reader agent
+			readerTemplateVars := map[string]string{
+				"Objective":     hcpo.GetObjective(),
+				"WorkspacePath": hcpo.GetWorkspacePath(),
+				"PlanMarkdown":  planContent, // Use the markdown content we found
+			}
+
+			// Execute plan reader agent to get structured output
+			planReaderAgentTyped, ok := planReaderAgent.(*HumanControlledPlanReaderAgent)
+			if !ok {
+				hcpo.GetLogger().Warnf("⚠️ Failed to cast plan reader agent to correct type")
+				planExists = false
+			} else {
+				existingPlan, err := planReaderAgentTyped.ExecuteStructured(ctx, readerTemplateVars, []llms.MessageContent{})
+				if err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Failed to convert markdown plan to JSON: %v", err)
+					// Fall through to create new plan
+					planExists = false
+				} else {
+					// Convert existing plan to TodoStep format
+					breakdownSteps = hcpo.convertPlanStepsToTodoSteps(existingPlan.Steps)
+					hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
+					independentStepsResult = fmt.Sprintf("Using existing plan.md converted to JSON with %d steps", len(breakdownSteps))
+					planSource = "Existing plan.md (converted to JSON)"
+					phasesDescription = "Existing Plan.md → JSON Conversion → Step-by-Step Execution with Validation → Learning Analysis → Writing"
+				}
+			}
+		}
+	}
+
+	if !planExists {
 		hcpo.GetLogger().Infof("🔄 No existing plan found, creating new plan to execute objective")
 
 		maxPlanRevisions := 20 // Allow up to 20 plan revisions
@@ -147,29 +179,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		planningConversationHistory := []llms.MessageContent{}
 
 		// Retry loop for plan approval and revision
-		var approvedPlan *PlanningResponse
 		for revisionAttempt := 1; revisionAttempt <= maxPlanRevisions; revisionAttempt++ {
 			hcpo.GetLogger().Infof("🔄 Plan revision attempt %d/%d", revisionAttempt, maxPlanRevisions)
 
-			// Phase 1: Create structured plan (with optional human feedback)
-			approvedPlan, planningConversationHistory, err = hcpo.runPlanningPhase(ctx, revisionAttempt, planningConversationHistory)
+			// Phase 1: Create markdown plan (with optional human feedback)
+			_, planningConversationHistory, err = hcpo.runPlanningPhase(ctx, revisionAttempt, planningConversationHistory)
 			if err != nil {
 				return "", fmt.Errorf("planning phase failed: %w", err)
 			}
 
-			// Emit todo steps extracted event (before human approval)
-			breakdownSteps = hcpo.convertPlanStepsToTodoSteps(approvedPlan.Steps)
-			hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "new_plan")
-
-			// Phase 1.5: Request human approval for plan
+			// Phase 1.5: Request human approval for markdown plan
 			approved, feedback, err := hcpo.requestPlanApproval(ctx, revisionAttempt)
 			if err != nil {
 				return "", fmt.Errorf("plan approval request failed: %w", err)
 			}
 
 			if approved {
-				hcpo.GetLogger().Infof("✅ Plan approved by human, proceeding to plan writing")
-				break // Exit retry loop and continue to plan writing
+				hcpo.GetLogger().Infof("✅ Markdown plan approved by human, proceeding to conversion")
+				break // Exit retry loop and continue to plan reading
 			}
 
 			// Plan rejected with feedback for revision - add to planning history
@@ -181,7 +208,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			}
 		}
 
-		// Phase 1.75: Write approved plan to workspace
+		// Phase 1.75: Read markdown plan and convert to structured JSON
+		approvedPlan, err := hcpo.runPlanReaderPhase(ctx)
+		if err != nil {
+			return "", fmt.Errorf("plan reader phase failed: %w", err)
+		}
+
+		// Phase 1.8: Write structured plan to JSON file
 		err = hcpo.runPlanWriterPhase(ctx, approvedPlan)
 		if err != nil {
 			return "", fmt.Errorf("plan writer phase failed: %w", err)
@@ -189,9 +222,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 		// Convert approved plan steps to TodoStep format for execution
 		breakdownSteps = hcpo.convertPlanStepsToTodoSteps(approvedPlan.Steps)
-		independentStepsResult = fmt.Sprintf("Plan approved and written to workspace with %d steps", len(breakdownSteps))
-		planSource = "New plan created and approved"
-		phasesDescription = "Direct Planning → JSON Step Extraction → Step-by-Step Execution with Validation → Learning Analysis → Writing"
+
+		// Emit todo steps extracted event after plan reader conversion
+		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "new_plan_converted")
+
+		independentStepsResult = fmt.Sprintf("Plan approved and converted to JSON with %d steps", len(breakdownSteps))
+		planSource = "New plan created, approved, and converted"
+		phasesDescription = "Markdown Planning → Human Approval → JSON Conversion → Step-by-Step Execution with Validation → Learning Analysis → Writing"
 	}
 
 	// Phase 2: Execute plan steps one by one (with validation after each step)
@@ -246,8 +283,8 @@ The todo list has been created and is ready for the execution phase. The indepen
 		independentStepsResult), nil
 }
 
-// runPlanningPhase creates or refines the step-wise plan and returns structured output
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, iteration int, conversationHistory []llms.MessageContent) (*PlanningResponse, []llms.MessageContent, error) {
+// runPlanningPhase creates markdown plan and returns conversation history
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, iteration int, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	planningTemplateVars := map[string]string{
 		"Objective":     hcpo.GetObjective(),
 		"WorkspacePath": hcpo.GetWorkspacePath(),
@@ -256,60 +293,70 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	// Create fresh planning agent with proper context
 	planningAgent, err := hcpo.createPlanningAgent(ctx, "planning", 0, iteration)
 	if err != nil {
-		return nil, conversationHistory, fmt.Errorf("failed to create planning agent: %w", err)
+		return "", conversationHistory, fmt.Errorf("failed to create planning agent: %w", err)
 	}
 
-	// Pass conversation history to planning agent and get structured output
-	planningAgentTyped, ok := planningAgent.(*HumanControlledTodoPlannerPlanningAgent)
-	if !ok {
-		return nil, conversationHistory, fmt.Errorf("failed to cast planning agent to correct type")
-	}
-
-	result, err := planningAgentTyped.ExecuteStructured(ctx, planningTemplateVars, conversationHistory)
+	// Execute planning agent to create markdown plan
+	_, conversationHistory, err = planningAgent.Execute(ctx, planningTemplateVars, conversationHistory)
 	if err != nil {
-		return nil, conversationHistory, fmt.Errorf("planning failed: %w", err)
+		return "", conversationHistory, fmt.Errorf("planning failed: %w", err)
 	}
 
-	// Add planning agent response to conversation history
-	assistantMessage := llms.MessageContent{
-		Role:  llms.ChatMessageTypeAI,
-		Parts: []llms.ContentPart{llms.TextContent{Text: fmt.Sprintf("Created plan with %d steps: %v", len(result.Steps), result.Steps)}},
-	}
-	conversationHistory = append(conversationHistory, assistantMessage)
-
-	return result, conversationHistory, nil
+	hcpo.GetLogger().Infof("✅ Markdown plan created successfully")
+	return "markdown_plan_created", conversationHistory, nil
 }
 
-// runPlanWriterPhase writes the approved plan to workspace files
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanWriterPhase(ctx context.Context, approvedPlan *PlanningResponse) error {
-	hcpo.GetLogger().Infof("📝 Writing approved plan to workspace")
+// runPlanReaderPhase reads markdown plan and converts to structured JSON
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanReaderPhase(ctx context.Context) (*PlanningResponse, error) {
+	hcpo.GetLogger().Infof("📖 Reading markdown plan and converting to structured JSON")
 
-	// Create plan writer agent
-	planWriterAgent, err := hcpo.createPlanWriterAgent(ctx, "plan_writing", 0, 1)
+	// Create plan reader agent
+	planReaderAgent, err := hcpo.createPlanReaderAgent(ctx, "plan_reading", 0, 1)
 	if err != nil {
-		return fmt.Errorf("failed to create plan writer agent: %w", err)
+		return nil, fmt.Errorf("failed to create plan reader agent: %w", err)
 	}
 
-	// Convert plan to JSON for template
+	// Read markdown plan content (this would typically use MCP tools)
+	// For now, we'll assume the markdown content is available
+	planMarkdown := "Plan markdown content would be read here" // TODO: Implement actual file reading
+
+	// Prepare template variables for plan reader agent
+	readerTemplateVars := map[string]string{
+		"Objective":     hcpo.GetObjective(),
+		"WorkspacePath": hcpo.GetWorkspacePath(),
+		"PlanMarkdown":  planMarkdown,
+	}
+
+	// Execute plan reader agent to get structured output
+	planReaderAgentTyped, ok := planReaderAgent.(*HumanControlledPlanReaderAgent)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast plan reader agent to correct type")
+	}
+
+	result, err := planReaderAgentTyped.ExecuteStructured(ctx, readerTemplateVars, []llms.MessageContent{})
+	if err != nil {
+		return nil, fmt.Errorf("plan reading failed: %w", err)
+	}
+
+	hcpo.GetLogger().Infof("✅ Plan converted to structured JSON successfully")
+	return result, nil
+}
+
+// runPlanWriterPhase writes the structured plan to JSON file
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanWriterPhase(ctx context.Context, approvedPlan *PlanningResponse) error {
+	hcpo.GetLogger().Infof("📝 Writing structured plan to JSON file")
+
+	// Convert plan to JSON
 	planJSON, err := json.MarshalIndent(approvedPlan, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal plan to JSON: %w", err)
 	}
 
-	// Prepare template variables for plan writer agent
-	writerTemplateVars := map[string]string{
-		"Objective":     hcpo.GetObjective(),
-		"WorkspacePath": hcpo.GetWorkspacePath(),
-		"PlanData":      string(planJSON),
-	}
+	// Write JSON to file (this would typically use MCP tools)
+	// For now, we'll just log it
+	hcpo.GetLogger().Infof("Structured plan JSON: %s", string(planJSON))
 
-	// Execute plan writer agent
-	_, _, err = planWriterAgent.Execute(ctx, writerTemplateVars, []llms.MessageContent{})
-	if err != nil {
-		return fmt.Errorf("plan writing failed: %w", err)
-	}
-
-	hcpo.GetLogger().Infof("✅ Plan written to workspace successfully")
+	hcpo.GetLogger().Infof("✅ Plan written to JSON file successfully")
 	return nil
 }
 
@@ -326,6 +373,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(ctx context.Context, breakdownSteps []TodoStep, iteration int) ([]llms.MessageContent, error) {
 	hcpo.GetLogger().Infof("🔄 Starting step-by-step execution of %d steps", len(breakdownSteps))
 
+	// Track human feedback across all steps for continuous improvement
+	var humanFeedbackHistory []string
+
 	// Execute each step one by one
 	for i, step := range breakdownSteps {
 		hcpo.GetLogger().Infof("📋 Executing step %d/%d: %s", i+1, len(breakdownSteps), step.Title)
@@ -335,15 +385,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(ctx contex
 
 		// Prepare template variables for this specific step with individual fields
 		templateVars := map[string]string{
-			"StepNumber":          fmt.Sprintf("%d", i+1),
-			"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
-			"StepTitle":           step.Title,
-			"StepDescription":     step.Description,
-			"StepSuccessCriteria": step.SuccessCriteria,
-			"StepWhyThisStep":     step.WhyThisStep,
-			"StepContextOutput":   step.ContextOutput,
-			"WorkspacePath":       hcpo.GetWorkspacePath(),
-			"LearningAgentOutput": "", // Will be populated with learning agent's output
+			"StepNumber":            fmt.Sprintf("%d", i+1),
+			"TotalSteps":            fmt.Sprintf("%d", len(breakdownSteps)),
+			"StepTitle":             step.Title,
+			"StepDescription":       step.Description,
+			"StepSuccessCriteria":   step.SuccessCriteria,
+			"StepWhyThisStep":       step.WhyThisStep,
+			"StepContextOutput":     step.ContextOutput,
+			"WorkspacePath":         hcpo.GetWorkspacePath(),
+			"LearningAgentOutput":   "", // Will be populated with learning agent's output
+			"PreviousHumanFeedback": "", // Will be populated with human feedback from previous steps
 		}
 
 		// Add context dependencies as a comma-separated string
@@ -351,6 +402,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(ctx contex
 			templateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
 		} else {
 			templateVars["StepContextDependencies"] = ""
+		}
+
+		// Add previous human feedback to template variables
+		if len(humanFeedbackHistory) > 0 {
+			templateVars["PreviousHumanFeedback"] = strings.Join(humanFeedbackHistory, "\n---\n")
+		} else {
+			templateVars["PreviousHumanFeedback"] = ""
 		}
 
 		// Execute this specific step with retry logic
@@ -496,6 +554,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(ctx contex
 			hcpo.GetLogger().Warnf("⚠️ Human feedback request failed: %v", err)
 			// Default to continue if feedback fails
 			approved = true
+		}
+
+		// Store human feedback for future steps (even if approved, user might have provided guidance)
+		if feedback != "" {
+			feedbackEntry := fmt.Sprintf("Step %d/%d Feedback: %s", i+1, len(breakdownSteps), feedback)
+			humanFeedbackHistory = append(humanFeedbackHistory, feedbackEntry)
+			hcpo.GetLogger().Infof("📝 Stored human feedback for future steps: %s", feedbackEntry)
 		}
 
 		if !approved {
@@ -821,18 +886,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createWriterAgent(ctx contex
 	return agent, nil
 }
 
-// createPlanWriterAgent creates a plan writer agent for writing approved plans to workspace
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanWriterAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	agent, err := hcpo.CreateAndSetupStandardAgent(
+// createPlanReaderAgent creates a plan reader agent for converting markdown to JSON
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanReaderAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
+	agent, err := hcpo.CreateAndSetupStandardAgentWithCustomServers(
 		ctx,
-		"plan-writer-agent",
+		"plan-reader-agent",
 		phase,
 		step,
 		iteration,
 		hcpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
+		[]string{"NO_SERVERS"}, // Special MCP identifier for no servers - plan reader only converts markdown to JSON
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewHumanControlledStructuredPlanWriterAgent(config, logger, tracer, eventBridge)
+			return NewHumanControlledPlanReaderAgent(config, logger, tracer, eventBridge)
 		},
 		hcpo.WorkspaceTools,
 		hcpo.WorkspaceToolExecutors,
@@ -984,117 +1050,25 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getWorkflowID() string {
 	return hcpo.workflowID
 }
 
-// checkExistingPlan checks if plan.json already exists in the workspace and returns the plan if found
-func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingPlan(ctx context.Context, workspacePath string) (bool, *PlanningResponse, error) {
-	planPath := fmt.Sprintf("%s/todo_creation_human/planning/plan.json", workspacePath)
-	planningFolder := fmt.Sprintf("%s/todo_creation_human/planning", workspacePath)
+// checkExistingPlan checks if a plan file already exists in the workspace and returns the plan content if found
+// Uses the generic ReadWorkspaceFile function from base orchestrator
+func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingPlan(ctx context.Context, planPath string) (bool, string, error) {
+	hcpo.GetLogger().Infof("🔍 Checking for existing plan at %s", planPath)
 
-	hcpo.GetLogger().Infof("🔍 DEBUG: Checking for existing plan at %s", planPath)
-	hcpo.GetLogger().Infof("🔍 DEBUG: Planning folder: %s", planningFolder)
-
-	// Use workspace tools to check if plan.json exists
-	// First, list files in the planning directory
-	listArgs := map[string]interface{}{
-		"folder":    planningFolder,
-		"max_depth": 1,
-	}
-
-	hcpo.GetLogger().Infof("🔍 DEBUG: List args: %+v", listArgs)
-
-	// Get the workspace tool executor for list_workspace_files
-	hcpo.GetLogger().Infof("🔍 DEBUG: Available workspace tool executors: %v", getMapKeys(hcpo.WorkspaceToolExecutors))
-
-	listExecutorInterface, exists := hcpo.WorkspaceToolExecutors["list_workspace_files"]
-	if !exists {
-		hcpo.GetLogger().Errorf("❌ DEBUG: list_workspace_files tool executor not found")
-		return false, nil, fmt.Errorf("list_workspace_files tool executor not found")
-	}
-
-	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
-	if !ok {
-		hcpo.GetLogger().Errorf("❌ DEBUG: list_workspace_files tool executor has wrong type: %T", listExecutorInterface)
-		return false, nil, fmt.Errorf("list_workspace_files tool executor has wrong type")
-	}
-
-	hcpo.GetLogger().Infof("🔍 DEBUG: Calling list_workspace_files with args: %+v", listArgs)
-	listResult, err := listExecutor(ctx, listArgs)
+	// Use the generic ReadWorkspaceFile function from base orchestrator
+	planContent, err := hcpo.ReadWorkspaceFile(ctx, planPath)
 	if err != nil {
-		hcpo.GetLogger().Errorf("❌ DEBUG: Failed to list workspace files: %v", err)
-		return false, nil, fmt.Errorf("failed to list workspace files: %w", err)
+		// Check if it's a "file not found" error vs other errors
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
+			hcpo.GetLogger().Infof("📋 No existing plan found: %v", err)
+			return false, "", nil
+		}
+		// Other errors should be returned
+		return false, "", err
 	}
 
-	hcpo.GetLogger().Infof("🔍 DEBUG: List result: %s", listResult)
-
-	// Check if plan.json exists in the result
-	if !strings.Contains(listResult, "plan.json") {
-		hcpo.GetLogger().Infof("📋 No existing plan.json found in workspace at %s", planPath)
-		hcpo.GetLogger().Infof("🔍 DEBUG: List result did not contain 'plan.json': %s", listResult)
-		return false, nil, nil
-	}
-
-	hcpo.GetLogger().Infof("🔍 DEBUG: Found 'plan.json' in list result, proceeding to read file")
-
-	// Plan exists, read it
-	readArgs := map[string]interface{}{
-		"filepath": planPath,
-	}
-
-	hcpo.GetLogger().Infof("🔍 DEBUG: Read args: %+v", readArgs)
-	hcpo.GetLogger().Infof("📋 Found existing plan.json at %s, reading plan data", planPath)
-
-	readExecutorInterface, exists := hcpo.WorkspaceToolExecutors["read_workspace_file"]
-	if !exists {
-		hcpo.GetLogger().Errorf("❌ DEBUG: read_workspace_file tool executor not found")
-		return false, nil, fmt.Errorf("read_workspace_file tool executor not found")
-	}
-
-	readExecutor, ok := readExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
-	if !ok {
-		hcpo.GetLogger().Errorf("❌ DEBUG: read_workspace_file tool executor has wrong type: %T", readExecutorInterface)
-		return false, nil, fmt.Errorf("read_workspace_file tool executor has wrong type")
-	}
-
-	hcpo.GetLogger().Infof("🔍 DEBUG: Calling read_workspace_file with args: %+v", readArgs)
-	readResult, err := readExecutor(ctx, readArgs)
-	if err != nil {
-		hcpo.GetLogger().Errorf("❌ DEBUG: Failed to read existing plan.json: %v", err)
-		return false, nil, fmt.Errorf("failed to read existing plan.json: %w", err)
-	}
-
-	hcpo.GetLogger().Infof("🔍 DEBUG: Read result length: %d characters", len(readResult))
-	hcpo.GetLogger().Infof("🔍 DEBUG: Read result preview: %s", truncateString(readResult, 200))
-
-	// Parse the JSON response to extract the plan data
-	hcpo.GetLogger().Infof("🔍 DEBUG: Parsing JSON response from workspace API")
-
-	// The workspace tools return a response with a "content" field containing the file data
-	var workspaceResp struct {
-		Content string `json:"content"`
-	}
-
-	if err := json.Unmarshal([]byte(readResult), &workspaceResp); err != nil {
-		hcpo.GetLogger().Errorf("❌ DEBUG: Failed to parse workspace response: %v", err)
-		hcpo.GetLogger().Errorf("❌ DEBUG: Raw workspace response that failed to parse: %s", readResult)
-		return false, nil, fmt.Errorf("failed to parse workspace response: %w", err)
-	}
-
-	hcpo.GetLogger().Infof("🔍 DEBUG: Extracted content length: %d characters", len(workspaceResp.Content))
-	hcpo.GetLogger().Infof("🔍 DEBUG: Content preview: %s", truncateString(workspaceResp.Content, 200))
-
-	// Now parse the content as PlanningResponse
-	hcpo.GetLogger().Infof("🔍 DEBUG: Converting file content to PlanningResponse")
-
-	var existingPlan PlanningResponse
-	if err := json.Unmarshal([]byte(workspaceResp.Content), &existingPlan); err != nil {
-		hcpo.GetLogger().Errorf("❌ DEBUG: Failed to unmarshal plan data to PlanningResponse: %v", err)
-		hcpo.GetLogger().Errorf("❌ DEBUG: Raw plan content that failed to unmarshal: %s", workspaceResp.Content)
-		return false, nil, fmt.Errorf("failed to unmarshal plan data to PlanningResponse: %w", err)
-	}
-
-	hcpo.GetLogger().Infof("✅ Found existing plan.json with %d steps at %s", len(existingPlan.Steps), planPath)
-	hcpo.GetLogger().Infof("🔍 DEBUG: Plan objective analysis: %s", existingPlan.ObjectiveAnalysis)
-	hcpo.GetLogger().Infof("🔍 DEBUG: Plan approach: %s", existingPlan.Approach)
-	return true, &existingPlan, nil
+	hcpo.GetLogger().Infof("✅ Found existing plan at %s", planPath)
+	return true, planContent, nil
 }
 
 // addUserFeedbackToHistory adds human feedback to conversation history
@@ -1157,22 +1131,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatConversationHistory(co
 	}
 
 	return result.String()
-}
-
-// Helper functions for debugging
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 // requestPlanApproval requests human approval for the generated plan

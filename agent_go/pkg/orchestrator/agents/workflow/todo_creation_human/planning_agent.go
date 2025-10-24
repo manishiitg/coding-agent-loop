@@ -58,73 +58,6 @@ func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgent
 	}
 }
 
-// ExecuteStructured executes the planning agent and returns structured output
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*PlanningResponse, error) {
-	// Define the JSON schema for planning output
-	schema := `{
-		"type": "object",
-		"properties": {
-			"objective_analysis": {
-				"type": "string",
-				"description": "Analysis of what needs to be achieved"
-			},
-			"approach": {
-				"type": "string",
-				"description": "Brief description of overall approach"
-			},
-			"steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"title": {
-							"type": "string",
-							"description": "Short, clear title for the step"
-						},
-						"description": {
-							"type": "string",
-							"description": "Detailed description of what this step accomplishes"
-						},
-						"success_criteria": {
-							"type": "string",
-							"description": "How to verify this step was completed successfully"
-						},
-						"why_this_step": {
-							"type": "string",
-							"description": "How this step contributes to achieving the objective"
-						},
-						"context_dependencies": {
-							"type": "array",
-							"items": {
-								"type": "string"
-							},
-							"description": "List of context files from previous steps that this step depends on"
-						},
-						"context_output": {
-							"type": "string",
-							"description": "What context file this step will create for other agents"
-						}
-					},
-					"required": ["title", "description", "success_criteria", "why_this_step"]
-				}
-			},
-			"expected_outcome": {
-				"type": "string",
-				"description": "What the complete plan should achieve"
-			}
-		},
-		"required": ["objective_analysis", "approach", "steps", "expected_outcome"]
-	}`
-
-	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := agents.ExecuteStructuredWithInputProcessor[PlanningResponse](hctppa.BaseOrchestratorAgent, ctx, templateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory, schema)
-	if err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
 // Execute implements the OrchestratorAgent interface
 func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
@@ -170,42 +103,63 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningIn
 
 ## 📤 Output Format
 
-**RETURN STRUCTURED JSON RESPONSE ONLY**
+**WRITE MARKDOWN PLAN FILE - DO NOT RETURN JSON**
 
-Create a comprehensive plan and return it as a JSON object with the following structure:
+**CRITICAL**: 
+- Write plan.md file to workspace - do NOT return JSON response
+- Do NOT use structured output - generate markdown plan instead
+- Create comprehensive markdown plan for human review
 
-The response should be a JSON object with:
-- objective_analysis: Analysis of what needs to be achieved
-- approach: Brief description of overall approach
-- steps: Array of step objects, each with:
-  - title: Short, clear title for the step
-  - description: Detailed description of what this step accomplishes
-  - success_criteria: How to verify this step was completed successfully
-  - why_this_step: How this step contributes to achieving the objective
-  - context_dependencies: Array of context files from previous steps that this step depends on (OPTIONAL - RELATIVE PATHS ONLY)
-  - context_output: Single string - what context file this step will create for other agents (OPTIONAL - RELATIVE PATH ONLY - NOT AN ARRAY)
-- expected_outcome: What the complete plan should achieve
+Write the following file:
 
-Example JSON structure:
-` + "```json" + `
-{
-  "objective_analysis": "Analysis of what needs to be achieved",
-  "approach": "Brief description of overall approach",
-  "steps": [
-    {
-      "title": "Step 1 Title",
-      "description": "Step 1 description",
-      "success_criteria": "How to verify completion",
-      "why_this_step": "Why this step is needed",
-      "context_dependencies": ["../execution/step_0_context.md"],
-      "context_output": "./execution/step_1_context.md"
-    }
-  ],
-  "expected_outcome": "What the complete plan should achieve"
-}
+1. **{{.WorkspacePath}}/todo_creation_human/planning/plan.md**
+   - Create a comprehensive markdown plan file
+   - Include objective analysis, approach, and all steps
+   - Use clear markdown formatting with headers and lists
+   - This plan will be reviewed by humans before execution
+
+## 📋 MARKDOWN PLAN STRUCTURE
+
+Create a markdown plan with this structure:
+
+` + "```markdown" + `
+# Plan: [Objective Title]
+
+## Objective Analysis
+[Analysis of what needs to be achieved]
+
+## Approach
+[Brief description of overall approach]
+
+## Steps
+
+### Step 1: [Step Name]
+- **Description**: [Detailed description of what this step accomplishes]
+- **Success Criteria**: [How to verify this step was completed successfully]
+- **Why This Step**: [How this step contributes to achieving the objective]
+- **Context Dependencies**: [List of context files from previous steps]
+- **Context Output**: [What context file this step will create]
+
+### Step 2: [Step Name]
+- **Description**: [Detailed description of what this step accomplishes]
+- **Success Criteria**: [How to verify this step was completed successfully]
+- **Why This Step**: [How this step contributes to achieving the objective]
+- **Context Dependencies**: [List of context files from previous steps]
+- **Context Output**: [What context file this step will create]
+
+### Step 3: [Step Name]
+[Continue pattern for all steps...]
+
+## Expected Outcome
+[What the complete plan should achieve]
 ` + "```" + `
 
-**Note**: Focus on creating a clear, actionable plan to execute the objective. Each step should be concrete and contribute directly to achieving the goal. Remember that different steps may be executed by different agents, so include context dependencies and outputs to ensure proper coordination and memory sharing across the multi-agent system.`
+**IMPORTANT NOTES**: 
+1. Focus on creating a clear, actionable markdown plan
+2. Each step should be concrete and contribute directly to achieving the goal
+3. Include context dependencies and outputs for multi-agent coordination
+4. **WRITE plan.md FILE** - do not return JSON response
+5. The plan reader agent will convert this to JSON in the next phase`
 
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_planning").Parse(templateStr)

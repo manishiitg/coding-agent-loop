@@ -164,7 +164,7 @@ export const useChatStore = create<ChatState>()(
       // Initial state
       isStreaming: false,
       observerId: '',
-      lastEventIndex: 0,
+      lastEventIndex: -1,
       pollingInterval: null,
       totalEvents: 0,
       lastEventCount: 0,
@@ -332,7 +332,7 @@ export const useChatStore = create<ChatState>()(
         set({
           isStreaming: false,
           observerId: '',
-          lastEventIndex: 0,
+          lastEventIndex: -1,
           pollingInterval: null,
           totalEvents: 0,
           lastEventCount: 0,

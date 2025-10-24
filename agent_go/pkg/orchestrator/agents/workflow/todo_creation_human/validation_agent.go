@@ -208,7 +208,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- planning/plan.json (original plan for reference)
+- planning/plan.md (original plan for reference)
 - workspace files (to verify execution claims)
 
 **WRITE:**

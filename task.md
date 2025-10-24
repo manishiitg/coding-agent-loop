@@ -33,3 +33,5 @@ like pass this from frontend to a variable and when we are sending a user messag
 51. get resource, doesn't work test with google-sheets
 
 52. add support for docker in install of mcp
+
+53. the diff tool in workspace, has some issues. test with json format

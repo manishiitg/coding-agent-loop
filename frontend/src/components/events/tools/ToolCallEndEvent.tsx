@@ -8,6 +8,7 @@ interface ToolCallEndEventProps {
 }
 
 export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event }) => {
+  
   // Check if this is a workspace tool
   const isWorkspaceTool = (toolName: string): boolean => {
     const workspaceToolNames = [
@@ -17,7 +18,8 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
       'list_workspace_files',
       // Add more as we implement their UI
     ]
-    return workspaceToolNames.includes(toolName)
+    const isWorkspace = workspaceToolNames.includes(toolName)
+    return isWorkspace
   }
 
   // If it's a workspace tool, use the specialized component

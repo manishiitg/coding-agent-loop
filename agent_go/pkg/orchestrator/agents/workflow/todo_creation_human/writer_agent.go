@@ -96,7 +96,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- planning/plan.json (plan)
+- planning/plan.md (plan)
 - validation/step_*_validation_report.md (all step validation reports with execution summaries)
 - learnings/success_patterns.md (success learning insights)
 - learnings/failure_analysis.md (failure patterns to avoid)
@@ -112,7 +112,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 - Keep todo_final.md concise and actionable
 
 ## 📋 SYNTHESIS GUIDELINES
-- **Read Workspace Files**: Review plan.json, validation reports (which include execution summaries), and learnings/ folder
+- **Read Workspace Files**: Review plan.md, validation reports (which include execution summaries), and learnings/ folder
 - **Review Learnings**: Read learnings/success_patterns.md for what worked and learnings/failure_analysis.md for what to avoid
 - **Get Execution Details**: Validation reports contain execution conversation and tool usage details
 - **Prioritize by Success**: High priority for steps with strong success patterns, medium for refinements, low for optional improvements

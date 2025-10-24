@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -515,6 +516,168 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 // SetupStandardAgent removed: setup is now performed inline in CreateAndSetupStandardAgent
 
 // setupAgent removed: logic is now inlined in CreateAndSetupStandardAgent
+
+// ReadWorkspaceFile reads a file from the workspace and returns its content
+// Emits tool call events for proper observability
+func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath string) (string, error) {
+	bo.GetLogger().Infof("📖 Reading workspace file: %s", filePath)
+
+	// Prepare tool call parameters
+	readArgs := map[string]interface{}{
+		"filepath": filePath,
+	}
+
+	// Convert args to JSON string for event
+	argsJSON, _ := json.Marshal(readArgs)
+
+	// Emit tool call start event
+	toolCallStartEvent := &events.ToolCallStartEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:     0, // Orchestrator-level call
+		ToolName: "read_workspace_file",
+		ToolParams: events.ToolParams{
+			Arguments: string(argsJSON),
+		},
+		ServerName: "workspace", // Internal workspace tool
+	}
+
+	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
+
+	// Get the tool executor
+	readExecutorInterface, exists := bo.WorkspaceToolExecutors["read_workspace_file"]
+	if !exists {
+		// Emit tool call error event
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "read_workspace_file",
+			Error:      "read_workspace_file tool executor not found",
+			ServerName: "workspace",
+			Duration:   0,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return "", fmt.Errorf("read_workspace_file tool executor not found")
+	}
+
+	readExecutor, ok := readExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		// Emit tool call error event
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "read_workspace_file",
+			Error:      "read_workspace_file tool executor has wrong type",
+			ServerName: "workspace",
+			Duration:   0,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return "", fmt.Errorf("read_workspace_file tool executor has wrong type")
+	}
+
+	// Execute the tool call using existing workspace tool logic
+	startTime := time.Now()
+	readResult, err := readExecutor(ctx, readArgs)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		// Emit tool call error event for read failure
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "read_workspace_file",
+			Error:      fmt.Sprintf("Failed to read file: %v", err),
+			ServerName: "workspace",
+			Duration:   duration,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
+	}
+
+	// Parse the response - handleReadWorkspaceFile returns only the Data field from API response
+	var fileData struct {
+		Filepath string `json:"filepath"`
+		Content  string `json:"content"`
+	}
+
+	if err := json.Unmarshal([]byte(readResult), &fileData); err != nil {
+		// Emit tool call error event for parsing failure
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "read_workspace_file",
+			Error:      fmt.Sprintf("Failed to parse workspace response: %v", err),
+			ServerName: "workspace",
+			Duration:   duration,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return "", fmt.Errorf("failed to parse workspace response: %w", err)
+	}
+
+	// Extract content directly from the parsed data
+	fileContent := fileData.Content
+
+	if fileContent == "" {
+		// Emit tool call error event for missing content
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "read_workspace_file",
+			Error:      "No content found in workspace response",
+			ServerName: "workspace",
+			Duration:   duration,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return "", fmt.Errorf("no content found in workspace response")
+	}
+
+	// Emit successful tool call end event
+	toolCallEndEvent := &events.ToolCallEndEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:       0,
+		ToolName:   "read_workspace_file",
+		Result:     fmt.Sprintf("Successfully read file (%d characters)", len(fileContent)),
+		Duration:   duration,
+		ServerName: "workspace",
+	}
+	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
+
+	bo.GetLogger().Infof("✅ Successfully read file: %s (%d characters)", filePath, len(fileContent))
+	return fileContent, nil
+}
+
+// CheckWorkspaceFileExists checks if a file exists in the workspace
+// Uses ReadWorkspaceFile internally but returns a boolean instead of content
+func (bo *BaseOrchestrator) CheckWorkspaceFileExists(ctx context.Context, filePath string) (bool, error) {
+	bo.GetLogger().Infof("🔍 Checking if workspace file exists: %s", filePath)
+
+	_, err := bo.ReadWorkspaceFile(ctx, filePath)
+	if err != nil {
+		// Check if it's a "file not found" error vs other errors
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
+			bo.GetLogger().Infof("📋 File does not exist: %s", filePath)
+			return false, nil
+		}
+		// Other errors should be returned
+		return false, err
+	}
+
+	bo.GetLogger().Infof("✅ File exists: %s", filePath)
+	return true, nil
+}
 
 // RequestHumanFeedback is a common function for requesting human feedback with blocking behavior
 // Returns: (approved bool, feedback string, error)

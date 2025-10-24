@@ -181,6 +181,7 @@ interface EventDispatcherProps {
 }
 
 export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, onSubmitFeedback, isApproving }) => {
+  
   if (!event.type || !event.data) {
     return (
       <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
@@ -425,11 +426,14 @@ export const EventList: React.FC<{
   // Filter events based on current mode (basic/advanced) - memoized
   const filteredEvents = React.useMemo(() => {
     const filtered = events.filter(event => {
-      if (!event.type) return false
-      return shouldShowEvent(event.type)
+      if (!event.type) {
+        return false
+      }
+      const shouldShow = shouldShowEvent(event.type)
+      return shouldShow
     })
     return filtered
-  }, [events, shouldShowEvent])
+  }, [events, shouldShowEvent, mode])
   
   if (events.length === 0) {
     return <div className="text-gray-500 text-center py-4">No events to display</div>

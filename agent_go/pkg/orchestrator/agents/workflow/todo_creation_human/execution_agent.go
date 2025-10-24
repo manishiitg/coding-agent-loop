@@ -27,6 +27,7 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	WorkspacePath           string
 	ValidationFeedback      string
 	LearningAgentOutput     string
+	PreviousHumanFeedback   string
 }
 
 // HumanControlledTodoPlannerExecutionAgent executes the objective using MCP servers in human-controlled mode
@@ -102,11 +103,12 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		WorkspacePath:           templateVars["WorkspacePath"],
 		ValidationFeedback:      templateVars["ValidationFeedback"],
 		LearningAgentOutput:     templateVars["LearningAgentOutput"],
+		PreviousHumanFeedback:   templateVars["PreviousHumanFeedback"],
 	}
 
 	// 	## 📁 FILE PERMISSIONS
 	// **READ:**
-	// - {{.WorkspacePath}}/todo_creation_human/planning/plan.json (current plan)
+	// - {{.WorkspacePath}}/todo_creation_human/planning/plan.md (current plan)
 
 	// Define the template
 	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
@@ -121,7 +123,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 - **Mode**: Single step execution (step {{.StepNumber}} of {{.TotalSteps}})
 
 **FILE PERMISSIONS:**
-- **READ ONLY**: planning/plan.json, context files from previous steps
+- **READ ONLY**: planning/plan.md, context files from previous steps
 
 **RESTRICTIONS:**
 - Focus on executing the task using MCP tools
@@ -149,6 +151,15 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Learning Agent Analysis**: {{.LearningAgentOutput}}
 
 **Important**: The learning agent has analyzed the previous execution and provided this refined guidance. Use this analysis to improve your execution approach.
+{{end}}
+
+{{if .PreviousHumanFeedback}}
+## 👥 PREVIOUS HUMAN FEEDBACK
+
+**Human Guidance from Previous Steps:**
+{{.PreviousHumanFeedback}}
+
+**Important**: Use this feedback to improve your execution approach and avoid repeating previous mistakes. Consider the human's suggestions when selecting tools and executing this step.
 {{end}}
 
 ## 🎯 CURRENT STEP EXECUTION

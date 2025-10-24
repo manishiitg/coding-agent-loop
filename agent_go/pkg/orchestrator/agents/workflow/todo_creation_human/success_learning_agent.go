@@ -115,48 +115,34 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) successLearningInpu
 
 ## 🧠 **YOUR TASK - SUCCESS ANALYSIS**
 
-This step was executed successfully! Analyze what made it work well and improve the plan.json file with these learnings.
+This step was executed successfully! Analyze what made it work well and improve the plan.md file with these learnings.
 
 ### **Success Analysis Process:**
-1. **Read current plan** - Examine ` + "`plan.json`" + ` to understand the current step
+1. **Read current plan** - Examine ` + "`plan.md`" + ` to understand the current step
 2. **Identify success factors** - What tools, approaches, and patterns worked best
 3. **Extract best practices** - Successful strategies that should be documented
 4. **Update plan step** - Improve the step description, success criteria, and context dependencies based on what actually worked
-5. **Write improved plan** - Update ` + "`plan.json`" + ` with better step details
+5. **Write improved plan** - Update ` + "`plan.md`" + ` with better step details
 6. **Document success patterns** - Write to ` + "`learnings/success_patterns.md`" + ` and ` + "`learnings/step_X_learning.md`" + `
 
 ### **Plan Improvement Focus:**
-Update plan.json with the **final working approach** that achieved success:
+Update plan.md with the **final working approach** that achieved success by **enhancing the markdown content**:
 
-**Example of Enhanced Step in Plan.json:**
-` + "```" + `json
-{
-  "title": "Deploy service",
-  "description": "Deploy using kubectl apply with --dry-run validation first. Use namespace 'production'. Verify deployment status with kubectl rollout status.",
-  "success_criteria": "Service is running with all pods healthy and endpoint accessible",
-  "mcp_tools_used": [
-    {
-      "server": "kubernetes",
-      "tool": "kubectl_apply",
-      "args": "--dry-run=client -f deployment.yaml"
-    },
-    {
-      "server": "kubernetes", 
-      "tool": "kubectl_rollout",
-      "args": "status deployment/myapp -n production"
-    }
-  ],
-  "approach_to_follow": "1. Validate with dry-run first, 2. Apply to production, 3. Monitor rollout status, 4. Verify endpoint health",
-  "approach_to_avoid": "Don't apply directly without dry-run validation. Don't skip rollout status check. Avoid assuming success without verifying pods.",
-  "context_dependencies": ["../validation/environment_check.md", "../execution/step_1_config.md"]
-}
+**Example of Enhanced Step in Plan.md:**
+` + "```markdown" + `
+### Step 1: Deploy service
+- **Description**: Deploy using kubectl apply. APPROACH: 1) First validate with 'kubectl apply --dry-run=client -f deployment.yaml' to check YAML syntax. 2) Apply to production with 'kubectl apply -f deployment.yaml -n production'. 3) Monitor rollout with 'kubectl rollout status deployment/myapp -n production'. 4) Verify pods with 'kubectl get pods -n production'. TOOLS USED: kubernetes.kubectl_apply (--dry-run then actual apply), kubernetes.kubectl_rollout (status check). AVOID: Don't apply directly without dry-run validation. Don't skip rollout status verification. Don't assume success without checking pod health.
+- **Success Criteria**: Service is running with all pods healthy (kubectl get pods shows 'Running' status for all pods), deployment rolled out successfully (kubectl rollout status returns 'successfully rolled out'), and endpoint is accessible (curl to service endpoint returns 200 OK response)
+- **Why This Step**: This step deploys the application to production. The dry-run validation is critical because it catches YAML syntax errors before applying. The rollout status check ensures the deployment progressed without errors. Pod health verification confirms the service is actually running.
+- **Context Dependencies**: ../validation/environment_check.md, ../execution/step_1_config.md
+- **Context Output**: ./execution/step_2_deployment.md
 ` + "```" + `
 
-**Required Documentation**:
-1. **mcp_tools_used**: List exact MCP server, tool name, and successful arguments
-2. **approach_to_follow**: Step-by-step path that led to success
-3. **approach_to_avoid**: What NOT to do (failed attempts, wrong tools, bad patterns)
-4. **Enhanced description**: Add specific commands and validation steps that worked
+**How to Enhance Markdown Plan:**
+1. **Description**: Add specific tools (MCP server.tool_name), exact commands/arguments, step-by-step approach, and what to avoid
+2. **Success Criteria**: Add exact validation methods, expected outputs, and measurable indicators
+3. **Why This Step**: Explain why this specific approach worked and why each sub-step is important
+4. **Context Dependencies**: Update with actual files that were crucial for successful execution
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
@@ -187,10 +173,11 @@ Provide your response in this exact format:
 ## Plan Improvement Actions
 
 ### Plan Updates Made:
-- [Description of how the plan.json file was updated with successful execution insights]
-- [Specific improvements made to step description based on what worked]
-- [Enhanced success criteria based on actual successful validation]
-- [Improved context dependencies based on successful execution]
+- [Enhanced markdown step descriptions with specific tools, commands, and step-by-step approach that worked]
+- [Enhanced success criteria with exact validation methods and expected outputs]
+- [Enhanced why_this_step sections with insights about why this approach worked best]
+- [Updated context dependencies with actual files that were crucial for success]
+- [NOTE: Update plan.md file - do NOT create new files or change file structure]
 
 ### Success Patterns Documented:
 - [Successful tools and approaches that worked well]
@@ -203,7 +190,7 @@ Provide your response in this exact format:
 ## 📁 **FILE PERMISSIONS**
 
 **READ:**
-- planning/plan.json (current plan)
+- planning/plan.md (current markdown plan)
 - validation/step_X_validation_report.md (validation results with execution summary)
 
 **WRITE TO learnings/ FOLDER ONLY:**
@@ -211,18 +198,19 @@ Provide your response in this exact format:
 - learnings/step_X_learning.md (create detailed learning for this step)
 
 **WRITE TO planning/ FOLDER:**
-- planning/plan.json (update with improvements)
+- planning/plan.md (update with improvements)
 
 **RESTRICTIONS:**
 - All learning outputs MUST go to learnings/ folder
 - Read execution details from validation reports (which contain execution conversation)
-- Update plan.json in planning/ folder with improvements
+- Update plan.md in planning/ folder with improvements
 
 ---
 
 **Important**: 
 1. **Focus on success**: Analyze what made this execution successful
-2. **Update plan.json**: Improve the step details based on successful execution learnings
-3. **Document in learnings/**: Write success patterns to ` + "`learnings/success_patterns.md`" + ` and step details to ` + "`learnings/step_X_learning.md`" + `
-4. **Tool recommendations**: Document exact MCP server, tool name, and arguments that worked`
+2. **Update plan.md**: Improve the markdown plan by enhancing step descriptions, success criteria, and context dependencies
+3. **Markdown format**: Update the markdown plan.md file - do NOT create JSON files
+4. **Document in learnings/**: Write success patterns to ` + "`learnings/success_patterns.md`" + ` and step details to ` + "`learnings/step_X_learning.md`" + `
+5. **Tool recommendations**: Integrate tool information directly into the markdown step descriptions`
 }

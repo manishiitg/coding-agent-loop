@@ -51,6 +51,33 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     }
   }
 
+  // Render final result with JSON detection
+  const renderFinalResult = (result: string) => {
+    try {
+      // Try to parse as JSON
+      const parsed = JSON.parse(result)
+      
+      // If successful, render as formatted JSON
+      return (
+        <div className="bg-gray-100 dark:bg-gray-700 rounded-md p-2">
+          <div className="text-xs text-gray-600 dark:text-gray-400 mb-1 font-medium">
+            📄 JSON Result
+          </div>
+          <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap">
+            {JSON.stringify(parsed, null, 2)}
+          </pre>
+        </div>
+      )
+    } catch {
+      // If not valid JSON, render as markdown
+      return (
+        <div className="bg-white dark:bg-gray-800 rounded-md p-2">
+          <ConversationMarkdownRenderer content={result} />
+        </div>
+      )
+    }
+  }
+
   // Single-line layout following design guidelines
   return (
     <div className="bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded p-2">
@@ -81,9 +108,7 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
       {/* Result always visible below */}
       {event.final_result && (
         <div className="mt-2">
-          <div className="bg-white dark:bg-gray-800 rounded-md p-2">
-            <ConversationMarkdownRenderer content={event.final_result} />
-          </div>
+          {renderFinalResult(event.final_result)}
         </div>
       )}
     </div>

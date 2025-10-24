@@ -191,20 +191,41 @@ export default function Workspace({
         
         if (response.success && response.data) {
           let processedContent = response.data.content
+          let isJsonFile = false
+          let formattedJson = null
           
           // Check if this is an image file
           if (response.data.is_image && processedContent.startsWith('data:image/')) {
             // For images, the content is already base64 encoded data URL
             // No processing needed for images
           } else {
+            // Check if this is a JSON file
+            isJsonFile = file.filepath.toLowerCase().endsWith('.json')
+            
             // Process the content to convert escaped newlines to actual newlines
             processedContent = processedContent
               .replace(/\\n/g, '\n')  // Convert \n to actual newlines
               .replace(/\\t/g, '\t')  // Convert \t to actual tabs
               .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
+            
+            // If it's a JSON file, try to parse and format it
+            if (isJsonFile) {
+              try {
+                const parsed = JSON.parse(processedContent)
+                formattedJson = JSON.stringify(parsed, null, 2)
+              } catch (parseError) {
+                // If JSON parsing fails, keep the original content
+                console.warn('Failed to parse JSON file:', parseError)
+                formattedJson = null
+              }
+            }
           }
           
+          // Store both original content and formatted JSON (if applicable)
           setFileContent(processedContent)
+          if (formattedJson) {
+            setFileContent(formattedJson)
+          }
           setShowFileContent(true)
         } else {
           setError(response.message || 'Failed to load file content')

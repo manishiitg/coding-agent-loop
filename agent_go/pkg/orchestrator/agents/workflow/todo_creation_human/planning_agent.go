@@ -25,6 +25,24 @@ type HumanControlledTodoPlannerPlanningAgent struct {
 	*agents.BaseOrchestratorAgent
 }
 
+// PlanStep represents a step in the planning output
+type PlanStep struct {
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	SuccessCriteria     string   `json:"success_criteria"`
+	WhyThisStep         string   `json:"why_this_step"`
+	ContextDependencies []string `json:"context_dependencies"`
+	ContextOutput       string   `json:"context_output"`
+}
+
+// PlanningResponse represents the structured response from planning
+type PlanningResponse struct {
+	ObjectiveAnalysis string     `json:"objective_analysis"`
+	Approach          string     `json:"approach"`
+	Steps             []PlanStep `json:"steps"`
+	ExpectedOutcome   string     `json:"expected_outcome"`
+}
+
 // NewHumanControlledTodoPlannerPlanningAgent creates a new human-controlled todo planner planning agent
 func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerPlanningAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
@@ -40,26 +58,78 @@ func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgent
 	}
 }
 
+// ExecuteStructured executes the planning agent and returns structured output
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*PlanningResponse, error) {
+	// Define the JSON schema for planning output
+	schema := `{
+		"type": "object",
+		"properties": {
+			"objective_analysis": {
+				"type": "string",
+				"description": "Analysis of what needs to be achieved"
+			},
+			"approach": {
+				"type": "string",
+				"description": "Brief description of overall approach"
+			},
+			"steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"title": {
+							"type": "string",
+							"description": "Short, clear title for the step"
+						},
+						"description": {
+							"type": "string",
+							"description": "Detailed description of what this step accomplishes"
+						},
+						"success_criteria": {
+							"type": "string",
+							"description": "How to verify this step was completed successfully"
+						},
+						"why_this_step": {
+							"type": "string",
+							"description": "How this step contributes to achieving the objective"
+						},
+						"context_dependencies": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "List of context files from previous steps that this step depends on"
+						},
+						"context_output": {
+							"type": "string",
+							"description": "What context file this step will create for other agents"
+						}
+					},
+					"required": ["title", "description", "success_criteria", "why_this_step"]
+				}
+			},
+			"expected_outcome": {
+				"type": "string",
+				"description": "What the complete plan should achieve"
+			}
+		},
+		"required": ["objective_analysis", "approach", "steps", "expected_outcome"]
+	}`
+
+	// Use the base orchestrator agent's ExecuteStructured method
+	result, err := agents.ExecuteStructuredWithInputProcessor[PlanningResponse](hctppa.BaseOrchestratorAgent, ctx, templateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory, schema)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // Execute implements the OrchestratorAgent interface
 func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
-	// Extract variables from template variables
-	objective := templateVars["Objective"]
-	workspacePath := templateVars["WorkspacePath"]
-
-	// Prepare template variables - simplified for human-controlled mode
-	planningTemplateVars := map[string]string{
-		"Objective":     objective,
-		"WorkspacePath": workspacePath,
-	}
-
-	// Create template data for validation
-	templateData := HumanControlledTodoPlannerPlanningTemplate{
-		Objective:     objective,
-		WorkspacePath: workspacePath,
-	}
-
-	// Execute using template validation
-	return hctppa.ExecuteWithTemplateValidation(ctx, planningTemplateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory, templateData)
+	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
+	// This will automatically emit agent start/end events
+	return hctppa.ExecuteWithInputProcessor(ctx, templateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory)
 }
 
 // humanControlledPlanningInputProcessor processes inputs specifically for fast, simplified planning
@@ -70,120 +140,70 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningIn
 		WorkspacePath: templateVars["WorkspacePath"],
 	}
 
-	// Define the template - simplified for direct planning
-	templateStr := `## 🚀 PRIMARY TASK - CREATE PLAN TO EXECUTE OBJECTIVE
+	// Define the template - simplified for direct planning with structured output
+	templateStr := `## 🚀 PRIMARY TASK - CREATE STRUCTURED PLAN TO EXECUTE OBJECTIVE
 
 **OBJECTIVE**: {{.Objective}}
 **WORKSPACE**: {{.WorkspacePath}}
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Planning Agent
-- **Responsibility**: Create a comprehensive plan to execute the objective
-
-## 📁 FILE PERMISSIONS
-**READ (if files exist):**
-- {{.WorkspacePath}}/planning/plan.md (previous work - learn from existing plans)
-- {{.WorkspacePath}}/execution/execution_results.md (what worked - learn from execution results)
-
-**WRITE:**
-- **CREATE** {{.WorkspacePath}}/planning/plan.md (create new plan)
-
-**RESTRICTIONS:**
-- Only modify files within {{.WorkspacePath}}/
-- Focus on creating actionable steps to achieve the objective
-- Learn from existing plans and execution results to create a better plan
+- **Responsibility**: Create a comprehensive structured plan to execute the objective
 
 ## 📋 PLANNING GUIDELINES
-- **Learn from Existing Work**: Read existing plan.md and execution_results.md to understand what worked and what didn't
-- **Build on Success**: Use successful approaches from previous executions
-- **Avoid Failures**: Learn from failed attempts and avoid repeating mistakes
 - **Comprehensive Scope**: Create complete plan to achieve objective
 - **Actionable Steps**: Each step should be concrete and executable
 - **Clear Success Criteria**: Define how to verify each step worked
 - **Logical Order**: Steps should follow logical sequence
 - **Focus on Strategy**: Plan what needs to be done, not how to do it (execution details will be handled by execution agents)
 
-## 🤖 MULTI-AGENT SYSTEM AWARENESS
-**Important**: Different steps in this plan may be executed by different agents. Each agent will have access to workspace memory and context sharing capabilities.
+## 🤖 MULTI-AGENT COORDINATION
+**Important**: Different agents will execute this plan. Ensure proper coordination through workspace files.
 
-### **Cross-Agent Context Sharing**
-- **Memory Access**: Agents executing steps will have access to workspace memory for reading and writing context
-- **Context Continuity**: Each step should reference relevant context files from previous steps
-- **Shared Context**: Use relative file paths to reference context created by other agents
-- **Documentation**: Each step should document its context and findings for subsequent agents
+### **Context Sharing Rules**
+- **Read context** from previous steps using relative paths (e.g., "../execution/step_1_context.md")
+- **Write context** for next steps with clear documentation
+- **Use relative paths only** - NEVER use absolute paths
+- **Document findings** in workspace files for other agents
 
-### **Inter-Agent Coordination Guidelines**
-- **Read Previous Work**: Steps should reference context files from previous steps using relative paths
-- **Share Context**: Document step findings and context in workspace files for other agents
-- **Context Dependencies**: Specify which context files each step depends on using RELATIVE PATHS ONLY
-- **Memory Persistence**: Use workspace files to maintain context across different agent executions
-- **Path Format**: Use relative paths like ` + "`../execution/step_1_context.md`" + ` or ` + "`./planning/plan.md`" + ` - NEVER use full absolute paths
-
-**⚠️ IMPORTANT**: Only create/modify files within {{.WorkspacePath}}/ folder structure.
-
-        ` + GetTodoCreationHumanMemoryRequirements() + `
+` + GetTodoCreationHumanMemoryRequirements() + `
 
 ## 📤 Output Format
 
-**CREATE** {{.WorkspacePath}}/todo_creation_human/planning/plan.md
+**RETURN STRUCTURED JSON RESPONSE ONLY**
 
----
+Create a comprehensive plan and return it as a JSON object with the following structure:
 
-## 📋 Plan to Execute: {{.Objective}}
-**Date**: [Current date/time]
+The response should be a JSON object with:
+- objective_analysis: Analysis of what needs to be achieved
+- approach: Brief description of overall approach
+- steps: Array of step objects, each with:
+  - title: Short, clear title for the step
+  - description: Detailed description of what this step accomplishes
+  - success_criteria: How to verify this step was completed successfully
+  - why_this_step: How this step contributes to achieving the objective
+  - context_dependencies: Array of context files from previous steps that this step depends on (OPTIONAL - RELATIVE PATHS ONLY)
+  - context_output: Single string - what context file this step will create for other agents (OPTIONAL - RELATIVE PATH ONLY - NOT AN ARRAY)
+- expected_outcome: What the complete plan should achieve
 
-### Learning from Previous Work
-**Existing Plan Analysis**: [If plan.md exists, summarize what was tried before]
-**Execution Results Analysis**: [If execution_results.md exists, summarize what worked and what didn't]
-**Key Learnings**: [What to build on, what to avoid, what to improve]
-
-### Objective Analysis
-**What we need to achieve**: {{.Objective}}
-**Approach**: [Brief description of overall approach based on learnings]
-
-### Execution Plan
-
-#### Step 1: [First step name]
-- **Description**: [What to do - detailed and clear]
-- **Success Criteria**: [How to verify it worked]
-- **Why This Step**: [How it contributes to the objective]
-- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_1_context.md" - only if this step depends on previous work]
-- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_1_context.md" - only if this step creates context for other steps]
-
-#### Step 2: [Second step name]
-- **Description**: [What to do]
-- **Success Criteria**: [Verification]
-- **Why This Step**: [Contribution to objective]
-- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_1_context.md" - only if this step depends on previous work]
-- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_2_context.md" - only if this step creates context for other steps]
-
-#### Step 3: [Third step name]
-- **Description**: [What to do]
-- **Success Criteria**: [Verification]
-- **Why This Step**: [Contribution to objective]
-- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_2_context.md" - only if this step depends on previous work]
-- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_3_context.md" - only if this step creates context for other steps]
-
-#### Step 4: [Fourth step name - if needed]
-- **Description**: [What to do]
-- **Success Criteria**: [Verification]
-- **Why This Step**: [Contribution to objective]
-- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_3_context.md" - only if this step depends on previous work]
-- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_4_context.md" - only if this step creates context for other steps]
-
-#### Step 5: [Fifth step name - if needed]
-- **Description**: [What to do]
-- **Success Criteria**: [Verification]
-- **Why This Step**: [Contribution to objective]
-- **Context Dependencies**: [OPTIONAL - List any context files from previous steps, e.g., "../execution/step_4_context.md" - only if this step depends on previous work]
-- **Context Output**: [OPTIONAL - Specify what context this step will create for other agents, e.g., "./execution/step_5_context.md" - only if this step creates context for other steps]
-
-### Expected Outcome
-- [What the complete plan should achieve]
-- [How this plan addresses the objective]
-- [Success criteria for the overall objective]
-
----
+Example JSON structure:
+` + "```json" + `
+{
+  "objective_analysis": "Analysis of what needs to be achieved",
+  "approach": "Brief description of overall approach",
+  "steps": [
+    {
+      "title": "Step 1 Title",
+      "description": "Step 1 description",
+      "success_criteria": "How to verify completion",
+      "why_this_step": "Why this step is needed",
+      "context_dependencies": ["../execution/step_0_context.md"],
+      "context_output": "./execution/step_1_context.md"
+    }
+  ],
+  "expected_outcome": "What the complete plan should achieve"
+}
+` + "```" + `
 
 **Note**: Focus on creating a clear, actionable plan to execute the objective. Each step should be concrete and contribute directly to achieving the goal. Remember that different steps may be executed by different agents, so include context dependencies and outputs to ensure proper coordination and memory sharing across the multi-agent system.`
 

@@ -25,6 +25,8 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	StepContextDependencies string
 	StepContextOutput       string
 	WorkspacePath           string
+	ValidationFeedback      string
+	LearningAgentOutput     string
 }
 
 // HumanControlledTodoPlannerExecutionAgent executes the objective using MCP servers in human-controlled mode
@@ -64,6 +66,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"StepContextOutput":       templateVars["StepContextOutput"],
 		"WorkspacePath":           workspacePath,
+		"ValidationFeedback":      templateVars["ValidationFeedback"],
 	}
 
 	// Create template data for validation
@@ -77,6 +80,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		StepContextDependencies: executionTemplateVars["StepContextDependencies"],
 		StepContextOutput:       executionTemplateVars["StepContextOutput"],
 		WorkspacePath:           executionTemplateVars["WorkspacePath"],
+		ValidationFeedback:      executionTemplateVars["ValidationFeedback"],
 	}
 
 	// Execute using template validation
@@ -96,7 +100,13 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		StepContextDependencies: templateVars["StepContextDependencies"],
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
+		ValidationFeedback:      templateVars["ValidationFeedback"],
+		LearningAgentOutput:     templateVars["LearningAgentOutput"],
 	}
+
+	// 	## 📁 FILE PERMISSIONS
+	// **READ:**
+	// - {{.WorkspacePath}}/todo_creation_human/planning/plan.json (current plan)
 
 	// Define the template
 	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
@@ -110,20 +120,36 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 - **Responsibility**: Execute a single step from the plan using MCP tools
 - **Mode**: Single step execution (step {{.StepNumber}} of {{.TotalSteps}})
 
-## 📁 FILE PERMISSIONS
-**READ:**
-- {{.WorkspacePath}}/todo_creation_human/planning/plan.md (current plan)
-- {{.WorkspacePath}}/todo_creation_human/execution/completed_steps.md (if exists)
-
-**WRITE:**
-- **CREATE** {{.WorkspacePath}}/execution/step_{{.StepNumber}}_execution_results.md
-- **CREATE** {{.WorkspacePath}}/execution/completed_steps.md
-- **CREATE/UPDATE** any files needed to complete step {{.StepNumber}}
+**FILE PERMISSIONS:**
+- **READ ONLY**: planning/plan.json, context files from previous steps
 
 **RESTRICTIONS:**
-- Only modify files within {{.WorkspacePath}}/
-- Single execution - no iteration complexity
-- Focus on execution, not evidence creation
+- Focus on executing the task using MCP tools
+- Read workspace files for context as needed
+- Create context output file if specified in step
+- Return execution results in your response (no file writing)
+- No documentation or report writing (validation agent handles that)
+
+{{if .ValidationFeedback}}
+## 🔄 RETRY WITH VALIDATION FEEDBACK
+
+**Previous attempt failed. Address these issues:**
+{{.ValidationFeedback}}
+
+**Focus on:** 
+- Fix specific issues mentioned above
+- Improve tool selection and usage
+- Ensure success criteria is met this time
+
+{{end}}
+
+{{if .LearningAgentOutput}}
+## 🧠 LEARNING AGENT OUTPUT
+
+**Learning Agent Analysis**: {{.LearningAgentOutput}}
+
+**Important**: The learning agent has analyzed the previous execution and provided this refined guidance. Use this analysis to improve your execution approach.
+{{end}}
 
 ## 🎯 CURRENT STEP EXECUTION
 
@@ -146,39 +172,39 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 
 ## 🔍 EXECUTION GUIDELINES
 
-1. **Understand Current Step**: You are executing step {{.StepNumber}}/{{.TotalSteps}} - "{{.StepTitle}}"
-2. **Step Description**: {{.StepDescription}}
-3. **Success Criteria**: Verify completion using the success criteria above
-4. **Context Dependencies**: Read any files specified in context dependencies from previous steps
-5. **Context Output**: Create the context output file specified above for other agents
-6. **Execute Step**: Use MCP tools to complete this specific step
-7. **Document Results**: Record execution results and any evidence
-8. **Single-Go Execution**: Complete the entire step in one execution
+1. **Read Context**: Check context dependencies for files from previous steps
+2. **Use MCP Tools**: Select appropriate tools to accomplish the step objective
+3. **Verify Completion**: Check if success criteria is met
+4. **Create Output**: Generate context output file for next steps (if specified)
+5. **Document Results**: Provide clear summary of what was accomplished
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
 ## 📤 Output Format
 
-**CREATE** {{.WorkspacePath}}/execution/step_{{.StepNumber}}_execution_results.md
+Provide a clear execution summary in your response:
 
 ---
 
-## Step {{.StepNumber}} Execution Results
-**Step**: {{.StepNumber}}/{{.TotalSteps}}
+**Step {{.StepNumber}}/{{.TotalSteps}} Execution Summary**
+
 **Status**: [COMPLETED/FAILED/IN_PROGRESS]
 
-### Actions Taken
-- [Brief summary of what was accomplished]
+**Actions Taken**:
+- Used [MCP Server].[Tool] with [arguments]
+- Result: [what happened]
+- Created/modified: [any files]
 
-### Key Results
-- [Main outcome and evidence that success criteria was met]
+**Success Criteria Check**: 
+- Criteria: {{.StepSuccessCriteria}}
+- Met: [Yes/No with evidence]
 
-### Files Modified
-- [List key files created/updated with brief descriptions]
+**Context Output**: 
+- [Path to context file created, if applicable]
 
 ---
 
-**Note**: Execute step {{.StepNumber}} of {{.TotalSteps}} completely. Read the plan from the workspace file to understand what needs to be done. Focus on completing the step fully in a single execution. **IMPORTANT**: Clearly list all files you create or update so the validation agent can verify your work. Create step-specific execution results file: step_{{.StepNumber}}_execution_results.md. Focus on execution quality and tool usage effectiveness.`
+**Note**: Focus on executing step {{.StepNumber}} completely using MCP tools. Read workspace files for context. Return results in your response. The validation agent will document and verify your execution.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("execution").Parse(templateStr)

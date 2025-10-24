@@ -425,7 +425,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 		// Set a reasonable default max_tokens to prevent immediate completion
 		// Use environment variable if available, otherwise default to 4000 tokens
-		maxTokens := 4000 // Default value
+		maxTokens := 40000 // Default value
 		if maxTokensEnv := os.Getenv("ORCHESTRATOR_MAIN_LLM_MAX_TOKENS"); maxTokensEnv != "" {
 			if parsed, err := strconv.Atoi(maxTokensEnv); err == nil && parsed > 0 {
 				maxTokens = parsed
@@ -1282,7 +1282,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 	var err error
 
 	// Create options for final call with reasonable max_tokens
-	maxTokens := 4000 // Default value
+	maxTokens := 40000 // Default value
 	if maxTokensEnv := os.Getenv("ORCHESTRATOR_MAIN_LLM_MAX_TOKENS"); maxTokensEnv != "" {
 		if parsed, err := strconv.Atoi(maxTokensEnv); err == nil && parsed > 0 {
 			maxTokens = parsed

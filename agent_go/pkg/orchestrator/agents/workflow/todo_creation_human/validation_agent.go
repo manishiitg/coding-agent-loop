@@ -28,6 +28,21 @@ type HumanControlledTodoPlannerValidationTemplate struct {
 	ExecutionHistory        string
 }
 
+// ValidationFeedback represents combined issues and recommendations from validation
+type ValidationFeedback struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"` // HIGH/MEDIUM/LOW
+}
+
+// ValidationResponse represents the structured response from validation analysis
+type ValidationResponse struct {
+	IsSuccessCriteriaMet bool                 `json:"is_success_criteria_met"`
+	ExecutionStatus      string               `json:"execution_status"` // COMPLETED/PARTIAL/FAILED/INCOMPLETE
+	Reasoning            string               `json:"reasoning"`
+	Feedback             []ValidationFeedback `json:"feedback"`
+}
+
 // HumanControlledTodoPlannerValidationAgent validates if tasks were completed properly
 type HumanControlledTodoPlannerValidationAgent struct {
 	*agents.BaseOrchestratorAgent
@@ -94,6 +109,60 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 	return hctpva.ExecuteWithTemplateValidation(ctx, validationTemplateVars, hctpva.humanControlledValidationInputProcessor, conversationHistory, templateData)
 }
 
+// ExecuteStructured executes the validation agent and returns structured output
+func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*ValidationResponse, error) {
+	// Define the JSON schema for validation analysis
+	schema := `{
+		"type": "object",
+		"properties": {
+			"is_success_criteria_met": {
+				"type": "boolean",
+				"description": "Whether the success criteria was met based on execution evidence"
+			},
+			"execution_status": {
+				"type": "string",
+				"enum": ["COMPLETED", "PARTIAL", "FAILED", "INCOMPLETE"],
+				"description": "Overall status of step execution"
+			},
+			"reasoning": {
+				"type": "string",
+				"description": "Detailed reasoning for the validation decision"
+			},
+			"feedback": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"type": {
+							"type": "string",
+							"description": "Type of feedback (issue, recommendation, etc.)"
+						},
+						"description": {
+							"type": "string",
+							"description": "Description of the feedback"
+						},
+						"severity": {
+							"type": "string",
+							"enum": ["HIGH", "MEDIUM", "LOW"],
+							"description": "Severity of the feedback"
+						}
+					},
+					"required": ["type", "description", "severity"]
+				}
+			}
+		},
+		"required": ["is_success_criteria_met", "execution_status", "reasoning"]
+	}`
+
+	// Use the base orchestrator agent's ExecuteStructured method
+	result, err := agents.ExecuteStructuredWithInputProcessor[ValidationResponse](hctpva.BaseOrchestratorAgent, ctx, templateVars, hctpva.humanControlledValidationInputProcessor, conversationHistory, schema)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // humanControlledValidationInputProcessor processes inputs specifically for task completion validation
 func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidationInputProcessor(templateVars map[string]string) string {
 	// Create template data
@@ -139,19 +208,19 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- **ANALYZE** execution output for evidence of file operations and tool usage
-- **VERIFY** any files mentioned in the execution output
+- planning/plan.json (original plan for reference)
+- workspace files (to verify execution claims)
 
 **WRITE:**
-- **CREATE** {{.WorkspacePath}}/validation/step_{{.StepNumber}}_validation_report.md (step validation report)
+- validation/step_{{.StepNumber}}_validation_report.md (validation report with execution summary)
 
 **RESTRICTIONS:**
-- Only modify files within {{.WorkspacePath}}/
-- Focus on step {{.StepNumber}} execution output analysis - verify claims from execution agent
-- Simple validation approach for human-controlled mode
-- **Receives step {{.StepNumber}} execution output as input** - validates execution claims
+- Only modify files within {{.WorkspacePath}}/todo_creation_human/
+- Write validation report to validation/ folder
+- Document execution conversation in validation report
+- Focus on verifying execution claims
 
-**EXECUTION CONVERSATION HISTORY TO VALIDATE**:
+**EXECUTION CONVERSATION TO VALIDATE**:
 {{.ExecutionHistory}}
 
 
@@ -159,105 +228,54 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 **Step {{.StepNumber}}/{{.TotalSteps}} - "{{.StepTitle}}"**
 
-**Your Task**: Validate if the execution conversation history shows that step {{.StepNumber}} was completed successfully by checking if the SUCCESS CRITERIA was met.
+**Your Task**: Validate if step {{.StepNumber}} was completed successfully by checking if the SUCCESS CRITERIA was met.
 
-**Primary Validation Focus**: **SUCCESS CRITERIA VERIFICATION**
 **Success Criteria**: {{.StepSuccessCriteria}}
 
-**Validation Approach**:
-1. **Analyze Execution Conversation**: Review the execution conversation history for evidence of successful completion
-2. **Verify Success Criteria**: Check if the success criteria "{{.StepSuccessCriteria}}" was actually met based on execution evidence
-3. **Tool Usage Analysis**: Analyze what tools were used and their results from the conversation
-4. **File Operations Analysis**: Check if files were created/updated as claimed in the conversation
-5. **Task Completion**: Ensure the step objective was achieved based on execution results
+**Validation Steps**:
+1. **Review Execution History**: Analyze conversation for evidence of completion
+2. **Check Success Criteria**: Verify if criteria "{{.StepSuccessCriteria}}" was met
+3. **Analyze Tool Usage**: Check which tools were used and their results
+4. **Assess Evidence**: Identify what worked and what didn't
 
-**Validation Criteria**:
-- **PRIMARY**: Success criteria "{{.StepSuccessCriteria}}" must be met based on execution evidence
-- Execution conversation must show successful tool usage
-- File operations mentioned in execution must be verifiable
-- Step {{.StepNumber}} objective must be achieved based on execution results
-- No critical errors or failures in execution conversation
-
-**Validation Decision**:
-- ✅ **PASS**: If success criteria is met and execution evidence supports completion
-- ❌ **FAIL**: If success criteria is not met or execution evidence is insufficient
+**Decision**:
+- ✅ **PASS**: Success criteria met with sufficient evidence
+- ❌ **FAIL**: Success criteria not met or insufficient evidence
 
 ## 📤 Output Format
 
-**CREATE** {{.WorkspacePath}}/validation/step_{{.StepNumber}}_validation_report.md
+**RETURN STRUCTURED JSON RESPONSE ONLY**
 
----
+Analyze the execution conversation history and validate if step {{.StepNumber}} was completed successfully. Return a JSON response with the following structure:
 
-## 📋 Step {{.StepNumber}} Execution Validation Report
-**Date**: [Current date/time]
-**Step**: {{.StepNumber}}/{{.TotalSteps}}
+The response should be a JSON object with:
+- is_success_criteria_met: boolean - Whether the success criteria was met based on execution evidence
+- execution_status: string - Overall status (COMPLETED/PARTIAL/FAILED/INCOMPLETE)
+- reasoning: string - Detailed reasoning for the validation decision
+- feedback: array of objects with type, description, and severity (HIGH/MEDIUM/LOW)
 
-### 🎯 Overall Assessment
-- **Success Criteria Met**: [✅ YES / ❌ NO] - "{{.StepSuccessCriteria}}"
-- **Execution Status**: [COMPLETED/PARTIAL/FAILED/INCOMPLETE]
-- **Evidence Quality**: [STRONG/MODERATE/WEAK/INSUFFICIENT]
-- **Execution Quality**: [HIGH/MEDIUM/LOW]
+Example JSON structure:
+` + "```json" + `
+{
+  "is_success_criteria_met": true,
+  "execution_status": "COMPLETED",
+  "reasoning": "The execution conversation shows clear evidence that the success criteria was met. The agent successfully used MCP tools to accomplish the step objective and provided detailed results.",
+  "feedback": [
+    {
+      "type": "Issue",
+      "description": "Could have provided more detailed tool output",
+      "severity": "LOW"
+    },
+    {
+      "type": "Recommendation",
+      "description": "Include more detailed tool output in future executions",
+      "severity": "LOW"
+    }
+  ]
+}
+` + "```" + `
 
-### 📝 Step Analysis
-
-#### Success Criteria Verification
-- **Success Criteria**: "{{.StepSuccessCriteria}}"
-- **Evidence Found**: [Specific evidence from execution conversation that success criteria was met]
-- **Verification Method**: [How you verified the success criteria based on execution evidence]
-- **Verification Result**: [✅ CONFIRMED / ❌ NOT MET / ⚠️ PARTIAL]
-
-#### Execution Conversation Analysis
-- **Tools Used**: [List of tools used by execution agent from conversation]
-- **Tool Results**: [Results and outputs from tool usage in conversation]
-- **File Operations**: [Files created/updated based on execution conversation]
-- **Key Actions**: [Main actions performed by execution agent from conversation]
-
-### ✅ Evidence Found
-1. **[Evidence Type]**: [Description] - ✅ CONFIRMED in execution conversation
-2. **[Evidence Type]**: [Description] - ✅ CONFIRMED in execution conversation
-
-### ⚠️ Partial Evidence
-1. **[Evidence Type]**: [Description] - ⚠️ PARTIAL evidence found
-2. **[Evidence Type]**: [Description] - ⚠️ UNCLEAR from execution conversation
-
-### ❌ Missing Evidence
-1. **[Evidence Type]**: [Description] - ❌ NO EVIDENCE found
-2. **[Evidence Type]**: [Description] - ❌ INSUFFICIENT evidence
-
-### 🔍 Execution Evidence Analysis
-**Execution Conversation Summary:**
-- [Summary of what the execution agent accomplished from conversation]
-- [Key tools used and their results from conversation]
-- [Files created or modified from conversation]
-
-**Success Criteria Evidence:**
-- [Specific evidence that supports success criteria completion]
-- [Any gaps or missing evidence]
-
-**Tool Usage Analysis:**
-- [Analysis of tool usage effectiveness from conversation]
-- [Results and outputs from tools in conversation]
-
-### 📊 Evidence Summary
-- **Success Criteria Evidence**: [STRONG/MODERATE/WEAK/INSUFFICIENT]
-- **Tool Usage Evidence**: [COMPREHENSIVE/PARTIAL/MINIMAL/NONE]
-- **File Operations Evidence**: [COMPLETE/PARTIAL/MISSING/NONE]
-- **Overall Evidence Quality**: [HIGH/MEDIUM/LOW/INSUFFICIENT]
-
-### 💡 Recommendations
-**For Step {{.StepNumber}}:**
-- [Specific evidence gaps that need to be addressed]
-- [Missing execution evidence that should be provided]
-- [Areas where execution could be improved]
-
-**For Next Steps:**
-- [How step {{.StepNumber}} execution evidence affects subsequent steps]
-- [Any execution patterns that should be continued or improved]
-- [Adjustments needed for future execution approaches]
-
----
-
-**Note**: Focus on step {{.StepNumber}} execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage, file operations, and execution results to verify completion. Provide clear feedback on what evidence was found versus what was needed for step {{.StepNumber}}.`
+**Note**: Focus on step {{.StepNumber}} execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)

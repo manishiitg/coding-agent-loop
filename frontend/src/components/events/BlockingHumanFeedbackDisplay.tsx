@@ -28,6 +28,8 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
 }) => {
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
+  const [hasSubmitted, setHasSubmitted] = useState(false)
+  const [submittedFeedback, setSubmittedFeedback] = useState<string>('')
 
   // Use backend-provided content directly
   const question = event.data.question || 'Do you want to continue?'
@@ -38,6 +40,8 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       setIsSubmittingFeedback(true)
       try {
         await onSubmitFeedback(event.data.request_id, feedback.trim())
+        setSubmittedFeedback(feedback.trim())
+        setHasSubmitted(true)
         setFeedback('') // Clear feedback after submission
       } catch (error) {
         console.error('Failed to submit feedback:', error)
@@ -49,16 +53,75 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
 
   const handleApprove = async () => {
     if (event.data.request_id) {
-      // Submit "Approve" as feedback
-      if (onSubmitFeedback) {
-        await onSubmitFeedback(event.data.request_id, "Approve")
+      setIsSubmittingFeedback(true)
+      try {
+        // Submit "Approve" as feedback
+        if (onSubmitFeedback) {
+          await onSubmitFeedback(event.data.request_id, "Approve")
+        }
+        // Then proceed with approval
+        onApprove(event.data.request_id, { 
+          ...event.data, 
+          feedback: "Approve"
+        })
+        setSubmittedFeedback("Approve")
+        setHasSubmitted(true)
+      } catch (error) {
+        console.error('Failed to approve:', error)
+      } finally {
+        setIsSubmittingFeedback(false)
       }
-      // Then proceed with approval
-      await onApprove(event.data.request_id, { 
-        ...event.data, 
-        feedback: "Approve"
-      })
     }
+  }
+
+  // Show submitted state if feedback has been submitted
+  if (hasSubmitted) {
+    return (
+      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md p-4 my-3">
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0 w-8 h-8 bg-green-100 dark:bg-green-800 rounded-full flex items-center justify-center">
+            <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-2">
+              ✅ Feedback Submitted
+            </h3>
+            
+            <p className="text-xs text-green-700 dark:text-green-300 mb-3">
+              {question}
+            </p>
+
+            {/* Context Information */}
+            {context && (
+              <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded border">
+                <h4 className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-2">
+                  Context:
+                </h4>
+                <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                  {context}
+                </div>
+              </div>
+            )}
+
+            {/* Submitted Feedback */}
+            <div className="mb-4 p-3 bg-green-100 dark:bg-green-800/50 rounded border border-green-200 dark:border-green-700">
+              <h4 className="text-xs font-medium text-green-900 dark:text-green-100 mb-2">
+                Your Response:
+              </h4>
+              <div className="text-xs text-green-800 dark:text-green-200 font-medium">
+                "{submittedFeedback}"
+              </div>
+            </div>
+
+            <div className="text-xs text-green-600 dark:text-green-400 italic">
+              Processing your feedback...
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -111,13 +174,16 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
 
           {/* Action Buttons */}
           <div className="flex justify-end gap-2">
-            <button
-              onClick={handleApprove}
-              disabled={isApproving || isSubmittingFeedback}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
-            >
-              {isApproving ? '⏳ Processing...' : '✅ Approve & Continue'}
-            </button>
+            {/* Only show approve button if no feedback is typed */}
+            {!feedback.trim() && (
+              <button
+                onClick={handleApprove}
+                disabled={isApproving || isSubmittingFeedback}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
+              >
+                {isApproving ? '⏳ Processing...' : '✅ Approve & Continue'}
+              </button>
+            )}
             {feedback.trim() && (
               <button
                 onClick={handleSubmitFeedback}

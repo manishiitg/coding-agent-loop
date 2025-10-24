@@ -96,29 +96,33 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- {{.WorkspacePath}}/planning/plan.md (plan)
-- {{.WorkspacePath}}/execution/step_*_execution_results.md (all step execution results)
-- {{.WorkspacePath}}/execution/completed_steps.md (completed work)
-- {{.WorkspacePath}}/execution/evidence/ (evidence)
-- {{.WorkspacePath}}/validation/step_*_validation_report.md (all step validation reports)
+- planning/plan.json (plan)
+- validation/step_*_validation_report.md (all step validation reports with execution summaries)
+- learnings/success_patterns.md (success learning insights)
+- learnings/failure_analysis.md (failure patterns to avoid)
+- learnings/step_*_learning.md (per-step learning details)
 
 **WRITE:**
-- **CREATE** {{.WorkspacePath}}/todo_final.md (final todo list)
+- {{.WorkspacePath}}/todo_final.md (final todo list - outside todo_creation_human/)
 
 **RESTRICTIONS:**
-- Only modify files within {{.WorkspacePath}}/
-- Single execution mode - no iteration analysis needed
+- Read from planning/, validation/, learnings/ folders
+- Validation reports contain execution summaries from execution agent
+- Write todo_final.md to workspace root
 - Keep todo_final.md concise and actionable
 
 ## 📋 SYNTHESIS GUIDELINES
-- **Read All Step Results**: Review all step_*_execution_results.md files to understand what was executed
-- **Review Validation Reports**: Check step_*_validation_report.md files to see what was validated
-- **Focus on Success**: Emphasize steps that worked in execution
-- **Learn from Execution**: Use execution results to create better todo items
-- **Actionable Steps**: Each todo item should be concrete and executable
-- **Clear Success Criteria**: Define how to verify each todo item
-- **Logical Order**: Arrange todo items in logical sequence
-- **MCP Tools**: Include specific MCP tools and arguments that worked
+- **Read Workspace Files**: Review plan.json, validation reports (which include execution summaries), and learnings/ folder
+- **Review Learnings**: Read learnings/success_patterns.md for what worked and learnings/failure_analysis.md for what to avoid
+- **Get Execution Details**: Validation reports contain execution conversation and tool usage details
+- **Prioritize by Success**: High priority for steps with strong success patterns, medium for refinements, low for optional improvements
+- **Be Specific**: Include exact MCP server, tool, and arguments from success patterns
+- **Handle Missing Data**: If learnings files missing, use validation reports only
+
+**Prioritization Logic**:
+- **HIGH**: Steps validated as successful with strong evidence
+- **MEDIUM**: Steps needing minor adjustments based on validation feedback
+- **LOW**: Optional improvements or nice-to-have enhancements
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -136,9 +140,10 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 **Execution Approach**: [Brief description based on execution results]
 
 ### Execution Learnings
-**What Worked**: [Successful approaches from execution]
-**What Didn't Work**: [Failed approaches to avoid]
-**Key Insights**: [Important discoveries for todo list creation]
+**What Worked**: [Successful approaches from execution and learning reports]
+**What Didn't Work**: [Failed approaches to avoid based on learning reports]
+**Key Insights**: [Important discoveries from learning analysis for todo list creation]
+**Learning-Based Improvements**: [Specific improvements based on learning reports]
 
 ### Todo Items
 
@@ -170,9 +175,10 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 - **Dependencies**: [Any prerequisites]
 
 ### Execution Notes
-- **Proven Methods**: [MCP tools/approaches that worked well]
-- **Avoid These**: [Approaches that failed or didn't work]
-- **Critical Steps**: [Steps that are essential for success]
+- **Proven Methods**: [MCP tools/approaches that worked well based on learning reports]
+- **Avoid These**: [Approaches that failed or didn't work based on learning analysis]
+- **Critical Steps**: [Steps that are essential for success based on learnings]
+- **Learning-Based Recommendations**: [Specific recommendations from learning reports]
 
 ### Next Steps
 - [What should be done first]
@@ -181,7 +187,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 ---
 
-**Note**: Focus on creating actionable todo items based on what worked in the execution. Each item should be concrete and executable with clear success criteria.`
+**Note**: Focus on creating actionable todo items based on execution results AND learning reports. Each item should be concrete and executable with clear success criteria, incorporating insights from the learning analysis.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_writer").Parse(templateStr)

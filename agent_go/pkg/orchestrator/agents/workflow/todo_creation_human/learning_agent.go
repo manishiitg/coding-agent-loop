@@ -118,11 +118,11 @@ func (agent *HumanControlledTodoPlannerFailureLearningAgent) failureLearningInpu
 This step execution failed validation. Analyze what went wrong and provide a refined task description for immediate retry.
 
 ### **Failure Analysis Process:**
-1. **Read current plan** - Examine ` + "`plan.md`" + ` to understand the current step
+1. **Read current plan** - Examine plan.md to understand the current step
 2. **Identify failure points** - What specific issues caused the validation to fail
 3. **Analyze root causes** - Why did the execution not meet the success criteria
 4. **Generate refined task** - Create an improved task description for retry
-5. **Document failure insights** - Write to ` + "`learnings/failure_analysis.md`" + ` and ` + "`learnings/step_X_learning.md`" + `
+5. **Document failure insights** - Write to learnings/failure_analysis.md and learnings/step_X_learning.md
 
 ### **Root Cause Analysis:**
 Categorize the failure and identify root cause:
@@ -134,33 +134,37 @@ Categorize the failure and identify root cause:
 4. **Environment Failure**: External factors (permissions, network, dependencies)
 
 **Analysis Template**:
-` + "```" + `
+
 ## Root Cause Analysis:
 - **Failure Type**: [One of the categories above]
 - **Primary Cause**: [Direct cause of failure]
 - **Contributing Factors**: [What made it worse]
 - **Prevention Strategy**: [How to avoid this]
 - **Alternative Approach**: [What to try instead]
-` + "```" + `
 
 ### **Plan Improvement Focus:**
 Update plan.md with **learnings from the failure** by **enhancing the markdown content**:
 
 **Example of Enhanced Step After Failure Analysis:**
-` + "```markdown" + `
+
 ### Step 1: Deploy service
-- **Description**: Deploy using kubectl apply. APPROACH: 1) First validate with 'kubectl apply --dry-run=client -f deployment.yaml' to check YAML syntax (CRITICAL: previous failure was due to skipping validation). 2) Verify namespace exists with 'kubectl get namespace production' before applying. 3) Apply to production with 'kubectl apply -f deployment.yaml -n production'. 4) Monitor rollout with 'kubectl rollout status deployment/myapp -n production --timeout=5m'. TOOLS TO USE: kubernetes.kubectl_apply, kubernetes.kubectl_get (for namespace check), kubernetes.kubectl_rollout. AVOID: Don't use docker commands directly (previous failure). Don't assume namespace exists (previous error). Don't skip timeout on rollout status.
+- **Description**: Deploy using kubectl apply to production
 - **Success Criteria**: Service is running with all pods healthy (kubectl get pods shows 'Running' status), deployment rolled out successfully (kubectl rollout status returns 'successfully rolled out'), and no error events (kubectl get events shows no errors in last 5m)
 - **Why This Step**: This step deploys the application. Previous failure showed that namespace validation is critical before deployment. The timeout on rollout status prevents hanging indefinitely.
 - **Context Dependencies**: ../validation/environment_check.md, ../execution/step_1_config.md, ../validation/namespace_verification.md
 - **Context Output**: ./execution/step_2_deployment.md
-` + "```" + `
+- **Failure Patterns**:
+  - Don't use docker.docker_run directly (use kubectl instead - previous failure)
+  - Don't skip namespace validation (caused deployment error)
+  - Don't apply without dry-run check (YAML syntax errors not caught)
+  - Don't skip timeout on rollout status (prevents hanging indefinitely)
 
 **How to Enhance Markdown Plan Based on Failures:**
-1. **Description**: Add alternative tools/approaches that should work, exact error that occurred, and what to avoid based on failure
+1. **Description**: Keep concise, focus on core task
 2. **Success Criteria**: Add validation checks that would have caught the error, expected outputs with specific values
 3. **Why This Step**: Explain what went wrong in the previous attempt and why the new approach should work
 4. **Context Dependencies**: Add any missing dependencies that caused the failure
+5. **Failure Patterns**: ONLY add this section if you identified specific tools, approaches, or patterns that failed. Include specific MCP server.tool references and exact reasons why they failed.
 
 **Refinement Focus:**
 - **Specific Tool Recommendations**: Suggest alternative tools if original failed (integrate into description)
@@ -196,6 +200,7 @@ Provide your response in this exact format:
 - [Enhanced success criteria with validation checks that would have caught the error]
 - [Enhanced why_this_step sections with failure analysis and why new approach should work]
 - [Updated context dependencies with missing dependencies that caused failure]
+- [Added Failure Patterns section ONLY if specific tools/approaches that failed were identified - include MCP server.tool references and failure reasons]
 - [NOTE: Update plan.md file - do NOT create new files or change file structure]
 
 ### Execution Insights Captured:
@@ -211,14 +216,17 @@ Provide your response in this exact format:
 - planning/plan.md (current markdown plan)
 - validation/step_X_validation_report.md (validation results with execution summary)
 
-**WRITE TO learnings/ FOLDER ONLY:**
+**WRITE TO learnings/ FOLDER:**
 - learnings/failure_analysis.md (append failure patterns and anti-patterns)
 - learnings/step_X_learning.md (create detailed failure analysis for this step)
+
+**WRITE TO planning/ FOLDER:**
+- planning/plan.md (update with improvements based on failure analysis)
 
 **RESTRICTIONS:**
 - All learning outputs MUST go to learnings/ folder
 - Read execution details from validation reports (which contain execution conversation)
-- Do NOT write to planning/ or validation/ folders
+- Update plan.md in planning/ folder with improvements
 
 ---
 
@@ -227,6 +235,8 @@ Provide your response in this exact format:
 2. **Provide refined task**: Generate improved task description for immediate retry
 3. **Update plan.md**: Improve the markdown plan by enhancing step descriptions, success criteria, and context dependencies
 4. **Markdown format**: Update the markdown plan.md file - do NOT create JSON files
-5. **Document in learnings/**: Write failure patterns to ` + "`learnings/failure_analysis.md`" + ` and step details to ` + "`learnings/step_X_learning.md`" + `
-6. **Prevent repetition**: Integrate failure analysis and alternatives directly into the markdown step descriptions`
+5. **Document in learnings/**: Write failure patterns to learnings/failure_analysis.md and step details to learnings/step_X_learning.md
+6. **Prevent repetition**: Integrate failure analysis and alternatives directly into the markdown step descriptions
+7. **Failure Patterns Section**: ONLY add "- **Failure Patterns**:" section if you identified specific MCP tools, exact commands, or clear patterns that failed. Do NOT add empty or generic patterns.
+`
 }

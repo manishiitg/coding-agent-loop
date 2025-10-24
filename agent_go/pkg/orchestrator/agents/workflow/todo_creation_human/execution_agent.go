@@ -28,6 +28,8 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	ValidationFeedback      string
 	LearningAgentOutput     string
 	PreviousHumanFeedback   string
+	StepSuccessPatterns     string // NEW - success patterns from previous executions
+	StepFailurePatterns     string // NEW - failure patterns from previous executions
 }
 
 // HumanControlledTodoPlannerExecutionAgent executes the objective using MCP servers in human-controlled mode
@@ -104,6 +106,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		ValidationFeedback:      templateVars["ValidationFeedback"],
 		LearningAgentOutput:     templateVars["LearningAgentOutput"],
 		PreviousHumanFeedback:   templateVars["PreviousHumanFeedback"],
+		StepSuccessPatterns:     templateVars["StepSuccessPatterns"],
+		StepFailurePatterns:     templateVars["StepFailurePatterns"],
 	}
 
 	// 	## 📁 FILE PERMISSIONS
@@ -153,6 +157,24 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Important**: The learning agent has analyzed the previous execution and provided this refined guidance. Use this analysis to improve your execution approach.
 {{end}}
 
+{{if .StepSuccessPatterns}}
+## ✅ SUCCESS PATTERNS FROM PREVIOUS EXECUTIONS
+
+**What Worked Well Before:**
+{{.StepSuccessPatterns}}
+
+**Important**: These patterns show what worked in previous executions. Consider using these approaches and tools for this step.
+{{end}}
+
+{{if .StepFailurePatterns}}
+## ❌ FAILURE PATTERNS FROM PREVIOUS EXECUTIONS
+
+**What Failed Before:**
+{{.StepFailurePatterns}}
+
+**Important**: These patterns show what failed in previous executions. Avoid these approaches and tools for this step.
+{{end}}
+
 {{if .PreviousHumanFeedback}}
 ## 👥 PREVIOUS HUMAN FEEDBACK
 
@@ -184,10 +206,12 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 ## 🔍 EXECUTION GUIDELINES
 
 1. **Read Context**: Check context dependencies for files from previous steps
-2. **Use MCP Tools**: Select appropriate tools to accomplish the step objective
-3. **Verify Completion**: Check if success criteria is met
-4. **Create Output**: Generate context output file for next steps (if specified)
-5. **Document Results**: Provide clear summary of what was accomplished
+2. **Use Success Patterns**: If success patterns are provided, consider using those approaches and tools
+3. **Avoid Failure Patterns**: If failure patterns are provided, avoid those approaches and tools
+4. **Use MCP Tools**: Select appropriate tools to accomplish the step objective
+5. **Verify Completion**: Check if success criteria is met
+6. **Create Output**: Generate context output file for next steps (if specified)
+7. **Document Results**: Provide clear summary of what was accomplished
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 

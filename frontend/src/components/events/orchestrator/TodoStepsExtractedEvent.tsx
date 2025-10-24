@@ -98,8 +98,38 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                         </div>
                       )}
                       
+                      {/* Success Patterns */}
+                      {step.success_patterns && step.success_patterns.length > 0 && (
+                        <div className="text-xs mt-2">
+                          <span className="font-medium text-green-700 dark:text-green-400">✅ Success Patterns:</span>
+                          <div className="text-gray-600 dark:text-gray-400 ml-1 mt-1">
+                            {step.success_patterns.map((pattern, patternIndex) => (
+                              <div key={patternIndex} className="text-xs text-green-600 dark:text-green-400 mb-1">
+                                • {pattern}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Failure Patterns */}
+                      {step.failure_patterns && step.failure_patterns.length > 0 && (
+                        <div className="text-xs mt-2">
+                          <span className="font-medium text-red-700 dark:text-red-400">❌ Failure Patterns:</span>
+                          <div className="text-gray-600 dark:text-gray-400 ml-1 mt-1">
+                            {step.failure_patterns.map((pattern, patternIndex) => (
+                              <div key={patternIndex} className="text-xs text-red-600 dark:text-red-400 mb-1">
+                                • {pattern}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
                       {/* Show when step is independent (no context dependencies or output) */}
-                      {(!step.context_dependencies || step.context_dependencies.length === 0) && !step.context_output && (
+                      {(!step.context_dependencies || step.context_dependencies.length === 0) && !step.context_output && 
+                       (!step.success_patterns || step.success_patterns.length === 0) && 
+                       (!step.failure_patterns || step.failure_patterns.length === 0) && (
                         <div className="text-xs text-gray-500 dark:text-gray-500 italic">
                           Independent step - no context dependencies or outputs
                         </div>

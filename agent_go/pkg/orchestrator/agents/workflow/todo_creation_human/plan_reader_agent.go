@@ -80,6 +80,20 @@ func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Conte
 						"context_output": {
 							"type": "string",
 							"description": "What context file this step will create for other agents"
+						},
+						"success_patterns": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "List of approaches that worked, including tools used (extract from 'Success Patterns:' section)"
+						},
+						"failure_patterns": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "List of approaches that failed, including tools to avoid (extract from 'Failure Patterns:' section)"
 						}
 					},
 					"required": ["title", "description", "success_criteria", "why_this_step"]
@@ -161,6 +175,8 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
   - why_this_step: From "- **Why This Step**: [content]"
   - context_dependencies: From "- **Context Dependencies**: [content]" (convert to array)
   - context_output: From "- **Context Output**: [content]"
+  - success_patterns: From "- **Success Patterns**: [bullet list]" (convert to array, include if present)
+  - failure_patterns: From "- **Failure Patterns**: [bullet list]" (convert to array, include if present)
 - expected_outcome: Extract from "## Expected Outcome" section
 
 ## 📤 Output Format

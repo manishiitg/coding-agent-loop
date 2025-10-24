@@ -33,6 +33,8 @@ type PlanStep struct {
 	WhyThisStep         string   `json:"why_this_step"`
 	ContextDependencies []string `json:"context_dependencies"`
 	ContextOutput       string   `json:"context_output"`
+	SuccessPatterns     []string `json:"success_patterns,omitempty"` // NEW - what worked (includes tools)
+	FailurePatterns     []string `json:"failure_patterns,omitempty"` // NEW - what failed (includes tools to avoid)
 }
 
 // PlanningResponse represents the structured response from planning
@@ -139,6 +141,8 @@ Create a markdown plan with this structure:
 - **Why This Step**: [How this step contributes to achieving the objective]
 - **Context Dependencies**: [List of context files from previous steps]
 - **Context Output**: [What context file this step will create]
+- **Success Patterns**: [Optional - ONLY include if you have specific tools/approaches that worked in previous executions]
+- **Failure Patterns**: [Optional - ONLY include if you have specific tools/approaches that failed in previous executions]
 
 ### Step 2: [Step Name]
 - **Description**: [Detailed description of what this step accomplishes]
@@ -146,20 +150,23 @@ Create a markdown plan with this structure:
 - **Why This Step**: [How this step contributes to achieving the objective]
 - **Context Dependencies**: [List of context files from previous steps]
 - **Context Output**: [What context file this step will create]
+- **Success Patterns**: [Optional - ONLY include if you have specific tools/approaches that worked in previous executions]
+- **Failure Patterns**: [Optional - ONLY include if you have specific tools/approaches that failed in previous executions]
 
 ### Step 3: [Step Name]
 [Continue pattern for all steps...]
 
 ## Expected Outcome
 [What the complete plan should achieve]
-` + "```" + `
 
 **IMPORTANT NOTES**: 
 1. Focus on creating a clear, actionable markdown plan
 2. Each step should be concrete and contribute directly to achieving the goal
 3. Include context dependencies and outputs for multi-agent coordination
 4. **WRITE plan.md FILE** - do not return JSON response
-5. The plan reader agent will convert this to JSON in the next phase`
+5. The plan reader agent will convert this to JSON in the next phase
+6. **Success/Failure Patterns**: ONLY include these sections if you have specific MCP tools, exact commands, or clear patterns from previous executions. Do NOT add empty or generic patterns.
+`
 
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_planning").Parse(templateStr)

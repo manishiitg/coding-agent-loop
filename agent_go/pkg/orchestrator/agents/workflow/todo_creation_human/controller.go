@@ -25,6 +25,8 @@ type TodoStep struct {
 	WhyThisStep         string   `json:"why_this_step"`
 	ContextDependencies []string `json:"context_dependencies"`
 	ContextOutput       string   `json:"context_output"`
+	SuccessPatterns     []string `json:"success_patterns,omitempty"` // NEW - what worked (includes tools)
+	FailurePatterns     []string `json:"failure_patterns,omitempty"` // NEW - what failed (includes tools to avoid)
 }
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
@@ -395,6 +397,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(ctx contex
 			"WorkspacePath":         hcpo.GetWorkspacePath(),
 			"LearningAgentOutput":   "", // Will be populated with learning agent's output
 			"PreviousHumanFeedback": "", // Will be populated with human feedback from previous steps
+		}
+
+		// Add success and failure patterns if available
+		if len(step.SuccessPatterns) > 0 {
+			templateVars["StepSuccessPatterns"] = strings.Join(step.SuccessPatterns, "\n")
+		} else {
+			templateVars["StepSuccessPatterns"] = ""
+		}
+
+		if len(step.FailurePatterns) > 0 {
+			templateVars["StepFailurePatterns"] = strings.Join(step.FailurePatterns, "\n")
+		} else {
+			templateVars["StepFailurePatterns"] = ""
 		}
 
 		// Add context dependencies as a comma-separated string

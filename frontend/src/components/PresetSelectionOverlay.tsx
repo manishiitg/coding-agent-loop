@@ -76,6 +76,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     label: string, 
     query: string, 
     selectedServers?: string[], 
+    selectedTools?: string[],
     _agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', 
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig
@@ -86,12 +87,13 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     // Debug: Log the server selection (development only)
     if (process.env.NODE_ENV === 'development') {
       console.debug('[PRESET_SELECTION] Creating preset with servers:', selectedServers)
+      console.debug('[PRESET_SELECTION] Creating preset with tools:', selectedTools)
       console.debug('[PRESET_SELECTION] Available servers:', enabledServers)
     }
     
     try {
       // Create the preset and get the returned preset object directly
-      const newPreset = await addPreset(label, query, selectedServers, presetAgentMode, selectedFolder, llmConfig)
+      const newPreset = await addPreset(label, query, selectedServers, selectedTools, presetAgentMode, selectedFolder, llmConfig)
       
       if (!newPreset) {
         console.error('Failed to create preset')

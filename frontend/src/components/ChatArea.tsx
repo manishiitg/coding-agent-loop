@@ -52,7 +52,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   } = useAppStore()
   
   const { selectedModeCategory } = useModeStore()
-  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers } = usePresetApplication()
+  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = usePresetApplication()
   
   const { 
     primaryConfig: llmConfig
@@ -1290,6 +1290,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         agent_mode: agentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
         enabled_servers: effectiveServers,
+        selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? currentPresetTools : undefined, // Only send when preset is active
         provider: llmConfig.provider,
         model_id: llmConfig.model_id,
         llm_config: llmConfig,
@@ -1321,7 +1322,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     if (agentMode === 'orchestrator') {
       orchestratorModeHandlerRef.current?.resetSelection?.()
     }
-  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setLastEventIndex, setSessionId, llmConfig, effectiveServers, enabledTools, orchestratorExecutionMode, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
+  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, orchestratorExecutionMode, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {

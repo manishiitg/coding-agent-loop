@@ -208,6 +208,7 @@ type QueryRequest struct {
 	Query          string                  `json:"query"`
 	Servers        []string                `json:"servers,omitempty"`
 	EnabledServers []string                `json:"enabled_servers,omitempty"`
+	SelectedTools  []string                `json:"selected_tools,omitempty"` // Array of "server:tool" strings
 	Provider       string                  `json:"provider,omitempty"`
 	ModelID        string                  `json:"model_id,omitempty"`
 	Temperature    float64                 `json:"temperature,omitempty"`
@@ -956,6 +957,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors := createCustomTools()
 
+		// Load selected tools from preset if available (for workflow agents)
+		var selectedTools []string
+		if req.PresetQueryID != "" {
+			ctx := context.Background()
+			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
+			if err == nil && preset.SelectedTools != "" {
+				if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+					log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
+				} else {
+					log.Printf("[TOOLS] Loaded %d selected tools from preset", len(selectedTools))
+				}
+			}
+		}
+
+		// Use selected tools from request if preset didn't provide any
+		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
+			selectedTools = req.SelectedTools
+			log.Printf("[TOOLS] Using selected tools from request: %d tools", len(selectedTools))
+		}
+
 		// Create workflow orchestrator for this request
 		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
 			req.Provider,        // provider
@@ -967,6 +988,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workflowEventBridge, // eventBridge
 			tracer,              // tracer
 			selectedServers,     // selectedServers
+			selectedTools,       // NEW: selectedTools
 			allTools,            // customTools
 			allExecutors,        // customToolExecutors
 			req.LLMConfig,       // llmConfig
@@ -1335,6 +1357,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 			allTools, allExecutors := createCustomTools()
 
+			// Load selected tools from preset if available (for orchestrator agents)
+			var selectedTools []string
+			if req.PresetQueryID != "" {
+				ctx := context.Background()
+				preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
+				if err == nil && preset.SelectedTools != "" {
+					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
+					} else {
+						log.Printf("[TOOLS] Loaded %d selected tools from preset", len(selectedTools))
+					}
+				}
+			}
+
+			// Use selected tools from request if preset didn't provide any
+			if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
+				selectedTools = req.SelectedTools
+				log.Printf("[TOOLS] Using selected tools from request: %d tools", len(selectedTools))
+			}
+
 			// Create standardized orchestrator instance with full configuration
 			var err error
 			planOrch, err := orchtypes.NewPlannerOrchestrator(
@@ -1349,6 +1391,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				tracer,                       // tracer
 				selectedServers,              // selectedServers
 				selectedOptions,              // selectedOptions
+				selectedTools,                // NEW: selectedTools
 				allTools,                     // customTools
 				allExecutors,                 // customToolExecutors
 				llmConfig,                    // llmConfig
@@ -1526,6 +1569,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Load selected tools from preset if available (for simple/ReAct agents)
+		var selectedTools []string
+		if req.PresetQueryID != "" {
+			ctx := context.Background()
+			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
+			if err == nil && preset.SelectedTools != "" {
+				if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+					log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
+				} else {
+					log.Printf("[TOOLS] Loaded %d selected tools from preset", len(selectedTools))
+				}
+			}
+		}
+
+		// Use selected tools from request if preset didn't provide any
+		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
+			selectedTools = req.SelectedTools
+			log.Printf("[TOOLS] Using selected tools from request: %d tools", len(selectedTools))
+		}
+
 		// Create new agent with streamCtx instead of r.Context()
 		agentConfig := agent.LLMAgentConfig{
 			Name:               sessionID,
@@ -1538,7 +1601,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
 			Timeout:            2 * time.Minute,
-			CacheOnly:          false, // Allow fresh connections when cache is not available
+			CacheOnly:          false,         // Allow fresh connections when cache is not available
+			SelectedTools:      selectedTools, // NEW: Pass selected tools
 
 			// Enable smart routing by default for both React and Simple agents
 			EnableSmartRouting:     true,

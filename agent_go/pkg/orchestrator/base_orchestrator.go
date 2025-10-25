@@ -65,6 +65,7 @@ type BaseOrchestrator struct {
 	temperature     float64
 	agentMode       string
 	selectedServers []string
+	selectedTools   []string   // Selected tools in "server:tool" format
 	llmConfig       *LLMConfig // LLM configuration
 	maxTurns        int        // Maximum turns for the orchestrator
 
@@ -84,6 +85,7 @@ func NewBaseOrchestrator(
 	temperature float64,
 	agentMode string,
 	selectedServers []string,
+	selectedTools []string, // NEW parameter
 	llmConfig *LLMConfig,
 	maxTurns int,
 	customTools []llms.Tool,
@@ -107,6 +109,7 @@ func NewBaseOrchestrator(
 		temperature:     temperature,
 		agentMode:       agentMode,
 		selectedServers: selectedServers,
+		selectedTools:   selectedTools, // NEW field
 		llmConfig:       llmConfig,
 		maxTurns:        maxTurns,
 	}, nil
@@ -262,6 +265,11 @@ func (bo *BaseOrchestrator) GetSelectedServers() []string {
 	return bo.selectedServers
 }
 
+// GetSelectedTools returns the selected tools
+func (bo *BaseOrchestrator) GetSelectedTools() []string {
+	return bo.selectedTools
+}
+
 // GetLLMConfig returns the LLM configuration
 func (bo *BaseOrchestrator) GetLLMConfig() *LLMConfig {
 	return bo.llmConfig
@@ -326,6 +334,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.ToolChoice = "auto"
 	config.CacheOnly = false // Allow fresh connections when cache is not available
 	config.ServerNames = bo.GetSelectedServers()
+	config.SelectedTools = bo.GetSelectedTools() // NEW field
 	config.Mode = agents.AgentMode(bo.GetAgentMode())
 	config.OutputFormat = outputFormat
 	config.MaxRetries = 3

@@ -213,6 +213,7 @@ func NewWorkflowOrchestrator(
 	eventBridge mcpagent.AgentEventListener,
 	tracer observability.Tracer,
 	selectedServers []string,
+	selectedTools []string, // NEW parameter
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
@@ -230,7 +231,8 @@ func NewWorkflowOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		llmConfig, // LLM configuration
+		selectedTools, // NEW: Pass through
+		llmConfig,     // LLM configuration
 		maxTurns,
 		customTools,
 		customToolExecutors,
@@ -323,6 +325,7 @@ func (wo *WorkflowOrchestrator) runAutoModelPlanning(ctx context.Context, object
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
+		wo.GetSelectedTools(), // NEW: Pass selected tools
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),
@@ -373,6 +376,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
+		wo.GetSelectedTools(), // NEW: Pass selected tools
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),
@@ -493,7 +497,7 @@ func (wo *WorkflowOrchestrator) getWorkflowID() string {
 // createTodoExecutionOrchestrator creates and configures the TodoExecutionOrchestrator
 func (wo *WorkflowOrchestrator) createTodoExecutionOrchestrator() (orchestrator.Orchestrator, error) {
 	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_execution.NewTodoExecutionOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
+	agent, err := todo_execution.NewTodoExecutionOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create todo execution orchestrator: %w", err)
 	}
@@ -553,7 +557,7 @@ func (wo *WorkflowOrchestrator) getPlanningStrategy(selectedOptions *database.Wo
 // createTodoOptimizationOrchestrator creates and configures the TodoOptimizationOrchestrator
 func (wo *WorkflowOrchestrator) createTodoOptimizationOrchestrator() (orchestrator.Orchestrator, error) {
 	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_optimization.NewTodoOptimizationOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
+	agent, err := todo_optimization.NewTodoOptimizationOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create todo optimization orchestrator: %w", err)
 	}

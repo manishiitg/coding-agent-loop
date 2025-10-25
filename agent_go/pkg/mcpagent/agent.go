@@ -169,6 +169,13 @@ func WithCrossProviderFallback(crossProviderFallback *CrossProviderFallback) Age
 	}
 }
 
+// WithSelectedTools sets specific tools to use (format: "server:tool")
+func WithSelectedTools(tools []string) AgentOption {
+	return func(a *Agent) {
+		a.selectedTools = tools
+	}
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is generic enough to be reused by CLI commands, services, or tests.
 type Agent struct {
@@ -189,12 +196,13 @@ type Agent struct {
 	Tools   []llms.Tool
 
 	// Configuration knobs
-	MaxTurns    int
-	Temperature float64
-	ToolChoice  string
-	ModelID     string
-	AgentMode   AgentMode     // NEW: Agent mode (Simple or ReAct)
-	ToolTimeout time.Duration // Tool execution timeout (default: 5 minutes)
+	MaxTurns      int
+	Temperature   float64
+	ToolChoice    string
+	ModelID       string
+	AgentMode     AgentMode     // NEW: Agent mode (Simple or ReAct)
+	ToolTimeout   time.Duration // Tool execution timeout (default: 5 minutes)
+	selectedTools []string      // Selected tools in "server:tool" format
 
 	// Enhanced tracking info
 	SystemPrompt string
@@ -453,6 +461,39 @@ func NewAgent(ctx context.Context, llm llms.Model, serverName, configPath, model
 	ag.resources = resources
 	ag.filteredTools = allLLMTools
 	ag.configPath = configPath
+
+	// Apply selected tools filter if specified
+	if len(ag.selectedTools) > 0 {
+		logger.Infof("Filtering tools: %d selected tools specified", len(ag.selectedTools))
+
+		// Create set for fast lookup
+		selectedToolSet := make(map[string]bool)
+		for _, fullName := range ag.selectedTools {
+			selectedToolSet[fullName] = true
+		}
+
+		// Filter tools
+		var filteredTools []llms.Tool
+		for _, tool := range allLLMTools {
+			// Get server name for this tool
+			serverName, exists := toolToServer[tool.Function.Name]
+			if !exists {
+				// Custom/virtual tool - always include
+				filteredTools = append(filteredTools, tool)
+				continue
+			}
+
+			// Check if "server:tool" is in selected set
+			fullName := fmt.Sprintf("%s:%s", serverName, tool.Function.Name)
+			if selectedToolSet[fullName] {
+				filteredTools = append(filteredTools, tool)
+			}
+		}
+
+		logger.Infof("Tool filtering complete: %d tools selected from %d total", len(filteredTools), len(allLLMTools))
+		ag.Tools = filteredTools
+		ag.filteredTools = filteredTools
+	}
 
 	// Always rebuild system prompt with the correct agent mode
 	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts

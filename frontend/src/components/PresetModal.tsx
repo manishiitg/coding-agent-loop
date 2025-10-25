@@ -3,9 +3,9 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Checkbox } from './ui/checkbox';
 import { Folder, Plus, X, Settings } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
+import { ToolSelectionSection } from './ToolSelectionSection';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
@@ -15,7 +15,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -34,6 +34,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [label, setLabel] = useState('');
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [agentMode, setAgentMode] = useState<'simple' | 'ReAct' | 'orchestrator' | 'workflow'>('ReAct');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
@@ -71,9 +72,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
 
   useEffect(() => {
     if (editingPreset) {
+      console.log('[PresetModal] Loading preset:', editingPreset);
+      console.log('[PresetModal] Selected tools from preset:', editingPreset.selectedTools);
       setLabel(editingPreset.label);
       setQuery(editingPreset.query);
       setSelectedServers(editingPreset.selectedServers || []);
+      setSelectedTools(editingPreset.selectedTools || []); // NEW
       setAgentMode(editingPreset.agentMode || 'ReAct');
       setSelectedFolder(editingPreset.selectedFolder || null);
       setLlmConfig(editingPreset.llmConfig || {
@@ -84,6 +88,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLabel('');
       setQuery('');
       setSelectedServers([]);
+      setSelectedTools([]); // NEW
       setAgentMode(fixedAgentMode || 'ReAct');
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
@@ -93,14 +98,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       });
     }
   }, [editingPreset, fixedAgentMode, primaryConfig]);
-
-  const handleServerToggle = useCallback((server: string) => {
-    setSelectedServers(prev => 
-      prev.includes(server)
-        ? prev.filter(s => s !== server)
-        : [...prev, server]
-    );
-  }, []);
 
   const handleSelectFolders = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -128,10 +125,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         return;
       }
       // Use the local LLM config (either from editing preset or user selection)
-      onSave(label.trim(), query.trim(), selectedServers, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
+      onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, llmConfig, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -256,6 +253,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                 </div>
               </div>
 
+              {/* MCP Servers and Tools Selection */}
+              {availableServers.length > 0 && (
+                <ToolSelectionSection
+                  availableServers={availableServers}
+                  selectedServers={selectedServers}
+                  selectedTools={selectedTools}
+                  onServerChange={setSelectedServers}
+                  onToolChange={setSelectedTools}
+                />
+              )}
+
               {/* Folder Selection */}
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -360,36 +368,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
-
-              {availableServers.length > 0 && (
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    MCP Servers (Optional - Leave empty to use all servers)
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded-md p-3">
-                    {availableServers.map((server) => (
-                      <div key={server} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`server-${server}`}
-                          checked={selectedServers.includes(server)}
-                          onCheckedChange={() => handleServerToggle(server)}
-                        />
-                        <label
-                          htmlFor={`server-${server}`}
-                          className="text-sm cursor-pointer"
-                        >
-                          {server}
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                  {selectedServers.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Selected: {selectedServers.join(', ')}
-                    </p>
-                  )}
                 </div>
               )}
             </div>

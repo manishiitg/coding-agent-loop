@@ -44,6 +44,7 @@ export interface AgentQueryRequest {
   max_turns?: number
   enabled_tools?: string[]
   enabled_servers?: string[]
+  selected_tools?: string[] // Array of "server:tool" strings
   agent_mode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
   llm_config?: LLMConfiguration
   preset_query_id?: string
@@ -459,6 +460,7 @@ export interface PresetQuery {
   label: string;
   query: string;
   selected_servers: string; // JSON string
+  selected_tools: string; // JSON string of "server:tool" array
   selected_folder: string; // Single folder path
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
@@ -472,6 +474,7 @@ export interface CreatePresetQueryRequest {
   label: string;
   query: string;
   selected_servers?: string[];
+  selected_tools?: string[]; // NEW
   selected_folder?: string; // Single folder path
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
@@ -482,6 +485,7 @@ export interface UpdatePresetQueryRequest {
   label?: string;
   query?: string;
   selected_servers?: string[];
+  selected_tools?: string[]; // NEW
   selected_folder?: string; // Single folder path
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset

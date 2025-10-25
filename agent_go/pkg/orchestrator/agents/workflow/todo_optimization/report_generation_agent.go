@@ -44,7 +44,7 @@ func NewReportGenerationAgent(config *agents.OrchestratorAgentConfig, logger uti
 }
 
 // Execute implements the OrchestratorAgent interface
-func (rga *ReportGenerationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (rga *ReportGenerationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract objective from template variables
 	objective, ok := templateVars["Objective"]
 	if !ok {

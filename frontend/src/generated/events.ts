@@ -53,6 +53,8 @@ export interface UnifiedEventsCompleteSchema {
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
+  blocking_human_feedback?: BlockingHumanFeedbackEvent;
+  todo_steps_extracted?: TodoStepsExtractedEvent;
 }
 export interface ToolCallStartEvent {
   timestamp?: string;
@@ -1126,4 +1128,55 @@ export interface RequestHumanFeedbackEvent {
   title?: string;
   action_label?: string;
   action_description?: string;
+}
+export interface BlockingHumanFeedbackEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  question?: string;
+  allow_feedback?: boolean;
+  context?: string;
+  workflow_id?: string;
+  request_id?: string;
+  yes_no_only?: boolean;
+  yes_label?: string;
+  no_label?: string;
+}
+export interface TodoStepsExtractedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  total_steps_extracted?: number;
+  extracted_steps?: TodoStep[];
+  extraction_method?: string;
+}
+export interface TodoStep {
+  title?: string;
+  description?: string;
+  success_criteria?: string;
+  why_this_step?: string;
+  context_dependencies?: string[];
+  context_output?: string;
+  success_patterns?: string[]; // NEW - what worked in previous executions
+  failure_patterns?: string[]; // NEW - what failed in previous executions
 }

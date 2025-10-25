@@ -3,6 +3,7 @@ export { OrchestratorStartEventDisplay } from './OrchestratorStartEvent'
 export { OrchestratorEndEventDisplay } from './OrchestratorEndEvent'
 export { OrchestratorErrorEventDisplay } from './OrchestratorErrorEvent'
 export { IndependentStepsSelectedEventDisplay } from './IndependentStepsSelectedEvent'
+export { TodoStepsExtractedEventDisplay } from './TodoStepsExtractedEvent'
 
 // Unified Orchestrator Agent Event Components
 export { OrchestratorAgentStartEventDisplay } from '../system/OrchestratorAgentStartEvent'

@@ -52,7 +52,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   } = useAppStore()
   
   const { selectedModeCategory } = useModeStore()
-  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers } = usePresetApplication()
+  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = usePresetApplication()
   
   const { 
     primaryConfig: llmConfig
@@ -323,7 +323,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   const processedCompletionEventsRef = useRef<Set<string>>(new Set())
 
   // Selected preset folder state
-  const lastEventIndexRef = useRef<number>(0)
+  const lastEventIndexRef = useRef<number>(-1)
   const totalEventsRef = useRef<number>(0)
 
   // Toast wrapper for components that only support limited types
@@ -530,7 +530,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setEvents([])
       setTotalEvents(0)
       setLastEventCount(0)
-      setLastEventIndex(0)
+      setLastEventIndex(-1)
       setFinalResponse('')
       setIsCompleted(false)
       setCurrentUserMessage('')
@@ -673,6 +673,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       return
     }
 
+    
     try {
       const response = await agentApi.getEvents(observerId, currentLastEventIndex)
 
@@ -683,10 +684,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         
         // Add new events to batch for debounced processing
         const newEvents = response.events.filter(event => {
-            // Debug: Log all tool_call_start events to see what we're getting
-            if (event.type === 'tool_call_start') {
-              // const eventData = event.data as Record<string, unknown> 
-            }
             
             // Detect request human feedback event and stop streaming
             if (event.type === 'request_human_feedback') {
@@ -1181,7 +1178,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     // Reset event polling index so next workflow/chat starts fresh
     // This prevents the frontend from missing orchestrator events
     console.log('[STOP] Resetting event polling index for next workflow/chat')
-    setLastEventIndex(0)
+    setLastEventIndex(-1)
     setLastEventCount(0)
   }, [pollingInterval, setPollingInterval, observerId, setIsStreaming, setLastEventIndex, setLastEventCount])
 
@@ -1293,6 +1290,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         agent_mode: agentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
         enabled_servers: effectiveServers,
+        selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? currentPresetTools : undefined, // Only send when preset is active
         provider: llmConfig.provider,
         model_id: llmConfig.model_id,
         llm_config: llmConfig,
@@ -1324,7 +1322,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     if (agentMode === 'orchestrator') {
       orchestratorModeHandlerRef.current?.resetSelection?.()
     }
-  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setLastEventIndex, setSessionId, llmConfig, effectiveServers, enabledTools, orchestratorExecutionMode, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
+  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, orchestratorExecutionMode, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {
@@ -1358,7 +1356,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setEvents([])
     setTotalEvents(0)
     setLastEventCount(0)
-    setLastEventIndex(0)
+    setLastEventIndex(-1)
     processedCompletionEventsRef.current.clear()
     
     // Clear guidance state

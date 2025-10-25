@@ -25,6 +25,12 @@
         "DRIVE_FOLDER_ID": "1KAhwqrp37tqTRTQzX_XwBnOpzOn2FiO3"
       }
     },
+    "gmail": {
+      "command": "npx",
+      "args": [
+        "@gongrzhe/server-gmail-autoauth-mcp"
+      ]
+    },
     "playwright": {
       "command": "npx",
       "args": [

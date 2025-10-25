@@ -167,7 +167,7 @@ func initializeBedrock(config Config) (llms.Model, error) {
 	// LLM Initialization event data - use typed structure directly
 	llmMetadata := LLMMetadata{
 		ModelVersion: config.ModelID,
-		MaxTokens:    0, // Will be set at call time
+		MaxTokens:    40000, // Will be set at call time
 		TopP:         config.Temperature,
 		User:         "bedrock_user",
 		CustomFields: map[string]string{

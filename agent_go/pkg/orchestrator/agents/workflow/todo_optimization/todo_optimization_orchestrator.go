@@ -28,6 +28,7 @@ func NewTodoOptimizationOrchestrator(
 	temperature float64,
 	agentMode string,
 	selectedServers []string,
+	selectedTools []string, // NEW parameter
 	mcpConfigPath string,
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -47,7 +48,8 @@ func NewTodoOptimizationOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		llmConfig, // llmConfig passed from caller
+		selectedTools, // Pass through actual selected tools
+		llmConfig,     // llmConfig passed from caller
 		maxTurns,
 		customTools,
 		customToolExecutors,
@@ -134,7 +136,7 @@ func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context,
 	}
 
 	// Execute refinement using the TodoRefinePlannerAgent
-	refinementResult, err := refineAgent.Execute(ctx, templateVars, nil)
+	refinementResult, _, err := refineAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("refinement execution failed: %v", err)
 	}
@@ -160,7 +162,7 @@ func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, o
 	}
 
 	// Execute critique using the DataCritiqueAgent
-	critiqueResult, err := critiqueAgent.Execute(ctx, templateVars, nil)
+	critiqueResult, _, err := critiqueAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("critique execution failed: %v", err)
 	}

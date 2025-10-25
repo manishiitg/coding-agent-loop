@@ -34,27 +34,6 @@ like pass this from frontend to a variable and when we are sending a user messag
 
 52. add support for docker in install of mcp
 
+53. the diff tool in workspace, has some issues. test with json format
 
-
-
-
-
-
-agent builder task
-
-1. i have an objective, i should be able to create a flow for it using llm + human input
-
-2. this would be UI driven for sure, not like llm based only
-
-3. idea is that, user puts in his objective..
-
-3.a LLM creates a simple step wise plan
-3.b maybe we break the steps in parts that can be executed
-
-3.c we create multiple agents for every step? automatically with each having todo as the oubjective..
-
-3.d. human can update the objective? manually?
-
-3.c human can add steps in between?
-
-3.d. human runs it ? and its clear which agent is running? 
+54. in presets we should be able to select mcp server tools also to expose

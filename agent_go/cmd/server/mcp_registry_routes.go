@@ -584,24 +584,39 @@ func (api *StreamingAPI) discoverServerToolsLive(serverID string) (*EnhancedTool
 	}
 
 	// Convert tools to the expected format
-	toolDetails := make([]ToolDetail, 0, len(tools))
+	toolDetails := make([]mcpclient.ToolDetail, 0, len(tools))
 	functionNames := make([]string, 0, len(tools))
 
 	for _, tool := range tools {
 		// Convert mcp.Tool to ToolDetail format
-		// Convert InputSchema to map[string]interface{}
+		// Convert InputSchema to map[string]interface{} with proper JSON Schema format
 		parameters := make(map[string]interface{})
-		if tool.InputSchema.Properties != nil {
-			parameters["properties"] = tool.InputSchema.Properties
-		}
-		if tool.InputSchema.Required != nil {
-			parameters["required"] = tool.InputSchema.Required
-		}
+
+		// Set type
 		if tool.InputSchema.Type != "" {
 			parameters["type"] = tool.InputSchema.Type
+		} else {
+			parameters["type"] = "object"
 		}
 
-		toolDetail := ToolDetail{
+		// Only add properties if they exist and are not empty
+		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
+			parameters["properties"] = tool.InputSchema.Properties
+		} else {
+			parameters["properties"] = map[string]interface{}{}
+		}
+
+		// Only add required if they exist and are not empty
+		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
+			parameters["required"] = tool.InputSchema.Required
+		} else {
+			parameters["required"] = []string{}
+		}
+
+		// Add additional properties restriction for better validation
+		parameters["additionalProperties"] = false
+
+		toolDetail := mcpclient.ToolDetail{
 			Name:        tool.Name,
 			Description: tool.Description,
 			Parameters:  parameters,
@@ -715,24 +730,39 @@ func (api *StreamingAPI) discoverServerToolsLiveWithHeaders(serverID string, cus
 	}
 
 	// Convert tools to the expected format
-	toolDetails := make([]ToolDetail, 0, len(tools))
+	toolDetails := make([]mcpclient.ToolDetail, 0, len(tools))
 	functionNames := make([]string, 0, len(tools))
 
 	for _, tool := range tools {
 		// Convert mcp.Tool to ToolDetail format
-		// Convert InputSchema to map[string]interface{}
+		// Convert InputSchema to map[string]interface{} with proper JSON Schema format
 		parameters := make(map[string]interface{})
-		if tool.InputSchema.Properties != nil {
-			parameters["properties"] = tool.InputSchema.Properties
-		}
-		if tool.InputSchema.Required != nil {
-			parameters["required"] = tool.InputSchema.Required
-		}
+
+		// Set type
 		if tool.InputSchema.Type != "" {
 			parameters["type"] = tool.InputSchema.Type
+		} else {
+			parameters["type"] = "object"
 		}
 
-		toolDetail := ToolDetail{
+		// Only add properties if they exist and are not empty
+		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
+			parameters["properties"] = tool.InputSchema.Properties
+		} else {
+			parameters["properties"] = map[string]interface{}{}
+		}
+
+		// Only add required if they exist and are not empty
+		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
+			parameters["required"] = tool.InputSchema.Required
+		} else {
+			parameters["required"] = []string{}
+		}
+
+		// Add additional properties restriction for better validation
+		parameters["additionalProperties"] = false
+
+		toolDetail := mcpclient.ToolDetail{
 			Name:        tool.Name,
 			Description: tool.Description,
 			Parameters:  parameters,
@@ -849,24 +879,39 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 	}
 
 	// Convert tools to the expected format
-	toolDetails := make([]ToolDetail, 0, len(tools))
+	toolDetails := make([]mcpclient.ToolDetail, 0, len(tools))
 	functionNames := make([]string, 0, len(tools))
 
 	for _, tool := range tools {
 		// Convert mcp.Tool to ToolDetail format
-		// Convert InputSchema to map[string]interface{}
+		// Convert InputSchema to map[string]interface{} with proper JSON Schema format
 		parameters := make(map[string]interface{})
-		if tool.InputSchema.Properties != nil {
-			parameters["properties"] = tool.InputSchema.Properties
-		}
-		if tool.InputSchema.Required != nil {
-			parameters["required"] = tool.InputSchema.Required
-		}
+
+		// Set type
 		if tool.InputSchema.Type != "" {
 			parameters["type"] = tool.InputSchema.Type
+		} else {
+			parameters["type"] = "object"
 		}
 
-		toolDetail := ToolDetail{
+		// Only add properties if they exist and are not empty
+		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
+			parameters["properties"] = tool.InputSchema.Properties
+		} else {
+			parameters["properties"] = map[string]interface{}{}
+		}
+
+		// Only add required if they exist and are not empty
+		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
+			parameters["required"] = tool.InputSchema.Required
+		} else {
+			parameters["required"] = []string{}
+		}
+
+		// Add additional properties restriction for better validation
+		parameters["additionalProperties"] = false
+
+		toolDetail := mcpclient.ToolDetail{
 			Name:        tool.Name,
 			Description: tool.Description,
 			Parameters:  parameters,
@@ -917,7 +962,7 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 // convertCacheEntryToResponse converts a cached CacheEntry to EnhancedToolStatus
 func (api *StreamingAPI) convertCacheEntryToResponse(entry *mcpcache.CacheEntry) (*EnhancedToolStatus, error) {
 	// Convert tools to ToolDetail format
-	toolDetails := make([]ToolDetail, 0, len(entry.Tools))
+	toolDetails := make([]mcpclient.ToolDetail, 0, len(entry.Tools))
 	functionNames := make([]string, 0, len(entry.Tools))
 
 	for _, tool := range entry.Tools {
@@ -929,7 +974,7 @@ func (api *StreamingAPI) convertCacheEntryToResponse(entry *mcpcache.CacheEntry)
 			}
 		}
 
-		toolDetail := ToolDetail{
+		toolDetail := mcpclient.ToolDetail{
 			Name:        tool.Function.Name,
 			Description: tool.Function.Description,
 			Parameters:  parameters,

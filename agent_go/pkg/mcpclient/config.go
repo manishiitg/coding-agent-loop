@@ -17,6 +17,13 @@ const (
 	ProtocolHTTP  ProtocolType = "http"
 )
 
+// Special server name constants
+const (
+	// NoServers indicates that no MCP servers should be connected
+	// This is used when an agent should work with pure LLM reasoning without any tools
+	NoServers = "NO_SERVERS"
+)
+
 // PoolConfig defines connection pooling settings
 type PoolConfig struct {
 	MaxConnections       int           `json:"max_connections"`

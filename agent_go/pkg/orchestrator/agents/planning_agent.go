@@ -39,7 +39,7 @@ func NewOrchestratorPlanningAgent(config *OrchestratorAgentConfig, logger utils.
 }
 
 // Execute executes the planning agent with planning-specific input processing
-func (pa *OrchestratorPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (pa *OrchestratorPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	return pa.ExecuteWithInputProcessor(ctx, templateVars, pa.planningInputProcessor, conversationHistory)
 }
 

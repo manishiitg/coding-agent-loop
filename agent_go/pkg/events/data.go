@@ -1828,3 +1828,20 @@ type RequestHumanFeedbackEvent struct {
 func (e *RequestHumanFeedbackEvent) GetEventType() EventType {
 	return RequestHumanFeedback
 }
+
+type BlockingHumanFeedbackEvent struct {
+	BaseEventData
+	Question      string `json:"question"`       // Question to ask user
+	AllowFeedback bool   `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
+	Context       string `json:"context"`        // Additional context (e.g., validation results)
+	SessionID     string `json:"session_id"`
+	WorkflowID    string `json:"workflow_id"`
+	RequestID     string `json:"request_id"`          // Unique ID for this feedback request
+	YesNoOnly     bool   `json:"yes_no_only"`         // If true, show only Approve/Reject buttons (no textarea)
+	YesLabel      string `json:"yes_label,omitempty"` // Custom label for Approve button (default: "Approve")
+	NoLabel       string `json:"no_label,omitempty"`  // Custom label for Reject button (default: "Reject")
+}
+
+func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {
+	return BlockingHumanFeedback
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/tmc/langchaingo/llms"
@@ -60,8 +62,22 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 		},
 	}
 
-	// Generate response with JSON mode
-	response, err := sog.llm.GenerateContent(ctx, messages, llms.WithJSONMode())
+	// Configure max_tokens for structured output (higher default due to complex prompts)
+	maxTokens := 20000 // Higher default for structured output
+	if maxTokensEnv := os.Getenv("ORCHESTRATOR_MAIN_LLM_MAX_TOKENS"); maxTokensEnv != "" {
+		if parsed, err := strconv.Atoi(maxTokensEnv); err == nil && parsed > 0 {
+			maxTokens = parsed
+		}
+	}
+
+	// Generate response with JSON mode and max_tokens
+	opts := []llms.CallOption{
+		llms.WithJSONMode(),
+		llms.WithMaxTokens(maxTokens),
+	}
+
+	sog.logger.Infof("Structured output max_tokens: %d", maxTokens)
+	response, err := sog.llm.GenerateContent(ctx, messages, opts...)
 	if err != nil {
 		sog.logger.Errorf("LLM call failed: %v", err)
 		return "", fmt.Errorf("failed to generate structured output: %w", err)

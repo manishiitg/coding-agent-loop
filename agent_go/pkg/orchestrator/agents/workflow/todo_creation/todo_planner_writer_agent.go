@@ -46,7 +46,7 @@ func NewTodoPlannerWriterAgent(config *agents.OrchestratorAgentConfig, logger ut
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tpwa *TodoPlannerWriterAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tpwa *TodoPlannerWriterAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract variables from template variables
 	// Writer is strategic - synthesizes from all iterations
 	objective := templateVars["Objective"]

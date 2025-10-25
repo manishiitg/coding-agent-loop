@@ -14,6 +14,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation"
+	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_execution"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_optimization"
 
@@ -57,7 +58,22 @@ func GetWorkflowConstants() WorkflowConstants {
 				ID:          database.WorkflowStatusPreVerification,
 				Title:       "Planning & Todo Creation",
 				Description: "Stage 1: Collaborate with the planning agent to create and iterate on a comprehensive todo list using MCP tools. You can refine and improve the todo list through conversation until you're satisfied with the final plan.",
-				Options:     []WorkflowPhaseOption{}, // No options for planning phase
+				Options: []WorkflowPhaseOption{
+					{
+						ID:          "human_controlled",
+						Label:       "Human Controlled (single execution, fast)",
+						Description: "Simplified approach with single execution, no validation, no critique, no cleanup, focused on fastest plan creation",
+						Group:       "planning_strategy",
+						Default:     true, // Make this default
+					},
+					{
+						ID:          "auto_model",
+						Label:       "Auto Model (10 iterations with validation)",
+						Description: "Full automated model with 10 iterations, validation agent, and adaptive strategy system",
+						Group:       "planning_strategy",
+						Default:     false,
+					},
+				},
 			},
 			{
 				ID:          database.WorkflowStatusPostVerification,
@@ -197,6 +213,7 @@ func NewWorkflowOrchestrator(
 	eventBridge mcpagent.AgentEventListener,
 	tracer observability.Tracer,
 	selectedServers []string,
+	selectedTools []string, // NEW parameter
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
@@ -214,7 +231,8 @@ func NewWorkflowOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		llmConfig, // LLM configuration
+		selectedTools, // NEW: Pass through
+		llmConfig,     // LLM configuration
 		maxTurns,
 		customTools,
 		customToolExecutors,
@@ -272,19 +290,53 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	case database.WorkflowStatusPreVerification:
 		// Run planning phase
-		return wo.runPlanning(ctx, objective)
+		return wo.runPlanning(ctx, objective, selectedOptions)
 
 	default:
 		wo.GetLogger().Warnf("⚠️ Unknown workflow status: %s, defaulting to planning phase", workflowStatus)
-		return wo.runPlanning(ctx, objective)
+		return wo.runPlanning(ctx, objective, selectedOptions)
 	}
 }
 
-func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string) (string, error) {
-	// Create todo planner agent
-	todoPlannerAgent, err := wo.createTodoPlannerAgent()
+func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	// Get planning strategy from selected options (if available)
+	planningStrategy := wo.getPlanningStrategy(selectedOptions)
+	wo.GetLogger().Infof("🎯 Planning strategy: %s", planningStrategy)
+
+	// Call different orchestrators based on strategy
+	if planningStrategy == "auto_model" {
+		wo.GetLogger().Infof("🤖 Starting Auto Model Planning")
+		return wo.runAutoModelPlanning(ctx, objective)
+	} else {
+		wo.GetLogger().Infof("👤 Starting Human Controlled Planning")
+		return wo.runHumanControlledPlanning(ctx, objective)
+	}
+}
+
+// runAutoModelPlanning runs the auto model planning with full validation and critique
+func (wo *WorkflowOrchestrator) runAutoModelPlanning(ctx context.Context, objective string) (string, error) {
+	wo.GetLogger().Infof("🤖 Running Auto Model Planning for objective: %s", objective)
+
+	// Create auto model planner orchestrator directly
+	llmConfig := wo.GetLLMConfig()
+	todoPlannerAgent, err := todo_creation.NewTodoPlannerOrchestrator(
+		wo.GetProvider(),
+		wo.GetModel(),
+		wo.GetTemperature(),
+		wo.GetAgentMode(),
+		wo.GetSelectedServers(),
+		wo.GetSelectedTools(), // NEW: Pass selected tools
+		wo.GetMCPConfigPath(),
+		llmConfig,
+		wo.GetMaxTurns(),
+		wo.GetLogger(),
+		wo.GetTracer(),
+		wo.GetContextAwareBridge(),
+		wo.WorkspaceTools,
+		wo.WorkspaceToolExecutors,
+	)
 	if err != nil {
-		return "", fmt.Errorf("failed to create todo planner agent: %w", err)
+		return "", fmt.Errorf("failed to create auto model planner orchestrator: %w", err)
 	}
 
 	// Generate todo list using Execute method
@@ -293,20 +345,68 @@ func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective strin
 		return "", fmt.Errorf("failed to create/update todo list: %w", err)
 	}
 
-	// Note: Todo list is already saved by the todo planner agent using workspace tools
-	// No need for additional save operation here
-
 	// Emit request_human_feedback event
 	if err := wo.emitRequestHumanFeedback(ctx, objective, todoListMarkdown,
 		"planning_verification",
 		database.WorkflowStatusPostVerification,
-		"Todo List Planning Complete",
+		"Auto Model Planning Complete",
 		"Approve Plan & Continue",
 		"Please review the generated todo list and approve to proceed with execution."); err != nil {
 		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
 	}
 
-	planningResult := fmt.Sprintf("Planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
+	planningResult := fmt.Sprintf("Auto model planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
+
+	// Emit orchestrator completion events
+	wo.EmitOrchestratorEnd(ctx, objective, planningResult, "completed", "", "workflow_execution")
+	wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, planningResult, "completed", 1)
+
+	return planningResult, nil
+}
+
+// runHumanControlledPlanning runs the human controlled planning with simplified approach
+func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, objective string) (string, error) {
+	wo.GetLogger().Infof("👤 Running Human Controlled Planning for objective: %s", objective)
+
+	// Create human controlled planner orchestrator directly
+	llmConfig := wo.GetLLMConfig()
+	todoPlannerAgent, err := todo_creation_human.NewHumanControlledTodoPlannerOrchestrator(
+		wo.GetProvider(),
+		wo.GetModel(),
+		wo.GetTemperature(),
+		wo.GetAgentMode(),
+		wo.GetSelectedServers(),
+		wo.GetSelectedTools(), // NEW: Pass selected tools
+		wo.GetMCPConfigPath(),
+		llmConfig,
+		wo.GetMaxTurns(),
+		wo.GetLogger(),
+		wo.GetTracer(),
+		wo.GetContextAwareBridge(),
+		wo.WorkspaceTools,
+		wo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
+	}
+
+	// Generate todo list using Execute method
+	todoListMarkdown, err := todoPlannerAgent.Execute(ctx, objective, wo.GetWorkspacePath(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create/update todo list: %w", err)
+	}
+
+	// Emit request_human_feedback event
+	if err := wo.emitRequestHumanFeedback(ctx, objective, todoListMarkdown,
+		"planning_verification",
+		database.WorkflowStatusPostVerification,
+		"Human Controlled Planning Complete",
+		"Approve Plan & Continue",
+		"Please review the generated todo list and approve to proceed with execution."); err != nil {
+		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
+	}
+
+	planningResult := fmt.Sprintf("Human controlled planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
 
 	// Emit orchestrator completion events
 	wo.EmitOrchestratorEnd(ctx, objective, planningResult, "completed", "", "workflow_execution")
@@ -394,24 +494,10 @@ func (wo *WorkflowOrchestrator) getWorkflowID() string {
 	return "workflow-" + fmt.Sprintf("%d", time.Now().Unix())
 }
 
-// createTodoPlannerAgent creates a new todo planner orchestrator
-func (wo *WorkflowOrchestrator) createTodoPlannerAgent() (orchestrator.Orchestrator, error) {
-	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_creation.NewTodoPlannerOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
-	if err != nil {
-		return nil, fmt.Errorf("todo planner orchestrator creation failed: %w", err)
-	}
-
-	// Set workspace tools for the TodoPlannerOrchestrator so it can pass them to sub-agents
-	// Note: WorkspaceTools and WorkspaceToolExecutors are already available from BaseOrchestrator
-
-	return agent, nil
-}
-
 // createTodoExecutionOrchestrator creates and configures the TodoExecutionOrchestrator
 func (wo *WorkflowOrchestrator) createTodoExecutionOrchestrator() (orchestrator.Orchestrator, error) {
 	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_execution.NewTodoExecutionOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
+	agent, err := todo_execution.NewTodoExecutionOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create todo execution orchestrator: %w", err)
 	}
@@ -436,10 +522,42 @@ func (wo *WorkflowOrchestrator) getRunOption(selectedOptions *database.WorkflowS
 	return runOption
 }
 
+// getPlanningStrategy returns the planning strategy to use based on selected options
+func (wo *WorkflowOrchestrator) getPlanningStrategy(selectedOptions *database.WorkflowSelectedOptions) string {
+	// Default to human_controlled
+	strategy := "human_controlled"
+
+	// Debug logging
+	if selectedOptions == nil {
+		wo.GetLogger().Infof("🔍 DEBUG: selectedOptions is nil, using default strategy: %s", strategy)
+	} else {
+		wo.GetLogger().Infof("🔍 DEBUG: selectedOptions.PhaseID: %s", selectedOptions.PhaseID)
+		wo.GetLogger().Infof("🔍 DEBUG: selectedOptions.Selections count: %d", len(selectedOptions.Selections))
+
+		for i, selection := range selectedOptions.Selections {
+			wo.GetLogger().Infof("🔍 DEBUG: Selection[%d] - Group: %s, OptionID: %s", i, selection.Group, selection.OptionID)
+		}
+	}
+
+	// Check if selected options are provided and contain planning strategy selection
+	if selectedOptions != nil && selectedOptions.PhaseID == database.WorkflowStatusPreVerification {
+		for _, selection := range selectedOptions.Selections {
+			if selection.Group == "planning_strategy" {
+				strategy = selection.OptionID
+				wo.GetLogger().Infof("🔍 DEBUG: Found planning_strategy selection: %s", strategy)
+				break
+			}
+		}
+	}
+
+	wo.GetLogger().Infof("🎯 Using planning strategy: %s", strategy)
+	return strategy
+}
+
 // createTodoOptimizationOrchestrator creates and configures the TodoOptimizationOrchestrator
 func (wo *WorkflowOrchestrator) createTodoOptimizationOrchestrator() (orchestrator.Orchestrator, error) {
 	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_optimization.NewTodoOptimizationOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
+	agent, err := todo_optimization.NewTodoOptimizationOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create todo optimization orchestrator: %w", err)
 	}
@@ -535,11 +653,18 @@ func (wo *WorkflowOrchestrator) emitRefinementVerificationRequest(ctx context.Co
 
 // Execute implements the Orchestrator interface
 func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, workspacePath string, options map[string]interface{}) (string, error) {
+	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION START - Execute method called")
+	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - objective: %s", objective)
+	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - workspacePath: %s", workspacePath)
+	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - options: %+v", options)
+
 	// Validate options if provided
 	if options != nil {
+		wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - options is not nil, validating...")
 
 		// Validate workflowStatus if provided
 		if workflowStatusVal, exists := options["workflowStatus"]; exists {
+			wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - workflowStatus found: %+v (type: %T)", workflowStatusVal, workflowStatusVal)
 			if workflowStatus, ok := workflowStatusVal.(string); !ok {
 				return "", fmt.Errorf("invalid workflowStatus: expected string, got %T", workflowStatusVal)
 			} else if workflowStatus == "" {
@@ -562,31 +687,47 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					return "", fmt.Errorf("invalid workflowStatus: %s, valid statuses: %v", workflowStatus, validStatuses)
 				}
 			}
+		} else {
+			wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - workflowStatus not found in options")
 		}
 
 		// Validate selectedOptions if provided
 		if selectedOptsVal, exists := options["selectedOptions"]; exists {
+			wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions found: %+v (type: %T)", selectedOptsVal, selectedOptsVal)
 			if selectedOptsVal != nil {
 				if _, ok := selectedOptsVal.(*database.WorkflowSelectedOptions); !ok {
 					return "", fmt.Errorf("invalid selectedOptions: expected *database.WorkflowSelectedOptions, got %T", selectedOptsVal)
 				}
 			}
+		} else {
+			wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions not found in options")
 		}
+	} else {
+		wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - options is nil")
 	}
 
 	// Extract options from the map with defaults
 	var workflowStatus string
 	if ws, ok := options["workflowStatus"].(string); ok && ws != "" {
 		workflowStatus = ws
+		wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - extracted workflowStatus: %s", workflowStatus)
 	} else {
 		workflowStatus = database.WorkflowStatusPreVerification // Default to planning phase
+		wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - using default workflowStatus: %s", workflowStatus)
 	}
 
 	var selectedOptions *database.WorkflowSelectedOptions
 	if opts, ok := options["selectedOptions"]; ok && opts != nil {
 		if so, ok := opts.(*database.WorkflowSelectedOptions); ok {
 			selectedOptions = so
+			wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - extracted selectedOptions: %+v", selectedOptions)
+			if selectedOptions != nil {
+				wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions.PhaseID: %s", selectedOptions.PhaseID)
+				wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions.Selections count: %d", len(selectedOptions.Selections))
+			}
 		}
+	} else {
+		wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - no selectedOptions extracted")
 	}
 
 	// Validate workspace path is provided
@@ -599,6 +740,16 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 		return "", fmt.Errorf("objective cannot be empty")
 	}
 
+	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - About to call executeFlow with workflowStatus: %s", workflowStatus)
+	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions for executeFlow: %+v", selectedOptions)
+
 	// Call the existing executeFlow method with the extracted parameters
-	return wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions)
+	result, err := wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions)
+	if err != nil {
+		wo.GetLogger().Errorf("🚀 WORKFLOW EXECUTION ERROR - executeFlow failed: %v", err)
+		return "", err
+	}
+
+	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION SUCCESS - executeFlow completed successfully")
+	return result, nil
 }

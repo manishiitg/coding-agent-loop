@@ -45,7 +45,7 @@ func NewDataCritiqueAgent(config *agents.OrchestratorAgentConfig, logger utils.E
 }
 
 // Execute implements the OrchestratorAgent interface
-func (dca *DataCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (dca *DataCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract required parameters
 	objective, ok := templateVars["Objective"]
 	if !ok {

@@ -12,8 +12,8 @@ import (
 
 // OrchestratorAgent defines the interface for all orchestrator agents
 type OrchestratorAgent interface {
-	// Execute executes the agent with the given template variables and returns the result
-	Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error)
+	// Execute executes the agent with the given template variables and returns the result and updated conversation history
+	Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error)
 
 	// GetType returns the agent type (planning, execution, validation, plan_organizer)
 	GetType() string
@@ -59,6 +59,7 @@ type OrchestratorAgentConfig struct {
 
 	// Required MCP configuration
 	ServerNames   []string `json:"server_names" validate:"required"`
+	SelectedTools []string `json:"selected_tools,omitempty"` // Array of "server:tool" strings
 	MCPConfigPath string   `json:"mcp_config_path" validate:"required"`
 	ToolChoice    string   `json:"tool_choice" validate:"required"`
 	MaxTurns      int      `json:"max_turns" validate:"required"`

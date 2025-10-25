@@ -54,10 +54,15 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
   }
 
   let parsedResult: Record<string, unknown> = {}
+  let isJsonResult = false
+  
   try {
     parsedResult = JSON.parse(event.result)
+    isJsonResult = true
   } catch {
-    return null
+    // For non-JSON results, create a simple object with the result as content
+    parsedResult = { content: event.result }
+    isJsonResult = false
   }
 
   const toolName = event.tool_name || ''
@@ -149,13 +154,17 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
     const folder = (parsedResult.folder as string) || ''
     const lastModified = (parsedResult.last_modified as string) || ''
     
+    
+    // If it's not a JSON result, the content is just the result message
+    const resultMessage = isJsonResult ? 'File Read Successfully' : content
+    
     return (
       <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-green-700 dark:text-green-300">
-                📖 File Read Successfully{' '}
+                📖 {resultMessage}{' '}
                 <span className="text-xs font-normal text-green-600 dark:text-green-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.tool_name && ` • Tool: ${event.tool_name}`}

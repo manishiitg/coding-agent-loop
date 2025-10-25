@@ -117,15 +117,15 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
     if (editingPreset) {
-      await updatePreset(editingPreset.id, label, query, selectedServers, agentMode, selectedFolder, llmConfig);
+      await updatePreset(editingPreset.id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig);
       // Call the callback to refresh workflow presets when a preset is updated
       setTimeout(() => {
         onPresetAdded?.();
       }, 100);
     } else {
-      await addPreset(label, query, selectedServers, agentMode, selectedFolder, llmConfig);
+      await addPreset(label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig);
       // Add a small delay to ensure the preset is fully processed
       setTimeout(() => {
         onPresetAdded?.();

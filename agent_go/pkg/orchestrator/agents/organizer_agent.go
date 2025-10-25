@@ -41,7 +41,7 @@ func NewPlanOrganizerAgent(config *OrchestratorAgentConfig, logger utils.Extende
 }
 
 // Execute executes the plan organizer agent with organizer-specific input processing
-func (poa *PlanOrganizerAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (poa *PlanOrganizerAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	return poa.ExecuteWithInputProcessor(ctx, templateVars, poa.organizerInputProcessor, conversationHistory)
 }
 

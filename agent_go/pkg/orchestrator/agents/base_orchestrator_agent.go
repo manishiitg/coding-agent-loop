@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"regexp"
 	"time"
 
 	"github.com/tmc/langchaingo/llms"
@@ -68,6 +70,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		llmInstance,
 		boa.systemPrompt,
 		boa.config.ServerNames,
+		boa.config.SelectedTools, // NEW: Pass selected tools
 		boa.config.Mode,
 		boa.tracer,
 		traceID,
@@ -107,7 +110,7 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	baseAgent := boa.baseAgent
 
 	// Use the agent's built-in structured output capability
-	result, err := AskStructured[T](baseAgent, ctx, userMessage, schema)
+	result, err := AskStructured[T](baseAgent, ctx, userMessage, schema, conversationHistory)
 
 	duration := time.Since(startTime)
 
@@ -130,7 +133,7 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 }
 
 // ExecuteWithInputProcessor executes the agent with a custom input processor
-func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent) (string, error) {
+func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	startTime := time.Now()
 
 	// Auto-emit agent start event
@@ -145,7 +148,7 @@ func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context,
 	baseAgentTemplateVars := map[string]string{
 		"userMessage": userMessage,
 	}
-	result, err := boa.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
+	result, updatedConversationHistory, err := boa.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
 
 	duration := time.Since(startTime)
 
@@ -154,11 +157,47 @@ func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context,
 
 	if err != nil {
 		boa.logger.Errorf("❌ Base Orchestrator Agent (%s) execution failed: %v", boa.agentType, err)
-		return "", fmt.Errorf("base orchestrator execution failed: %w", err)
+		return "", nil, fmt.Errorf("base orchestrator execution failed: %w", err)
 	}
 
 	// Orchestrator agent execution completed
-	return result, nil
+	return result, updatedConversationHistory, nil
+}
+
+// ExecuteWithTemplateValidation executes the agent with template validation
+func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent, templateData interface{}) (string, []llms.MessageContent, error) {
+	startTime := time.Now()
+
+	// Auto-emit agent start event
+	boa.emitAgentStartEvent(ctx, templateVars)
+
+	// Process inputs using the provided processor function
+	userMessage := inputProcessor(templateVars)
+
+	// Validate template fields at compile time
+	if err := boa.validateTemplateFields(userMessage, templateData); err != nil {
+		boa.logger.Errorf("❌ Template validation failed for agent %s: %v", boa.agentType, err)
+		return "", nil, fmt.Errorf("template validation failed: %w", err)
+	}
+
+	// Delegate to template's Execute method which enforces event patterns
+	baseAgentTemplateVars := map[string]string{
+		"userMessage": userMessage,
+	}
+	result, updatedConversationHistory, err := boa.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
+
+	duration := time.Since(startTime)
+
+	// Auto-emit agent end event
+	boa.emitAgentEndEvent(ctx, templateVars, result, err, duration)
+
+	if err != nil {
+		boa.logger.Errorf("❌ Base Orchestrator Agent (%s) execution failed: %v", boa.agentType, err)
+		return "", nil, fmt.Errorf("base orchestrator execution failed: %w", err)
+	}
+
+	// Orchestrator agent execution completed
+	return result, updatedConversationHistory, nil
 }
 
 // GetType returns the agent type
@@ -322,4 +361,69 @@ func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llms.Model, er
 	}
 
 	return llmInstance, nil
+}
+
+// validateTemplateFields validates that all template field references exist in the struct
+func (boa *BaseOrchestratorAgent) validateTemplateFields(templateStr string, templateData interface{}) error {
+	// Extract all template field references using regex
+	re := regexp.MustCompile(`\{\{\.([A-Za-z][A-Za-z0-9_]*)\}\}`)
+	matches := re.FindAllStringSubmatch(templateStr, -1)
+
+	// Get struct field names using reflection
+	structFields := boa.getStructFieldNames(templateData)
+
+	// Check if all template references exist in struct
+	for _, match := range matches {
+		fieldName := match[1]
+		if !boa.contains(structFields, fieldName) {
+			return fmt.Errorf("template references non-existent field: %s", fieldName)
+		}
+	}
+
+	return nil
+}
+
+// getStructFieldNames extracts field names from a struct using reflection
+func (boa *BaseOrchestratorAgent) getStructFieldNames(v interface{}) []string {
+	if v == nil {
+		return []string{}
+	}
+
+	val := reflect.ValueOf(v)
+	typ := reflect.TypeOf(v)
+
+	// Handle pointers
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return []string{}
+		}
+		val = val.Elem()
+		typ = typ.Elem()
+	}
+
+	// Only handle structs
+	if val.Kind() != reflect.Struct {
+		return []string{}
+	}
+
+	var fieldNames []string
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		// Only include exported fields (uppercase)
+		if field.PkgPath == "" {
+			fieldNames = append(fieldNames, field.Name)
+		}
+	}
+
+	return fieldNames
+}
+
+// contains checks if a slice contains a string
+func (boa *BaseOrchestratorAgent) contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

@@ -45,7 +45,7 @@ func NewTodoPlannerPlanningAgent(config *agents.OrchestratorAgentConfig, logger 
 }
 
 // Execute implements the OrchestratorAgent interface
-func (tppa *TodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (tppa *TodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Extract variables from template variables
 	objective := templateVars["Objective"]
 	workspacePath := templateVars["WorkspacePath"]
@@ -66,10 +66,13 @@ func (tppa *TodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars 
 		"WorkspacePath": workspacePath,
 		"Strategy":      strategy,
 		"Focus":         focus,
+		"Iteration":     templateVars["Iteration"],
+		"MaxIterations": templateVars["MaxIterations"],
 	}
 
 	// Execute using input processor
-	return tppa.ExecuteWithInputProcessor(ctx, planningTemplateVars, tppa.planningInputProcessor, conversationHistory)
+	result, conversationHistory, err := tppa.ExecuteWithInputProcessor(ctx, planningTemplateVars, tppa.planningInputProcessor, conversationHistory)
+	return result, conversationHistory, err
 }
 
 // planningInputProcessor processes inputs specifically for step-wise planning

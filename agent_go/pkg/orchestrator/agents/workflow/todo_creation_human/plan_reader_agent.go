@@ -2,7 +2,6 @@ package todo_creation_human
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"text/template"
@@ -15,7 +14,9 @@ import (
 	"github.com/tmc/langchaingo/llms"
 )
 
-// HumanControlledPlanReaderAgent reads markdown plan and converts to structured JSON
+// HumanControlledPlanReaderAgent reads markdown plan files and converts to structured JSON format
+// This agent can read files but does NOT write files - it only returns structured data
+// File reading is performed by the agent, file writing is handled by the orchestrator
 type HumanControlledPlanReaderAgent struct {
 	*agents.BaseOrchestratorAgent
 }
@@ -130,45 +131,51 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 		"Objective":     templateVars["Objective"],
 		"WorkspacePath": templateVars["WorkspacePath"],
 		"PlanMarkdown":  templateVars["PlanMarkdown"], // Markdown plan content
+		"FileType":      templateVars["FileType"],     // "plan" or "todo_final"
 	}
 
 	// Define the template for plan reading and conversion
-	templateStr := `## 📖 PRIMARY TASK - CONVERT MARKDOWN PLAN TO STRUCTURED JSON ONLY
+	templateStr := `## 📖 PRIMARY TASK - CONVERT MARKDOWN {{if eq .FileType "todo_final"}}TODO LIST{{else}}PLAN{{end}} TO STRUCTURED JSON ONLY
 
 **OBJECTIVE**: {{.Objective}}
 **WORKSPACE**: {{.WorkspacePath}}
+**FILE TYPE**: {{.FileType}}
 
 ## 🤖 AGENT IDENTITY
-- **Role**: Plan Reader Agent
-- **Responsibility**: Convert markdown plan to structured JSON format
-- **NO EXECUTION**: This agent does NOT execute plans - only converts format
+- **Role**: {{if eq .FileType "todo_final"}}Todo List{{else}}Plan{{end}} Reader Agent
+- **Responsibility**: Convert markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} content to structured JSON format
+- **Input**: Markdown {{if eq .FileType "todo_final"}}todo_final.md{{else}}plan.md{{end}} file
+- **Output**: Structured JSON data
+- **NO EXECUTION**: This agent does NOT execute {{if eq .FileType "todo_final"}}todos{{else}}plans{{end}} - only converts format
+- **READ ONLY**: This agent reads files but does NOT write any files
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- **{{.WorkspacePath}}/todo_creation_human/planning/plan.md** (read markdown plan)
+- **{{if eq .FileType "todo_final"}}{{.WorkspacePath}}/todo_final.md{{else}}{{.WorkspacePath}}/todo_creation_human/planning/plan.md{{end}}** (read markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}})
 
-**WRITE:**
-- **{{.WorkspacePath}}/todo_creation_human/planning/plan.json** (write structured JSON)
+**NO WRITE PERMISSIONS:**
+- This agent does NOT write any files - only reads and converts
 
 ## 📋 CONVERSION GUIDELINES
 
 **Your ONLY Job**:
-1. Read the markdown plan from plan.md
+1. Read the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} from {{if eq .FileType "todo_final"}}todo_final.md{{else}}plan.md{{end}}
 2. Parse the markdown structure into structured JSON format
 3. Extract objective analysis, approach, steps, and expected outcome
 4. Convert each step's details into the required JSON structure
 5. Return structured JSON response
 
 **DO NOT**:
-- Execute any steps from the plan
-- Modify the plan content
+- Execute any {{if eq .FileType "todo_final"}}todos{{else}}steps{{end}} from the {{if eq .FileType "todo_final"}}list{{else}}plan{{end}}
+- Modify the {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} content
 - Add execution logic
-- Create additional files beyond plan.json
+- Write or create any files
+- Save JSON output to files
 
 **JSON Structure Requirements**:
-- objective_analysis: Extract from "## Objective Analysis" section
-- approach: Extract from "## Approach" section  
-- steps: Extract from "## Steps" section, each step with:
+- objective_analysis: Extract from "## Objective Analysis" section{{if eq .FileType "todo_final"}} or "## 🎯 Objective" section{{end}}
+- approach: Extract from "## Approach" section{{if eq .FileType "todo_final"}} or "## 📊 Execution" section{{end}}
+- steps: Extract from "## Steps" section{{if eq .FileType "todo_final"}} or "## 📝 Step-by-Step Execution Plan" section{{end}}, each step with:
   - title: From "### Step X: [Title]"
   - description: From "- **Description**: [content]"
   - success_criteria: From "- **Success Criteria**: [content]"
@@ -177,24 +184,26 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
   - context_output: From "- **Context Output**: [content]"
   - success_patterns: From "- **Success Patterns**: [bullet list]" (convert to array, include if present)
   - failure_patterns: From "- **Failure Patterns**: [bullet list]" (convert to array, include if present)
-- expected_outcome: Extract from "## Expected Outcome" section
+- expected_outcome: Extract from "## Expected Outcome" section{{if eq .FileType "todo_final"}} or infer from objective{{end}}
 
 ## 📤 Output Format
 
 **RETURN STRUCTURED JSON RESPONSE ONLY**
 
-Convert the markdown plan to structured JSON format. Return ONLY the JSON object that matches the required schema.
+Convert the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} to structured JSON format. Return ONLY the JSON object that matches the required schema.
 
-## 📊 MARKDOWN PLAN CONTENT
+## 📊 MARKDOWN {{if eq .FileType "todo_final"}}TODO LIST{{else}}PLAN{{end}} CONTENT
 {{.PlanMarkdown}}
 
 **IMPORTANT NOTES**: 
-1. Parse the markdown structure carefully to extract all required fields
-2. Convert markdown lists and formatting to clean JSON values
-3. Ensure all steps are properly extracted with their details
-4. Return ONLY valid JSON - no explanations or additional text
-5. This agent ONLY converts format - execution is handled by other agents
-6. Focus on accurate parsing, not plan modification or execution`
+1. Read the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} file from {{if eq .FileType "todo_final"}}todo_final.md{{else}}plan.md{{end}}
+2. Parse the markdown structure carefully to extract all required fields
+3. Convert markdown lists and formatting to clean JSON values
+4. Ensure all steps are properly extracted with their details
+5. Return ONLY valid JSON - no explanations or additional text
+6. This agent ONLY converts format - execution is handled by other agents
+7. Focus on accurate parsing, not {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} modification or execution
+8. This agent reads markdown files and returns structured JSON - NO file writing`
 
 	// Parse and execute the template
 	tmpl, err := template.New("plan_reader").Parse(templateStr)
@@ -214,19 +223,6 @@ Convert the markdown plan to structured JSON format. Return ONLY the JSON object
 func (hcpra *HumanControlledPlanReaderAgent) ReadPlanMarkdown(ctx context.Context, workspacePath string) (string, error) {
 	// This would typically use MCP tools to read the file
 	// For now, we'll assume the content is passed via templateVars
+	// TODO: Implement actual file reading using MCP tools
 	return "", fmt.Errorf("plan markdown reading not implemented yet - use templateVars")
-}
-
-// WriteStructuredPlan writes the structured plan to JSON file
-func (hcpra *HumanControlledPlanReaderAgent) WriteStructuredPlan(ctx context.Context, workspacePath string, plan *PlanningResponse) error {
-	// Convert plan to JSON
-	_, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal plan to JSON: %w", err)
-	}
-
-	// This would typically use MCP tools to write the file
-	// For now, we'll assume the conversion happens in the agent execution
-	// Note: Logger access would need to be implemented based on BaseOrchestratorAgent structure
-	return nil
 }

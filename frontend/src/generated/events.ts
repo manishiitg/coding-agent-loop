@@ -1148,6 +1148,9 @@ export interface BlockingHumanFeedbackEvent {
   context?: string;
   workflow_id?: string;
   request_id?: string;
+  yes_no_only?: boolean;
+  yes_label?: string;
+  no_label?: string;
 }
 export interface TodoStepsExtractedEvent {
   timestamp?: string;

@@ -745,3 +745,280 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	bo.GetLogger().Infof("🔄 User provided feedback: %s", response)
 	return false, response, nil
 }
+
+// RequestYesNoFeedback requests simple yes/no feedback from user with Approve/Reject buttons
+// Returns: (approved bool, error)
+func (bo *BaseOrchestrator) RequestYesNoFeedback(
+	ctx context.Context,
+	requestID string,
+	question string,
+	yesLabel string,
+	noLabel string,
+	context string,
+	sessionID string,
+	workflowID string,
+) (bool, error) {
+	bo.GetLogger().Infof("🤔 Requesting yes/no feedback: %s", question)
+
+	// Set default labels if not provided
+	if yesLabel == "" {
+		yesLabel = "Approve"
+	}
+	if noLabel == "" {
+		noLabel = "Reject"
+	}
+
+	// Emit human feedback request event with yes/no only mode
+	feedbackEvent := &events.BlockingHumanFeedbackEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Question:      question,
+		AllowFeedback: false, // No textarea in yes/no mode
+		YesNoOnly:     true,  // Enable yes/no only mode
+		YesLabel:      yesLabel,
+		NoLabel:       noLabel,
+		Context:       context,
+		SessionID:     sessionID,
+		WorkflowID:    workflowID,
+		RequestID:     requestID,
+	}
+
+	// Emit the event
+	agentEvent := &events.AgentEvent{
+		Type:      events.BlockingHumanFeedback,
+		Timestamp: time.Now(),
+		Data:      feedbackEvent,
+	}
+
+	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to emit yes/no feedback event: %v", err)
+	}
+
+	// Wait for response
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+	if err := feedbackStore.CreateRequest(requestID, question); err != nil {
+		return false, fmt.Errorf("failed to create feedback request: %w", err)
+	}
+
+	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for yes/no response...")
+
+	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
+	if err != nil {
+		return false, fmt.Errorf("timeout waiting for feedback: %w", err)
+	}
+
+	bo.GetLogger().Infof("▶️ Orchestrator resumed with response: %s", response)
+
+	// Parse response: "Approve" means Yes, anything else means No
+	if strings.TrimSpace(response) == "Approve" {
+		bo.GetLogger().Infof("✅ User selected Yes (Approve)")
+		return true, nil
+	}
+
+	bo.GetLogger().Infof("❌ User selected No (Reject)")
+	return false, nil
+}
+
+// WriteWorkspaceFile writes content to a file in the workspace using MCP tools
+// Emits tool call events for proper observability
+func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath string, content string) error {
+	bo.GetLogger().Infof("📝 Writing workspace file: %s (%d characters)", filePath, len(content))
+
+	// Prepare tool call parameters
+	writeArgs := map[string]interface{}{
+		"filepath": filePath,
+		"content":  content,
+	}
+
+	// Convert args to JSON string for event
+	argsJSON, _ := json.Marshal(writeArgs)
+
+	// Emit tool call start event
+	toolCallStartEvent := &events.ToolCallStartEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:     0, // Orchestrator-level call
+		ToolName: "update_workspace_file",
+		ToolParams: events.ToolParams{
+			Arguments: string(argsJSON),
+		},
+		ServerName: "workspace", // Internal workspace tool
+	}
+
+	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
+
+	// Get the tool executor
+	writeExecutorInterface, exists := bo.WorkspaceToolExecutors["update_workspace_file"]
+	if !exists {
+		// Emit tool call error event
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "update_workspace_file",
+			Error:      "update_workspace_file tool executor not found",
+			ServerName: "workspace",
+			Duration:   0,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return fmt.Errorf("update_workspace_file tool executor not found")
+	}
+
+	writeExecutor, ok := writeExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		// Emit tool call error event
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "update_workspace_file",
+			Error:      "update_workspace_file tool executor has wrong type",
+			ServerName: "workspace",
+			Duration:   0,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return fmt.Errorf("update_workspace_file tool executor has wrong type")
+	}
+
+	// Execute the tool call using existing workspace tool logic
+	startTime := time.Now()
+	_, err := writeExecutor(ctx, writeArgs)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		// Emit tool call error event for write failure
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "update_workspace_file",
+			Error:      fmt.Sprintf("Failed to write file: %v", err),
+			ServerName: "workspace",
+			Duration:   duration,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return fmt.Errorf("failed to write file %s: %w", filePath, err)
+	}
+
+	// Emit successful tool call end event
+	toolCallEndEvent := &events.ToolCallEndEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:       0,
+		ToolName:   "update_workspace_file",
+		Result:     fmt.Sprintf("Successfully wrote file (%d characters)", len(content)),
+		Duration:   duration,
+		ServerName: "workspace",
+	}
+	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
+
+	bo.GetLogger().Infof("✅ Successfully wrote file: %s (%d characters)", filePath, len(content))
+	return nil
+}
+
+// DeleteWorkspaceFile deletes a file from the workspace using MCP tools
+// Emits tool call events for proper observability
+func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath string) error {
+	bo.GetLogger().Infof("🗑️ Deleting workspace file: %s", filePath)
+
+	// Prepare tool call parameters
+	deleteArgs := map[string]interface{}{
+		"filepath": filePath,
+	}
+
+	// Convert args to JSON string for event
+	argsJSON, _ := json.Marshal(deleteArgs)
+
+	// Emit tool call start event
+	toolCallStartEvent := &events.ToolCallStartEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:     0, // Orchestrator-level call
+		ToolName: "delete_workspace_file",
+		ToolParams: events.ToolParams{
+			Arguments: string(argsJSON),
+		},
+		ServerName: "workspace", // Internal workspace tool
+	}
+
+	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
+
+	// Get the tool executor
+	deleteExecutorInterface, exists := bo.WorkspaceToolExecutors["delete_workspace_file"]
+	if !exists {
+		// Emit tool call error event
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "delete_workspace_file",
+			Error:      "delete_workspace_file tool executor not found",
+			ServerName: "workspace",
+			Duration:   0,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return fmt.Errorf("delete_workspace_file tool executor not found")
+	}
+
+	deleteExecutor, ok := deleteExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		// Emit tool call error event
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "delete_workspace_file",
+			Error:      "delete_workspace_file tool executor has wrong type",
+			ServerName: "workspace",
+			Duration:   0,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return fmt.Errorf("delete_workspace_file tool executor has wrong type")
+	}
+
+	// Execute the tool call using existing workspace tool logic
+	startTime := time.Now()
+	_, err := deleteExecutor(ctx, deleteArgs)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		// Emit tool call error event for delete failure
+		toolCallErrorEvent := &events.ToolCallErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Turn:       0,
+			ToolName:   "delete_workspace_file",
+			Error:      fmt.Sprintf("Failed to delete file: %v", err),
+			ServerName: "workspace",
+			Duration:   duration,
+		}
+		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
+		return fmt.Errorf("failed to delete file %s: %w", filePath, err)
+	}
+
+	// Emit successful tool call end event
+	toolCallEndEvent := &events.ToolCallEndEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:       0,
+		ToolName:   "delete_workspace_file",
+		Result:     fmt.Sprintf("Successfully deleted file: %s", filePath),
+		Duration:   duration,
+		ServerName: "workspace",
+	}
+	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
+
+	bo.GetLogger().Infof("✅ Successfully deleted file: %s", filePath)
+	return nil
+}

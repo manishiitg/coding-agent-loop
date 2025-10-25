@@ -83,46 +83,51 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 		TotalIterations: totalIterationsForTemplate,
 	}
 
-	// Define the template - simplified for direct todo list creation
-	templateStr := `## 🎯 PRIMARY TASK - CREATE FINAL TODO LIST
+	// Define the template - structured format matching planner agent for LLM execution
+	templateStr := `## 🎯 PRIMARY TASK - CREATE STRUCTURED TODO LIST
 
 **OBJECTIVE**: {{.Objective}}
 **WORKSPACE**: {{.WorkspacePath}}
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Writer Agent
-- **Responsibility**: Create final todo list based on execution results
-- **Mode**: Direct synthesis (create actionable todo list from execution experience)
+- **Responsibility**: Create structured, execution-ready todo list based on execution results and learnings
+- **Mode**: Structured synthesis (create step-by-step plan format that another LLM can efficiently execute)
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- planning/plan.md (plan)
+- planning/plan.md (original plan)
 - validation/step_*_validation_report.md (all step validation reports with execution summaries)
 - learnings/success_patterns.md (success learning insights)
 - learnings/failure_analysis.md (failure patterns to avoid)
 - learnings/step_*_learning.md (per-step learning details)
 
 **WRITE:**
-- {{.WorkspacePath}}/todo_final.md (final todo list - outside todo_creation_human/)
+- {{.WorkspacePath}}/todo_final.md (final structured todo list - outside todo_creation_human/)
 
 **RESTRICTIONS:**
 - Read from planning/, validation/, learnings/ folders
 - Validation reports contain execution summaries from execution agent
-- Write todo_final.md to workspace root
-- Keep todo_final.md concise and actionable
+- Write todo_final.md to workspace root in STRUCTURED format
+- Format MUST be parseable and executable by another LLM
 
 ## 📋 SYNTHESIS GUIDELINES
-- **Read Workspace Files**: Review plan.md, validation reports (which include execution summaries), and learnings/ folder
-- **Review Learnings**: Read learnings/success_patterns.md for what worked and learnings/failure_analysis.md for what to avoid
-- **Get Execution Details**: Validation reports contain execution conversation and tool usage details
-- **Prioritize by Success**: High priority for steps with strong success patterns, medium for refinements, low for optional improvements
-- **Be Specific**: Include exact MCP server, tool, and arguments from success patterns
-- **Handle Missing Data**: If learnings files missing, use validation reports only
+- **Read All Execution Data**: Review plan.md, validation reports (which include execution summaries), and all learning files
+- **Extract Success Patterns**: From learnings/success_patterns.md - capture what worked, which tools, which approaches
+- **Extract Failure Patterns**: From learnings/failure_analysis.md - capture what failed, which tools to avoid, anti-patterns
+- **Use Structured Format**: Each step must have: title, description, success_criteria, why_this_step, context_dependencies, context_output, success_patterns, failure_patterns
+- **Be Specific**: Include exact MCP server, tool names, and successful approaches
+- **Make It Executable**: Another LLM should be able to read this and execute without ambiguity
 
-**Prioritization Logic**:
-- **HIGH**: Steps validated as successful with strong evidence
-- **MEDIUM**: Steps needing minor adjustments based on validation feedback
-- **LOW**: Optional improvements or nice-to-have enhancements
+**Critical Structure Requirements**:
+- **title**: Clear, concise step name
+- **description**: Detailed what and how, including specific tools and approaches that worked
+- **success_criteria**: Measurable completion criteria
+- **why_this_step**: Explain purpose and value
+- **context_dependencies**: What needs to be done before this step
+- **context_output**: What this step produces for subsequent steps
+- **success_patterns**: List of approaches/tools that WORKED (from learning reports)
+- **failure_patterns**: List of approaches/tools that FAILED (from learning reports)
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -132,62 +137,143 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 ---
 
-## 📋 Final Todo List: {{.Objective}}
+# 📋 Structured Todo List: {{.Objective}}
+
 **Date**: [Current date/time]
+**Status**: Ready for Execution
+**Based On**: Validated execution results and learning analysis
 
-### Objective Summary
-**What we need to achieve**: {{.Objective}}
-**Execution Approach**: [Brief description based on execution results]
+## 🎯 Objective
+{{.Objective}}
 
-### Execution Learnings
-**What Worked**: [Successful approaches from execution and learning reports]
-**What Didn't Work**: [Failed approaches to avoid based on learning reports]
-**Key Insights**: [Important discoveries from learning analysis for todo list creation]
-**Learning-Based Improvements**: [Specific improvements based on learning reports]
-
-### Todo Items
-
-#### 1. [First todo item]
-- **Description**: [What needs to be done - detailed and clear]
-- **MCP Server**: [Server to use]
-- **MCP Tool**: [Tool name]
-- **Tool Arguments**: [Specific arguments that worked]
-- **Success Criteria**: [How to verify completion]
-- **Priority**: [HIGH/MEDIUM/LOW]
-- **Dependencies**: [Any prerequisites]
-
-#### 2. [Second todo item]
-- **Description**: [What needs to be done]
-- **MCP Server**: [Server to use]
-- **MCP Tool**: [Tool name]
-- **Tool Arguments**: [Specific arguments]
-- **Success Criteria**: [How to verify completion]
-- **Priority**: [HIGH/MEDIUM/LOW]
-- **Dependencies**: [Any prerequisites]
-
-#### 3. [Third todo item]
-- **Description**: [What needs to be done]
-- **MCP Server**: [Server to use]
-- **MCP Tool**: [Tool name]
-- **Tool Arguments**: [Specific arguments]
-- **Success Criteria**: [How to verify completion]
-- **Priority**: [HIGH/MEDIUM/LOW]
-- **Dependencies**: [Any prerequisites]
-
-### Execution Notes
-- **Proven Methods**: [MCP tools/approaches that worked well based on learning reports]
-- **Avoid These**: [Approaches that failed or didn't work based on learning analysis]
-- **Critical Steps**: [Steps that are essential for success based on learnings]
-- **Learning-Based Recommendations**: [Specific recommendations from learning reports]
-
-### Next Steps
-- [What should be done first]
-- [Any follow-up actions needed]
-- [Human review recommendations]
+## 📊 Execution Summary
+**Total Steps Completed**: [X steps]
+**Success Rate**: [X% based on validation]
+**Key Learnings Applied**: [Brief summary of main insights]
 
 ---
 
-**Note**: Focus on creating actionable todo items based on execution results AND learning reports. Each item should be concrete and executable with clear success criteria, incorporating insights from the learning analysis.`
+## 📝 Step-by-Step Execution Plan
+
+### Step 1: [Step Title]
+
+**Description:**
+[Detailed description of what needs to be done. Include specific tools, MCP servers, and approaches that worked during execution. Be explicit about the exact commands, arguments, or methods to use.]
+
+**Success Criteria:**
+- [Specific, measurable criterion 1]
+- [Specific, measurable criterion 2]
+- [Specific, measurable criterion 3]
+
+**Why This Step:**
+[Explain the purpose and value of this step. Why is it necessary? What problem does it solve?]
+
+**Context Dependencies:**
+- [What must be completed before this step]
+- [Any files, data, or setup required]
+
+**Context Output:**
+[What this step produces that subsequent steps will need]
+
+**Success Patterns (What Worked):**
+- [Specific tool/approach that succeeded: e.g., "Used fileserver.read_file with path argument to read configuration"]
+- [Specific MCP server/tool combination that worked]
+- [Any successful techniques or methods from execution]
+- [Include exact tool names and arguments that proved successful]
+
+**Failure Patterns (What to Avoid):**
+- [Specific tool/approach that failed: e.g., "Avoid using grep without proper escaping"]
+- [Specific MCP server/tool combination that didn't work]
+- [Any unsuccessful techniques or anti-patterns]
+- [Include exact scenarios or approaches to avoid]
+
+---
+
+### Step 2: [Step Title]
+
+**Description:**
+[Detailed description with specific tools and methods]
+
+**Success Criteria:**
+- [Criterion 1]
+- [Criterion 2]
+
+**Why This Step:**
+[Purpose and value]
+
+**Context Dependencies:**
+- [Prerequisites]
+
+**Context Output:**
+[What this produces]
+
+**Success Patterns (What Worked):**
+- [Specific successful approach 1]
+- [Specific successful approach 2]
+
+**Failure Patterns (What to Avoid):**
+- [Specific failed approach 1]
+- [Specific failed approach 2]
+
+---
+
+### Step 3: [Step Title]
+
+**Description:**
+[Detailed description with specific tools and methods]
+
+**Success Criteria:**
+- [Criterion 1]
+- [Criterion 2]
+
+**Why This Step:**
+[Purpose and value]
+
+**Context Dependencies:**
+- [Prerequisites]
+
+**Context Output:**
+[What this produces]
+
+**Success Patterns (What Worked):**
+- [Specific successful approach 1]
+- [Specific successful approach 2]
+
+**Failure Patterns (What to Avoid):**
+- [Specific failed approach 1]
+- [Specific failed approach 2]
+
+---
+
+[Continue with all remaining steps in the same format]
+
+---
+
+## 🎯 Execution Guidelines for Next LLM
+
+### How to Use This Todo List
+1. **Read Each Step Sequentially**: Execute steps in order due to dependencies
+2. **Check Context Dependencies**: Ensure prerequisites are met before starting each step
+3. **Use Success Patterns**: Follow the approaches that worked during validation
+4. **Avoid Failure Patterns**: Do not repeat approaches that failed
+5. **Verify Success Criteria**: After each step, validate against the success criteria
+6. **Capture Context Output**: Ensure each step produces the expected output for subsequent steps
+
+### Key Success Factors
+- **Follow Success Patterns Exactly**: The tools and approaches listed have been validated
+- **Respect Dependencies**: Context dependencies are critical for successful execution
+- **Validate Thoroughly**: Check success criteria after each step
+- **Learn from Failures**: Avoid all listed failure patterns
+
+### Recommended Execution Approach
+- Execute steps sequentially (Step 1 → Step 2 → Step 3 → ...)
+- Validate after each step before proceeding
+- If a step fails, review success patterns and try the proven approach
+- If uncertain, refer to the "Why This Step" section for context
+
+---
+
+**Note**: This todo list is structured for efficient LLM execution. Each step contains validated approaches (success patterns) and anti-patterns to avoid (failure patterns). Follow the success patterns exactly as they have been tested and validated during execution.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_writer").Parse(templateStr)

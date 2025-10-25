@@ -35,3 +35,5 @@ like pass this from frontend to a variable and when we are sending a user messag
 52. add support for docker in install of mcp
 
 53. the diff tool in workspace, has some issues. test with json format
+
+54. in presets we should be able to select mcp server tools also to expose

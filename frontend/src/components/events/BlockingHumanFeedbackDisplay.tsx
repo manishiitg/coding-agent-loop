@@ -7,6 +7,9 @@ interface BlockingHumanFeedbackEvent {
   session_id?: string
   workflow_id?: string
   request_id?: string
+  yes_no_only?: boolean
+  yes_label?: string
+  no_label?: string
 }
 
 interface BlockingHumanFeedbackDisplayProps {
@@ -34,6 +37,9 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   // Use backend-provided content directly
   const question = event.data.question || 'Do you want to continue?'
   const context = event.data.context || ''
+  const yesNoOnly = event.data.yes_no_only || false
+  const yesLabel = event.data.yes_label || 'Approve'
+  const noLabel = event.data.no_label || 'Reject'
 
   const handleSubmitFeedback = async () => {
     if (event.data.request_id && feedback.trim() && onSubmitFeedback) {
@@ -68,6 +74,27 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         setHasSubmitted(true)
       } catch (error) {
         console.error('Failed to approve:', error)
+      } finally {
+        setIsSubmittingFeedback(false)
+      }
+    }
+  }
+
+  const handleReject = async () => {
+    if (event.data.request_id) {
+      setIsSubmittingFeedback(true)
+      try {
+        if (onSubmitFeedback) {
+          await onSubmitFeedback(event.data.request_id, "Reject")
+        }
+        onApprove(event.data.request_id, { 
+          ...event.data, 
+          feedback: "Reject"
+        })
+        setSubmittedFeedback("Reject")
+        setHasSubmitted(true)
+      } catch (error) {
+        console.error('Failed to reject:', error)
       } finally {
         setIsSubmittingFeedback(false)
       }
@@ -153,45 +180,70 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
             </div>
           )}
           
-          {/* Feedback Input */}
-          <div className="mb-4">
-            <label htmlFor="feedback-input" className="block text-xs font-medium text-yellow-900 dark:text-yellow-100 mb-1">
-              Your feedback:
-            </label>
-            <textarea
-              id="feedback-input"
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              placeholder="Type your feedback here... (e.g., 'Approve', 'Looks good', 'Please fix the validation issue', etc.)"
-              className="w-full px-3 py-2 text-xs border border-yellow-200 dark:border-yellow-700 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500 resize-none"
-              rows={4}
-              disabled={isApproving || isSubmittingFeedback}
-            />
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Type "Approve" or positive feedback to continue, or describe any issues to stop execution.
-            </p>
-          </div>
+          {/* Feedback Input - hide when yesNoOnly is true */}
+          {!yesNoOnly && (
+            <div className="mb-4">
+              <label htmlFor="feedback-input" className="block text-xs font-medium text-yellow-900 dark:text-yellow-100 mb-1">
+                Your feedback:
+              </label>
+              <textarea
+                id="feedback-input"
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder="Type your feedback here... (e.g., 'Approve', 'Looks good', 'Please fix the validation issue', etc.)"
+                className="w-full px-3 py-2 text-xs border border-yellow-200 dark:border-yellow-700 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500 resize-none"
+                rows={4}
+                disabled={isApproving || isSubmittingFeedback}
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Type "Approve" or positive feedback to continue, or describe any issues to stop execution.
+              </p>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="flex justify-end gap-2">
-            {/* Only show approve button if no feedback is typed */}
-            {!feedback.trim() && (
-              <button
-                onClick={handleApprove}
-                disabled={isApproving || isSubmittingFeedback}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
-              >
-                {isApproving ? '⏳ Processing...' : '✅ Approve & Continue'}
-              </button>
-            )}
-            {feedback.trim() && (
-              <button
-                onClick={handleSubmitFeedback}
-                disabled={isSubmittingFeedback || isApproving || !feedback.trim()}
-                className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400 text-white text-xs font-medium rounded transition-colors"
-              >
-                {isSubmittingFeedback ? '⏳ Submitting...' : '📝 Submit Feedback'}
-              </button>
+            {yesNoOnly ? (
+              // Yes/No only mode - show two buttons
+              <>
+                <button
+                  onClick={handleReject}
+                  disabled={isApproving || isSubmittingFeedback}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-medium rounded transition-colors"
+                >
+                  {isSubmittingFeedback ? '⏳ Processing...' : `❌ ${noLabel}`}
+                </button>
+                <button
+                  onClick={handleApprove}
+                  disabled={isApproving || isSubmittingFeedback}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
+                >
+                  {isApproving ? '⏳ Processing...' : `✅ ${yesLabel}`}
+                </button>
+              </>
+            ) : (
+              // Normal mode - show textarea with approve/submit buttons
+              <>
+                {/* Only show approve button if no feedback is typed */}
+                {!feedback.trim() && (
+                  <button
+                    onClick={handleApprove}
+                    disabled={isApproving || isSubmittingFeedback}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
+                  >
+                    {isApproving ? '⏳ Processing...' : '✅ Approve & Continue'}
+                  </button>
+                )}
+                {feedback.trim() && (
+                  <button
+                    onClick={handleSubmitFeedback}
+                    disabled={isSubmittingFeedback || isApproving || !feedback.trim()}
+                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400 text-white text-xs font-medium rounded transition-colors"
+                  >
+                    {isSubmittingFeedback ? '⏳ Submitting...' : '📝 Submit Feedback'}
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

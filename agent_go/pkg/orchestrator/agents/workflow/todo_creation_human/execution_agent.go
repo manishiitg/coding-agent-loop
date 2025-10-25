@@ -26,10 +26,8 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	StepContextOutput       string
 	WorkspacePath           string
 	ValidationFeedback      string
-	LearningAgentOutput     string
+	LearningAgentOutput     string // Combined success/failure patterns and learning insights
 	PreviousHumanFeedback   string
-	StepSuccessPatterns     string // NEW - success patterns from previous executions
-	StepFailurePatterns     string // NEW - failure patterns from previous executions
 }
 
 // HumanControlledTodoPlannerExecutionAgent executes the objective using MCP servers in human-controlled mode
@@ -70,6 +68,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"StepContextOutput":       templateVars["StepContextOutput"],
 		"WorkspacePath":           workspacePath,
 		"ValidationFeedback":      templateVars["ValidationFeedback"],
+		"LearningAgentOutput":     templateVars["LearningAgentOutput"],
+		"PreviousHumanFeedback":   templateVars["PreviousHumanFeedback"],
 	}
 
 	// Create template data for validation
@@ -84,6 +84,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		StepContextOutput:       executionTemplateVars["StepContextOutput"],
 		WorkspacePath:           executionTemplateVars["WorkspacePath"],
 		ValidationFeedback:      executionTemplateVars["ValidationFeedback"],
+		LearningAgentOutput:     executionTemplateVars["LearningAgentOutput"],
+		PreviousHumanFeedback:   executionTemplateVars["PreviousHumanFeedback"],
 	}
 
 	// Execute using template validation
@@ -106,8 +108,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		ValidationFeedback:      templateVars["ValidationFeedback"],
 		LearningAgentOutput:     templateVars["LearningAgentOutput"],
 		PreviousHumanFeedback:   templateVars["PreviousHumanFeedback"],
-		StepSuccessPatterns:     templateVars["StepSuccessPatterns"],
-		StepFailurePatterns:     templateVars["StepFailurePatterns"],
 	}
 
 	// 	## 📁 FILE PERMISSIONS
@@ -154,25 +154,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 
 **Learning Agent Analysis**: {{.LearningAgentOutput}}
 
-**Important**: The learning agent has analyzed the previous execution and provided this refined guidance. Use this analysis to improve your execution approach.
-{{end}}
-
-{{if .StepSuccessPatterns}}
-## ✅ SUCCESS PATTERNS FROM PREVIOUS EXECUTIONS
-
-**What Worked Well Before:**
-{{.StepSuccessPatterns}}
-
-**Important**: These patterns show what worked in previous executions. Consider using these approaches and tools for this step.
-{{end}}
-
-{{if .StepFailurePatterns}}
-## ❌ FAILURE PATTERNS FROM PREVIOUS EXECUTIONS
-
-**What Failed Before:**
-{{.StepFailurePatterns}}
-
-**Important**: These patterns show what failed in previous executions. Avoid these approaches and tools for this step.
+**Important**: The learning agent has analyzed previous executions and provided this guidance. Use this analysis to improve your execution approach, including success patterns to follow and failure patterns to avoid.
 {{end}}
 
 {{if .PreviousHumanFeedback}}
@@ -206,12 +188,11 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 ## 🔍 EXECUTION GUIDELINES
 
 1. **Read Context**: Check context dependencies for files from previous steps
-2. **Use Success Patterns**: If success patterns are provided, consider using those approaches and tools
-3. **Avoid Failure Patterns**: If failure patterns are provided, avoid those approaches and tools
-4. **Use MCP Tools**: Select appropriate tools to accomplish the step objective
-5. **Verify Completion**: Check if success criteria is met
-6. **Create Output**: Generate context output file for next steps (if specified)
-7. **Document Results**: Provide clear summary of what was accomplished
+2. **Use Learning Insights**: If learning agent output is provided, follow success patterns and avoid failure patterns
+3. **Use MCP Tools**: Select appropriate tools to accomplish the step objective
+4. **Verify Completion**: Check if success criteria is met
+5. **Create Output**: Generate context output file for next steps (if specified)
+6. **Document Results**: Provide clear summary of what was accomplished
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 

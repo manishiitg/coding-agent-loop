@@ -125,6 +125,7 @@ func NewBaseAgent(
 	llm llms.Model,
 	instructions string,
 	serverNames []string,
+	selectedTools []string, // NEW parameter
 	mode AgentMode,
 	tracer observability.Tracer,
 	traceID observability.TraceID,
@@ -159,6 +160,11 @@ func NewBaseAgent(
 		mcpagent.WithMaxTurns(maxTurns),
 		mcpagent.WithProvider(internalLLM.Provider(provider)),
 		mcpagent.WithCacheOnly(cacheOnly),
+	}
+
+	// Add selected tools if provided
+	if len(selectedTools) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(selectedTools))
 	}
 
 	// Enable smart routing for all agents

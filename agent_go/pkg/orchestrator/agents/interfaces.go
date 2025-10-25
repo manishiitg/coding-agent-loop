@@ -59,6 +59,7 @@ type OrchestratorAgentConfig struct {
 
 	// Required MCP configuration
 	ServerNames   []string `json:"server_names" validate:"required"`
+	SelectedTools []string `json:"selected_tools,omitempty"` // Array of "server:tool" strings
 	MCPConfigPath string   `json:"mcp_config_path" validate:"required"`
 	ToolChoice    string   `json:"tool_choice" validate:"required"`
 	MaxTurns      int      `json:"max_turns" validate:"required"`

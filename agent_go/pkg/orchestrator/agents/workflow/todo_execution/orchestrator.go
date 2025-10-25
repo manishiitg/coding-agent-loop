@@ -29,6 +29,7 @@ func NewTodoExecutionOrchestrator(
 	temperature float64,
 	agentMode string,
 	selectedServers []string,
+	selectedTools []string, // NEW parameter
 	mcpConfigPath string,
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -50,7 +51,8 @@ func NewTodoExecutionOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		llmConfig, // llmConfig passed from caller
+		selectedTools, // Pass through actual selected tools
+		llmConfig,     // llmConfig passed from caller
 		maxTurns,
 		customTools,
 		customToolExecutors,

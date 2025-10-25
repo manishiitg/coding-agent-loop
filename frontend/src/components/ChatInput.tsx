@@ -82,6 +82,10 @@ export const ChatInput = React.memo<ChatInputProps>(({
 
   // Computed values
   const primaryLLM = getCurrentLLMOption()
+  
+  // Check if a preset is active for the current mode
+  const chatActivePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+  
   const isRequiredFolderSelected = useMemo(() => {
     if (agentMode !== 'orchestrator' && agentMode !== 'workflow') return true; // No validation needed for other modes
     
@@ -712,8 +716,8 @@ export const ChatInput = React.memo<ChatInputProps>(({
                   </div>
                 )}
                 
-                {/* Server and LLM Selection for Simple/ReAct modes */}
-                {(agentMode === 'simple' || agentMode === 'ReAct') && (
+                {/* Server and LLM Selection for Simple/ReAct modes - only show when no preset is active */}
+                {(agentMode === 'simple' || agentMode === 'ReAct') && !chatActivePreset && (
                   <div className="flex items-center gap-2">
                     <ServerSelectionDropdown
                       availableServers={availableServers}

@@ -70,6 +70,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		llmInstance,
 		boa.systemPrompt,
 		boa.config.ServerNames,
+		boa.config.SelectedTools, // NEW: Pass selected tools
 		boa.config.Mode,
 		boa.tracer,
 		traceID,

@@ -148,6 +148,7 @@ func NewPlannerOrchestrator(
 	tracer observability.Tracer,
 	selectedServers []string,
 	selectedOptions *PlannerSelectedOptions,
+	selectedTools []string, // NEW parameter
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
@@ -165,6 +166,7 @@ func NewPlannerOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
+		selectedTools, // NEW: Pass through
 		llmConfig,
 		maxTurns,
 		customTools,

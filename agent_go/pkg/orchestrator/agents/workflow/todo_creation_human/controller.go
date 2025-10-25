@@ -73,6 +73,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	temperature float64,
 	agentMode string,
 	selectedServers []string,
+	selectedTools []string, // NEW parameter
 	mcpConfigPath string,
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -94,6 +95,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
+		selectedTools, // Pass through actual selected tools
 		llmConfig,
 		maxTurns,
 		customTools,

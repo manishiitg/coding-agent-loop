@@ -47,6 +47,7 @@ type LLMAgentConfig struct {
 	ToolTimeout        time.Duration      // Tool execution timeout (default: 5 minutes)
 	AgentMode          mcpagent.AgentMode // Agent mode (Simple or ReAct)
 	CacheOnly          bool               // If true, only use cached servers (skip servers without cache)
+	SelectedTools      []string           // Selected tools in "server:tool" format
 
 	// Smart routing configuration
 	EnableSmartRouting     bool // Enable smart routing for tool filtering
@@ -181,6 +182,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		agentOptions = append(agentOptions, mcpagent.WithCrossProviderFallback(crossProviderFallback))
 		logger.Infof("🔄 Cross-provider fallback configured - Provider: %s, Models: %v",
 			crossProviderFallback.Provider, crossProviderFallback.Models)
+	}
+
+	// Add selected tools if provided
+	if len(config.SelectedTools) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(config.SelectedTools))
+		logger.Infof("🔧 Selected tools configured: %d tools", len(config.SelectedTools))
 	}
 
 	// Add smart routing options if enabled

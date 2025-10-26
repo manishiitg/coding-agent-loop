@@ -3,6 +3,7 @@ package todo_optimization
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"mcp-agent/agent_go/internal/observability"
@@ -88,7 +89,7 @@ func (too *TodoOptimizationOrchestrator) ExecuteRefinement(ctx context.Context, 
 
 		// Step 2: Critique the refined output
 		refinementPrompt := fmt.Sprintf("Critique the refined todo list output for iteration %d. Focus on factual accuracy, completeness, and alignment with the objective.", iteration)
-		critiqueResult, err := too.runCritiquePhase(ctx, objective, refinementResult, refinementPrompt, iteration)
+		critiqueResult, err := too.runCritiquePhase(ctx, objective, refinementResult, refinementPrompt, iteration, previousCritiqueResult)
 
 		if err != nil {
 			return "", fmt.Errorf("critique iteration %d failed: %w", iteration, err)
@@ -145,7 +146,7 @@ func (too *TodoOptimizationOrchestrator) runRefinementPhase(ctx context.Context,
 }
 
 // runCritiquePhase runs a single critique iteration using the proper agent pattern
-func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, objective, inputData, inputPrompt string, iteration int) (string, error) {
+func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, objective, inputData, inputPrompt string, iteration int, previousCritiqueResult string) (string, error) {
 	// Create DataCritiqueAgent for critique
 	critiqueAgent, err := too.createCritiqueAgent(ctx, "critique", 1, iteration)
 	if err != nil {
@@ -153,12 +154,18 @@ func (too *TodoOptimizationOrchestrator) runCritiquePhase(ctx context.Context, o
 	}
 
 	// Prepare template variables
+	refinementHistory := "No refinement history available for first iteration"
+	if iteration > 1 && previousCritiqueResult != "" {
+		refinementHistory = strings.TrimSpace(previousCritiqueResult)
+	}
+
 	templateVars := map[string]string{
 		"Objective":         objective,
 		"InputData":         inputData,
 		"InputPrompt":       inputPrompt,
-		"RefinementHistory": "No refinement history available for first iteration",
+		"RefinementHistory": refinementHistory,
 		"Iteration":         fmt.Sprintf("%d", iteration),
+		"WorkspacePath":     too.GetWorkspacePath(),
 	}
 
 	// Execute critique using the DataCritiqueAgent

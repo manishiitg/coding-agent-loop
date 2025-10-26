@@ -69,7 +69,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"WorkspacePath":           workspacePath,
 		"ValidationFeedback":      templateVars["ValidationFeedback"],
 		"LearningAgentOutput":     templateVars["LearningAgentOutput"],
-		"PreviousHumanFeedback":   templateVars["PreviousHumanFeedback"],
 	}
 
 	// Create template data for validation
@@ -85,7 +84,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		WorkspacePath:           executionTemplateVars["WorkspacePath"],
 		ValidationFeedback:      executionTemplateVars["ValidationFeedback"],
 		LearningAgentOutput:     executionTemplateVars["LearningAgentOutput"],
-		PreviousHumanFeedback:   executionTemplateVars["PreviousHumanFeedback"],
 	}
 
 	// Execute using template validation
@@ -126,28 +124,36 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 - **Responsibility**: Execute a single step from the plan using MCP tools
 - **Mode**: Single step execution (step {{.StepNumber}} of {{.TotalSteps}})
 
-**FILE PERMISSIONS:**
-- **READ ONLY**: planning/plan.md, context files from previous steps
+## 📁 FILE PERMISSIONS (Execution Agent)
+
+**READ:**
+- planning/plan.md (current plan for reference)
+- Context files from previous steps (as specified in Context Dependencies)
+- Any workspace files needed for task execution
+
+**WRITE:**
+- Context output files (ONLY if specified in "Context Output" field)
+- No validation reports or documentation files
 
 **RESTRICTIONS:**
 - Focus on executing the task using MCP tools
 - Read workspace files for context as needed
 - Create context output file if specified in step
-- Return execution results in your response (no file writing)
+- Return execution results in your response
 - No documentation or report writing (validation agent handles that)
 
-{{if .ValidationFeedback}}
-## 🔄 RETRY WITH VALIDATION FEEDBACK
+## 📝 EVIDENCE COLLECTION (When to Gather Evidence)
 
-**Previous attempt failed. Address these issues:**
-{{.ValidationFeedback}}
+**Collect evidence for:**
+- Tool outputs that prove task completion
+- Quantitative results (numbers, counts, metrics)
+- Files created or modified
+- Validation checks performed
 
-**Focus on:** 
-- Fix specific issues mentioned above
-- Improve tool selection and usage
-- Ensure success criteria is met this time
-
-{{end}}
+**Example Evidence:**
+- "grep found 15 matches in 3 files"
+- "read_file returned 245 lines from config.json"
+- "Created context_output/step_1_results.md with 10 database URLs"
 
 {{if .LearningAgentOutput}}
 ## 🧠 LEARNING AGENT OUTPUT
@@ -157,14 +163,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Important**: The learning agent has analyzed previous executions and provided this guidance. Use this analysis to improve your execution approach, including success patterns to follow and failure patterns to avoid.
 {{end}}
 
-{{if .PreviousHumanFeedback}}
-## 👥 PREVIOUS HUMAN FEEDBACK
-
-**Human Guidance from Previous Steps:**
-{{.PreviousHumanFeedback}}
-
-**Important**: Use this feedback to improve your execution approach and avoid repeating previous mistakes. Consider the human's suggestions when selecting tools and executing this step.
-{{end}}
+**Note**: Validation feedback and human feedback are provided through conversation history. Review the conversation context for any previous validation results or human guidance.
 
 ## 🎯 CURRENT STEP EXECUTION
 
@@ -217,6 +216,29 @@ Provide a clear execution summary in your response:
 
 **Context Output**: 
 - [Path to context file created, if applicable]
+
+---
+
+**Example Output:**
+
+**Step 1/5 Execution Summary**
+
+**Status**: COMPLETED
+
+**Actions Taken**:
+- Used fileserver.read_file with path="config/database.json" to read database configuration
+- Result: Successfully read 245 lines, found 3 database connection strings
+- Used grep.search with pattern="mongodb://.*" to extract MongoDB URLs
+- Result: Found 3 MongoDB URLs on lines 45, 78, 123
+- Used fileserver.write_file with path="context_output/step_1_database_urls.md" to save results
+- Result: Created context output file with extracted database URLs and connection details
+
+**Success Criteria Check**: 
+- Criteria: Extract all database URLs from configuration files and save to context file
+- Met: Yes - Found 3 MongoDB URLs and saved to context_output/step_1_database_urls.md
+
+**Context Output**: 
+- context_output/step_1_database_urls.md
 
 ---
 

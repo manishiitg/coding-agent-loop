@@ -42,14 +42,6 @@ func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Conte
 	schema := `{
 		"type": "object",
 		"properties": {
-			"objective_analysis": {
-				"type": "string",
-				"description": "Analysis of what needs to be achieved"
-			},
-			"approach": {
-				"type": "string",
-				"description": "Brief description of overall approach"
-			},
 			"steps": {
 				"type": "array",
 				"items": {
@@ -99,13 +91,9 @@ func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Conte
 					},
 					"required": ["title", "description", "success_criteria", "why_this_step"]
 				}
-			},
-			"expected_outcome": {
-				"type": "string",
-				"description": "What the complete plan should achieve"
 			}
 		},
-		"required": ["objective_analysis", "approach", "steps", "expected_outcome"]
+		"required": ["steps"]
 	}`
 
 	// Use the base orchestrator agent's ExecuteStructured method
@@ -161,7 +149,7 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 **Your ONLY Job**:
 1. Read the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} from {{if eq .FileType "todo_final"}}todo_final.md{{else}}plan.md{{end}}
 2. Parse the markdown structure into structured JSON format
-3. Extract objective analysis, approach, steps, and expected outcome
+3. Extract steps
 4. Convert each step's details into the required JSON structure
 5. Return structured JSON response
 
@@ -173,18 +161,49 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 - Save JSON output to files
 
 **JSON Structure Requirements**:
-- objective_analysis: Extract from "## Objective Analysis" section{{if eq .FileType "todo_final"}} or "## 🎯 Objective" section{{end}}
-- approach: Extract from "## Approach" section{{if eq .FileType "todo_final"}} or "## 📊 Execution" section{{end}}
 - steps: Extract from "## Steps" section{{if eq .FileType "todo_final"}} or "## 📝 Step-by-Step Execution Plan" section{{end}}, each step with:
   - title: From "### Step X: [Title]"
   - description: From "- **Description**: [content]"
   - success_criteria: From "- **Success Criteria**: [content]"
   - why_this_step: From "- **Why This Step**: [content]"
-  - context_dependencies: From "- **Context Dependencies**: [content]" (convert to array)
+  - context_dependencies: From "- **Context Dependencies**: [content]" - See conversion rules below
   - context_output: From "- **Context Output**: [content]"
-  - success_patterns: From "- **Success Patterns**: [bullet list]" (convert to array, include if present)
-  - failure_patterns: From "- **Failure Patterns**: [bullet list]" (convert to array, include if present)
-- expected_outcome: Extract from "## Expected Outcome" section{{if eq .FileType "todo_final"}} or infer from objective{{end}}
+  - success_patterns: From "- **Success Patterns**: [bullet list]" - See parsing rules below
+  - failure_patterns: From "- **Failure Patterns**: [bullet list]" - See parsing rules below
+
+**Context Dependencies Conversion Rules**:
+- "none" → [] (empty array)
+- "step_1_results.md" → ["step_1_results.md"]
+- "step_1_results.md, step_2_data.json" → ["step_1_results.md", "step_2_data.json"]
+- If section is missing → [] (empty array)
+
+**Pattern Parsing Rules**:
+Markdown Input:
+` + "```" + `
+- **Success Patterns**:
+  - Used grep tool with --type flag
+  - read_file with line limits worked well
+` + "```" + `
+
+JSON Output:
+` + "```json" + `
+"success_patterns": [
+  "Used grep tool with --type flag",
+  "read_file with line limits worked well"
+]
+` + "```" + `
+
+Special Cases:
+- If section has "none" or is empty → omit field entirely (don't include empty array)
+- If section is missing → omit field entirely
+- If nested bullets exist → flatten to single-level array
+- Preserve original text without modification
+
+**Error Handling**:
+- Missing required sections (title, description, etc.) → Include step with available fields only
+- Malformed markdown structure → Skip problematic step and continue with others
+- Empty file or no steps found → Return ` + "`{\"steps\": []}`" + `
+- Invalid step format → Log warning and attempt best-effort parsing
 
 ## 📤 Output Format
 

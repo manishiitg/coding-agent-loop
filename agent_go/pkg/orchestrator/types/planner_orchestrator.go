@@ -918,7 +918,7 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context
 			po.GetMaxTurns(),     // maxTurns
 			agents.OutputFormatStructured,
 			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-				return agents.NewOrchestratorParallelExecutionAgent(context.Background(), config, logger, tracer, eventBridge)
+				return agents.NewOrchestratorParallelExecutionAgent(ctx, config, logger, tracer, eventBridge)
 			},
 			po.WorkspaceTools,
 			po.WorkspaceToolExecutors,
@@ -940,7 +940,7 @@ func (po *PlannerOrchestrator) createDedicatedExecutionAgent(ctx context.Context
 			po.GetMaxTurns(),       // maxTurns
 			agents.OutputFormatStructured,
 			func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-				return agents.NewOrchestratorExecutionAgent(context.Background(), config, logger, tracer, eventBridge)
+				return agents.NewOrchestratorExecutionAgent(ctx, config, logger, tracer, eventBridge)
 			},
 			po.WorkspaceTools,
 			po.WorkspaceToolExecutors,

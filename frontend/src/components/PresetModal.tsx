@@ -124,6 +124,15 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         alert('Folder selection is required for Deep Search and workflow presets');
         return;
       }
+      
+      // Debug: Log what we're sending
+      console.log('[PresetModal] Saving preset with:', {
+        selectedServers,
+        selectedTools,
+        label,
+        agentMode: effectiveAgentMode
+      });
+      
       // Use the local LLM config (either from editing preset or user selection)
       onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
       onClose();

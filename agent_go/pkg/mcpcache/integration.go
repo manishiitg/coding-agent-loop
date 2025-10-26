@@ -202,7 +202,7 @@ func GetCachedOrFreshConnection(
 	var servers []string
 	if serverName == "all" || serverName == "" {
 		servers = config.ListServers()
-	} else if serverName == "NO_SERVERS" {
+	} else if serverName == mcpclient.NoServers {
 		// Special case: no servers should be connected
 		servers = []string{}
 		logger.Info("🔍 No servers requested - pure LLM reasoning mode", map[string]interface{}{
@@ -239,7 +239,7 @@ func GetCachedOrFreshConnection(
 
 		// Return empty result for pure LLM reasoning
 		result.CacheUsed = true
-		result.CacheKey = "NO_SERVERS"
+		result.CacheKey = mcpclient.NoServers
 		result.FreshFallback = false
 		result.CacheOnlyMode = cacheOnly
 

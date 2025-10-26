@@ -1239,15 +1239,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				// NEW: End agent session for hierarchy tracking
 				a.EndAgentSession(ctx)
 
-				// Append the final response to messages array for consistency
-				if choice.Content != "" {
-					assistantMessage := llms.MessageContent{
-						Role:  llms.ChatMessageTypeAI,
-						Parts: []llms.ContentPart{llms.TextContent{Text: choice.Content}},
-					}
-					messages = append(messages, assistantMessage)
-				}
-
 				return choice.Content, messages, nil
 			}
 		}

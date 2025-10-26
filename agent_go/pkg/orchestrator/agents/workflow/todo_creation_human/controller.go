@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
+	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 
@@ -275,19 +277,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 		maxPlanRevisions := 20 // Allow up to 20 plan revisions
 		var err error
-
-		// Initialize conversation history for planning agent
-		planningConversationHistory := []llms.MessageContent{}
+		var humanFeedback string                                 // Track human feedback separately
+		var accumulatedConversationHistory []llms.MessageContent // Track conversation across iterations
 
 		// Retry loop for plan approval and revision
 		for revisionAttempt := 1; revisionAttempt <= maxPlanRevisions; revisionAttempt++ {
 			hcpo.GetLogger().Infof("🔄 Plan revision attempt %d/%d", revisionAttempt, maxPlanRevisions)
 
 			// Phase 1: Create markdown plan (with optional human feedback)
-			_, planningConversationHistory, err = hcpo.runPlanningPhase(ctx, revisionAttempt, planningConversationHistory)
+			_, updatedHistory, err := hcpo.runPlanningPhase(ctx, revisionAttempt, humanFeedback, accumulatedConversationHistory)
 			if err != nil {
 				return "", fmt.Errorf("planning phase failed: %w", err)
 			}
+
+			// Accumulate conversation history for next iteration
+			accumulatedConversationHistory = updatedHistory
 
 			// Phase 1.5: Request human approval for markdown plan
 			approved, feedback, err := hcpo.requestPlanApproval(ctx, revisionAttempt)
@@ -302,7 +306,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 			// Plan rejected with feedback for revision - add to planning history
 			hcpo.GetLogger().Infof("🔄 Plan revision requested (attempt %d/%d): %s", revisionAttempt, maxPlanRevisions, feedback)
-			hcpo.addUserFeedbackToHistory(feedback, &planningConversationHistory)
+			humanFeedback = feedback // Store feedback for next attempt
 
 			if revisionAttempt >= maxPlanRevisions {
 				return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
@@ -486,27 +490,40 @@ The todo list has been created and is ready for the execution phase. The indepen
 		independentStepsResult), nil
 }
 
-// runPlanningPhase creates markdown plan and returns conversation history
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, iteration int, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+// runPlanningPhase creates markdown plan
+// conversationHistory is updated in-place to accumulate across iterations
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	planningTemplateVars := map[string]string{
 		"Objective":     hcpo.GetObjective(),
 		"WorkspacePath": hcpo.GetWorkspacePath(),
 	}
 
+	// Add human feedback to conversation if provided
+	if humanFeedback != "" {
+		feedbackMessage := llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: humanFeedback}},
+		}
+		conversationHistory = append(conversationHistory, feedbackMessage)
+		hcpo.GetLogger().Infof("📝 Added human feedback to conversation history for iteration %d", iteration)
+	}
+
 	// Create fresh planning agent with proper context
 	planningAgent, err := hcpo.createPlanningAgent(ctx, "planning", 0, iteration)
 	if err != nil {
-		return "", conversationHistory, fmt.Errorf("failed to create planning agent: %w", err)
+		return "", nil, fmt.Errorf("failed to create planning agent: %w", err)
 	}
 
-	// Execute planning agent to create markdown plan
-	_, conversationHistory, err = planningAgent.Execute(ctx, planningTemplateVars, conversationHistory)
+	// Execute planning agent
+	// If this is the first iteration (empty conversationHistory), template vars will create initial task
+	// If conversationHistory is already populated, template vars will be added after existing conversation
+	_, updatedConversationHistory, err := planningAgent.Execute(ctx, planningTemplateVars, conversationHistory)
 	if err != nil {
-		return "", conversationHistory, fmt.Errorf("planning failed: %w", err)
+		return "", nil, fmt.Errorf("planning failed: %w", err)
 	}
 
-	hcpo.GetLogger().Infof("✅ Markdown plan created successfully")
-	return "markdown_plan_created", conversationHistory, nil
+	hcpo.GetLogger().Infof("✅ Markdown plan created successfully (conversation has %d messages)", len(updatedConversationHistory))
+	return "markdown_plan_created", updatedConversationHistory, nil
 }
 
 // runPlanReaderPhase reads markdown plan and converts to structured JSON
@@ -519,9 +536,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanReaderPhase(ctx conte
 		return nil, fmt.Errorf("failed to create plan reader agent: %w", err)
 	}
 
-	// Read markdown plan content (this would typically use MCP tools)
-	// For now, we'll assume the markdown content is available
-	planMarkdown := "Plan markdown content would be read here" // TODO: Implement actual file reading
+	// Read markdown plan content from workspace
+	planPath := filepath.Join(hcpo.GetWorkspacePath(), "plan.md")
+	hcpo.GetLogger().Infof("📖 Reading plan markdown from: %s", planPath)
+
+	planMarkdown, err := hcpo.ReadWorkspaceFile(ctx, planPath)
+	if err != nil {
+		// Check if this is a file not found error (expected case for new plans)
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
+			hcpo.GetLogger().Infof("📝 Plan file not found, using empty content (new plan): %s", planPath)
+			planMarkdown = ""
+		} else {
+			hcpo.GetLogger().Errorf("❌ Failed to read plan file %s: %v", planPath, err)
+			return nil, fmt.Errorf("failed to read plan file %s: %w", planPath, err)
+		}
+	} else {
+		hcpo.GetLogger().Infof("✅ Successfully read plan markdown (%d characters)", len(planMarkdown))
+	}
 
 	// Prepare template variables for plan reader agent
 	readerTemplateVars := map[string]string{
@@ -616,16 +647,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 		// Prepare template variables for this specific step with individual fields
 		templateVars := map[string]string{
-			"StepNumber":            fmt.Sprintf("%d", i+1),
-			"TotalSteps":            fmt.Sprintf("%d", len(breakdownSteps)),
-			"StepTitle":             step.Title,
-			"StepDescription":       step.Description,
-			"StepSuccessCriteria":   step.SuccessCriteria,
-			"StepWhyThisStep":       step.WhyThisStep,
-			"StepContextOutput":     step.ContextOutput,
-			"WorkspacePath":         hcpo.GetWorkspacePath(),
-			"LearningAgentOutput":   "", // Will be populated with learning agent's output
-			"PreviousHumanFeedback": "", // Will be populated with human feedback from previous steps
+			"StepNumber":          fmt.Sprintf("%d", i+1),
+			"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
+			"StepTitle":           step.Title,
+			"StepDescription":     step.Description,
+			"StepSuccessCriteria": step.SuccessCriteria,
+			"StepWhyThisStep":     step.WhyThisStep,
+			"StepContextOutput":   step.ContextOutput,
+			"WorkspacePath":       hcpo.GetWorkspacePath(),
+			"LearningAgentOutput": "", // Will be populated with learning agent's output
 		}
 
 		// Combine success and failure patterns from plan breakdown into LearningAgentOutput
@@ -656,11 +686,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			templateVars["StepContextDependencies"] = ""
 		}
 
-		// Add previous human feedback to template variables
+		// Add human feedback from previous steps to conversation history
+		// This allows agents to see feedback in context, not as template variables
 		if len(humanFeedbackHistory) > 0 {
-			templateVars["PreviousHumanFeedback"] = strings.Join(humanFeedbackHistory, "\n---\n")
-		} else {
-			templateVars["PreviousHumanFeedback"] = ""
+			previousFeedbackMessage := llms.MessageContent{
+				Role: llms.ChatMessageTypeHuman,
+				Parts: []llms.ContentPart{llms.TextContent{
+					Text: fmt.Sprintf("## Previous Steps' Feedback for Context:\n%s", strings.Join(humanFeedbackHistory, "\n---\n")),
+				}},
+			}
+			executionConversationHistory = append(executionConversationHistory, previousFeedbackMessage)
+			hcpo.GetLogger().Infof("📝 Added human feedback from previous steps to conversation history for step %d", i+1)
 		}
 
 		// Execute this specific step with retry logic
@@ -671,12 +707,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
 			hcpo.GetLogger().Infof("🔄 Executing step %d/%d (attempt %d/%d): %s", i+1, len(breakdownSteps), retryAttempt, maxRetryAttempts, step.Title)
 
-			// Add validation feedback to template variables if this is a retry
-			if retryAttempt > 1 {
+			// Add validation feedback to conversation history if this is a retry
+			if retryAttempt > 1 && validationFeedback != nil {
 				feedbackJSON, _ := json.Marshal(validationFeedback)
-				templateVars["ValidationFeedback"] = string(feedbackJSON)
-			} else {
-				templateVars["ValidationFeedback"] = ""
+				validationFeedbackMessage := llms.MessageContent{
+					Role: llms.ChatMessageTypeHuman,
+					Parts: []llms.ContentPart{llms.TextContent{
+						Text: fmt.Sprintf("## Validation Feedback (Retry Attempt %d):\n%s", retryAttempt, string(feedbackJSON)),
+					}},
+				}
+				executionConversationHistory = append(executionConversationHistory, validationFeedbackMessage)
+				hcpo.GetLogger().Infof("📝 Added validation feedback to conversation history for step %d, retry %d", i+1, retryAttempt)
 			}
 
 			// Create execution agent for this step
@@ -809,8 +850,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					break
 				} else {
 					hcpo.GetLogger().Infof("🔄 Retrying step %d execution with validation feedback", i+1)
-					// Reset conversation history for retry
-					executionConversationHistory = []llms.MessageContent{}
+					// Note: conversation history is preserved from previous attempts for context
 				}
 			}
 		}
@@ -1089,7 +1129,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestHumanFeedback(ctx con
 
 // Agent creation methods - reuse from base orchestrator
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	agent, err := hcpo.CreateAndSetupStandardAgent(
+	agent, err := hcpo.CreateAndSetupStandardAgentWithCustomServers(
 		ctx,
 		"human-controlled-planning-agent",
 		phase,
@@ -1097,6 +1137,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 		iteration,
 		hcpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
+		[]string{mcpclient.NoServers}, // Planning agent only works with plan.md file, no MCP servers needed
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewHumanControlledTodoPlannerPlanningAgent(config, logger, tracer, eventBridge)
 		},
@@ -1188,7 +1229,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanReaderAgent(ctx co
 		iteration,
 		hcpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		[]string{"NO_SERVERS"}, // Special MCP identifier for no servers - plan reader only converts markdown to JSON
+		[]string{mcpclient.NoServers}, // Special MCP identifier for no servers - plan reader only converts markdown to JSON
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewHumanControlledPlanReaderAgent(config, logger, tracer, eventBridge)
 		},

@@ -1,5 +1,8 @@
 # 🚀 MCP Agent - Multi-Server AI Orchestrator
 
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/manishiitg/mcp-agent-builder-go)
+
+
 [![Security Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Secret%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
 [![Dependency Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Dependency%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
 [![Go Version](https://img.shields.io/badge/Go-1.24.4-blue.svg)](https://golang.org/)

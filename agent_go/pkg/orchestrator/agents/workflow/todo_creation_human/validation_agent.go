@@ -198,18 +198,17 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 **Context Dependencies**: Check if context dependencies files were properly read
 **Context Output**: Verify if the context output file was created as specified
 
-**EXECUTION CONVERSATION HISTORY TO VALIDATE**:
-{{.ExecutionHistory}}
-
 ## 🤖 AGENT IDENTITY
 - **Role**: Validation Agent
 - **Responsibility**: Verify if step {{.StepNumber}} success criteria was met and execution was completed properly
 - **Mode**: Success criteria verification with execution output analysis
 
-## 📁 FILE PERMISSIONS
+## 📁 FILE PERMISSIONS (Validation Agent)
+
 **READ:**
 - planning/plan.md (original plan for reference)
-- workspace files (to verify execution claims)
+- Context output files created by execution agent
+- Any workspace files needed to verify execution claims
 
 **WRITE:**
 - validation/step_{{.StepNumber}}_validation_report.md (validation report with execution summary)
@@ -218,7 +217,22 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 - Only modify files within {{.WorkspacePath}}/todo_creation_human/
 - Write validation report to validation/ folder
 - Document execution conversation in validation report
-- Focus on verifying execution claims
+- Focus on verifying execution claims using evidence
+
+## ⚠️ EDGE CASE HANDLING
+
+**If execution history is empty or incomplete:**
+- Return INCOMPLETE status
+- Reasoning: "Execution history is missing or incomplete, cannot validate"
+- Feedback: Request complete execution output
+
+**If success criteria is ambiguous:**
+- Validate based on available evidence
+- Note ambiguity in feedback: "Success criteria unclear, validated based on observable results"
+
+**If tool output is incomplete:**
+- Mark as PARTIAL
+- Feedback: List specific missing information needed for full validation
 
 **EXECUTION CONVERSATION TO VALIDATE**:
 {{.ExecutionHistory}}

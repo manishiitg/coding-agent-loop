@@ -105,13 +105,39 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             
             try {
               if (preset.selected_tools) {
-                selectedTools = JSON.parse(preset.selected_tools)
+                const parsedTools = JSON.parse(preset.selected_tools)
+                selectedTools = parsedTools || []
               }
             } catch (error) {
               console.error('[PRESET] Error parsing selected tools:', error)
             }
             
-            if (preset.selected_folder) {
+            // After both selectedServers and selectedTools are loaded, add "*" markers for servers in "all tools" mode
+            // A server is in "all tools" mode if it's in selectedServers but has no specific tools
+            console.log('[PRESET_LOAD] Raw data:', {
+              selectedServers,
+              selectedTools
+            });
+            
+            if (selectedServers.length > 0) {
+              selectedServers.forEach(server => {
+                const hasSpecificTools = selectedTools.some(t => 
+                  t.startsWith(`${server}:`) && !t.endsWith(':*')
+                )
+                if (!hasSpecificTools && !selectedTools.includes(`${server}:*`)) {
+                  selectedTools.push(`${server}:*`)
+                  console.log(`[PRESET_LOAD] Added "all tools" marker for server: ${server}`)
+                }
+              })
+            }
+            
+            console.log('[PRESET_LOAD] Final data:', {
+              selectedServers,
+              selectedTools
+            });
+            
+            // Handle selected_folder - could be string, null, or undefined
+            if (preset.selected_folder && typeof preset.selected_folder === 'string') {
               selectedFolder = {
                 filepath: preset.selected_folder,
                 content: '',
@@ -168,6 +194,18 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 llmConfig = undefined
               }
               
+              let selectedFolder: PlannerFile | undefined = undefined;
+              // Handle selected_folder - could be string, null, or undefined
+              if (preset.selected_folder && typeof preset.selected_folder === 'string') {
+                selectedFolder = {
+                  filepath: preset.selected_folder,
+                  content: '',
+                  last_modified: '',
+                  type: 'folder' as const,
+                  children: []
+                }
+              }
+              
               return {
                 id: preset.id,
                 label: preset.label,
@@ -175,13 +213,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selectedServers: [],
                 selectedTools: [], // NEW: Predefined presets don't have custom tool selection
                 agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
-                selectedFolder: preset.selected_folder ? {
-                  filepath: preset.selected_folder,
-                  content: '',
-                  last_modified: '',
-                  type: 'folder' as const,
-                  children: []
-                } : undefined,
+                selectedFolder,
                 llmConfig
               }
             })
@@ -202,11 +234,22 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig) => {
         try {
+          // Filter out "*" markers - these indicate "all tools" mode
+          // For "all tools", we send empty array to backend (which means use all tools from server)
+          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+          
+          console.log('[PRESET_SAVE] Before filtering:', {
+            selectedServers,
+            selectedTools,
+            toolsForBackend,
+            label
+          });
+          
           const request: CreatePresetQueryRequest = {
             label,
             query,
             selected_servers: selectedServers,
-            selected_tools: selectedTools, // NEW
+            selected_tools: toolsForBackend, // Filtered tools without "*" markers
             agent_mode: agentMode,
             selected_folder: selectedFolder?.filepath
           }
@@ -216,7 +259,9 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             request.llm_config = llmConfig
           }
           
-          console.log('[PRESET] Creating preset with request:', request)
+          console.log('[PRESET_SAVE] Sending to backend:', {
+            request
+          });
           
           const response = await agentApi.createPresetQuery(request)
           
@@ -245,11 +290,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig) => {
         try {
+          // Filter out "*" markers - these indicate "all tools" mode
+          // For "all tools", we send empty array to backend (which means use all tools from server)
+          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+          
           const request: UpdatePresetQueryRequest = {
             label,
             query,
             selected_servers: selectedServers,
-            selected_tools: selectedTools, // NEW
+            selected_tools: toolsForBackend, // Filtered tools without "*" markers
             agent_mode: agentMode,
             selected_folder: selectedFolder?.filepath
           }

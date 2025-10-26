@@ -499,9 +499,10 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	var preset PresetQuery
 	var selectedServersStr string
 	var selectedToolsStr string
+	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, req.IsPredefined, "user").Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &preset.SelectedFolder, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -510,6 +511,7 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	// Parse selected servers JSON
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
+	preset.SelectedFolder = selectedFolderStr
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -530,9 +532,10 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	var preset PresetQuery
 	var selectedServersStr string
 	var selectedToolsStr string
+	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &preset.SelectedFolder, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -543,6 +546,7 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
+	preset.SelectedFolder = selectedFolderStr
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -642,9 +646,10 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 	var preset PresetQuery
 	var selectedServersStr string
 	var selectedToolsStr string
+	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &preset.SelectedFolder, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -655,6 +660,7 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
+	preset.SelectedFolder = selectedFolderStr
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -729,11 +735,7 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 		} else {
 			preset.LLMConfig = json.RawMessage("null")
 		}
-		if selectedFolderStr.Valid {
-			preset.SelectedFolder = selectedFolderStr.String
-		} else {
-			preset.SelectedFolder = ""
-		}
+		preset.SelectedFolder = selectedFolderStr
 		presets = append(presets, preset)
 	}
 

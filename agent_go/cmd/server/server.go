@@ -966,7 +966,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
 					log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
 				} else {
-					log.Printf("[TOOLS] Loaded %d selected tools from preset", len(selectedTools))
+					if len(selectedTools) > 0 {
+						log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+					} else {
+						log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+					}
 				}
 			}
 		}
@@ -974,7 +978,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Use selected tools from request if preset didn't provide any
 		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
 			selectedTools = req.SelectedTools
-			log.Printf("[TOOLS] Using selected tools from request: %d tools", len(selectedTools))
+			if len(selectedTools) > 0 {
+				log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
+			} else {
+				log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
+			}
+		} else if len(selectedTools) == 0 {
+			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
 		// Create workflow orchestrator for this request
@@ -1366,7 +1376,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
 						log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
 					} else {
-						log.Printf("[TOOLS] Loaded %d selected tools from preset", len(selectedTools))
+						if len(selectedTools) > 0 {
+							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+						} else {
+							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						}
 					}
 				}
 			}
@@ -1374,7 +1388,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Use selected tools from request if preset didn't provide any
 			if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
 				selectedTools = req.SelectedTools
-				log.Printf("[TOOLS] Using selected tools from request: %d tools", len(selectedTools))
+				if len(selectedTools) > 0 {
+					log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
+				} else {
+					log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
+				}
+			} else if len(selectedTools) == 0 {
+				log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 			}
 
 			// Create standardized orchestrator instance with full configuration
@@ -1578,7 +1598,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
 					log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
 				} else {
-					log.Printf("[TOOLS] Loaded %d selected tools from preset", len(selectedTools))
+					if len(selectedTools) > 0 {
+						log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+					} else {
+						log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+					}
 				}
 			}
 		}
@@ -1586,7 +1610,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Use selected tools from request if preset didn't provide any
 		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
 			selectedTools = req.SelectedTools
-			log.Printf("[TOOLS] Using selected tools from request: %d tools", len(selectedTools))
+			if len(selectedTools) > 0 {
+				log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
+			} else {
+				log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
+			}
+		} else if len(selectedTools) == 0 {
+			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
 		// Create new agent with streamCtx instead of r.Context()

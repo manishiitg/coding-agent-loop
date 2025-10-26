@@ -48,19 +48,20 @@ const (
 	TodoOptimizationAgentType  AgentType = "todo_optimization"   // Orchestrates optimization processes (refinement, critique, reports)
 
 	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
-	TodoPlannerPlanningAgentType   AgentType = "todo_planner_planning"   // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType  AgentType = "todo_planner_execution"  // Executes first step of plan
-	TodoPlannerValidationAgentType AgentType = "todo_planner_validation" // Validates execution results
-	TodoPlannerWriterAgentType     AgentType = "todo_planner_writer"     // Creates optimal todo list
-	TodoPlannerCleanupAgentType    AgentType = "todo_planner_cleanup"    // Manages workspace cleanup
-	TodoPlannerCritiqueAgentType   AgentType = "todo_planner_critique"   // Critiques execution/validation data for planning
-	ConditionalLLMAgentType        AgentType = "conditional_llm"         // Makes conditional decisions
+	TodoPlannerPlanningAgentType        AgentType = "todo_planner_planning"         // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType       AgentType = "todo_planner_execution"        // Executes first step of plan
+	TodoPlannerValidationAgentType      AgentType = "todo_planner_validation"       // Validates execution results
+	TodoPlannerWriterAgentType          AgentType = "todo_planner_writer"           // Creates optimal todo list
+	TodoPlannerCleanupAgentType         AgentType = "todo_planner_cleanup"          // Manages workspace cleanup
+	TodoPlannerCritiqueAgentType        AgentType = "todo_planner_critique"         // Critiques execution/validation data for planning
+	TodoPlannerSuccessLearningAgentType AgentType = "todo_planner_success_learning" // Analyzes successful executions to capture best practices
+	ConditionalLLMAgentType             AgentType = "conditional_llm"               // Makes conditional decisions
 )
 
 // BaseAgentInterface defines the interface for base agent operations
 type BaseAgentInterface interface {
 	// Core execution
-	Execute(ctx context.Context, templateVars map[string]string) (string, error)
+	Execute(ctx context.Context, templateVars map[string]string) (string, []llms.MessageContent, error)
 
 	// Agent information
 	GetType() AgentType
@@ -162,6 +163,11 @@ func NewBaseAgent(
 		mcpagent.WithCacheOnly(cacheOnly),
 	}
 
+	// Add selected servers for "all tools" mode determination
+	if len(serverNames) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithSelectedServers(serverNames))
+	}
+
 	// Add selected tools if provided
 	if len(selectedTools) > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(selectedTools))
@@ -240,26 +246,27 @@ func (ba *BaseAgent) Execute(ctx context.Context, templateVars map[string]string
 	// Note: Conversation history is handled by AskWithHistory method
 	// The history will be passed directly to AskWithHistory below
 
-	// Create a single user message for the question
-	userMessageContent := llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: userMessage}},
-	}
-
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
 	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
-	// Prepare messages with conversation history
-	messages := []llms.MessageContent{}
-
-	// Add conversation history if provided
-	if len(conversationHistory) > 0 {
-		messages = append(messages, conversationHistory...)
+	// Prepare messages: only add template-based message if conversation is empty (first turn)
+	// Otherwise, just use the conversation history as-is (continuing existing conversation)
+	var messages []llms.MessageContent
+	if len(conversationHistory) == 0 {
+		// First turn: create message from template vars
+		userMessageContent := llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: userMessage}},
+		}
+		messages = append(messages, userMessageContent)
+		ba.logger.Infof("📝 Starting new conversation with template message")
+	} else {
+		// Continuing conversation: use existing history as-is
+		messages = make([]llms.MessageContent, len(conversationHistory))
+		copy(messages, conversationHistory)
+		ba.logger.Infof("📝 Continuing existing conversation with %d messages", len(conversationHistory))
 	}
-
-	// Add the current user message
-	messages = append(messages, userMessageContent)
 
 	// Execute the agent with orchestrator context and conversation history
 	answer, updatedConversationHistory, err := ba.agent.AskWithHistory(orchestratorCtx, messages)

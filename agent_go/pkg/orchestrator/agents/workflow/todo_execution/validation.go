@@ -16,9 +16,13 @@ import (
 
 // TodoValidationTemplate holds template variables for validation prompts
 type TodoValidationTemplate struct {
-	Objective       string
-	WorkspacePath   string
-	ExecutionOutput string
+	Objective           string
+	WorkspacePath       string
+	ExecutionOutput     string
+	StepNumber          int
+	TotalSteps          int
+	StepTitle           string
+	StepSuccessCriteria string
 }
 
 // ValidationResponse represents the structured output from validation agent
@@ -83,11 +87,29 @@ func (tva *TodoValidationAgent) Execute(ctx context.Context, templateVars map[st
 
 // todoValidationInputProcessor processes inputs specifically for single step validation
 func (tva *TodoValidationAgent) todoValidationInputProcessor(templateVars map[string]string) string {
+	// Parse numeric fields from templateVars
+	stepNumber := 0
+	totalSteps := 0
+	if stepNumStr, exists := templateVars["StepNumber"]; exists {
+		if parsed, err := fmt.Sscanf(stepNumStr, "%d", &stepNumber); err != nil || parsed != 1 {
+			stepNumber = 0
+		}
+	}
+	if totalStepsStr, exists := templateVars["TotalSteps"]; exists {
+		if parsed, err := fmt.Sscanf(totalStepsStr, "%d", &totalSteps); err != nil || parsed != 1 {
+			totalSteps = 0
+		}
+	}
+
 	// Create template data
 	templateData := TodoValidationTemplate{
-		Objective:       templateVars["StepDescription"], // Use step description as objective
-		WorkspacePath:   templateVars["WorkspacePath"],
-		ExecutionOutput: templateVars["ExecutionOutput"],
+		Objective:           templateVars["StepDescription"], // Use step description as objective
+		WorkspacePath:       templateVars["WorkspacePath"],
+		ExecutionOutput:     templateVars["ExecutionOutput"],
+		StepNumber:          stepNumber,
+		TotalSteps:          totalSteps,
+		StepTitle:           templateVars["StepTitle"],
+		StepSuccessCriteria: templateVars["StepSuccessCriteria"],
 	}
 
 	// Define the template for single step validation

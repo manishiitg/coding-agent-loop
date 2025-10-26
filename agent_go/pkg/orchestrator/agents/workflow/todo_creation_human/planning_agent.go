@@ -39,10 +39,7 @@ type PlanStep struct {
 
 // PlanningResponse represents the structured response from planning
 type PlanningResponse struct {
-	ObjectiveAnalysis string     `json:"objective_analysis"`
-	Approach          string     `json:"approach"`
-	Steps             []PlanStep `json:"steps"`
-	ExpectedOutcome   string     `json:"expected_outcome"`
+	Steps []PlanStep `json:"steps"`
 }
 
 // NewHumanControlledTodoPlannerPlanningAgent creates a new human-controlled todo planner planning agent
@@ -91,34 +88,50 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningIn
 - **Clear Success Criteria**: Define how to verify each step worked
 - **Logical Order**: Steps should follow logical sequence
 - **Focus on Strategy**: Plan what needs to be done, not how to do it (execution details will be handled by execution agents)
+- **Agent Execution Limits**: Each step should be completable by one agent using MCP tools before reaching context output limits
+- **Success/Failure Patterns**: ONLY include these if you have specific MCP tools, exact commands, or clear patterns from previous executions. Do NOT add empty or generic patterns.
 
 ## 🤖 MULTI-AGENT COORDINATION
-**Important**: Different agents will execute this plan. Ensure proper coordination through workspace files.
-
-### **Context Sharing Rules**
-- **Read context** from previous steps using relative paths (e.g., "../execution/step_1_context.md")
-- **Write context** for next steps with clear documentation
+- **Different Agents**: Each step is executed by a different agent
+- **Data Sharing**: Steps may need to share context/data between each other
+- **Context Dependencies**: Each step should specify what context files it needs from previous steps
+- **Context Output**: Each step should specify what context file it will create for subsequent steps
+- **Workspace Files**: Store data in workspace files when steps need to share information
 - **Use relative paths only** - NEVER use absolute paths
 - **Document findings** in workspace files for other agents
+
+## 📝 EXAMPLE OF A WELL-FORMED STEP
+
+` + "```markdown" + `
+### Step 1: Analyze Codebase Structure
+- **Description**: Use grep and read_file tools to identify all TypeScript files in the src/ directory and understand the project structure. Create a comprehensive map of main modules, their relationships, and key entry points.
+- **Success Criteria**: Complete file tree with main modules identified and documented in codebase_structure.md
+- **Why This Step**: Understanding the codebase structure is foundational for making informed changes without breaking existing functionality
+- **Context Dependencies**: none (first step)
+- **Context Output**: codebase_structure.md
+- **Success Patterns**: 
+  - Used grep with --type typescript flag to find all .ts files efficiently
+  - read_file with line limits (max 1000 lines) prevented context overflow on large files
+  - list_dir tool helped map directory structure before reading individual files
+- **Failure Patterns**:
+  - Avoid read_file without line limits on large files (causes context limit errors)
+  - Don't use codebase_search for simple file listing (grep is faster and more reliable)
+` + "```" + `
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
 ## 📤 Output Format
 
-**WRITE MARKDOWN PLAN FILE - DO NOT RETURN JSON**
+**UPDATE PLAN.MD FILE**
 
 **CRITICAL**: 
-- Write plan.md file to workspace - do NOT return JSON response
-- Do NOT use structured output - generate markdown plan instead
-- Create comprehensive markdown plan for human review
+- Always update the existing plan.md file in the workspace
+- If no plan exists, create a new one
+- **DO NOT read any other files from the workspace** - only work with plan.md
+- Focus on creating/updating plan.md, not on investigating the workspace structure
 
-Write the following file:
-
-1. **{{.WorkspacePath}}/todo_creation_human/planning/plan.md**
-   - Create a comprehensive markdown plan file
-   - Include objective analysis, approach, and all steps
-   - Use clear markdown formatting with headers and lists
-   - This plan will be reviewed by humans before execution
+**File to Update:**
+- **{{.WorkspacePath}}/todo_creation_human/planning/plan.md**
 
 ## 📋 MARKDOWN PLAN STRUCTURE
 
@@ -127,45 +140,43 @@ Create a markdown plan with this structure:
 ` + "```markdown" + `
 # Plan: [Objective Title]
 
-## Objective Analysis
-[Analysis of what needs to be achieved]
-
-## Approach
-[Brief description of overall approach]
-
 ## Steps
 
 ### Step 1: [Step Name]
-- **Description**: [Detailed description of what this step accomplishes]
+- **Description**: [Detailed description of what this step accomplishes - should be completable by one agent using MCP tools]
 - **Success Criteria**: [How to verify this step was completed successfully]
 - **Why This Step**: [How this step contributes to achieving the objective]
-- **Context Dependencies**: [List of context files from previous steps]
-- **Context Output**: [What context file this step will create]
+- **Context Dependencies**: [List of context files from previous steps - use "none" if first step]
+- **Context Output**: [What context file this step will create for subsequent steps - e.g., "step_1_results.md"]
 - **Success Patterns**: [Optional - ONLY include if you have specific tools/approaches that worked in previous executions]
 - **Failure Patterns**: [Optional - ONLY include if you have specific tools/approaches that failed in previous executions]
 
-### Step 2: [Step Name]
-- **Description**: [Detailed description of what this step accomplishes]
-- **Success Criteria**: [How to verify this step was completed successfully]
-- **Why This Step**: [How this step contributes to achieving the objective]
-- **Context Dependencies**: [List of context files from previous steps]
-- **Context Output**: [What context file this step will create]
-- **Success Patterns**: [Optional - ONLY include if you have specific tools/approaches that worked in previous executions]
-- **Failure Patterns**: [Optional - ONLY include if you have specific tools/approaches that failed in previous executions]
+[Continue this pattern for all steps...]
+` + "```" + `
 
-### Step 3: [Step Name]
-[Continue pattern for all steps...]
+## 📤 YOUR RESPONSE AFTER WRITING FILE
 
-## Expected Outcome
-[What the complete plan should achieve]
+After successfully writing the plan.md file, respond with:
+- Brief summary of the plan created
+- Number of steps in the plan
+- Key milestones or phases identified
+- Confirmation that plan.md was written successfully
+
+**Example Response:**
+"I've created a comprehensive plan with 5 steps in {{.WorkspacePath}}/todo_creation_human/planning/plan.md:
+1. Analyze codebase structure
+2. Identify modification points
+3. Implement changes
+4. Run tests
+5. Document changes
+
+The plan focuses on systematic analysis before implementation, with clear context handoffs between steps."
 
 **IMPORTANT NOTES**: 
 1. Focus on creating a clear, actionable markdown plan
 2. Each step should be concrete and contribute directly to achieving the goal
 3. Include context dependencies and outputs for multi-agent coordination
-4. **WRITE plan.md FILE** - do not return JSON response
-5. The plan reader agent will convert this to JSON in the next phase
-6. **Success/Failure Patterns**: ONLY include these sections if you have specific MCP tools, exact commands, or clear patterns from previous executions. Do NOT add empty or generic patterns.
+4. Remember: Success/Failure Patterns are OPTIONAL and should only be included when you have specific, concrete examples from previous executions
 `
 
 	// Parse and execute the template

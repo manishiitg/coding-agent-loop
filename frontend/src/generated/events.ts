@@ -1148,9 +1148,6 @@ export interface BlockingHumanFeedbackEvent {
   context?: string;
   workflow_id?: string;
   request_id?: string;
-  yes_no_only?: boolean;
-  yes_label?: string;
-  no_label?: string;
 }
 export interface TodoStepsExtractedEvent {
   timestamp?: string;
@@ -1177,6 +1174,4 @@ export interface TodoStep {
   why_this_step?: string;
   context_dependencies?: string[];
   context_output?: string;
-  success_patterns?: string[]; // NEW - what worked in previous executions
-  failure_patterns?: string[]; // NEW - what failed in previous executions
 }

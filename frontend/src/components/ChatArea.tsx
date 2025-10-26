@@ -1284,13 +1284,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     processedCompletionEventsRef.current.clear()
 
     try {
+      // Filter out "*" markers from currentPresetTools before sending to backend
+      // "*" markers indicate "all tools" mode, which is represented as an empty array
+      const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
+      
+      console.log('[CHATAREA] Starting workflow with:', {
+        agentMode,
+        selectedWorkflowPreset,
+        currentPresetServers,
+        currentPresetTools,
+        filteredPresetTools,
+        effectiveServers,
+        enabledToolsCount: enabledTools.length,
+        'hasAllToolsMarkers': currentPresetTools?.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
+      });
+      
       // Submit query to backend
       const response = await agentApi.startQuery({
         query: enhancedQuery,
         agent_mode: agentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
         enabled_servers: effectiveServers,
-        selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? currentPresetTools : undefined, // Only send when preset is active
+        selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? filteredPresetTools : undefined, // Only send when preset is active
         provider: llmConfig.provider,
         model_id: llmConfig.model_id,
         llm_config: llmConfig,

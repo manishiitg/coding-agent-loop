@@ -176,6 +176,15 @@ func WithSelectedTools(tools []string) AgentOption {
 	}
 }
 
+// WithSelectedServers sets the selected servers list
+func WithSelectedServers(servers []string) AgentOption {
+	return func(a *Agent) {
+		// Store selected servers for tool filtering logic
+		// This is used to determine which servers should use "all tools" mode
+		a.selectedServers = servers
+	}
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is generic enough to be reused by CLI commands, services, or tests.
 type Agent struct {
@@ -196,13 +205,14 @@ type Agent struct {
 	Tools   []llms.Tool
 
 	// Configuration knobs
-	MaxTurns      int
-	Temperature   float64
-	ToolChoice    string
-	ModelID       string
-	AgentMode     AgentMode     // NEW: Agent mode (Simple or ReAct)
-	ToolTimeout   time.Duration // Tool execution timeout (default: 5 minutes)
-	selectedTools []string      // Selected tools in "server:tool" format
+	MaxTurns        int
+	Temperature     float64
+	ToolChoice      string
+	ModelID         string
+	AgentMode       AgentMode     // NEW: Agent mode (Simple or ReAct)
+	ToolTimeout     time.Duration // Tool execution timeout (default: 5 minutes)
+	selectedTools   []string      // Selected tools in "server:tool" format
+	selectedServers []string      // Selected servers list for "all tools" mode determination
 
 	// Enhanced tracking info
 	SystemPrompt string
@@ -463,16 +473,30 @@ func NewAgent(ctx context.Context, llm llms.Model, serverName, configPath, model
 	ag.configPath = configPath
 
 	// Apply selected tools filter if specified
+	// Empty selectedTools array means "use all tools" (no filtering)
+	// Non-empty selectedTools array means "use only these specific tools"
+	// IMPORTANT: If a server is in selectedServers but has NO tools in selectedTools,
+	// it means "use ALL tools from that server" (all tools mode for that server)
 	if len(ag.selectedTools) > 0 {
-		logger.Infof("Filtering tools: %d selected tools specified", len(ag.selectedTools))
+		logger.Infof("🔧 Tool filtering active: %d specific tools selected", len(ag.selectedTools))
 
-		// Create set for fast lookup
+		// Create set for fast lookup of specific tools
 		selectedToolSet := make(map[string]bool)
 		for _, fullName := range ag.selectedTools {
 			selectedToolSet[fullName] = true
 		}
 
-		// Filter tools
+		// Build map of which servers have specific tools
+		serversWithSpecificTools := make(map[string]bool)
+		for _, fullName := range ag.selectedTools {
+			// Parse "server:tool" format
+			parts := strings.SplitN(fullName, ":", 2)
+			if len(parts) == 2 {
+				serversWithSpecificTools[parts[0]] = true
+			}
+		}
+
+		// Filter tools: include specific tools OR all tools from servers without specific tools
 		var filteredTools []llms.Tool
 		for _, tool := range allLLMTools {
 			// Get server name for this tool
@@ -483,16 +507,30 @@ func NewAgent(ctx context.Context, llm llms.Model, serverName, configPath, model
 				continue
 			}
 
-			// Check if "server:tool" is in selected set
-			fullName := fmt.Sprintf("%s:%s", serverName, tool.Function.Name)
-			if selectedToolSet[fullName] {
+			// Check if this server has specific tools selected
+			hasSpecificTools := serversWithSpecificTools[serverName]
+
+			if hasSpecificTools {
+				// Server has specific tools - check if this tool is selected
+				fullName := fmt.Sprintf("%s:%s", serverName, tool.Function.Name)
+				if selectedToolSet[fullName] {
+					filteredTools = append(filteredTools, tool)
+				}
+			} else {
+				// Server has no specific tools - include ALL tools from this server
+				// (this is "all tools" mode for this server)
 				filteredTools = append(filteredTools, tool)
 			}
 		}
 
-		logger.Infof("Tool filtering complete: %d tools selected from %d total", len(filteredTools), len(allLLMTools))
+		logger.Infof("🔧 Tool filtering complete: %d tools selected from %d total", len(filteredTools), len(allLLMTools))
 		ag.Tools = filteredTools
 		ag.filteredTools = filteredTools
+	} else {
+		// No specific tools selected - use all available tools
+		logger.Infof("🔧 Using all available tools: %d tools (no filtering applied)", len(allLLMTools))
+		ag.Tools = allLLMTools
+		ag.filteredTools = allLLMTools
 	}
 
 	// Always rebuild system prompt with the correct agent mode

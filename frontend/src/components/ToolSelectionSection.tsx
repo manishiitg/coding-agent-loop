@@ -26,8 +26,8 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   const [serverToolMode, setServerToolMode] = useState<Record<string, 'all' | 'specific'>>({});
 
   // Load tool details for a server
-  const loadServerTools = useCallback(async (serverName: string) => {
-    if (toolDetails[serverName]) {
+  const loadServerTools = useCallback(async (serverName: string, force = false) => {
+    if (!force && toolDetails[serverName]) {
       return;
     }
     
@@ -48,10 +48,14 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
         serverTools = [];
       }
       
-      setToolDetails(prev => ({
-        ...prev,
-        [serverName]: serverTools
-      }));
+      setToolDetails(prev => {
+        const updated = {
+          ...prev,
+          [serverName]: serverTools
+        };
+        console.log('[ToolSelectionSection] ToolDetails updated for:', serverName, 'tools:', serverTools.length);
+        return updated;
+      });
     } catch (error) {
       console.error(`Failed to load tools for ${serverName}:`, error);
     } finally {
@@ -65,37 +69,56 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
 
   // Initialize server tool mode based on current selection
   useEffect(() => {
+    // Don't run if we have existing modes set (user has made selections)
+    if (Object.keys(serverToolMode).length > 0) {
+      return;
+    }
+    
     const newMode: Record<string, 'all' | 'specific'> = {};
     
     selectedServers.forEach(server => {
-      const serverTools = selectedTools.filter(t => t.startsWith(`${server}:`));
-      // If no specific tools selected for this server, default to 'all'
-      newMode[server] = serverTools.length === 0 ? 'all' : 'specific';
+      // Check if server has the "all tools" marker
+      const hasAllToolsMarker = selectedTools.includes(`${server}:*`);
       
-      // If this server has specific tools selected, load tool details
-      if (serverTools.length > 0) {
-        loadServerTools(server);
+      if (hasAllToolsMarker) {
+        // Server is in "all tools" mode
+        newMode[server] = 'all';
+      } else {
+        // Check if server has specific tools selected
+        const serverTools = selectedTools.filter(t => 
+          t.startsWith(`${server}:`) && !t.endsWith(':*')
+        );
+        newMode[server] = serverTools.length > 0 ? 'specific' : 'all';
+        
+        // Load tool details if specific tools are selected
+        if (serverTools.length > 0) {
+          loadServerTools(server);
+        }
       }
     });
     
+    console.log('[ToolSelectionSection] Initializing modes (first load):', newMode);
     setServerToolMode(newMode);
     
-    // Only expand servers that have specific tools selected
-    // Don't override manually expanded servers
+    // Expand servers that have specific tools selected (not "all tools" mode)
     setExpandedServers(prev => {
       const newExpandedServers = new Set(prev);
       
-      // Add servers that have specific tools selected
       selectedServers.forEach(server => {
-        const serverTools = selectedTools.filter(t => t.startsWith(`${server}:`));
-        if (serverTools.length > 0) {
+        const hasAllToolsMarker = selectedTools.includes(`${server}:*`);
+        const serverTools = selectedTools.filter(t => 
+          t.startsWith(`${server}:`) && !t.endsWith(':*')
+        );
+        
+        // Only expand if we have specific tools (not in "all tools" mode)
+        if (!hasAllToolsMarker && serverTools.length > 0) {
           newExpandedServers.add(server);
         }
       });
       
       return newExpandedServers;
     });
-  }, [selectedServers, selectedTools, loadServerTools]);
+  }, [selectedServers, selectedTools, loadServerTools, serverToolMode]);
 
   // Auto-expand server when selected
   const expandServer = useCallback((serverName: string) => {
@@ -116,7 +139,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
       const newServers = selectedServers.filter(s => s !== serverName);
       onServerChange(newServers);
       
-      // Remove all tools from this server
+      // Remove all tools from this server (including "*" marker)
       const newTools = selectedTools.filter(t => !t.startsWith(`${serverName}:`));
       onToolChange(newTools);
       
@@ -134,6 +157,10 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
         [serverName]: 'all'
       }));
       
+      // Set "all tools" marker by default
+      const newTools = [...selectedTools, `${serverName}:*`];
+      onToolChange(newTools);
+      
       // Always expand when server is selected so user can choose tool mode
       expandServer(serverName);
     }
@@ -141,20 +168,32 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
 
   // Handle switching between "all tools" and "specific tools" for a server
   const handleServerToolModeChange = useCallback((serverName: string, mode: 'all' | 'specific') => {
-    setServerToolMode(prev => ({
-      ...prev,
-      [serverName]: mode
-    }));
+    console.log('[ToolSelectionSection] Mode change:', { serverName, mode });
+    setServerToolMode(prev => {
+      const newMode = { ...prev, [serverName]: mode };
+      console.log('[ToolSelectionSection] New mode state:', newMode);
+      return newMode;
+    });
     
     if (mode === 'all') {
-      // Remove all specific tools for this server
+      // Set special marker "server:*" to indicate "all tools" mode
       const newTools = selectedTools.filter(t => !t.startsWith(`${serverName}:`));
+      newTools.push(`${serverName}:*`);
+      console.log('[ToolSelectionSection] Setting all tools mode:', newTools);
       onToolChange(newTools);
     } else {
-      // Switch to specific mode - tools will be selected individually
-      // Don't automatically select any tools, let user choose
+      // Remove the special marker and switch to specific mode
+      const newTools = selectedTools.filter(t => t !== `${serverName}:*`);
+      console.log('[ToolSelectionSection] Setting specific tools mode, loading tools for:', serverName);
+      onToolChange(newTools);
+      // Load tools for this server when switching to specific mode (force reload)
+      loadServerTools(serverName, true).then(() => {
+        console.log('[ToolSelectionSection] Tools loaded for:', serverName);
+      });
+      // Expand the server when switching to specific mode so user can see tools
+      expandServer(serverName);
     }
-  }, [selectedTools, onToolChange]);
+  }, [selectedTools, onToolChange, loadServerTools, expandServer]);
 
   // Handle tool checkbox
   const handleToolToggle = useCallback((serverName: string, toolName: string) => {
@@ -195,9 +234,20 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
 
   // Check if all tools from a server are selected
   const areAllServerToolsSelected = useCallback((serverName: string) => {
+    // Check if in "all tools" mode first
+    if (selectedTools.includes(`${serverName}:*`)) {
+      return true;
+    }
+    
     const serverTools = toolDetails[serverName] || [];
     if (!Array.isArray(serverTools) || serverTools.length === 0) return false;
-    return serverTools.every(t => selectedTools.includes(`${serverName}:${t.name}`));
+    
+    // Filter out "*" marker when counting specific tools
+    const specificTools = selectedTools.filter(t => 
+      t.startsWith(`${serverName}:`) && !t.endsWith(':*')
+    );
+    
+    return specificTools.length > 0 && serverTools.every(t => selectedTools.includes(`${serverName}:${t.name}`));
   }, [toolDetails, selectedTools]);
 
   return (
@@ -228,6 +278,18 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
           const allToolsSelected = areAllServerToolsSelected(serverName);
           const toolMode = serverToolMode[serverName] || 'all';
           const isServerToolsArray = Array.isArray(serverTools);
+          
+          // Debug logging
+          if (isExpanded && isServerSelected) {
+            console.log(`[ToolSelectionSection] Rendering server: ${serverName}`, {
+              isExpanded,
+              isServerSelected,
+              toolMode,
+              isLoading,
+              serverToolsLength: serverTools.length,
+              toolDetailsKeys: Object.keys(toolDetails)
+            });
+          }
 
           return (
             <div key={serverName} className="border-b border-gray-200 dark:border-gray-700 last:border-b-0">
@@ -253,7 +315,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                   {serverName}
                   {isServerSelected && isServerToolsArray && serverTools.length > 0 && (
                     <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-                      ({toolMode === 'all' ? 'all tools' : `${selectedTools.filter(t => t.startsWith(`${serverName}:`)).length}/${serverTools.length} tools`})
+                      ({toolMode === 'all' ? 'all tools' : `${selectedTools.filter(t => t.startsWith(`${serverName}:`) && !t.endsWith(':*')).length}/${serverTools.length} tools`})
                     </span>
                   )}
                 </label>

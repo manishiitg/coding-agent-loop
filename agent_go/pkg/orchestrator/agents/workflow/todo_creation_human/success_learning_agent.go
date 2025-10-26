@@ -36,7 +36,7 @@ func NewHumanControlledTodoPlannerSuccessLearningAgent(config *agents.Orchestrat
 		config,
 		logger,
 		tracer,
-		agents.TodoPlannerValidationAgentType, // Use validation agent type for now
+		agents.TodoPlannerSuccessLearningAgentType,
 		eventBridge,
 	)
 
@@ -183,7 +183,8 @@ Provide your response in this exact format:
 - [Enhanced why_this_step sections with insights about why this approach worked best]
 - [Updated context dependencies with actual files that were crucial for success]
 - [Added Success Patterns section ONLY if specific tools/approaches that led to success were identified - include MCP server.tool references]
-- [NOTE: Update plan.md file - do NOT create new files or change file structure]
+
+**NOTE**: Update plan.md file - do NOT create new files or change file structure
 
 ### Success Patterns Documented:
 - [Successful tools and approaches that worked well]
@@ -193,23 +194,22 @@ Provide your response in this exact format:
 
 ---
 
-## 📁 **FILE PERMISSIONS**
+## 📁 **FILE PERMISSIONS (Success Learning Agent)**
 
 **READ:**
 - planning/plan.md (current markdown plan)
 - validation/step_X_validation_report.md (validation results with execution summary)
 
-**WRITE TO learnings/ FOLDER ONLY:**
+**WRITE:**
 - learnings/success_patterns.md (append cumulative success patterns)
 - learnings/step_X_learning.md (create detailed learning for this step)
-
-**WRITE TO planning/ FOLDER:**
-- planning/plan.md (update with improvements)
+- planning/plan.md (update with improvements based on what worked)
 
 **RESTRICTIONS:**
-- All learning outputs MUST go to learnings/ folder
+- Learning outputs go to learnings/ folder
+- Plan improvements go to planning/plan.md
 - Read execution details from validation reports (which contain execution conversation)
-- Update plan.md in planning/ folder with improvements
+- Focus on capturing success patterns and best practices
 
 ---
 

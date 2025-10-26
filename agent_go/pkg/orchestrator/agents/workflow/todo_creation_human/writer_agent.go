@@ -94,22 +94,24 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 - **Responsibility**: Create structured, execution-ready todo list based on execution results and learnings
 - **Mode**: Structured synthesis (create step-by-step plan format that another LLM can efficiently execute)
 
-## 📁 FILE PERMISSIONS
+## 📁 FILE PERMISSIONS (Writer Agent)
+
 **READ:**
 - planning/plan.md (original plan)
 - validation/step_*_validation_report.md (all step validation reports with execution summaries)
-- learnings/success_patterns.md (success learning insights)
-- learnings/failure_analysis.md (failure patterns to avoid)
-- learnings/step_*_learning.md (per-step learning details)
+- learnings/success_patterns.md (success learning insights - if exists)
+- learnings/failure_analysis.md (failure patterns to avoid - if exists)
+- learnings/step_*_learning.md (per-step learning details - if exists)
 
 **WRITE:**
-- {{.WorkspacePath}}/todo_final.md (final structured todo list - outside todo_creation_human/)
+- todo_final.md (final structured todo list - writes to workspace root: {{.WorkspacePath}}/todo_final.md)
 
 **RESTRICTIONS:**
-- Read from planning/, validation/, learnings/ folders
+- Read from todo_creation_human/ folder (planning/, validation/, learnings/)
 - Validation reports contain execution summaries from execution agent
-- Write todo_final.md to workspace root in STRUCTURED format
+- Write todo_final.md to workspace root (NOT inside todo_creation_human/)
 - Format MUST be parseable and executable by another LLM
+- Handle missing learning files gracefully (they may not exist for all steps)
 
 ## 📋 SYNTHESIS GUIDELINES
 - **Read All Execution Data**: Review plan.md, validation reports (which include execution summaries), and all learning files
@@ -146,7 +148,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 ## 🎯 Objective
 {{.Objective}}
 
-## 📊 Execution Summary
+## 📊 Execution 
 **Total Steps Completed**: [X steps]
 **Success Rate**: [X% based on validation]
 **Key Learnings Applied**: [Brief summary of main insights]
@@ -189,63 +191,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 ---
 
-### Step 2: [Step Title]
-
-**Description:**
-[Detailed description with specific tools and methods]
-
-**Success Criteria:**
-- [Criterion 1]
-- [Criterion 2]
-
-**Why This Step:**
-[Purpose and value]
-
-**Context Dependencies:**
-- [Prerequisites]
-
-**Context Output:**
-[What this produces]
-
-**Success Patterns (What Worked):**
-- [Specific successful approach 1]
-- [Specific successful approach 2]
-
-**Failure Patterns (What to Avoid):**
-- [Specific failed approach 1]
-- [Specific failed approach 2]
-
----
-
-### Step 3: [Step Title]
-
-**Description:**
-[Detailed description with specific tools and methods]
-
-**Success Criteria:**
-- [Criterion 1]
-- [Criterion 2]
-
-**Why This Step:**
-[Purpose and value]
-
-**Context Dependencies:**
-- [Prerequisites]
-
-**Context Output:**
-[What this produces]
-
-**Success Patterns (What Worked):**
-- [Specific successful approach 1]
-- [Specific successful approach 2]
-
-**Failure Patterns (What to Avoid):**
-- [Specific failed approach 1]
-- [Specific failed approach 2]
-
----
-
-[Continue with all remaining steps in the same format]
+[Continue with Step 2, Step 3, etc. using the same format as Step 1 above]
 
 ---
 

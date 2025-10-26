@@ -34,7 +34,7 @@ func NewTodoExecutionOrchestrator(
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
 	logger utils.ExtendedLogger,
-	tracer observability.Tracer,
+	_ observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
 	customTools []llms.Tool,
 	customToolExecutors map[string]interface{},

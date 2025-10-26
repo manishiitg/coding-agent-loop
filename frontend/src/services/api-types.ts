@@ -461,7 +461,7 @@ export interface PresetQuery {
   query: string;
   selected_servers: string; // JSON string
   selected_tools: string; // JSON string of "server:tool" array
-  selected_folder: string; // Single folder path
+  selected_folder?: string; // Single folder path (nullable)
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
   is_predefined: boolean;

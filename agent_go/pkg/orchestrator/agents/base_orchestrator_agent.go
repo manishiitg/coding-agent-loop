@@ -133,35 +133,10 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 }
 
 // ExecuteWithInputProcessor executes the agent with a custom input processor
+// This is a convenience method that delegates to ExecuteWithTemplateValidation with nil templateData
 func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
-	startTime := time.Now()
-
-	// Auto-emit agent start event
-	boa.emitAgentStartEvent(ctx, templateVars)
-
-	// Starting orchestrator agent execution
-
-	// Process inputs using the provided processor function
-	userMessage := inputProcessor(templateVars)
-
-	// Delegate to template's Execute method which enforces event patterns
-	baseAgentTemplateVars := map[string]string{
-		"userMessage": userMessage,
-	}
-	result, updatedConversationHistory, err := boa.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
-
-	duration := time.Since(startTime)
-
-	// Auto-emit agent end event
-	boa.emitAgentEndEvent(ctx, templateVars, result, err, duration)
-
-	if err != nil {
-		boa.logger.Errorf("❌ Base Orchestrator Agent (%s) execution failed: %v", boa.agentType, err)
-		return "", nil, fmt.Errorf("base orchestrator execution failed: %w", err)
-	}
-
-	// Orchestrator agent execution completed
-	return result, updatedConversationHistory, nil
+	// Delegate to ExecuteWithTemplateValidation with nil templateData to skip validation
+	return boa.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, nil)
 }
 
 // ExecuteWithTemplateValidation executes the agent with template validation
@@ -174,17 +149,16 @@ func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Cont
 	// Process inputs using the provided processor function
 	userMessage := inputProcessor(templateVars)
 
-	// Validate template fields at compile time
-	if err := boa.validateTemplateFields(userMessage, templateData); err != nil {
-		boa.logger.Errorf("❌ Template validation failed for agent %s: %v", boa.agentType, err)
-		return "", nil, fmt.Errorf("template validation failed: %w", err)
+	// Validate template fields at compile time (skip validation if templateData is nil)
+	if templateData != nil {
+		if err := boa.validateTemplateFields(userMessage, templateData); err != nil {
+			boa.logger.Errorf("❌ Template validation failed for agent %s: %v", boa.agentType, err)
+			return "", nil, fmt.Errorf("template validation failed: %w", err)
+		}
 	}
 
 	// Delegate to template's Execute method which enforces event patterns
-	baseAgentTemplateVars := map[string]string{
-		"userMessage": userMessage,
-	}
-	result, updatedConversationHistory, err := boa.baseAgent.Execute(ctx, baseAgentTemplateVars, conversationHistory)
+	result, updatedConversationHistory, err := boa.baseAgent.Execute(ctx, userMessage, conversationHistory)
 
 	duration := time.Since(startTime)
 

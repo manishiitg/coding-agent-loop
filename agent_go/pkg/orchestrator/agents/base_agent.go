@@ -14,6 +14,11 @@ import (
 	"github.com/tmc/langchaingo/llms"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+const orchestratorIDKey contextKey = "orchestrator_id"
+
 // AgentMode represents the mode of operation for an agent
 type AgentMode string
 
@@ -48,6 +53,7 @@ const (
 	TodoOptimizationAgentType  AgentType = "todo_optimization"   // Orchestrates optimization processes (refinement, critique, reports)
 
 	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
+	VariableExtractionAgentType         AgentType = "variable_extraction"           // Extracts variables from objective
 	TodoPlannerPlanningAgentType        AgentType = "todo_planner_planning"         // Creates step-wise plan from objective
 	TodoPlannerExecutionAgentType       AgentType = "todo_planner_execution"        // Executes first step of plan
 	TodoPlannerValidationAgentType      AgentType = "todo_planner_validation"       // Validates execution results
@@ -219,25 +225,9 @@ func NewBaseAgent(
 	return baseAgent, nil
 }
 
-// Execute executes the agent with template variables and returns the response with comprehensive logging
-func (ba *BaseAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+// Execute executes the agent with user message and conversation history
+func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	ba.logger.Infof("🚀 Executing %s agent: %s", ba.agentType, ba.name)
-
-	// For base agent, we expect the template variables to already be processed
-	// This is a fallback for agents that don't override Execute
-	userMessage := "Template variables provided but not processed by agent"
-	if len(templateVars) > 0 {
-		// Look for userMessage template variable first, then fall back to any value
-		if msg, exists := templateVars["userMessage"]; exists {
-			userMessage = msg
-		} else {
-			// Just use the first value as a simple fallback
-			for _, value := range templateVars {
-				userMessage = value
-				break
-			}
-		}
-	}
 
 	// Event emission now handled by unified events system
 
@@ -247,25 +237,32 @@ func (ba *BaseAgent) Execute(ctx context.Context, templateVars map[string]string
 	// The history will be passed directly to AskWithHistory below
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
-	// Prepare messages: only add template-based message if conversation is empty (first turn)
-	// Otherwise, just use the conversation history as-is (continuing existing conversation)
+	// Prepare messages: add userMessage (instructions) ONLY on first turn
+	// On subsequent turns, conversationHistory already contains the full conversation context
 	var messages []llms.MessageContent
-	if len(conversationHistory) == 0 {
-		// First turn: create message from template vars
+
+	// Copy existing conversation history if present
+	if len(conversationHistory) > 0 {
+		// Continuing conversation - use history as-is, don't add instructions again
+		// IMPORTANT: Do NOT append userMessage here because:
+		// 1. Instructions are already in history from iteration 1
+		// 2. Adding instructions again would create duplicate instructions
+		// 3. Human feedback needs to be the last message, not instructions
+		messages = make([]llms.MessageContent, len(conversationHistory))
+		copy(messages, conversationHistory)
+		ba.logger.Infof("📝 Continuing existing conversation with %d messages (instructions already in history)", len(conversationHistory))
+	} else {
+		// First turn - add instructions as initial user message
+		// This is the ONLY place we add instructions to the conversation
+		ba.logger.Infof("📝 Starting new conversation with template message")
 		userMessageContent := llms.MessageContent{
 			Role:  llms.ChatMessageTypeHuman,
 			Parts: []llms.ContentPart{llms.TextContent{Text: userMessage}},
 		}
 		messages = append(messages, userMessageContent)
-		ba.logger.Infof("📝 Starting new conversation with template message")
-	} else {
-		// Continuing conversation: use existing history as-is
-		messages = make([]llms.MessageContent, len(conversationHistory))
-		copy(messages, conversationHistory)
-		ba.logger.Infof("📝 Continuing existing conversation with %d messages", len(conversationHistory))
 	}
 
 	// Execute the agent with orchestrator context and conversation history
@@ -313,7 +310,7 @@ func (ba *BaseAgent) AskStructured(ctx context.Context, question string, result 
 	}
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
 	// Use the underlying MCP agent's AskStructured method
@@ -331,7 +328,7 @@ func (ba *BaseAgent) Ask(ctx context.Context, question string) (string, error) {
 	}
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
 	return ba.agent.Ask(orchestratorCtx, question)
@@ -420,17 +417,26 @@ func AskStructured[T any](ba *BaseAgent, ctx context.Context, question string, s
 	}
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
-	// Create user message for the question
-	userMessage := llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: question}},
-	}
+	// Prepare messages: add question ONLY on first turn (when history is empty)
+	var messages []llms.MessageContent
 
-	// Combine conversation history with the new user message
-	messages := append(conversationHistory, userMessage)
+	if len(conversationHistory) > 0 {
+		// Continuing conversation - use history as-is, don't add question again
+		// IMPORTANT: Do NOT append question here - it would create duplicate messages
+		// Instructions are already in history from iteration 1
+		messages = make([]llms.MessageContent, len(conversationHistory))
+		copy(messages, conversationHistory)
+	} else {
+		// First turn - add question as initial user message
+		userMessage := llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: question}},
+		}
+		messages = append(messages, userMessage)
+	}
 
 	// The MCP agent's AskWithHistoryStructured expects: (agent, ctx, messages, schema, schemaString)
 	// where schema is the type, not the result variable

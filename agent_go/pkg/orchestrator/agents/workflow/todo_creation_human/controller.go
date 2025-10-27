@@ -66,6 +66,11 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	// NEW: Store planning conversation for iterative refinement
 	sessionID  string // For human feedback tracking
 	workflowID string // For human feedback tracking
+
+	// Variable management
+	variablesManifest  *VariablesManifest // Extracted variables
+	templatedObjective string             // Objective with {{VARS}}
+	variableValues     map[string]string  // Runtime variable values
 }
 
 // NewHumanControlledTodoPlannerOrchestrator creates a new human-controlled todo planner orchestrator
@@ -185,6 +190,108 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	// Set objective and workspace path directly
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
+
+	// PHASE 0: Variable Extraction with Human Verification (NEW)
+	// Check if variables.json already exists
+	variablesPath := fmt.Sprintf("%s/todo_creation_human/variables/variables.json", workspacePath)
+	variablesExist, existingVariablesManifest, err := hcpo.checkExistingVariables(ctx, variablesPath)
+	if err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing variables: %v", err)
+		variablesExist = false
+	}
+
+	var variablesManifest *VariablesManifest
+	var templatedObjective string
+
+	// If variables exist, ask user if they want to use them or re-extract
+	if variablesExist {
+		requestID := fmt.Sprintf("existing_variables_decision_%d", time.Now().UnixNano())
+		useExistingVariables, err := hcpo.RequestYesNoFeedback(
+			ctx,
+			requestID,
+			"Found existing variables.json. Do you want to use the existing variables or extract new ones from the objective?",
+			"Use Existing Variables", // Yes button label
+			"Extract New Variables",  // No button label
+			fmt.Sprintf("Variables file: %s\nFound %d variables", variablesPath, len(existingVariablesManifest.Variables)),
+			hcpo.getSessionID(),
+			hcpo.getWorkflowID(),
+		)
+		if err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing variables: %v", err)
+			// Default to using existing variables
+			useExistingVariables = true
+		}
+
+		if useExistingVariables {
+			hcpo.GetLogger().Infof("✅ User chose to use existing variables")
+			variablesManifest = existingVariablesManifest
+			templatedObjective = existingVariablesManifest.Objective
+		} else {
+			hcpo.GetLogger().Infof("🔄 User chose to extract new variables, proceeding with extraction")
+			variablesExist = false // Trigger variable extraction
+		}
+	}
+
+	// Extract variables if they don't exist or user wants to re-extract
+	if !variablesExist {
+		maxVariableRevisions := 10
+		var variableFeedback string
+		var variableConversationHistory []llms.MessageContent
+
+		for revisionAttempt := 1; revisionAttempt <= maxVariableRevisions; revisionAttempt++ {
+			hcpo.GetLogger().Infof("🔄 Variable extraction attempt %d/%d", revisionAttempt, maxVariableRevisions)
+
+			// Run variable extraction phase (with optional human feedback)
+			var err error
+			variablesManifest, templatedObjective, err = hcpo.runVariableExtractionPhase(ctx, revisionAttempt, variableFeedback, variableConversationHistory)
+			if err != nil {
+				hcpo.GetLogger().Warnf("⚠️ Variable extraction failed: %v, continuing without variables", err)
+				templatedObjective = objective // Use original objective if extraction fails
+				break
+			}
+
+			// Accumulate conversation history for next iteration
+			variableConversationHistory = append(variableConversationHistory, llms.MessageContent{
+				Role:  llms.ChatMessageTypeAI,
+				Parts: []llms.ContentPart{llms.TextContent{Text: fmt.Sprintf("Extracted %d variables from objective", len(variablesManifest.Variables))}},
+			})
+
+			hcpo.GetLogger().Infof("✅ Extracted %d variables, templated objective: %s",
+				len(variablesManifest.Variables), templatedObjective)
+
+			// Request human approval for extracted variables
+			approved, feedback, err := hcpo.requestVariableApproval(ctx, variablesManifest, revisionAttempt)
+			if err != nil {
+				hcpo.GetLogger().Warnf("⚠️ Variable approval request failed: %v, using extracted variables", err)
+				approved = true // Default to approved if request fails
+			}
+
+			if approved {
+				hcpo.GetLogger().Infof("✅ Variables approved by human, proceeding to planning")
+				break // Exit retry loop
+			}
+
+			// Variables rejected with feedback for revision
+			hcpo.GetLogger().Infof("🔄 Variable revision requested (attempt %d/%d): %s", revisionAttempt, maxVariableRevisions, feedback)
+			variableFeedback = feedback // Store feedback for next attempt
+
+			if revisionAttempt >= maxVariableRevisions {
+				hcpo.GetLogger().Warnf("⚠️ Max variable revision attempts (%d) reached, using extracted variables", maxVariableRevisions)
+				break
+			}
+		}
+	}
+
+	// Load runtime variable values if provided and switch to templated objective
+	if variablesManifest != nil {
+		if err := hcpo.loadVariableValues(ctx); err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %v", err)
+		}
+
+		// Switch to templated objective for all subsequent phases
+		hcpo.SetObjective(templatedObjective)
+		hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
+	}
 
 	// Check if plan.md already exists
 	planPath := fmt.Sprintf("%s/todo_creation_human/planning/plan.md", workspacePath)
@@ -642,258 +749,462 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 		hcpo.GetLogger().Infof("📋 Executing step %d/%d: %s", i+1, len(breakdownSteps), step.Title)
 
-		// Create conversation history for execution agent
-		executionConversationHistory := []llms.MessageContent{}
-
-		// Prepare template variables for this specific step with individual fields
-		templateVars := map[string]string{
-			"StepNumber":          fmt.Sprintf("%d", i+1),
-			"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
-			"StepTitle":           step.Title,
-			"StepDescription":     step.Description,
-			"StepSuccessCriteria": step.SuccessCriteria,
-			"StepWhyThisStep":     step.WhyThisStep,
-			"StepContextOutput":   step.ContextOutput,
-			"WorkspacePath":       hcpo.GetWorkspacePath(),
-			"LearningAgentOutput": "", // Will be populated with learning agent's output
-		}
-
-		// Combine success and failure patterns from plan breakdown into LearningAgentOutput
-		var learningOutputParts []string
-		if len(step.SuccessPatterns) > 0 {
-			learningOutputParts = append(learningOutputParts, "## ✅ Success Patterns from Plan:")
-			for _, pattern := range step.SuccessPatterns {
-				learningOutputParts = append(learningOutputParts, fmt.Sprintf("- Success Pattern: %s", pattern))
-			}
-		}
-		if len(step.FailurePatterns) > 0 {
-			learningOutputParts = append(learningOutputParts, "## ❌ Failure Patterns from Plan:")
-			for _, pattern := range step.FailurePatterns {
-				learningOutputParts = append(learningOutputParts, fmt.Sprintf("- Failure Pattern: %s", pattern))
-			}
-		}
-
-		if len(learningOutputParts) > 0 {
-			templateVars["LearningAgentOutput"] = strings.Join(learningOutputParts, "\n")
-		} else {
-			templateVars["LearningAgentOutput"] = ""
-		}
-
-		// Add context dependencies as a comma-separated string
-		if len(step.ContextDependencies) > 0 {
-			templateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
-		} else {
-			templateVars["StepContextDependencies"] = ""
-		}
-
-		// Add human feedback from previous steps to conversation history
-		// This allows agents to see feedback in context, not as template variables
-		if len(humanFeedbackHistory) > 0 {
-			previousFeedbackMessage := llms.MessageContent{
-				Role: llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextContent{
-					Text: fmt.Sprintf("## Previous Steps' Feedback for Context:\n%s", strings.Join(humanFeedbackHistory, "\n---\n")),
-				}},
-			}
-			executionConversationHistory = append(executionConversationHistory, previousFeedbackMessage)
-			hcpo.GetLogger().Infof("📝 Added human feedback from previous steps to conversation history for step %d", i+1)
-		}
-
-		// Execute this specific step with retry logic
+		// Initialize variables for step execution
 		maxRetryAttempts := 3
-		var validationFeedback []ValidationFeedback
-		var validationResponse *ValidationResponse
+		var executionConversationHistory []llms.MessageContent
+		var humanFeedback string
+		stepCompleted := false
 
-		for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
-			hcpo.GetLogger().Infof("🔄 Executing step %d/%d (attempt %d/%d): %s", i+1, len(breakdownSteps), retryAttempt, maxRetryAttempts, step.Title)
-
-			// Add validation feedback to conversation history if this is a retry
-			if retryAttempt > 1 && validationFeedback != nil {
-				feedbackJSON, _ := json.Marshal(validationFeedback)
-				validationFeedbackMessage := llms.MessageContent{
+		// Outer loop: Handle re-execution with human feedback
+		for !stepCompleted {
+			// Add human feedback to conversation history if provided
+			if humanFeedback != "" {
+				humanFeedbackMessage := llms.MessageContent{
 					Role: llms.ChatMessageTypeHuman,
 					Parts: []llms.ContentPart{llms.TextContent{
-						Text: fmt.Sprintf("## Validation Feedback (Retry Attempt %d):\n%s", retryAttempt, string(feedbackJSON)),
+						Text: fmt.Sprintf("## Human Feedback for Step %d:\n%s", i+1, humanFeedback),
 					}},
 				}
-				executionConversationHistory = append(executionConversationHistory, validationFeedbackMessage)
-				hcpo.GetLogger().Infof("📝 Added validation feedback to conversation history for step %d, retry %d", i+1, retryAttempt)
+				executionConversationHistory = append(executionConversationHistory, humanFeedbackMessage)
+				hcpo.GetLogger().Infof("📝 Added human feedback to conversation history for step %d", i+1)
+				humanFeedback = "" // Reset for next iteration
 			}
 
-			// Create execution agent for this step
-			agentName := fmt.Sprintf("execution-agent-step-%d-%s", i+1, strings.ReplaceAll(step.Title, " ", "-"))
-			executionAgent, err := hcpo.createExecutionAgent(ctx, "execution", i+1, iteration, agentName)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create execution agent for step %d: %w", i+1, err)
-			}
-
-			// Execute this specific step with execution conversation history
-			_, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, executionConversationHistory)
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, retryAttempt, err)
-				if retryAttempt >= maxRetryAttempts {
-					hcpo.GetLogger().Errorf("❌ Step %d execution failed after %d attempts", i+1, maxRetryAttempts)
-					continue
-				}
-				continue
-			}
-
-			hcpo.GetLogger().Infof("✅ Step %d execution completed successfully (attempt %d)", i+1, retryAttempt)
-
-			// Validate this step's execution using structured output
-			hcpo.GetLogger().Infof("🔍 Validating step %d execution (attempt %d)", i+1, retryAttempt)
-
-			validationAgentName := fmt.Sprintf("validation-agent-step-%d-%s", i+1, strings.ReplaceAll(step.Title, " ", "-"))
-			validationAgent, err := hcpo.createValidationAgent(ctx, "validation", i+1, iteration, validationAgentName)
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to create validation agent for step %d: %v", i+1, err)
-				if retryAttempt >= maxRetryAttempts {
-					continue
-				}
-				continue
-			}
-
-			// Prepare validation template variables with individual fields
-			validationTemplateVars := map[string]string{
+			// Prepare template variables for this specific step with individual fields
+			// RESOLVE VARIABLES: Replace {{VARS}} with actual values for execution
+			templateVars := map[string]string{
 				"StepNumber":          fmt.Sprintf("%d", i+1),
 				"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
-				"StepTitle":           step.Title,
-				"StepDescription":     step.Description,
-				"StepSuccessCriteria": step.SuccessCriteria,
-				"StepWhyThisStep":     step.WhyThisStep,
-				"StepContextOutput":   step.ContextOutput,
+				"StepTitle":           hcpo.resolveVariables(step.Title),
+				"StepDescription":     hcpo.resolveVariables(step.Description),
+				"StepSuccessCriteria": hcpo.resolveVariables(step.SuccessCriteria),
+				"StepWhyThisStep":     hcpo.resolveVariables(step.WhyThisStep),
+				"StepContextOutput":   hcpo.resolveVariables(step.ContextOutput),
 				"WorkspacePath":       hcpo.GetWorkspacePath(),
-				"ExecutionHistory":    hcpo.formatConversationHistory(executionConversationHistory),
+				"LearningAgentOutput": "", // Will be populated with learning agent's output
 			}
 
-			// Add context dependencies as a comma-separated string
-			if len(step.ContextDependencies) > 0 {
-				validationTemplateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
+			// Combine success and failure patterns from plan breakdown into LearningAgentOutput
+			var learningOutputParts []string
+			if len(step.SuccessPatterns) > 0 {
+				learningOutputParts = append(learningOutputParts, "## ✅ Success Patterns from Plan:")
+				for _, pattern := range step.SuccessPatterns {
+					learningOutputParts = append(learningOutputParts, fmt.Sprintf("- Success Pattern: %s", pattern))
+				}
+			}
+			if len(step.FailurePatterns) > 0 {
+				learningOutputParts = append(learningOutputParts, "## ❌ Failure Patterns from Plan:")
+				for _, pattern := range step.FailurePatterns {
+					learningOutputParts = append(learningOutputParts, fmt.Sprintf("- Failure Pattern: %s", pattern))
+				}
+			}
+
+			if len(learningOutputParts) > 0 {
+				templateVars["LearningAgentOutput"] = strings.Join(learningOutputParts, "\n")
 			} else {
-				validationTemplateVars["StepContextDependencies"] = ""
+				templateVars["LearningAgentOutput"] = ""
 			}
 
-			// Validate this step's execution using structured output
-			validationResponse, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llms.MessageContent{})
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, retryAttempt, err)
-				if retryAttempt >= maxRetryAttempts {
+			// Add context dependencies as a comma-separated string (also resolve variables)
+			if len(step.ContextDependencies) > 0 {
+				resolvedDeps := make([]string, len(step.ContextDependencies))
+				for idx, dep := range step.ContextDependencies {
+					resolvedDeps[idx] = hcpo.resolveVariables(dep)
+				}
+				templateVars["StepContextDependencies"] = strings.Join(resolvedDeps, ", ")
+			} else {
+				templateVars["StepContextDependencies"] = ""
+			}
+
+			// Add human feedback from previous steps to conversation history (first iteration only)
+			if len(humanFeedbackHistory) > 0 && len(executionConversationHistory) == 0 {
+				previousFeedbackMessage := llms.MessageContent{
+					Role: llms.ChatMessageTypeHuman,
+					Parts: []llms.ContentPart{llms.TextContent{
+						Text: fmt.Sprintf("## Previous Steps' Feedback for Context:\n%s", strings.Join(humanFeedbackHistory, "\n---\n")),
+					}},
+				}
+				executionConversationHistory = append(executionConversationHistory, previousFeedbackMessage)
+				hcpo.GetLogger().Infof("📝 Added human feedback from previous steps to conversation history for step %d", i+1)
+			}
+
+			// Inner loop: Automatic retry logic
+			var validationFeedback []ValidationFeedback
+			var validationResponse *ValidationResponse
+
+			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
+				hcpo.GetLogger().Infof("🔄 Executing step %d/%d (attempt %d/%d): %s", i+1, len(breakdownSteps), retryAttempt, maxRetryAttempts, step.Title)
+
+				// Add validation feedback to template variables if this is a retry
+				if retryAttempt > 1 && validationFeedback != nil {
+					feedbackJSON, _ := json.Marshal(validationFeedback)
+					templateVars["ValidationFeedback"] = fmt.Sprintf("## Validation Feedback (Retry Attempt %d):\n%s", retryAttempt, string(feedbackJSON))
+					hcpo.GetLogger().Infof("📝 Added validation feedback to template variables for step %d, retry %d", i+1, retryAttempt)
+				} else {
+					templateVars["ValidationFeedback"] = "" // No validation feedback for first attempt
+				}
+
+				// Create execution agent for this step
+				agentName := fmt.Sprintf("execution-agent-step-%d-%s", i+1, strings.ReplaceAll(step.Title, " ", "-"))
+				executionAgent, err := hcpo.createExecutionAgent(ctx, "execution", i+1, iteration, agentName)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create execution agent for step %d: %w", i+1, err)
+				}
+
+				// Execute this specific step with execution conversation history
+				_, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, executionConversationHistory)
+				if err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, retryAttempt, err)
+					if retryAttempt >= maxRetryAttempts {
+						hcpo.GetLogger().Errorf("❌ Step %d execution failed after %d attempts", i+1, maxRetryAttempts)
+						continue
+					}
 					continue
 				}
-				continue
-			}
 
-			hcpo.GetLogger().Infof("✅ Step %d validation completed successfully (attempt %d)", i+1, retryAttempt)
-			hcpo.GetLogger().Infof("📊 Validation result: Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
+				hcpo.GetLogger().Infof("✅ Step %d execution completed successfully (attempt %d)", i+1, retryAttempt)
 
-			// Run appropriate learning phase based on validation result
-			if validationResponse.IsSuccessCriteriaMet {
-				// Success Learning Agent - analyze what worked well and update plan.json
-				hcpo.GetLogger().Infof("🧠 Running success learning analysis for step %d", i+1)
-				successLearningOutput, err := hcpo.runSuccessLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
+				// Validate this step's execution using structured output
+				hcpo.GetLogger().Infof("🔍 Validating step %d execution (attempt %d)", i+1, retryAttempt)
+
+				validationAgentName := fmt.Sprintf("validation-agent-step-%d-%s", i+1, strings.ReplaceAll(step.Title, " ", "-"))
+				validationAgent, err := hcpo.createValidationAgent(ctx, "validation", i+1, iteration, validationAgentName)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Success learning phase failed for step %d: %v", i+1, err)
-				} else {
-					hcpo.GetLogger().Infof("✅ Success learning analysis completed for step %d", i+1)
+					hcpo.GetLogger().Warnf("⚠️ Failed to create validation agent for step %d: %v", i+1, err)
+					if retryAttempt >= maxRetryAttempts {
+						continue
+					}
+					continue
+				}
 
-					// Append success learning analysis to existing LearningAgentOutput
-					if successLearningOutput != "" {
-						existingOutput := templateVars["LearningAgentOutput"]
-						if existingOutput != "" {
-							templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + successLearningOutput
-						} else {
-							templateVars["LearningAgentOutput"] = successLearningOutput
+				// Prepare validation template variables with individual fields
+				validationTemplateVars := map[string]string{
+					"StepNumber":          fmt.Sprintf("%d", i+1),
+					"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
+					"StepTitle":           step.Title,
+					"StepDescription":     step.Description,
+					"StepSuccessCriteria": step.SuccessCriteria,
+					"StepWhyThisStep":     step.WhyThisStep,
+					"StepContextOutput":   step.ContextOutput,
+					"WorkspacePath":       hcpo.GetWorkspacePath(),
+					"ExecutionHistory":    hcpo.formatConversationHistory(executionConversationHistory),
+				}
+
+				// Add context dependencies as a comma-separated string
+				if len(step.ContextDependencies) > 0 {
+					validationTemplateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
+				} else {
+					validationTemplateVars["StepContextDependencies"] = ""
+				}
+
+				// Validate this step's execution using structured output
+				validationResponse, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llms.MessageContent{})
+				if err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, retryAttempt, err)
+					if retryAttempt >= maxRetryAttempts {
+						continue
+					}
+					continue
+				}
+
+				hcpo.GetLogger().Infof("✅ Step %d validation completed successfully (attempt %d)", i+1, retryAttempt)
+				hcpo.GetLogger().Infof("📊 Validation result: Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
+
+				// Run appropriate learning phase based on validation result
+				if validationResponse.IsSuccessCriteriaMet {
+					// Success Learning Agent - analyze what worked well and update plan.json
+					hcpo.GetLogger().Infof("🧠 Running success learning analysis for step %d", i+1)
+					successLearningOutput, err := hcpo.runSuccessLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Success learning phase failed for step %d: %v", i+1, err)
+					} else {
+						hcpo.GetLogger().Infof("✅ Success learning analysis completed for step %d", i+1)
+
+						// Append success learning analysis to existing LearningAgentOutput
+						if successLearningOutput != "" {
+							existingOutput := templateVars["LearningAgentOutput"]
+							if existingOutput != "" {
+								templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + successLearningOutput
+							} else {
+								templateVars["LearningAgentOutput"] = successLearningOutput
+							}
+						}
+					}
+				} else {
+					// Failure Learning Agent - analyze what went wrong and provide refined task description
+					hcpo.GetLogger().Infof("🧠 Running failure learning analysis for step %d", i+1)
+					refinedTaskDescription, learningAnalysis, err := hcpo.runFailureLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failure learning phase failed for step %d: %v", i+1, err)
+					} else {
+						hcpo.GetLogger().Infof("✅ Failure learning analysis completed for step %d", i+1)
+
+						// Update step description for retry
+						if refinedTaskDescription != "" {
+							step.Description = refinedTaskDescription
+							templateVars["StepDescription"] = refinedTaskDescription
+							hcpo.GetLogger().Infof("🔄 Updated step %d description with refined task for retry", i+1)
+						}
+
+						// Update LearningAgentOutput with full learning analysis
+						if learningAnalysis != "" {
+							existingOutput := templateVars["LearningAgentOutput"]
+							if existingOutput != "" {
+								templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + learningAnalysis
+							} else {
+								templateVars["LearningAgentOutput"] = learningAnalysis
+							}
 						}
 					}
 				}
+
+				// Check if success criteria was met
+				if validationResponse.IsSuccessCriteriaMet {
+					hcpo.GetLogger().Infof("✅ Step %d passed validation - success criteria met", i+1)
+					break // Exit retry loop and continue to next step
+				} else {
+					hcpo.GetLogger().Warnf("⚠️ Step %d failed validation - success criteria not met (attempt %d/%d)", i+1, retryAttempt, maxRetryAttempts)
+
+					// Store feedback for next retry attempt
+					validationFeedback = validationResponse.Feedback
+
+					if retryAttempt >= maxRetryAttempts {
+						hcpo.GetLogger().Errorf("❌ Step %d failed validation after %d attempts", i+1, maxRetryAttempts)
+						// Continue to next step even if validation failed
+						break
+					} else {
+						hcpo.GetLogger().Infof("🔄 Retrying step %d execution with validation feedback", i+1)
+						// Note: conversation history is preserved from previous attempts for context
+					}
+				}
+			}
+
+			// BLOCKING HUMAN FEEDBACK - Ask user if they want to continue to next step or re-execute current step
+			var validationSummary string
+			if validationResponse != nil {
+				validationSummary = fmt.Sprintf("Step %d validation completed. Success Criteria Met: %v, Status: %s", i+1, validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
 			} else {
-				// Failure Learning Agent - analyze what went wrong and provide refined task description
-				hcpo.GetLogger().Infof("🧠 Running failure learning analysis for step %d", i+1)
-				refinedTaskDescription, learningAnalysis, err := hcpo.runFailureLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
+				validationSummary = fmt.Sprintf("Step %d execution failed - no validation response available", i+1)
+			}
+			approved, feedback, err := hcpo.requestHumanFeedback(ctx, i+1, len(breakdownSteps), validationSummary)
+			if err != nil {
+				hcpo.GetLogger().Warnf("⚠️ Human feedback request failed: %v", err)
+				// Default to continue if feedback fails
+				approved = true
+			}
+
+			// Store human feedback for future steps (even if approved, user might have provided guidance)
+			if feedback != "" {
+				feedbackEntry := fmt.Sprintf("Step %d/%d Feedback: %s", i+1, len(breakdownSteps), feedback)
+				humanFeedbackHistory = append(humanFeedbackHistory, feedbackEntry)
+				hcpo.GetLogger().Infof("📝 Stored human feedback for future steps: %s", feedbackEntry)
+			}
+
+			if approved {
+				// User approved - mark step as completed and exit outer loop
+				progress.CompletedStepIndices = append(progress.CompletedStepIndices, i)
+				if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Failed to save step progress: %v", err)
+				} else {
+					hcpo.GetLogger().Infof("✅ Step %d/%d marked as completed and saved", i+1, len(breakdownSteps))
+				}
+				stepCompleted = true
+			} else {
+				// User rejected - ask if they want to re-execute this step with feedback or move to next step
+				shouldReexecute, err := hcpo.requestReexecuteDecision(ctx, i+1, len(breakdownSteps), feedback)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failure learning phase failed for step %d: %v", i+1, err)
+					hcpo.GetLogger().Warnf("⚠️ Re-execution decision request failed: %v", err)
+					shouldReexecute = false // Default to stop if decision fails
+				}
+
+				if shouldReexecute {
+					// User wants to re-execute - set feedback and continue outer loop
+					hcpo.GetLogger().Infof("🔄 Will re-execute step %d with human feedback: %s", i+1, feedback)
+					humanFeedback = feedback
+					// Outer loop will continue, adding feedback to conversation history
 				} else {
-					hcpo.GetLogger().Infof("✅ Failure learning analysis completed for step %d", i+1)
-
-					// Update step description for retry
-					if refinedTaskDescription != "" {
-						step.Description = refinedTaskDescription
-						templateVars["StepDescription"] = refinedTaskDescription
-						hcpo.GetLogger().Infof("🔄 Updated step %d description with refined task for retry", i+1)
-					}
-
-					// Update LearningAgentOutput with full learning analysis
-					if learningAnalysis != "" {
-						existingOutput := templateVars["LearningAgentOutput"]
-						if existingOutput != "" {
-							templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + learningAnalysis
-						} else {
-							templateVars["LearningAgentOutput"] = learningAnalysis
-						}
-					}
+					// User wants to stop execution
+					hcpo.GetLogger().Infof("🛑 User requested to stop execution after step %d with feedback: %s", i+1, feedback)
+					break // Break out of outer loop (ends all steps)
 				}
 			}
-
-			// Check if success criteria was met
-			if validationResponse.IsSuccessCriteriaMet {
-				hcpo.GetLogger().Infof("✅ Step %d passed validation - success criteria met", i+1)
-				break // Exit retry loop and continue to next step
-			} else {
-				hcpo.GetLogger().Warnf("⚠️ Step %d failed validation - success criteria not met (attempt %d/%d)", i+1, retryAttempt, maxRetryAttempts)
-
-				// Store feedback for next retry attempt
-				validationFeedback = validationResponse.Feedback
-
-				if retryAttempt >= maxRetryAttempts {
-					hcpo.GetLogger().Errorf("❌ Step %d failed validation after %d attempts", i+1, maxRetryAttempts)
-					// Continue to next step even if validation failed
-					break
-				} else {
-					hcpo.GetLogger().Infof("🔄 Retrying step %d execution with validation feedback", i+1)
-					// Note: conversation history is preserved from previous attempts for context
-				}
-			}
-		}
-
-		// BLOCKING HUMAN FEEDBACK - Ask user if they want to continue to next step
-		var validationSummary string
-		if validationResponse != nil {
-			validationSummary = fmt.Sprintf("Step %d validation completed. Success Criteria Met: %v, Status: %s", i+1, validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
-		} else {
-			validationSummary = fmt.Sprintf("Step %d execution failed - no validation response available", i+1)
-		}
-		approved, feedback, err := hcpo.requestHumanFeedback(ctx, i+1, len(breakdownSteps), validationSummary)
-		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Human feedback request failed: %v", err)
-			// Default to continue if feedback fails
-			approved = true
-		}
-
-		// Store human feedback for future steps (even if approved, user might have provided guidance)
-		if feedback != "" {
-			feedbackEntry := fmt.Sprintf("Step %d/%d Feedback: %s", i+1, len(breakdownSteps), feedback)
-			humanFeedbackHistory = append(humanFeedbackHistory, feedbackEntry)
-			hcpo.GetLogger().Infof("📝 Stored human feedback for future steps: %s", feedbackEntry)
-		}
-
-		if !approved {
-			// User requested to stop - progress already saved up to previous step
-			hcpo.GetLogger().Infof("🛑 User requested to stop execution after step %d with feedback: %s", i+1, feedback)
-			break
-		} else {
-			// Mark step as completed and save progress
-			progress.CompletedStepIndices = append(progress.CompletedStepIndices, i)
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to save step progress: %v", err)
-			} else {
-				hcpo.GetLogger().Infof("✅ Step %d/%d marked as completed and saved",
-					i+1, len(breakdownSteps))
-			}
-		}
+		} // End of outer loop for step execution
 	}
 
 	hcpo.GetLogger().Infof("✅ All steps execution completed")
 	return nil, nil
+}
+
+// runVariableExtractionPhase extracts variables from objective (with optional human feedback)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llms.MessageContent) (*VariablesManifest, string, error) {
+	hcpo.GetLogger().Infof("🔍 Starting variable extraction from objective (attempt %d)", iteration)
+
+	// Create variable extraction agent
+	extractionAgent, err := hcpo.createVariableExtractionAgent(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create variable extraction agent: %w", err)
+	}
+
+	// Prepare template variables
+	extractionTemplateVars := map[string]string{
+		"Objective":     hcpo.GetObjective(),
+		"WorkspacePath": hcpo.GetWorkspacePath(),
+	}
+
+	// Add human feedback to conversation if provided
+	if humanFeedback != "" {
+		feedbackMessage := llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: humanFeedback}},
+		}
+		conversationHistory = append(conversationHistory, feedbackMessage)
+		hcpo.GetLogger().Infof("📝 Added human feedback to variable extraction conversation (attempt %d)", iteration)
+	}
+
+	// Execute variable extraction
+	_, updatedHistory, err := extractionAgent.Execute(ctx, extractionTemplateVars, conversationHistory)
+	if err != nil {
+		return nil, "", fmt.Errorf("variable extraction failed: %w", err)
+	}
+
+	// Read the generated variables.json file
+	variablesPath := fmt.Sprintf("%s/todo_creation_human/variables/variables.json", hcpo.GetWorkspacePath())
+	variablesContent, err := hcpo.ReadWorkspaceFile(ctx, variablesPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read variables.json: %w", err)
+	}
+
+	// Parse JSON to get manifest
+	var manifest VariablesManifest
+	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
+		return nil, "", fmt.Errorf("failed to parse variables.json: %w", err)
+	}
+
+	// Store manifest in orchestrator for future use
+	hcpo.variablesManifest = &manifest
+	hcpo.templatedObjective = manifest.Objective
+
+	hcpo.GetLogger().Infof("✅ Extracted %d variables from objective (conversation has %d messages)", len(manifest.Variables), len(updatedHistory))
+	return &manifest, manifest.Objective, nil
+}
+
+// requestVariableApproval requests human approval for extracted variables
+func (hcpo *HumanControlledTodoPlannerOrchestrator) requestVariableApproval(ctx context.Context, manifest *VariablesManifest, revisionAttempt int) (bool, string, error) {
+	hcpo.GetLogger().Infof("⏸️ Requesting human approval for extracted variables (attempt %d)", revisionAttempt)
+
+	// Format variables for display
+	var variablesSummary strings.Builder
+	variablesSummary.WriteString(fmt.Sprintf("Extracted %d variables from objective:\n\n", len(manifest.Variables)))
+
+	for _, variable := range manifest.Variables {
+		variablesSummary.WriteString(fmt.Sprintf("- **{{%s}}**: %s\n", variable.Name, variable.Description))
+		variablesSummary.WriteString(fmt.Sprintf("  - Value: %s\n", variable.Value))
+		variablesSummary.WriteString("\n")
+	}
+
+	variablesSummary.WriteString(fmt.Sprintf("\n**Templated Objective**:\n%s", manifest.Objective))
+
+	// Generate unique request ID
+	requestID := fmt.Sprintf("variable_approval_%d_%d", revisionAttempt, time.Now().UnixNano())
+
+	// Use common human feedback function
+	return hcpo.RequestHumanFeedback(
+		ctx,
+		requestID,
+		fmt.Sprintf("Please review the extracted variables (attempt %d). Are these correct or do you want to provide feedback for refinement?", revisionAttempt),
+		variablesSummary.String(),
+		hcpo.getSessionID(),
+		hcpo.getWorkflowID(),
+	)
+}
+
+// createVariableExtractionAgent creates the variable extraction agent
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createVariableExtractionAgent(ctx context.Context) (agents.OrchestratorAgent, error) {
+	agent, err := hcpo.CreateAndSetupStandardAgentWithCustomServers(
+		ctx,
+		"variable-extraction-agent",
+		"variable_extraction",
+		0, // No step number
+		0, // No iteration
+		hcpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		[]string{mcpclient.NoServers}, // No MCP servers needed - pure LLM extraction
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewVariableExtractionAgent(config, logger, tracer, eventBridge)
+		},
+		hcpo.WorkspaceTools,
+		hcpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return agent, nil
+}
+
+// loadVariableValues loads runtime variable values if provided
+func (hcpo *HumanControlledTodoPlannerOrchestrator) loadVariableValues(ctx context.Context) error {
+	if hcpo.variablesManifest == nil {
+		return nil // No variables to load
+	}
+
+	// Check if values.json exists
+	valuesPath := fmt.Sprintf("%s/todo_creation_human/variables/values.json", hcpo.GetWorkspacePath())
+	valuesContent, err := hcpo.ReadWorkspaceFile(ctx, valuesPath)
+	if err != nil {
+		// File doesn't exist - use default values from manifest
+		hcpo.GetLogger().Infof("📝 No values.json found, using default values from variables.json")
+		hcpo.variableValues = make(map[string]string)
+		for _, variable := range hcpo.variablesManifest.Variables {
+			hcpo.variableValues[variable.Name] = variable.Value
+		}
+		return nil
+	}
+
+	// Parse values.json
+	var valuesData struct {
+		Environment string            `json:"environment"`
+		Values      map[string]string `json:"values"`
+	}
+	if err := json.Unmarshal([]byte(valuesContent), &valuesData); err != nil {
+		return fmt.Errorf("failed to parse values.json: %w", err)
+	}
+
+	hcpo.variableValues = valuesData.Values
+	hcpo.GetLogger().Infof("✅ Loaded variable values for environment: %s", valuesData.Environment)
+	return nil
+}
+
+// resolveVariables replaces {{VARIABLE}} placeholders with actual values
+func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveVariables(text string) string {
+	if hcpo.variableValues == nil {
+		return text // No variables to resolve
+	}
+
+	resolved := text
+	for varName, varValue := range hcpo.variableValues {
+		placeholder := fmt.Sprintf("{{%s}}", varName)
+		resolved = strings.ReplaceAll(resolved, placeholder, varValue)
+	}
+	return resolved
+}
+
+// formatVariableSchema returns variable names and descriptions (NO VALUES)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) formatVariableSchema() string {
+	if hcpo.variablesManifest == nil || len(hcpo.variablesManifest.Variables) == 0 {
+		return "No variables defined"
+	}
+
+	var result strings.Builder
+	result.WriteString("## Available Variables:\n\n")
+
+	for _, variable := range hcpo.variablesManifest.Variables {
+		result.WriteString(fmt.Sprintf("### {{%s}}\n", variable.Name))
+		result.WriteString(fmt.Sprintf("- **Description**: %s\n", variable.Description))
+		result.WriteString("\n")
+	}
+
+	return result.String()
 }
 
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
@@ -1122,6 +1433,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestHumanFeedback(ctx con
 		requestID,
 		fmt.Sprintf("Step %d/%d validation completed. Should we continue with execution of the next step?", currentStep, totalSteps),
 		validationResult, // Show validation results as context
+		hcpo.getSessionID(),
+		hcpo.getWorkflowID(),
+	)
+}
+
+// requestReexecuteDecision asks user if they want to re-execute the current step with feedback or skip to next step
+// Returns: (shouldReexecute bool, error)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) requestReexecuteDecision(ctx context.Context, currentStep, totalSteps int, feedback string) (bool, error) {
+	hcpo.GetLogger().Infof("🔄 Requesting re-execution decision for step %d/%d", currentStep, totalSteps)
+
+	// Generate unique request ID
+	requestID := fmt.Sprintf("reexecute_decision_%d_%d_%d", currentStep, totalSteps, time.Now().UnixNano())
+
+	// Use common human feedback function with yes/no semantics
+	return hcpo.RequestYesNoFeedback(
+		ctx,
+		requestID,
+		fmt.Sprintf("You provided feedback for step %d/%d. Would you like to re-execute this step with your feedback, or skip to the next step?", currentStep, totalSteps),
+		"Re-execute Step with Feedback",
+		"Skip to Next Step",
+		fmt.Sprintf("Your feedback: %s", feedback),
 		hcpo.getSessionID(),
 		hcpo.getWorkflowID(),
 	)
@@ -1378,6 +1710,33 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingPlan(ctx contex
 
 	hcpo.GetLogger().Infof("✅ Found existing plan at %s", planPath)
 	return true, planContent, nil
+}
+
+// checkExistingVariables checks if variables.json already exists and loads it
+func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingVariables(ctx context.Context, variablesPath string) (bool, *VariablesManifest, error) {
+	hcpo.GetLogger().Infof("🔍 Checking for existing variables at %s", variablesPath)
+
+	// Try to read variables.json
+	variablesContent, err := hcpo.ReadWorkspaceFile(ctx, variablesPath)
+	if err != nil {
+		// Check if it's a "file not found" error
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
+			hcpo.GetLogger().Infof("📋 No existing variables found: %v", err)
+			return false, nil, nil
+		}
+		// Other errors should be returned
+		return false, nil, err
+	}
+
+	// Parse the existing variables manifest
+	var manifest VariablesManifest
+	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to parse existing variables.json: %v", err)
+		return false, nil, fmt.Errorf("failed to parse variables.json: %w", err)
+	}
+
+	hcpo.GetLogger().Infof("✅ Found existing variables.json with %d variables", len(manifest.Variables))
+	return true, &manifest, nil
 }
 
 // addUserFeedbackToHistory adds human feedback to conversation history

@@ -132,15 +132,18 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 - Any workspace files needed for task execution
 
 **WRITE:**
-- Context output files (ONLY if specified in "Context Output" field)
-- No validation reports or documentation files
+- Context output files in {{.WorkspacePath}}/execution/ folder ONLY
+- Write context files to execution/ subfolder as specified in "Context Output" field
+- NO validation reports or documentation files
+- NO writing to any other folders or workspace root
 
 **RESTRICTIONS:**
 - Focus on executing the task using MCP tools
 - Read workspace files for context as needed
-- Create context output file if specified in step
+- Create context output file in execution/ subfolder if specified in step
 - Return execution results in your response
 - No documentation or report writing (validation agent handles that)
+- **CRITICAL**: Only write to {{.WorkspacePath}}/execution/ folder
 
 ## 📝 EVIDENCE COLLECTION (When to Gather Evidence)
 
@@ -163,7 +166,15 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Important**: The learning agent has analyzed previous executions and provided this guidance. Use this analysis to improve your execution approach, including success patterns to follow and failure patterns to avoid.
 {{end}}
 
-**Note**: Validation feedback and human feedback are provided through conversation history. Review the conversation context for any previous validation results or human guidance.
+{{if .ValidationFeedback}}
+## ⚠️ VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT
+
+{{.ValidationFeedback}}
+
+**Important**: This is feedback from the validation of your previous attempt. Please address the issues mentioned above and improve your execution approach based on this feedback.
+{{end}}
+
+**Note**: Human feedback is provided through conversation history. Review the conversation context for any previous human guidance.
 
 ## 🎯 CURRENT STEP EXECUTION
 
@@ -230,15 +241,15 @@ Provide a clear execution summary in your response:
 - Result: Successfully read 245 lines, found 3 database connection strings
 - Used grep.search with pattern="mongodb://.*" to extract MongoDB URLs
 - Result: Found 3 MongoDB URLs on lines 45, 78, 123
-- Used fileserver.write_file with path="context_output/step_1_database_urls.md" to save results
+- Used fileserver.write_file with path="execution/step_1_database_urls.md" to save results
 - Result: Created context output file with extracted database URLs and connection details
 
 **Success Criteria Check**: 
 - Criteria: Extract all database URLs from configuration files and save to context file
-- Met: Yes - Found 3 MongoDB URLs and saved to context_output/step_1_database_urls.md
+- Met: Yes - Found 3 MongoDB URLs and saved to execution/step_1_database_urls.md
 
 **Context Output**: 
-- context_output/step_1_database_urls.md
+- execution/step_1_database_urls.md
 
 ---
 

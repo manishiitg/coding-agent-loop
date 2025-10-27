@@ -119,16 +119,40 @@ This step was executed successfully! Analyze what made it work well and improve 
 
 ### **Success Analysis Process:**
 1. **Read current plan** - Examine plan.md to understand the current step
-2. **Identify success factors** - What tools, approaches, and patterns worked best
-3. **Extract best practices** - Successful strategies that should be documented
-4. **Update plan step** - Improve the step description, success criteria, and context dependencies based on what actually worked
-5. **Write improved plan** - Update plan.md with better step details
-6. **Document success patterns** - Write to learnings/success_patterns.md and learnings/step_X_learning.md
+2. **Parse ExecutionHistory** - Extract EXACT tool calls from the execution conversation history below
+3. **Identify success factors** - What exact tools with arguments, approaches, and patterns worked best
+4. **Extract tool calls** - Capture complete MCP tool invocations with ALL arguments that led to success
+5. **Update plan step** - Improve the step description, success criteria, and context dependencies based on what actually worked
+6. **Write improved plan** - Update plan.md with better step details
+7. **Document success patterns** - Write EXACT tool calls with arguments to learnings/success_patterns.md and learnings/step_X_learning.md
+
+### **How to Extract Tool Calls from ExecutionHistory:**
+The ExecutionHistory section below contains the complete execution conversation. Parse it to extract:
+
+**From "## Tool Call" sections, extract:**
+- **Tool Name**: The exact MCP tool (e.g., fileserver.read_file, aws.cli_query)
+- **Arguments**: The COMPLETE arguments JSON that was used
+- **Tool Response**: The response that confirmed success
+
+**Extraction Format Example:**
+From ExecutionHistory:
+` + "```" + `
+### Tool Call
+**Tool Name:** fileserver.read_file
+**Arguments:** {"path":"/workspace/config.json","limit":100}
+` + "```" + `
+
+Extract to Success Patterns:
+` + "```markdown" + `
+- fileserver.read_file with {"path":"/workspace/config.json","limit":100}
+` + "```" + `
+
+**CRITICAL**: Extract the EXACT arguments JSON that was used, not a summary or description.
 
 ### **Plan Improvement Focus:**
 Update plan.md with the **final working approach** that achieved success by **enhancing the markdown content**:
 
-**Example of Enhanced Step in Plan.md:**
+**Example of Enhanced Step in Plan.md with EXACT Tool Calls:**
 
 ### Step 1: Deploy service
 - **Description**: Deploy using kubectl apply to production
@@ -136,18 +160,23 @@ Update plan.md with the **final working approach** that achieved success by **en
 - **Why This Step**: This step deploys the application to production. The dry-run validation is critical because it catches YAML syntax errors before applying. The rollout status check ensures the deployment progressed without errors. Pod health verification confirms the service is actually running.
 - **Context Dependencies**: ../validation/environment_check.md, ../execution/step_1_config.md
 - **Context Output**: ./execution/step_2_deployment.md
-- **Success Patterns**:
-  - Use kubernetes.kubectl_apply with --dry-run=client first to validate YAML syntax
-  - Monitor rollout with kubernetes.kubectl_rollout status command
-  - Verify pods with kubernetes.kubectl_get pods -n production
-  - Always check namespace exists before applying
+- **Success Patterns** (EXACT tool calls with arguments extracted from execution):
+  - kubernetes.kubectl_apply with {"file":"deployment.yaml","namespace":"production","dry_run":"client"}
+  - kubernetes.kubectl_rollout_status with {"resource":"deployment","name":"myapp","namespace":"production"}
+  - kubernetes.kubectl_get with {"resource":"pods","namespace":"production","output":"json"}
+  - kubernetes.kubectl_get with {"resource":"namespace","name":"production","exists":true} to verify namespace
 
 **How to Enhance Markdown Plan:**
 1. **Description**: Keep concise, focus on core task
 2. **Success Criteria**: Add exact validation methods, expected outputs, and measurable indicators
 3. **Why This Step**: Explain why this specific approach worked and why each sub-step is important
 4. **Context Dependencies**: Update with actual files that were crucial for successful execution
-5. **Success Patterns**: ONLY add this section if you identified specific tools, approaches, or patterns that led to success. Include specific MCP server.tool references and exact approaches that worked.
+5. **Success Patterns**: 
+   - ONLY add this section if you identified specific tools, approaches, or patterns that led to success
+   - Extract EXACT tool names and arguments from ExecutionHistory
+   - Format: tool_name with {"argument1":"value1","argument2":"value2"}
+   - Include COMPLETE argument JSON from tool calls that worked
+   - Use exact format as shown in the example above
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
@@ -170,7 +199,8 @@ Provide your response in this exact format:
 
 ### Best Practices Captured:
 - [Successful pattern that should be repeated]
-- [Tool combination that worked well]
+- [EXACT tool calls with complete arguments that led to success]
+- [Tool combination that worked well with specific configurations]
 - [Strategy that led to efficient execution]
 
 ---
@@ -182,15 +212,16 @@ Provide your response in this exact format:
 - [Enhanced success criteria with exact validation methods and expected outputs]
 - [Enhanced why_this_step sections with insights about why this approach worked best]
 - [Updated context dependencies with actual files that were crucial for success]
-- [Added Success Patterns section ONLY if specific tools/approaches that led to success were identified - include MCP server.tool references]
+- [Added Success Patterns section with EXACT tool calls including complete argument JSON from ExecutionHistory]
+- [Extracted exact tool invocations: format tool_name with {"arg":"value"} from successful tool calls]
 
 **NOTE**: Update plan.md file - do NOT create new files or change file structure
 
-### Success Patterns Documented:
-- [Successful tools and approaches that worked well]
-- [Patterns and best practices discovered]
+### Success Patterns Documented (EXACT tool calls extracted):
+- [Tool name with complete argument JSON: tool_name with {"arg":"value"}]
+- [Tool combinations that worked well with specific configurations]
+- [Patterns and best practices discovered from actual execution]
 - [Context dependencies that were crucial for success]
-- [Tool recommendations for future similar steps]
 
 ---
 
@@ -215,10 +246,11 @@ Provide your response in this exact format:
 
 **Important**: 
 1. **Focus on success**: Analyze what made this execution successful
-2. **Update plan.md**: Improve the markdown plan by enhancing step descriptions, success criteria, and context dependencies
-3. **Markdown format**: Update the markdown plan.md file - do NOT create JSON files
-4. **Document in learnings/**: Write success patterns to learnings/success_patterns.md and step details to learnings/step_X_learning.md
-5. **Tool recommendations**: Integrate tool information directly into the markdown step descriptions
-6. **Success Patterns Section**: ONLY add "- **Success Patterns**:" section if you identified specific MCP tools, exact commands, or clear patterns that led to success. Do NOT add empty or generic patterns.
+2. **Extract EXACT tools**: Parse ExecutionHistory and extract complete tool calls with full argument JSON
+3. **Update plan.md**: Improve the markdown plan by enhancing step descriptions, success criteria, and context dependencies
+4. **Markdown format**: Update the markdown plan.md file - do NOT create JSON files
+5. **Document in learnings/**: Write EXACT tool calls with arguments to learnings/success_patterns.md and step details to learnings/step_X_learning.md
+6. **Tool format**: Use exact format tool_name with {"arg":"value"} - extract COMPLETE argument JSON from ExecutionHistory
+7. **Success Patterns Section**: ONLY add "- **Success Patterns**:" section if you identified specific MCP tools with exact arguments. Extract the COMPLETE argument JSON from successful tool calls in ExecutionHistory. Do NOT add empty, generic, or summarized patterns.
 `
 }

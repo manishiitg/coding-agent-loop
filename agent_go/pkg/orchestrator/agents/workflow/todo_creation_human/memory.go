@@ -31,5 +31,20 @@ func GetTodoCreationHumanMemoryRequirements() string {
 - **Graceful Handling**: Handle missing files appropriately
 - **Context Sharing**: Share data between steps via workspace files
 
+## 🔐 VARIABLE HANDLING (CRITICAL - ALL AGENTS)
+
+**Variables** are placeholders like AWS_ACCOUNT_ID or GITHUB_REPO_URL (wrapped in double curly braces) that represent values changing across environments.
+
+**RULES:**
+1. **NEVER hard-code values** - Always preserve variable placeholders
+2. **NEVER replace placeholders** - Keep them as-is when reading/writing files
+3. **Execution agents see actual values** - Other agents only see placeholders
+
+**Examples:**
+- ✅ CORRECT: "Deploy to account AWS_ACCOUNT_ID" (placeholder preserved)
+- ❌ WRONG: "Deploy to account 123456789" (hard-coded value)
+
+**Why?** Plans must work across dev/staging/prod environments without modification
+
 ` + memory.GetWorkflowMemoryRequirements() // Include generic memory requirements
 }

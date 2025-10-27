@@ -829,6 +829,87 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	return false, nil
 }
 
+// RequestThreeChoiceFeedback requests three-choice feedback from user
+// Returns: (choice string, error) where choice is "option1", "option2", or "option3"
+func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
+	ctx context.Context,
+	requestID string,
+	question string,
+	option1Label string,
+	option2Label string,
+	option3Label string,
+	context string,
+	sessionID string,
+	workflowID string,
+) (string, error) {
+	bo.GetLogger().Infof("🤔 Requesting three-choice feedback: %s", question)
+
+	// Set default labels if not provided
+	if option1Label == "" {
+		option1Label = "Option 1"
+	}
+	if option2Label == "" {
+		option2Label = "Option 2"
+	}
+	if option3Label == "" {
+		option3Label = "Option 3"
+	}
+
+	// Emit human feedback request event with three-choice mode
+	feedbackEvent := &events.BlockingHumanFeedbackEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Question:        question,
+		AllowFeedback:   false, // No textarea in three-choice mode
+		ThreeChoiceMode: true,  // Enable three-choice mode
+		Option1Label:    option1Label,
+		Option2Label:    option2Label,
+		Option3Label:    option3Label,
+		Context:         context,
+		SessionID:       sessionID,
+		WorkflowID:      workflowID,
+		RequestID:       requestID,
+	}
+
+	// Emit the event
+	agentEvent := &events.AgentEvent{
+		Type:      events.BlockingHumanFeedback,
+		Timestamp: time.Now(),
+		Data:      feedbackEvent,
+	}
+
+	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to emit three-choice feedback event: %v", err)
+	}
+
+	// Wait for response
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+	if err := feedbackStore.CreateRequest(requestID, question); err != nil {
+		return "", fmt.Errorf("failed to create feedback request: %w", err)
+	}
+
+	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for three-choice response...")
+
+	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("timeout waiting for feedback: %w", err)
+	}
+
+	bo.GetLogger().Infof("▶️ Orchestrator resumed with response: %s", response)
+
+	// Parse response: should be "option1", "option2", or "option3"
+	response = strings.TrimSpace(response)
+	if response == "option1" || response == "option2" || response == "option3" {
+		bo.GetLogger().Infof("✅ User selected: %s", response)
+		return response, nil
+	}
+
+	// Default to option1 if response is unclear
+	bo.GetLogger().Warnf("⚠️ Unexpected response format: %s, defaulting to option1", response)
+	return "option1", nil
+}
+
 // WriteWorkspaceFile writes content to a file in the workspace using MCP tools
 // Emits tool call events for proper observability
 func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath string, content string) error {

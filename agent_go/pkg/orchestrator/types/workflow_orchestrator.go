@@ -13,10 +13,8 @@ import (
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_execution"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_optimization"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -58,22 +56,7 @@ func GetWorkflowConstants() WorkflowConstants {
 				ID:          database.WorkflowStatusPreVerification,
 				Title:       "Planning & Todo Creation",
 				Description: "Stage 1: Collaborate with the planning agent to create and iterate on a comprehensive todo list using MCP tools. You can refine and improve the todo list through conversation until you're satisfied with the final plan.",
-				Options: []WorkflowPhaseOption{
-					{
-						ID:          "human_controlled",
-						Label:       "Human Controlled (single execution, fast)",
-						Description: "Simplified approach with single execution, no validation, no critique, no cleanup, focused on fastest plan creation",
-						Group:       "planning_strategy",
-						Default:     true, // Make this default
-					},
-					{
-						ID:          "auto_model",
-						Label:       "Auto Model (10 iterations with validation)",
-						Description: "Full automated model with 10 iterations, validation agent, and adaptive strategy system",
-						Group:       "planning_strategy",
-						Default:     false,
-					},
-				},
+				Options:     []WorkflowPhaseOption{}, // No options for planning phase
 			},
 			{
 				ID:          database.WorkflowStatusPostVerification,
@@ -118,12 +101,6 @@ func GetWorkflowConstants() WorkflowConstants {
 						Default:     false,
 					},
 				},
-			},
-			{
-				ID:          database.WorkflowStatusPostVerificationTodoRefinement,
-				Title:       "Todo Refinement",
-				Description: "Stage 3: Based on execution results from runs/ output, refine and update the original todo list to improve future iterations and incorporate learnings from previous executions.",
-				Options:     []WorkflowPhaseOption{}, // No options for refinement phase
 			},
 		},
 	}
@@ -265,25 +242,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	// Check workflow status and execute appropriate flow
 	switch workflowStatus {
-	case database.WorkflowStatusPostVerificationTodoRefinement:
-		// Execute refinement as standalone operation
-		refinementResult, err := wo.runRefinement(ctx, objective)
-		if err != nil {
-			wo.GetLogger().Errorf("❌ Refinement failed: %v", err)
-			return "", fmt.Errorf("refinement failed: %w", err)
-		}
-
-		// Emit human verification request for refinement
-		if err := wo.emitRefinementVerificationRequest(ctx, objective, refinementResult); err != nil {
-			wo.GetLogger().Warnf("⚠️ Failed to emit refinement verification request: %v", err)
-		}
-
-		// Emit orchestrator completion events
-		wo.EmitOrchestratorEnd(ctx, objective, refinementResult, "completed", "", "workflow_execution")
-		wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, refinementResult, "completed", 1)
-
-		return refinementResult, nil
-
 	case database.WorkflowStatusPostVerification:
 		// Proceed directly to execution phase
 		return wo.runExecution(ctx, objective, selectedOptions)
@@ -299,69 +257,8 @@ func (wo *WorkflowOrchestrator) executeFlow(
 }
 
 func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	// Get planning strategy from selected options (if available)
-	planningStrategy := wo.getPlanningStrategy(selectedOptions)
-	wo.GetLogger().Infof("🎯 Planning strategy: %s", planningStrategy)
-
-	// Call different orchestrators based on strategy
-	if planningStrategy == "auto_model" {
-		wo.GetLogger().Infof("🤖 Starting Auto Model Planning")
-		return wo.runAutoModelPlanning(ctx, objective)
-	} else {
-		wo.GetLogger().Infof("👤 Starting Human Controlled Planning")
-		return wo.runHumanControlledPlanning(ctx, objective)
-	}
-}
-
-// runAutoModelPlanning runs the auto model planning with full validation and critique
-func (wo *WorkflowOrchestrator) runAutoModelPlanning(ctx context.Context, objective string) (string, error) {
-	wo.GetLogger().Infof("🤖 Running Auto Model Planning for objective: %s", objective)
-
-	// Create auto model planner orchestrator directly
-	llmConfig := wo.GetLLMConfig()
-	todoPlannerAgent, err := todo_creation.NewTodoPlannerOrchestrator(
-		wo.GetProvider(),
-		wo.GetModel(),
-		wo.GetTemperature(),
-		wo.GetAgentMode(),
-		wo.GetSelectedServers(),
-		wo.GetSelectedTools(), // NEW: Pass selected tools
-		wo.GetMCPConfigPath(),
-		llmConfig,
-		wo.GetMaxTurns(),
-		wo.GetLogger(),
-		wo.GetTracer(),
-		wo.GetContextAwareBridge(),
-		wo.WorkspaceTools,
-		wo.WorkspaceToolExecutors,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create auto model planner orchestrator: %w", err)
-	}
-
-	// Generate todo list using Execute method
-	todoListMarkdown, err := todoPlannerAgent.Execute(ctx, objective, wo.GetWorkspacePath(), nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create/update todo list: %w", err)
-	}
-
-	// Emit request_human_feedback event
-	if err := wo.emitRequestHumanFeedback(ctx, objective, todoListMarkdown,
-		"planning_verification",
-		database.WorkflowStatusPostVerification,
-		"Auto Model Planning Complete",
-		"Approve Plan & Continue",
-		"Please review the generated todo list and approve to proceed with execution."); err != nil {
-		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
-	}
-
-	planningResult := fmt.Sprintf("Auto model planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
-
-	// Emit orchestrator completion events
-	wo.EmitOrchestratorEnd(ctx, objective, planningResult, "completed", "", "workflow_execution")
-	wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, planningResult, "completed", 1)
-
-	return planningResult, nil
+	wo.GetLogger().Infof("👤 Starting Planning Phase")
+	return wo.runHumanControlledPlanning(ctx, objective)
 }
 
 // runHumanControlledPlanning runs the human controlled planning with simplified approach
@@ -435,48 +332,14 @@ func (wo *WorkflowOrchestrator) runExecution(ctx context.Context, objective stri
 		return "", fmt.Errorf("execution orchestrator failed: %w", err)
 	}
 
-	// Emit request_human_feedback event for execution completion
-	if err := wo.emitRequestHumanFeedback(ctx, objective, executionResult,
-		"execution_verification",
-		database.WorkflowStatusPostVerificationTodoRefinement,
-		"Execution Phase Complete",
-		"Review Results & Continue",
-		"Please review the execution results and choose to refine the plan if needed."); err != nil {
-		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
-	}
+	// Execution is complete - no refinement needed
+	wo.GetLogger().Infof("✅ Execution phase completed successfully")
 
 	// Emit orchestrator completion events
 	wo.EmitOrchestratorEnd(ctx, objective, executionResult, "completed", "", "workflow_execution")
 	wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, executionResult, "completed", 1)
 
 	return executionResult, nil
-}
-
-// runRefinement handles refinement requests for the workflow with iterative improvement loop
-func (wo *WorkflowOrchestrator) runRefinement(ctx context.Context, objective string) (string, error) {
-	// Create TodoOptimizationOrchestrator
-	todoOptimizationOrchestrator, err := wo.createTodoOptimizationOrchestrator()
-	if err != nil {
-		return "", fmt.Errorf("failed to create optimization orchestrator: %w", err)
-	}
-
-	// Delegate to TodoOptimizationOrchestrator using Execute method
-	refinementResult, err := todoOptimizationOrchestrator.Execute(ctx, objective, wo.GetWorkspacePath(), nil)
-	if err != nil {
-		return "", fmt.Errorf("optimization orchestrator failed: %w", err)
-	}
-
-	// Emit request_human_feedback event for refinement completion
-	if err := wo.emitRequestHumanFeedback(ctx, objective, refinementResult,
-		"refinement_verification",
-		database.WorkflowStatusPostVerification,
-		"Todo List Refinement Complete",
-		"Approve Refined Plan & Continue",
-		"Please review the refined todo list and approve to proceed with execution."); err != nil {
-		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
-	}
-
-	return refinementResult, nil
 }
 
 // Helper methods for workflow operations
@@ -522,54 +385,6 @@ func (wo *WorkflowOrchestrator) getRunOption(selectedOptions *database.WorkflowS
 	return runOption
 }
 
-// getPlanningStrategy returns the planning strategy to use based on selected options
-func (wo *WorkflowOrchestrator) getPlanningStrategy(selectedOptions *database.WorkflowSelectedOptions) string {
-	// Default to human_controlled
-	strategy := "human_controlled"
-
-	// Debug logging
-	if selectedOptions == nil {
-		wo.GetLogger().Infof("🔍 DEBUG: selectedOptions is nil, using default strategy: %s", strategy)
-	} else {
-		wo.GetLogger().Infof("🔍 DEBUG: selectedOptions.PhaseID: %s", selectedOptions.PhaseID)
-		wo.GetLogger().Infof("🔍 DEBUG: selectedOptions.Selections count: %d", len(selectedOptions.Selections))
-
-		for i, selection := range selectedOptions.Selections {
-			wo.GetLogger().Infof("🔍 DEBUG: Selection[%d] - Group: %s, OptionID: %s", i, selection.Group, selection.OptionID)
-		}
-	}
-
-	// Check if selected options are provided and contain planning strategy selection
-	if selectedOptions != nil && selectedOptions.PhaseID == database.WorkflowStatusPreVerification {
-		for _, selection := range selectedOptions.Selections {
-			if selection.Group == "planning_strategy" {
-				strategy = selection.OptionID
-				wo.GetLogger().Infof("🔍 DEBUG: Found planning_strategy selection: %s", strategy)
-				break
-			}
-		}
-	}
-
-	wo.GetLogger().Infof("🎯 Using planning strategy: %s", strategy)
-	return strategy
-}
-
-// createTodoOptimizationOrchestrator creates and configures the TodoOptimizationOrchestrator
-func (wo *WorkflowOrchestrator) createTodoOptimizationOrchestrator() (orchestrator.Orchestrator, error) {
-	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_optimization.NewTodoOptimizationOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create todo optimization orchestrator: %w", err)
-	}
-
-	// Set workspace tools if available
-	// Note: WorkspaceTools and WorkspaceToolExecutors are already available from BaseOrchestrator
-
-	return agent, nil
-}
-
-// emitWorkflowProgress function removed as requested
-
 // emitRequestHumanFeedback emits a request human feedback event
 func (wo *WorkflowOrchestrator) emitRequestHumanFeedback(ctx context.Context, objective string, todoListMarkdown string, verificationType string, nextPhase string, title string, actionLabel string, actionDescription string) error {
 
@@ -591,45 +406,6 @@ func (wo *WorkflowOrchestrator) emitRequestHumanFeedback(ctx context.Context, ob
 		Title:             title,
 		ActionLabel:       actionLabel,
 		ActionDescription: actionDescription,
-	}
-
-	// Create agent event
-	agentEvent := &events.AgentEvent{
-		Type:      events.RequestHumanFeedback,
-		Timestamp: time.Now(),
-		Data:      eventData,
-	}
-
-	// Emit through event bridge if available
-	if wo.GetContextAwareBridge() != nil {
-		if bridge, ok := wo.GetContextAwareBridge().(interface {
-			HandleEvent(context.Context, *events.AgentEvent) error
-		}); ok {
-			return bridge.HandleEvent(ctx, agentEvent)
-		}
-	}
-
-	return nil
-}
-
-// emitRefinementVerificationRequest emits a human verification request for refinement
-func (wo *WorkflowOrchestrator) emitRefinementVerificationRequest(ctx context.Context, objective, refinementResult string) error {
-
-	// Create request human feedback event data
-	eventData := &events.RequestHumanFeedbackEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Objective:         objective,
-		TodoListMarkdown:  refinementResult,
-		SessionID:         wo.getSessionID(),
-		WorkflowID:        wo.getWorkflowID(),
-		RequestID:         fmt.Sprintf("refinement_feedback_%d", time.Now().UnixNano()),
-		VerificationType:  "refinement_verification",
-		NextPhase:         "post-verification",
-		Title:             "Refined Todo List Verification Required",
-		ActionLabel:       "Accept Refined Plan & Continue",
-		ActionDescription: "The todo list has been refined based on execution results. Please review and approve to proceed with execution.",
 	}
 
 	// Create agent event
@@ -674,7 +450,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				validStatuses := []string{
 					database.WorkflowStatusPreVerification,
 					database.WorkflowStatusPostVerification,
-					database.WorkflowStatusPostVerificationTodoRefinement,
 				}
 				valid := false
 				for _, status := range validStatuses {

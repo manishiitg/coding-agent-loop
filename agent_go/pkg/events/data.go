@@ -1831,15 +1831,19 @@ func (e *RequestHumanFeedbackEvent) GetEventType() EventType {
 
 type BlockingHumanFeedbackEvent struct {
 	BaseEventData
-	Question      string `json:"question"`       // Question to ask user
-	AllowFeedback bool   `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
-	Context       string `json:"context"`        // Additional context (e.g., validation results)
-	SessionID     string `json:"session_id"`
-	WorkflowID    string `json:"workflow_id"`
-	RequestID     string `json:"request_id"`          // Unique ID for this feedback request
-	YesNoOnly     bool   `json:"yes_no_only"`         // If true, show only Approve/Reject buttons (no textarea)
-	YesLabel      string `json:"yes_label,omitempty"` // Custom label for Approve button (default: "Approve")
-	NoLabel       string `json:"no_label,omitempty"`  // Custom label for Reject button (default: "Reject")
+	Question        string `json:"question"`       // Question to ask user
+	AllowFeedback   bool   `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
+	Context         string `json:"context"`        // Additional context (e.g., validation results)
+	SessionID       string `json:"session_id"`
+	WorkflowID      string `json:"workflow_id"`
+	RequestID       string `json:"request_id"`                  // Unique ID for this feedback request
+	YesNoOnly       bool   `json:"yes_no_only"`                 // If true, show only Approve/Reject buttons (no textarea)
+	YesLabel        string `json:"yes_label,omitempty"`         // Custom label for Approve button (default: "Approve")
+	NoLabel         string `json:"no_label,omitempty"`          // Custom label for Reject button (default: "Reject")
+	ThreeChoiceMode bool   `json:"three_choice_mode,omitempty"` // If true, show three option buttons
+	Option1Label    string `json:"option1_label,omitempty"`     // Label for first option
+	Option2Label    string `json:"option2_label,omitempty"`     // Label for second option
+	Option3Label    string `json:"option3_label,omitempty"`     // Label for third option
 }
 
 func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {

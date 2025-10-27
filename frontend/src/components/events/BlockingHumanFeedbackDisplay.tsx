@@ -10,6 +10,10 @@ interface BlockingHumanFeedbackEvent {
   yes_no_only?: boolean
   yes_label?: string
   no_label?: string
+  three_choice_mode?: boolean
+  option1_label?: string
+  option2_label?: string
+  option3_label?: string
 }
 
 interface BlockingHumanFeedbackDisplayProps {
@@ -38,8 +42,12 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const question = event.data.question || 'Do you want to continue?'
   const context = event.data.context || ''
   const yesNoOnly = event.data.yes_no_only || false
+  const threeChoiceMode = event.data.three_choice_mode || false
   const yesLabel = event.data.yes_label || 'Approve'
   const noLabel = event.data.no_label || 'Reject'
+  const option1Label = event.data.option1_label || 'Option 1'
+  const option2Label = event.data.option2_label || 'Option 2'
+  const option3Label = event.data.option3_label || 'Option 3'
 
   const handleSubmitFeedback = async () => {
     if (event.data.request_id && feedback.trim() && onSubmitFeedback) {
@@ -95,6 +103,51 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         setHasSubmitted(true)
       } catch (error) {
         console.error('Failed to reject:', error)
+      } finally {
+        setIsSubmittingFeedback(false)
+      }
+    }
+  }
+
+  const handleOption1 = async () => {
+    if (event.data.request_id && onSubmitFeedback) {
+      setIsSubmittingFeedback(true)
+      try {
+        await onSubmitFeedback(event.data.request_id, "option1")
+        setSubmittedFeedback("option1")
+        setHasSubmitted(true)
+      } catch (error) {
+        console.error('Failed to select option 1:', error)
+      } finally {
+        setIsSubmittingFeedback(false)
+      }
+    }
+  }
+
+  const handleOption2 = async () => {
+    if (event.data.request_id && onSubmitFeedback) {
+      setIsSubmittingFeedback(true)
+      try {
+        await onSubmitFeedback(event.data.request_id, "option2")
+        setSubmittedFeedback("option2")
+        setHasSubmitted(true)
+      } catch (error) {
+        console.error('Failed to select option 2:', error)
+      } finally {
+        setIsSubmittingFeedback(false)
+      }
+    }
+  }
+
+  const handleOption3 = async () => {
+    if (event.data.request_id && onSubmitFeedback) {
+      setIsSubmittingFeedback(true)
+      try {
+        await onSubmitFeedback(event.data.request_id, "option3")
+        setSubmittedFeedback("option3")
+        setHasSubmitted(true)
+      } catch (error) {
+        console.error('Failed to select option 3:', error)
       } finally {
         setIsSubmittingFeedback(false)
       }
@@ -203,7 +256,32 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
 
           {/* Action Buttons */}
           <div className="flex justify-end gap-2">
-            {yesNoOnly ? (
+            {threeChoiceMode ? (
+              // Three-choice mode - show three buttons
+              <>
+                <button
+                  onClick={handleOption1}
+                  disabled={isApproving || isSubmittingFeedback}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-xs font-medium rounded transition-colors"
+                >
+                  {isSubmittingFeedback ? '⏳ Processing...' : option1Label}
+                </button>
+                <button
+                  onClick={handleOption2}
+                  disabled={isApproving || isSubmittingFeedback}
+                  className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400 text-white text-xs font-medium rounded transition-colors"
+                >
+                  {isSubmittingFeedback ? '⏳ Processing...' : option2Label}
+                </button>
+                <button
+                  onClick={handleOption3}
+                  disabled={isApproving || isSubmittingFeedback}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
+                >
+                  {isSubmittingFeedback ? '⏳ Processing...' : option3Label}
+                </button>
+              </>
+            ) : yesNoOnly ? (
               // Yes/No only mode - show two buttons
               <>
                 <button

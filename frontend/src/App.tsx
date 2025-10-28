@@ -8,6 +8,7 @@ import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
 import { resetSessionId } from "./services/api";
 import type { ActiveSessionInfo } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
+import { isValidJSON } from "./utils/event-helpers";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
@@ -344,7 +345,7 @@ function App() {
                             <p className="text-sm text-gray-500 mt-2">Image file</p>
                           </div>
                         )
-                      } else if (selectedFile?.path?.toLowerCase().endsWith('.json')) {
+                      } else if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
                         // Check if content looks like formatted JSON (has proper indentation)
                         const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')
                         
@@ -359,7 +360,7 @@ function App() {
                               )}
                             </div>
                             <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                              <pre className="text-sm font-mono text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
+                              <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
                                 {fileContent}
                               </pre>
                             </div>
@@ -367,11 +368,13 @@ function App() {
                         )
                       } else {
                         return (
-                          <MarkdownRenderer 
-                            content={fileContent} 
-                            className="prose-sm max-w-none dark:prose-invert"
-                            showScrollbar={true}
-                          />
+                          <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
+                            <MarkdownRenderer 
+                              content={fileContent} 
+                              className="max-w-none"
+                              showScrollbar={true}
+                            />
+                          </div>
                         )
                       }
                     })()}

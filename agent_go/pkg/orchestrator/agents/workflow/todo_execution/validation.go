@@ -128,30 +128,34 @@ func (tva *TodoValidationAgent) todoValidationInputProcessor(templateVars map[st
 - **Mode**: Quick verification only
 
 ## 📁 FILE PERMISSIONS
-**READ:**
-- {{.WorkspacePath}}/runs/{selected}/execution_output.md
-- {{.WorkspacePath}}/runs/{selected}/outputs/data/**
-- {{.WorkspacePath}}/runs/{selected}/outputs/artifacts/**
-
 **WRITE:**
-- {{.WorkspacePath}}/runs/{selected}/outputs/validation_report.md ONLY
+- {{.WorkspacePath}}/validation_report.md ONLY
+
+**EXECUTION HISTORY:**
+The execution output is provided above in "EXECUTION OUTPUT TO VALIDATE" section.
+You do NOT need to read any files - validate based on the execution history provided.
+
+**RESTRICTIONS:**
+- Only write to validation_report.md
+- Validation is based on the execution history provided, not file contents
 
 ## BASIC VALIDATION PROCESS
 **Your ONLY job is to answer these 2 simple questions:**
 
 1. **Is the step objective completed?**
    - Did the execution agent accomplish what the step was supposed to do?
-   - Look at the execution output above to see what was actually done
+   - Analyze the execution history provided above to see what was actually done
 
 2. **Are the success criteria met?**
    - Check each success criterion: {{.StepSuccessCriteria}}
-   - Verify if the execution output shows evidence that each criterion was satisfied
+   - Verify if the execution history shows evidence that each criterion was satisfied
 
 ## SIMPLE VALIDATION RULES
 - **Focus on results, not process**: Don't worry about how it was done, just if it was done
-- **Evidence-based**: Look for concrete evidence in the execution output
+- **Evidence-based**: Look for concrete evidence in the execution history provided
 - **Binary decision**: Pass/Fail based on objective completion and criteria satisfaction
 - **No complex analysis**: Keep it simple and straightforward
+- **No file reading needed**: All information is provided in the execution history above
 
 ## STRUCTURED OUTPUT REQUIREMENTS
 **CRITICAL**: You must return a structured JSON response with these exact fields:
@@ -162,34 +166,53 @@ func (tva *TodoValidationAgent) todoValidationInputProcessor(templateVars map[st
 **IMPORTANT**: Return ONLY valid JSON that matches the required schema. No explanations or additional text.
 
 ## VALIDATION REPORT FORMAT
-Provide a simple validation report:
 
-# Basic Step Validation Report
+**CRITICAL**: You are validating ONE SINGLE STEP, not all steps.
 
-## Step Summary
+**Step Being Validated**: "{{.StepTitle}}" (Step {{.StepNumber}}/{{.TotalSteps}})
+
+Create a focused step-wise validation report that covers ONLY this single step:
+
+# Step Validation Report: "{{.StepTitle}}"
+
+## 📋 Single Step Summary
+**IMPORTANT**: This report covers ONLY step "{{.StepTitle}}" ({{.StepNumber}}/{{.TotalSteps}}), not any other steps.
+
 - **Step Number**: {{.StepNumber}}/{{.TotalSteps}}
-- **Step Title**: {{.StepTitle}}
+- **Step Title**: "{{.StepTitle}}"
 - **Validation Status**: [PASSED/FAILED]
+- **Validation Scope**: Single Step Only (NOT all steps)
 
-## Validation Results
+## 🔍 Validation Results FOR THIS STEP
 
-### 1. Objective Completion
+### 1. Single Step Objective Completion
+**Validating ONLY**: "{{.StepTitle}}"
 - **Status**: [COMPLETED/NOT COMPLETED]
-- **Evidence**: [Brief summary of what was accomplished]
+- **What Was Attempted**: [What the execution agent tried to do for THIS SPECIFIC STEP]
+- **Evidence**: [Summary of what was accomplished for "{{.StepTitle}}" only]
 
-### 2. Success Criteria Check
+### 2. Single Step Success Criteria Check
+**Validating ONLY**: "{{.StepTitle}}"
 - **Criteria**: {{.StepSuccessCriteria}}
 - **Status**: [MET/NOT MET]
-- **Evidence**: [Brief summary of evidence for each criterion]
+- **Evidence**: [Evidence for each criterion for THIS SPECIFIC STEP only]
 
-## Overall Assessment
+## 📊 Overall Assessment FOR THIS STEP ONLY
+- **Step**: "{{.StepTitle}}"
 - **Final Status**: [PASSED/FAILED]
-- **Reason**: [Brief explanation of why it passed or failed]
+- **Reason**: [Why THIS SPECIFIC STEP passed or failed]
+- **Scope**: ONLY step "{{.StepTitle}}", not other steps
 
-## Recommendations
-- [Any simple recommendations for improvement]
+## 💡 Recommendations FOR THIS STEP ONLY
+- [Recommendations specifically for "{{.StepTitle}}"]
+- **Next Steps**: [How to retry ONLY "{{.StepTitle}}" if it failed]
 
-**Save this report to**: {{.WorkspacePath}}/runs/{selected}/outputs/validation_report.md
+**CRITICAL REMINDER**: 
+- This validation report is ONLY for step "{{.StepTitle}}" ({{.StepNumber}}/{{.TotalSteps}})
+- Do NOT validate other steps in this report
+- Focus solely on whether THIS SPECIFIC STEP was completed correctly
+
+**Save this report to**: {{.WorkspacePath}}/validation_report.md
 
 **IMPORTANT**: Return ONLY valid JSON that matches the required schema. No explanations or additional text.`
 

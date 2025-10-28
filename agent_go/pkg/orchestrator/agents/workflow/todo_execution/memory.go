@@ -10,33 +10,26 @@ func GetTodoExecutionMemoryRequirements() string {
 ### **Directory Structure**
 ` + "```" + `
 {{.WorkspacePath}}/
-├── todo_final.md                    (READ-ONLY: Structured todo list with Success/Failure Patterns)
-└── runs/                            (Execution runs folder)
-    └── {selected-run}/              (Run folder - name depends on run mode)
-        ├── execution_output.md      (Execution agent writes summary here)
-        ├── validation_report.md     (Validation agent writes report here)
-        └── outputs/                 (Generated files, artifacts, evidence)
-            └── (any files created during execution)
+├── validation_report.md             (Validation agent writes report here)
+└── outputs/                         (Generated files, artifacts, evidence)
+    └── (any files created during execution)
 ` + "```" + `
 
-**Note**: Run folder name depends on run mode (see "Run Folder Selection Rules" below)
+**Note**: WorkspacePath already points to the selected run folder (e.g., workspace/runs/2025-01-27-iteration-1)
 
-**Simplified Structure**: 2 core files + 1 outputs folder for any generated files/artifacts/evidence.
+**Simplified Structure**: 1 core file + 1 outputs folder. Execution results are captured in conversation history, not files.
 
-### **📁 STRUCTURED TODO FORMAT**
+### **📁 STEP INFORMATION**
 
-The ` + "`todo_final.md`" + ` file contains structured steps with the following format:
-
-#### **Step Structure**
-Each step in ` + "`todo_final.md`" + ` contains:
+**Step Details**: You receive step information via template variables:
 - **Title**: Clear, concise step name
 - **Description**: Detailed what and how, including specific tools and approaches
 - **Success Criteria**: Measurable completion criteria
 - **Why This Step**: Explain purpose and value
 - **Context Dependencies**: What needs to be done before this step
 - **Context Output**: What this step produces for subsequent steps
-- **Success Patterns**: List of approaches/tools that WORKED (from learning reports)
-- **Failure Patterns**: List of approaches/tools that FAILED (from learning reports)
+- **Success Patterns**: List of approaches/tools that worked (use these proven approaches)
+- **Failure Patterns**: List of approaches/tools that failed (avoid these approaches)
 
 #### **Success Patterns Usage**
 - **Follow Success Patterns Exactly**: These are validated approaches that worked before
@@ -58,143 +51,84 @@ Each step in ` + "`todo_final.md`" + ` contains:
 ### **📁 FILE PERMISSIONS BY AGENT**
 
 #### Execution Agent:
-**READ:**
-- {{.WorkspacePath}}/todo_final.md (READ-ONLY: structured todo list with patterns)
-
 **WRITE:**
-- {{.WorkspacePath}}/runs/{selected}/execution_output.md (step-wise execution summary)
-- {{.WorkspacePath}}/runs/{selected}/outputs/* (any files created during execution)
+- {{.WorkspacePath}}/outputs/* (any files created during execution, if needed)
 
-**RESTRICTIONS:**
-- **NEVER** modify {{.WorkspacePath}}/todo_final.md (READ-ONLY)
-- **Focus on execution only** - no evidence collection or complex documentation
+**EXECUTION FOCUS:**
+- **Execute the step using MCP tools** - focus on getting the work done
+- **Create files in outputs/ only if required** by the step itself
+- **No documentation required** - don't create execution_output.md or summary files
 - **Follow Success Patterns exactly** - these are validated approaches
 - **Avoid all Failure Patterns** - these approaches have failed
-- **Produce step-wise output** - clear summary of what was executed for this specific step
+- **The orchestrator captures your execution results** automatically
 
 ---
 
 #### Validation Agent:
-**READ:**
-- {{.WorkspacePath}}/todo_final.md (READ-ONLY: reference original with patterns)
-- {{.WorkspacePath}}/runs/{selected}/execution_output.md (step-wise execution summary to validate)
-- {{.WorkspacePath}}/runs/{selected}/outputs/* (check any files created during execution)
-
 **WRITE:**
-- {{.WorkspacePath}}/runs/{selected}/validation_report.md (validation results)
+- {{.WorkspacePath}}/validation_report.md ONLY (step-wise validation results)
+
+**EXECUTION HISTORY:**
+- **Receive full conversation history** - all execution conversations, tool calls, and responses
+- **Validate based on conversation history** - not file contents
+- **No file reading needed** - all information provided in execution history
 
 **RESTRICTIONS:**
-- READ-ONLY for execution_output.md and outputs/
 - Only write to validation_report.md
-- **Validate step-wise execution** - check if this specific step was completed correctly
-- **Validate Success Patterns were used** - check proven approaches were followed
-- **Validate Failure Patterns were avoided** - check failed approaches were not used
-- **Validate Context Output was produced** - check step produced expected output
+- Validation is based on the execution history provided, not file contents
+- **Validate single step only** - check if THIS SPECIFIC STEP was completed correctly
+- **Step-focused** - each validation report covers only one specific step
 
 ---
 
-### **🔍 Run Folder Selection Rules**
+### **🔍 Execution Context**
 
-All agents must follow this deterministic selection process:
+**Important**: The workspace path already points to your current run folder.
+- The orchestrator handles run folder selection and naming
+- You work directly within the assigned run folder
+- Focus on executing the step with the given information
 
-1. **List existing runs**: Use list_workspace_files to list {{.WorkspacePath}}/runs/
-2. **Parse run folders**: Identify folders matching pattern YYYY-MM-DD-*
-3. **Select based on mode**:
-   - **use_same_run**: Pick latest existing (highest date/name), create if none exist
-   - **create_new_runs_always**: Always create new YYYY-MM-DD-{descriptive-name}
-   - **create_new_run_once_daily**: Check if today's YYYY-MM-DD-* exists; create if not, use if exists
+### **🔄 Feedback Loop**
 
-4. **Naming convention**:
-   - Format: YYYY-MM-DD-{descriptive-name}
-   - Example: 2025-01-27-iteration-1, 2025-01-27-iteration-2
-   - Use descriptive names: initial, retry, batch-1, etc.
-
-5. **Fresh execution**:
-   - Each run starts fresh with no state tracking
-   - Execution and validation files are created as needed
-
----
-
-### **📝 Step-Wise Execution Output**
-
-**Execution Agent Output Format:**
-Each step produces a simple execution summary in execution_output.md:
-
-` + "```markdown" + `
-# Step Execution Summary
-
-## Step Details
-- **Step Number**: 1/3
-- **Step Title**: Setup Environment
-- **Status**: Completed
-
-## What Was Done
-- **Approach**: [Brief description of what was executed]
-- **Tools Used**: [MCP tools used for this step]
-- **Success Criteria Status**: [Which criteria were met]
-
-## Files Created/Modified
-- [List any files created or modified during execution]
-` + "```" + `
+**Execution-Validation Feedback Loop:**
+1. **Execute step** - Execution agent uses MCP tools to complete the step
+2. **Validate execution** - Validation agent reviews the full execution conversation history
+3. **Provide feedback** - If validation fails, feedback is sent back to execution agent
+4. **Retry with feedback** - Execution agent retries with feedback (up to 3 attempts)
+5. **Continue to next step** - Once validation passes, move to next step
 
 **Key Points:**
-- **Step-focused**: Each execution output covers only one specific step
-- **Simple format**: Basic summary without complex evidence collection
-- **Clear status**: Shows if the step was completed successfully
-- **Tool usage**: Lists MCP tools used for transparency
-- **File tracking**: Notes any files created/modified during execution
-
----
-
-### **🔄 Run Mode Behavior**
-
-#### use_same_run:
-- **Behavior**: Reuse the same run folder across executions
-- List runs/, select latest existing folder (any name)
-- If no runs exist: Create runs/initial/ (or another base name)
-- Fresh execution each time with no state persistence
-- **Folder naming**: Non-dated names like initial/, main/, batch-1/
-
-#### create_new_runs_always:
-- **Behavior**: Create a new run folder for EVERY execution
-- Always create new runs/YYYY-MM-DD-{name}/
-- Fresh start with no state persistence
-- Isolate from previous runs
-- Use incremental names: iteration-1, iteration-2, etc.
-- **Folder naming**: Dated names like 2025-01-27-iteration-1/, 2025-01-27-iteration-2/
-
-#### create_new_run_once_daily:
-- **Behavior**: Create ONE new run folder per day, reuse for same day
-- Check for today's YYYY-MM-DD-* folder
-- Create only if doesn't exist for today
-- First execution today: new folder (YYYY-MM-DD-{name})
-- Subsequent executions same day: use existing today's folder
-- Fresh execution each time with no state persistence
-- **Folder naming**: Dated names like 2025-01-27-daily/
+- **Full conversation history** shared with validation agent (not just summary)
+- **Automatic feedback loop** - validation feedback automatically improves execution
+- **Step-by-step validation** - each step validated individually before moving to next
+- **Up to 3 retry attempts** per step with validation feedback
 
 ---
 
 ### **⚠️ CRITICAL RESTRICTIONS**
 
 **NEVER MODIFY:**
-- {{.WorkspacePath}}/todo_final.md (original structured todo list is READ-ONLY)
 - Files outside {{.WorkspacePath}}/
 - Other workspace folders
 
 **ALWAYS CREATE:**
-- {{.WorkspacePath}}/runs/{selected}/execution_output.md (step-wise execution summary)
-- {{.WorkspacePath}}/runs/{selected}/validation_report.md (step-wise validation results)
+- {{.WorkspacePath}}/validation_report.md (step-wise validation results)
+
+**OPTIONAL CREATE:**
+- {{.WorkspacePath}}/outputs/* (files created during execution, only if step requires them)
 
 **OPTIONAL (with tool check):**
 - GitHub sync (only if sync_workspace_to_github tool exists)
 
 **STEP-WISE EXECUTION REQUIREMENTS:**
-- **Execute one step at a time** - focus on single step completion
+- **Execute one step at a time** - focus on single step completion using MCP tools
 - **Follow Success Patterns exactly** - these are validated approaches
 - **Avoid all Failure Patterns** - these approaches have failed
 - **Check Context Dependencies** - ensure prerequisites are satisfied
 - **Produce Context Output** - ensure step produces expected output for subsequent steps
-- **Simple output format** - basic summary without complex evidence collection
+- **No documentation required** - focus on execution, not writing summaries
+- **Execution results captured automatically** - orchestrator tracks full conversation history
+- **Validation feedback loop** - use feedback from validation to improve retries (up to 3 attempts)
 
 ` + memory.GetWorkflowMemoryRequirements() // Include generic memory requirements
 }

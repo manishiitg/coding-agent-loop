@@ -293,11 +293,11 @@ export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> =
               </div>
               
               {showContent && (
-                <div className="text-sm text-gray-800 dark:text-gray-200 mt-2">
+                <div className="text-xs text-gray-800 dark:text-gray-200 mt-2">
                   {isMarkdownContent(content) ? (
                     <ToolMarkdownRenderer content={content} maxHeight="400px" />
                   ) : (
-                    <pre className="whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded border max-h-96 overflow-y-auto">
+                    <pre className="text-xs whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded border max-h-96 overflow-y-auto">
                       {content}
                     </pre>
                   )}

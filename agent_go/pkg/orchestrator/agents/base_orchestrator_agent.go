@@ -109,6 +109,12 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	// Get the base agent for structured output
 	baseAgent := boa.baseAgent
 
+	// Check if baseAgent is initialized
+	if baseAgent == nil {
+		var zero T
+		return zero, fmt.Errorf("base agent is not initialized - Initialize() must be called before executing agent %s", boa.agentType)
+	}
+
 	// Use the agent's built-in structured output capability
 	result, err := AskStructured[T](baseAgent, ctx, userMessage, schema, conversationHistory)
 

@@ -75,6 +75,9 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	// Fast execute mode tracking
 	fastExecuteMode    bool // Whether we're in fast execute mode
 	fastExecuteEndStep int  // Last step index to fast execute (0-based)
+
+	// Testing flags
+	skipPlanningExecution bool // Skip planning and execution, go directly to writer phase
 }
 
 // NewHumanControlledTodoPlannerOrchestrator creates a new human-controlled todo planner orchestrator
@@ -117,9 +120,10 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	}
 
 	return &HumanControlledTodoPlannerOrchestrator{
-		BaseOrchestrator: baseOrchestrator,
-		sessionID:        fmt.Sprintf("session_%d", time.Now().UnixNano()),
-		workflowID:       fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
+		BaseOrchestrator:      baseOrchestrator,
+		sessionID:             fmt.Sprintf("session_%d", time.Now().UnixNano()),
+		workflowID:            fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
+		skipPlanningExecution: true, // Default to testing mode - skip planning/execution
 	}, nil
 }
 
@@ -194,6 +198,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	// Set objective and workspace path directly
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
+
+	// TESTING FLAG: Skip all planning/execution and go directly to writer phase
+	if hcpo.skipPlanningExecution {
+		hcpo.GetLogger().Infof("🧪 TESTING MODE: Skipping planning and execution, going directly to writer phase")
+		err := hcpo.runWriterPhaseWithHumanReview(ctx, 1)
+		if err != nil {
+			return "", fmt.Errorf("writer phase failed in testing mode: %w", err)
+		}
+		duration := time.Since(hcpo.GetStartTime())
+		return fmt.Sprintf(`# Todo Planning Complete - Testing Mode
+
+## Testing Summary
+- **Objective**: %s
+- **Duration**: %v
+- **Workspace**: %s
+- **Mode**: Testing (skipped planning/execution)
+
+## Final Todo List
+Todo list has been created and saved as `+"`todo_final.md`"+` in the workspace root by the writer agent.`,
+			objective, duration, workspacePath), nil
+	}
 
 	// PHASE 0: Variable Extraction with Human Verification (NEW)
 	// Check if variables.json already exists
@@ -356,6 +381,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				"WorkspacePath": hcpo.GetWorkspacePath(),
 				"PlanMarkdown":  planContent, // Use the markdown content we found
 			}
+			// Add variable names if available
+			if variableNames := hcpo.formatVariableNames(); variableNames != "" {
+				readerTemplateVars["VariableNames"] = variableNames
+			}
 
 			// Execute plan reader agent to get structured output
 			planReaderAgentTyped, ok := planReaderAgent.(*HumanControlledPlanReaderAgent)
@@ -383,10 +412,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	if !planExists {
 		hcpo.GetLogger().Infof("🔄 No existing plan found, creating new plan to execute objective")
 
-		// Delete existing progress since we're starting fresh planning
-		if err := hcpo.deleteStepProgress(ctx); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %v", err)
-		}
+		// NOTE: Don't delete existing progress here - only delete when actually starting new execution
+		// This prevents losing progress if plan reader fails or if user chooses to use existing plan
 
 		maxPlanRevisions := 20 // Allow up to 20 plan revisions
 		var err error
@@ -449,12 +476,67 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		phasesDescription = "Markdown Planning → Human Approval → JSON Conversion → Step-by-Step Execution with Validation → Learning Analysis → Writing"
 	}
 
+	// EARLY PROGRESS CHECK: Check if all steps are already completed before proceeding
+	// This prevents running plan reader unnecessarily if all steps are done
+	hcpo.GetLogger().Infof("🔍 Early progress check: Checking if all steps are already completed")
+
+	earlyProgress, err := hcpo.loadStepProgress(ctx)
+	if err == nil && earlyProgress != nil && len(earlyProgress.CompletedStepIndices) > 0 {
+		hcpo.GetLogger().Infof("📊 Found early progress: %d/%d steps completed",
+			len(earlyProgress.CompletedStepIndices), earlyProgress.TotalSteps)
+
+		// Check if total steps match
+		if earlyProgress.TotalSteps == len(breakdownSteps) {
+			// Calculate if all steps are completed
+			if len(earlyProgress.CompletedStepIndices) == earlyProgress.TotalSteps {
+				hcpo.GetLogger().Infof("✅ ALL steps already completed - skipping to writer phase")
+
+				// Phase 3: Write/Update todo list with critique validation loop
+				err = hcpo.runWriterPhaseWithHumanReview(ctx, 1)
+				if err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %v", err)
+				}
+
+				// Return early with completion message
+				duration := time.Since(hcpo.GetStartTime())
+				return fmt.Sprintf(`# Todo Planning Complete - All Steps Already Executed
+
+## Planning Summary
+- **Objective**: %s
+- **Duration**: %v
+- **Workspace**: %s
+- **Plan Source**: %s (All steps completed)
+- **Phases**: Skipped execution → Writing
+
+## Final Todo List
+Todo list has been created and saved as `+"`todo_final.md`"+` in the workspace root by the writer agent.
+
+## Status
+All execution steps were already completed. The writer agent has created the final todo list based on previous execution results.`,
+					hcpo.GetObjective(), duration, hcpo.GetWorkspacePath(), planSource), nil
+			}
+			hcpo.GetLogger().Infof("📊 Not all steps completed yet - will proceed with execution")
+		} else {
+			hcpo.GetLogger().Warnf("⚠️ Total steps changed (previous: %d, current: %d), will create new progress",
+				earlyProgress.TotalSteps, len(breakdownSteps))
+			earlyProgress = nil // Don't use old progress if plan changed
+		}
+	}
+
 	// Check for existing progress and ask user if they want to resume
 	var startFromStep int = 0 // 0-based index, 0 means start from beginning
 	var existingProgress *StepProgress
 
-	// Check if there's existing progress
-	existingProgress, err = hcpo.loadStepProgress(ctx)
+	// Use earlyProgress if available, otherwise load it
+	if earlyProgress != nil {
+		existingProgress = earlyProgress
+		hcpo.GetLogger().Infof("✅ Using early progress (avoided reload)")
+	} else {
+		// Check if there's existing progress
+		existingProgress, err = hcpo.loadStepProgress(ctx)
+	}
+
+	// Process existing progress if available
 	if err == nil && existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
 		hcpo.GetLogger().Infof("📊 Found existing progress: %d/%d steps completed",
 			len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps)
@@ -542,10 +624,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				hcpo.GetLogger().Infof("✅ All steps already completed (%d/%d), skipping execution phase and going directly to writer phase",
 					len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps)
 
-				// Phase 3: Write/Update todo list with human review loop
+				// Phase 3: Write/Update todo list with critique validation loop
 				err = hcpo.runWriterPhaseWithHumanReview(ctx, 1)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Writer phase with human review failed: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %v", err)
 				}
 
 				// Return early with completion message
@@ -584,14 +666,11 @@ All execution steps were already completed. The writer agent has created the fin
 		return "", fmt.Errorf("execution phase failed: %w", err)
 	}
 
-	// Phase 3: Write/Update todo list with human review loop
+	// Phase 3: Write/Update todo list with critique validation loop
 	err = hcpo.runWriterPhaseWithHumanReview(ctx, 1)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Writer phase with human review failed: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %v", err)
 	}
-
-	// Phase 5: Skip critique phase (human-controlled mode)
-	// No critique step in human-controlled mode
 
 	duration := time.Since(hcpo.GetStartTime())
 	hcpo.GetLogger().Infof("✅ Human-controlled todo planning completed in %v", duration)
@@ -700,6 +779,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanReaderPhase(ctx conte
 		"WorkspacePath": hcpo.GetWorkspacePath(),
 		"PlanMarkdown":  planMarkdown,
 	}
+	// Add variable names if available
+	if variableNames := hcpo.formatVariableNames(); variableNames != "" {
+		readerTemplateVars["VariableNames"] = variableNames
+	}
 
 	// Execute plan reader agent to get structured output
 	planReaderAgentTyped, ok := planReaderAgent.(*HumanControlledPlanReaderAgent)
@@ -738,7 +821,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanWriterPhase(ctx conte
 func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(planSteps []PlanStep) []TodoStep {
 	todoSteps := make([]TodoStep, len(planSteps))
 	for i, step := range planSteps {
-		todoSteps[i] = TodoStep(step)
+		// Convert FlexibleContextOutput to string for TodoStep
+		todoSteps[i] = TodoStep{
+			Title:               step.Title,
+			Description:         step.Description,
+			SuccessCriteria:     step.SuccessCriteria,
+			WhyThisStep:         step.WhyThisStep,
+			ContextDependencies: step.ContextDependencies,
+			ContextOutput:       step.ContextOutput.String(), // Convert FlexibleContextOutput to string
+			SuccessPatterns:     step.SuccessPatterns,
+			FailurePatterns:     step.FailurePatterns,
+		}
 	}
 	return todoSteps
 }
@@ -1252,6 +1345,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveVariables(text string
 	return resolved
 }
 
+// formatVariableNames formats the variables manifest into a human-readable string for agent prompts
+func (hcpo *HumanControlledTodoPlannerOrchestrator) formatVariableNames() string {
+	if hcpo.variablesManifest == nil || len(hcpo.variablesManifest.Variables) == 0 {
+		return "" // No variables to format
+	}
+
+	var builder strings.Builder
+	builder.WriteString("\n")
+	for _, variable := range hcpo.variablesManifest.Variables {
+		builder.WriteString(fmt.Sprintf("- {{%s}} - %s\n", variable.Name, variable.Description))
+	}
+	return builder.String()
+}
+
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llms.MessageContent, validationResponse *ValidationResponse) (string, error) {
 	hcpo.GetLogger().Infof("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
@@ -1287,6 +1394,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		successLearningTemplateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
 	} else {
 		successLearningTemplateVars["StepContextDependencies"] = ""
+	}
+
+	// Add variable names if available
+	if variableNames := hcpo.formatVariableNames(); variableNames != "" {
+		successLearningTemplateVars["VariableNames"] = variableNames
 	}
 
 	// Execute success learning agent and capture output
@@ -1334,6 +1446,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		failureLearningTemplateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
 	} else {
 		failureLearningTemplateVars["StepContextDependencies"] = ""
+	}
+
+	// Add variable names if available
+	if variableNames := hcpo.formatVariableNames(); variableNames != "" {
+		failureLearningTemplateVars["VariableNames"] = variableNames
 	}
 
 	// Execute failure learning agent and capture output
@@ -1386,7 +1503,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) extractRefinedTaskDescriptio
 
 // runWriterPhaseWithHumanReview creates todo list with human review and feedback loop
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runWriterPhaseWithHumanReview(ctx context.Context, iteration int) error {
-	maxRevisions := 5 // Allow up to 5 revisions based on human feedback
+	maxRevisions := 3 // Allow up to 3 revisions based on critique feedback
 	var writerConversationHistory []llms.MessageContent
 
 	for revisionAttempt := 1; revisionAttempt <= maxRevisions; revisionAttempt++ {
@@ -1406,6 +1523,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runWriterPhaseWithHumanRevie
 			"TotalIterations": fmt.Sprintf("%d", iteration),
 		}
 
+		// Add variable names if available
+		if variableNames := hcpo.formatVariableNames(); variableNames != "" {
+			writerTemplateVars["VariableNames"] = variableNames
+		}
+
 		// Execute writer agent with conversation history
 		_, writerConversationHistory, err = writerAgent.Execute(ctx, writerTemplateVars, writerConversationHistory)
 		if err != nil {
@@ -1414,27 +1536,53 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runWriterPhaseWithHumanRevie
 
 		hcpo.GetLogger().Infof("✅ Writer agent completed revision %d", revisionAttempt)
 
-		// Request human review of the generated todo list
-		approved, feedback, err := hcpo.requestTodoListReview(ctx, revisionAttempt)
+		// Run critique phase to validate quality
+		critiqueAgentName := fmt.Sprintf("critique-agent-revision-%d", revisionAttempt)
+		critiqueAgent, err := hcpo.createCritiqueAgent(ctx, "critique", 0, iteration, critiqueAgentName)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Human review request failed: %v", err)
-			// Default to approved if review fails
-			approved = true
+			return fmt.Errorf("failed to create critique agent for revision %d: %w", revisionAttempt, err)
 		}
 
-		// Add human feedback to conversation history for next revision
-		if feedback != "" {
-			hcpo.addUserFeedbackToHistory(feedback, &writerConversationHistory)
-			hcpo.GetLogger().Infof("📝 Added human feedback to conversation history for next revision: %s", feedback)
+		// Prepare template variables for critique
+		critiqueTemplateVars := map[string]string{
+			"WorkspacePath": hcpo.GetWorkspacePath(),
 		}
 
-		if approved {
-			hcpo.GetLogger().Infof("✅ Todo list approved by human after revision %d", revisionAttempt)
+		// Add variable names if available
+		if variableNames := hcpo.formatVariableNames(); variableNames != "" {
+			critiqueTemplateVars["VariableNames"] = variableNames
+		}
+
+		// Execute critique agent with structured output
+		critiqueAgentTyped, ok := critiqueAgent.(*HumanControlledTodoPlannerCritiqueAgent)
+		if !ok {
+			return fmt.Errorf("failed to cast critique agent to structured agent")
+		}
+
+		critiqueResponse, err := critiqueAgentTyped.ExecuteStructured(ctx, critiqueTemplateVars, nil)
+		if err != nil {
+			return fmt.Errorf("structured critique execution failed for revision %d: %w", revisionAttempt, err)
+		}
+
+		hcpo.GetLogger().Infof("✅ Critique completed for revision %d", revisionAttempt)
+		hcpo.GetLogger().Infof("📊 Quality Acceptable: %v, Issues Found: %d", critiqueResponse.IsQualityAcceptable, len(critiqueResponse.Feedback))
+
+		// Check if quality is acceptable
+		if critiqueResponse.IsQualityAcceptable {
+			hcpo.GetLogger().Infof("✅ Todo list quality is acceptable after revision %d", revisionAttempt)
 			break // Exit revision loop
 		}
 
-		// Todo list rejected with feedback for revision
-		hcpo.GetLogger().Infof("🔄 Todo list revision requested (attempt %d/%d): %s", revisionAttempt, maxRevisions, feedback)
+		// Quality not acceptable - prepare feedback for next revision
+		if len(critiqueResponse.Feedback) > 0 {
+			hcpo.GetLogger().Warnf("⚠️ Quality issues found, preparing feedback for revision %d", revisionAttempt+1)
+			// Format feedback as conversation history item
+			feedbackText := "## Critique Feedback - Please Address These Issues:\n\n"
+			for i, issue := range critiqueResponse.Feedback {
+				feedbackText += fmt.Sprintf("%d. **%s**: %s\n", i+1, issue.Type, issue.Description)
+			}
+			hcpo.addUserFeedbackToHistory(feedbackText, &writerConversationHistory)
+		}
 
 		if revisionAttempt >= maxRevisions {
 			hcpo.GetLogger().Warnf("⚠️ Max todo list revision attempts (%d) reached", maxRevisions)
@@ -1443,25 +1591,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runWriterPhaseWithHumanRevie
 	}
 
 	return nil
-}
-
-// requestTodoListReview requests human review of the generated todo list
-// Returns: (approved bool, feedback string, error)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) requestTodoListReview(ctx context.Context, revisionAttempt int) (bool, string, error) {
-	hcpo.GetLogger().Infof("📋 Requesting human review of todo list (revision %d)", revisionAttempt)
-
-	// Generate unique request ID
-	requestID := fmt.Sprintf("todo_list_review_%d_%d", revisionAttempt, time.Now().UnixNano())
-
-	// Use common human feedback function
-	return hcpo.RequestHumanFeedback(
-		ctx,
-		requestID,
-		fmt.Sprintf("Please review the generated todo list (revision %d). Is it ready for execution or do you want to provide feedback for improvements?", revisionAttempt),
-		fmt.Sprintf("Todo list location: %s/todo_final.md", hcpo.GetWorkspacePath()),
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
 }
 
 // requestHumanFeedback requests human feedback after validation and blocks until user responds
@@ -1585,6 +1714,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createWriterAgent(ctx contex
 		agents.OutputFormatStructured,
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewHumanControlledTodoPlannerWriterAgent(config, logger, tracer, eventBridge)
+		},
+		hcpo.WorkspaceTools,
+		hcpo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return agent, nil
+}
+
+// createCritiqueAgent creates a critique agent for validating todo list quality
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createCritiqueAgent(ctx context.Context, phase string, step, iteration int, agentName string) (agents.OrchestratorAgent, error) {
+	agent, err := hcpo.CreateAndSetupStandardAgent(
+		ctx,
+		agentName,
+		phase,
+		step,
+		iteration,
+		hcpo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewHumanControlledTodoPlannerCritiqueAgent(config, logger, tracer, eventBridge)
 		},
 		hcpo.WorkspaceTools,
 		hcpo.WorkspaceToolExecutors,
@@ -1745,6 +1897,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetFastExecuteMode(enabled b
 // IsFastExecuteStep checks if a step should be executed in fast mode
 func (hcpo *HumanControlledTodoPlannerOrchestrator) IsFastExecuteStep(stepIndex int) bool {
 	return hcpo.fastExecuteMode && stepIndex <= hcpo.fastExecuteEndStep
+}
+
+// SetSkipPlanningExecution sets the testing flag to skip planning and execution phases
+func (hcpo *HumanControlledTodoPlannerOrchestrator) SetSkipPlanningExecution(skip bool) {
+	hcpo.skipPlanningExecution = skip
 }
 
 // checkExistingPlan checks if a plan file already exists in the workspace and returns the plan content if found

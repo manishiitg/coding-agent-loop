@@ -118,28 +118,27 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 	templateData := map[string]string{
 		"Objective":     templateVars["Objective"],
 		"WorkspacePath": templateVars["WorkspacePath"],
-		"PlanMarkdown":  templateVars["PlanMarkdown"], // Markdown plan content
-		"FileType":      templateVars["FileType"],     // "plan" or "todo_final"
+		"PlanMarkdown":  templateVars["PlanMarkdown"],  // Markdown plan content
+		"VariableNames": templateVars["VariableNames"], // Available variables
 	}
 
 	// Define the template for plan reading and conversion
-	templateStr := `## 📖 PRIMARY TASK - CONVERT MARKDOWN {{if eq .FileType "todo_final"}}TODO LIST{{else}}PLAN{{end}} TO STRUCTURED JSON ONLY
+	templateStr := `## 📖 PRIMARY TASK - CONVERT MARKDOWN PLAN TO STRUCTURED JSON ONLY
 
 **OBJECTIVE**: {{.Objective}}
 **WORKSPACE**: {{.WorkspacePath}}
-**FILE TYPE**: {{.FileType}}
 
 ## 🤖 AGENT IDENTITY
-- **Role**: {{if eq .FileType "todo_final"}}Todo List{{else}}Plan{{end}} Reader Agent
-- **Responsibility**: Convert markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} content to structured JSON format
-- **Input**: Markdown {{if eq .FileType "todo_final"}}todo_final.md{{else}}plan.md{{end}} file
+- **Role**: Plan Reader Agent
+- **Responsibility**: Convert markdown plan content to structured JSON format
+- **Input**: Markdown plan.md file
 - **Output**: Structured JSON data
-- **NO EXECUTION**: This agent does NOT execute {{if eq .FileType "todo_final"}}todos{{else}}plans{{end}} - only converts format
+- **NO EXECUTION**: This agent does NOT execute plans - only converts format
 - **READ ONLY**: This agent reads files but does NOT write any files
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- **{{if eq .FileType "todo_final"}}{{.WorkspacePath}}/todo_final.md{{else}}{{.WorkspacePath}}/todo_creation_human/planning/plan.md{{end}}** (read markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}})
+- **{{.WorkspacePath}}/todo_creation_human/planning/plan.md** (read markdown plan)
 - **{{.WorkspacePath}}/todo_creation_human/learnings/success_patterns.md** (success learning insights - if exists)
 - **{{.WorkspacePath}}/todo_creation_human/learnings/failure_analysis.md** (failure patterns to avoid - if exists)
 - **{{.WorkspacePath}}/todo_creation_human/learnings/step_*_learning.md** (per-step learning details - if exists)
@@ -150,7 +149,7 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 ## 📋 CONVERSION GUIDELINES
 
 **Your ONLY Job**:
-1. Read the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} from {{if eq .FileType "todo_final"}}todo_final.md{{else}}plan.md{{end}}
+1. Read the markdown plan from plan.md
 2. **Read learnings files** from learnings/ directory (if they exist):
    - Read learnings/success_patterns.md to extract success patterns
    - Read learnings/failure_analysis.md to extract failure patterns
@@ -161,15 +160,26 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 6. **Incorporate learnings** into success_patterns and failure_patterns fields when available
 7. Return structured JSON response
 
+{{if .VariableNames}}
+## 🔑 AVAILABLE VARIABLES
+
+These variables may appear in the plan as placeholders (see list below):
+{{.VariableNames}}
+
+**CRITICAL**: When converting the plan to JSON, preserve ALL variable placeholders exactly as written. 
+DO NOT replace them with actual values. Keep placeholders like AWS_ACCOUNT_ID or GITHUB_REPO_URL intact.
+The output JSON must maintain variable placeholders, not resolved values.
+{{end}}
+
 **DO NOT**:
-- Execute any {{if eq .FileType "todo_final"}}todos{{else}}steps{{end}} from the {{if eq .FileType "todo_final"}}list{{else}}plan{{end}}
-- Modify the {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} content
+- Execute any steps from the plan
+- Modify the plan content
 - Add execution logic
 - Write or create any files
 - Save JSON output to files
 
 **JSON Structure Requirements**:
-- steps: Extract from "## Steps" section{{if eq .FileType "todo_final"}} or "## 📝 Step-by-Step Execution Plan" section{{end}}, each step with:
+- steps: Extract from "## Steps" section, each step with:
   - title: From "### Step X: [Title]"
   - description: From "- **Description**: [content]"
   - success_criteria: From "- **Success Criteria**: [content]"
@@ -203,10 +213,10 @@ JSON Output:
 
 **Incorporating Learnings**:
 When learnings files exist, enhance the extracted patterns:
-- Read learnings/success_patterns.md to find additional success patterns not in the {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}}
+- Read learnings/success_patterns.md to find additional success patterns not in the plan
 - Read learnings/failure_analysis.md to find failure patterns to include
 - Read step-specific learnings/step_X_learning.md to get detailed insights for each step
-- Merge learnings patterns with patterns extracted from the {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}}
+- Merge learnings patterns with patterns extracted from the plan
 - If same pattern appears in both source and learnings, include it only once
 
 Special Cases:
@@ -214,7 +224,7 @@ Special Cases:
 - If section is missing → omit field entirely
 - If nested bullets exist → flatten to single-level array
 - Preserve original text without modification
-- If learnings files don't exist → use only patterns from {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}}
+- If learnings files don't exist → use only patterns from the plan
 
 **Error Handling**:
 - Missing required sections (title, description, etc.) → Include step with available fields only
@@ -226,13 +236,13 @@ Special Cases:
 
 **RETURN STRUCTURED JSON RESPONSE ONLY**
 
-Convert the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} to structured JSON format. Return ONLY the JSON object that matches the required schema.
+Convert the markdown plan to structured JSON format. Return ONLY the JSON object that matches the required schema.
 
-## 📊 MARKDOWN {{if eq .FileType "todo_final"}}TODO LIST{{else}}PLAN{{end}} CONTENT
+## 📊 MARKDOWN PLAN CONTENT
 {{.PlanMarkdown}}
 
 **IMPORTANT NOTES**: 
-1. Read the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} file from {{if eq .FileType "todo_final"}}todo_final.md{{else}}plan.md{{end}}
+1. Read the markdown plan file from plan.md
 2. **Read learnings files** from todo_creation_human/learnings/ directory if they exist (handle gracefully if missing)
 3. Parse the markdown structure carefully to extract all required fields
 4. **Incorporate learnings** into success_patterns and failure_patterns when available
@@ -240,7 +250,7 @@ Convert the markdown {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}
 6. Ensure all steps are properly extracted with their details
 7. Return ONLY valid JSON - no explanations or additional text
 8. This agent ONLY converts format - execution is handled by other agents
-9. Focus on accurate parsing, not {{if eq .FileType "todo_final"}}todo list{{else}}plan{{end}} modification or execution
+9. Focus on accurate parsing, not plan modification or execution
 10. This agent reads markdown files and returns structured JSON - NO file writing
 11. Learnings enhance the output with real-world execution patterns and insights`
 

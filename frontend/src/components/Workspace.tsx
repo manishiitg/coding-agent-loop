@@ -4,6 +4,7 @@ import { agentApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { processHierarchicalFiles } from '../utils/fileUtils'
+import { isValidJSON } from '../utils/event-helpers'
 import GitSyncStatus from './workspace/GitSyncStatus'
 import SemanticSearchSync from './workspace/SemanticSearchSync'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
@@ -199,14 +200,16 @@ export default function Workspace({
             // For images, the content is already base64 encoded data URL
             // No processing needed for images
           } else {
-            // Check if this is a JSON file
-            isJsonFile = file.filepath.toLowerCase().endsWith('.json')
-            
             // Process the content to convert escaped newlines to actual newlines
             processedContent = processedContent
               .replace(/\\n/g, '\n')  // Convert \n to actual newlines
               .replace(/\\t/g, '\t')  // Convert \t to actual tabs
               .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
+            
+            // Check if this is a JSON file (by extension OR content)
+            const extensionIsJson = file.filepath.toLowerCase().endsWith('.json')
+            const contentIsJson = isValidJSON(processedContent)
+            isJsonFile = extensionIsJson || contentIsJson
             
             // If it's a JSON file, try to parse and format it
             if (isJsonFile) {

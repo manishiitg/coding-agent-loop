@@ -58,6 +58,7 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 	executionHistory := templateVars["ExecutionHistory"]
 	validationResult := templateVars["ValidationResult"]
 	currentObjective := templateVars["CurrentObjective"]
+	variableNames := templateVars["VariableNames"]
 
 	// Prepare template variables
 	successLearningTemplateVars := map[string]string{
@@ -71,6 +72,7 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 		"ExecutionHistory":        executionHistory,
 		"ValidationResult":        validationResult,
 		"CurrentObjective":        currentObjective,
+		"VariableNames":           variableNames,
 	}
 
 	// Create template data for success learning
@@ -107,6 +109,20 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) successLearningInpu
 ## 🎯 **OBJECTIVE**
 ` + templateVars["CurrentObjective"] + `
 
+` + func() string {
+		if templateVars["VariableNames"] != "" {
+			return `## 🔑 AVAILABLE VARIABLES
+
+These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
+` + templateVars["VariableNames"] + `
+
+**CRITICAL**: When updating the plan.md file, preserve ALL {{VARS}} exactly as written. 
+DO NOT replace them with actual values. Keep variable placeholders like {{AWS_ACCOUNT_ID}} intact.
+The updated plan must maintain variable placeholders, not resolved values.
+`
+		}
+		return ""
+	}() + `
 ## ✅ **SUCCESSFUL EXECUTION RESULTS**
 ` + templateVars["ExecutionHistory"] + `
 

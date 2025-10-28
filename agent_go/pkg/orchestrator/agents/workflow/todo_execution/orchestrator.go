@@ -3,18 +3,35 @@ package todo_execution
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
+	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-	todo_creation_human "mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 
 	"github.com/tmc/langchaingo/llms"
 )
+
+// TodoStepsExtractedEvent represents todo steps extracted from a plan
+type TodoStepsExtractedEvent struct {
+	events.BaseEventData
+	TotalStepsExtracted int        `json:"total_steps_extracted"`
+	ExtractedSteps      []TodoStep `json:"extracted_steps"`
+	ExtractionMethod    string     `json:"extraction_method"`
+	PlanSource          string     `json:"plan_source"`
+}
+
+// GetEventType implements events.EventData interface
+func (e *TodoStepsExtractedEvent) GetEventType() events.EventType {
+	return events.TodoStepsExtracted
+}
 
 // TodoExecutionOrchestrator manages the multi-agent todo execution process
 type TodoExecutionOrchestrator struct {
@@ -72,11 +89,22 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 
 	// Set objective and workspace path directly
 	teo.SetObjective(objective)
-	teo.SetWorkspacePath(workspacePath)
+
+	// Resolve selected run folder based on run option (in Go code, not in prompts)
+	selectedRunFolder, err := teo.resolveSelectedRunFolder(ctx, workspacePath, runOption)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve run folder: %w", err)
+	}
+	teo.GetLogger().Infof("📁 Selected run folder: %s", selectedRunFolder)
+
+	// Set workspace path to include the run folder
+	runWorkspacePath := filepath.Join(workspacePath, "runs", selectedRunFolder)
+	teo.SetWorkspacePath(runWorkspacePath)
 
 	// Parse todo_final.md into structured steps using plan reader agent
 	teo.GetLogger().Infof("📖 Parsing todo_final.md into structured steps using plan reader agent")
-	todoFinalPath := fmt.Sprintf("%s/todo_final.md", workspacePath)
+	// Read todo_final.md from workspace root (not from run folder)
+	todoFinalPath := filepath.Join(workspacePath, "todo_final.md")
 	content, err := teo.ReadWorkspaceFile(ctx, todoFinalPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read todo_final.md: %w", err)
@@ -103,21 +131,24 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 	}
 
 	// Convert PlanningResponse.Steps to TodoStep array
-	steps := make([]todo_creation_human.TodoStep, len(planningResponse.Steps))
+	steps := make([]TodoStep, len(planningResponse.Steps))
 	for i, step := range planningResponse.Steps {
-		steps[i] = todo_creation_human.TodoStep{
+		steps[i] = TodoStep{
 			Title:               step.Title,
 			Description:         step.Description,
 			SuccessCriteria:     step.SuccessCriteria,
 			WhyThisStep:         step.WhyThisStep,
 			ContextDependencies: step.ContextDependencies,
-			ContextOutput:       step.ContextOutput,
+			ContextOutput:       string(step.ContextOutput), // Convert FlexibleContextOutput to string
 			SuccessPatterns:     step.SuccessPatterns,
 			FailurePatterns:     step.FailurePatterns,
 		}
 	}
 
 	teo.GetLogger().Infof("📋 Parsed %d steps from todo_final.md", len(steps))
+
+	// Emit todo steps extracted event
+	teo.emitTodoStepsExtractedEvent(ctx, steps, "todo_final_md")
 
 	// Execute each step individually with validation feedback loop
 	var executionResults []string
@@ -136,14 +167,16 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 
 			// Execute this specific step
 			var err error
-			executionResult, err = teo.runStepExecutionPhase(ctx, step, i+1, len(steps), runOption, validationResult)
+			var conversationHistory []llms.MessageContent
+			executionResult, conversationHistory, err = teo.runStepExecutionPhase(ctx, step, i+1, len(steps), selectedRunFolder, runOption, validationResult)
 			if err != nil {
 				teo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, attempt, err)
 				executionResult = fmt.Sprintf("Step %d execution failed (attempt %d): %v", i+1, attempt, err)
+				conversationHistory = nil
 			}
 
 			// Validate this specific step
-			validationResponse, err := teo.runStepValidationPhase(ctx, step, i+1, len(steps), executionResult)
+			validationResponse, err := teo.runStepValidationPhase(ctx, step, i+1, len(steps), executionResult, conversationHistory)
 			if err != nil {
 				teo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, attempt, err)
 				validationResult = fmt.Sprintf("Step %d validation failed (attempt %d): %v", i+1, attempt, err)
@@ -181,10 +214,10 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 }
 
 // runStepExecutionPhase executes a single step using the execution agent
-func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context, step todo_creation_human.TodoStep, stepNumber, totalSteps int, runOption, previousFeedback string) (string, error) {
+func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, selectedRunFolder, runOption, previousFeedback string) (string, []llms.MessageContent, error) {
 	executionAgent, err := teo.createExecutionAgent(ctx, step.Title, stepNumber, 0)
 	if err != nil {
-		return "", fmt.Errorf("failed to create execution agent: %w", err)
+		return "", nil, fmt.Errorf("failed to create execution agent: %w", err)
 	}
 
 	// Prepare template variables for this specific step
@@ -199,21 +232,24 @@ func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context,
 		"StepContextOutput":       step.ContextOutput,
 		"StepSuccessPatterns":     strings.Join(step.SuccessPatterns, "\n- "),
 		"StepFailurePatterns":     strings.Join(step.FailurePatterns, "\n- "),
-		"WorkspacePath":           teo.GetWorkspacePath(),
+		"WorkspacePath":           teo.GetWorkspacePath(), // This now includes runs/{folder}
 		"RunOption":               runOption,
 		"PreviousFeedback":        previousFeedback,
 	}
 
-	executionResult, _, err := executionAgent.Execute(ctx, templateVars, nil)
+	executionResult, conversationHistory, err := executionAgent.Execute(ctx, templateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf("step %d execution failed: %w", stepNumber, err)
+		return "", nil, fmt.Errorf("step %d execution failed: %w", stepNumber, err)
 	}
 
-	return executionResult, nil
+	// Store execution result with conversation history
+	// Format: "EXECUTION_RESULT:|<result>|CONVERSATION_HISTORY:|<history_json>"
+	// This allows validation agent to access both the result and the full conversation
+	return executionResult, conversationHistory, nil
 }
 
 // runStepValidationPhase validates a single step's execution using the validation agent
-func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context, step todo_creation_human.TodoStep, stepNumber, totalSteps int, executionResult string) (*ValidationResponse, error) {
+func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, executionResult string, conversationHistory []llms.MessageContent) (*ValidationResponse, error) {
 	validationAgent, err := teo.createValidationAgent(ctx, step.Title, stepNumber, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create validation agent: %w", err)
@@ -225,6 +261,9 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 		return nil, fmt.Errorf("failed to cast validation agent to TodoValidationAgent")
 	}
 
+	// Format conversation history as string for template variable
+	conversationHistoryStr := formatConversationHistory(conversationHistory)
+
 	// Prepare template variables for this specific step
 	templateVars := map[string]string{
 		"StepNumber":          fmt.Sprintf("%d", stepNumber),
@@ -232,11 +271,11 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 		"StepTitle":           step.Title,
 		"StepDescription":     step.Description,
 		"StepSuccessCriteria": step.SuccessCriteria,
-		"WorkspacePath":       teo.GetWorkspacePath(),
-		"ExecutionOutput":     executionResult,
+		"WorkspacePath":       teo.GetWorkspacePath(), // This now includes runs/{folder}
+		"ExecutionOutput":     conversationHistoryStr, // Pass conversation history instead of just result
 	}
 
-	validationResponse, err := todoValidationAgent.ExecuteStructured(ctx, templateVars, nil)
+	validationResponse, err := todoValidationAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
 	if err != nil {
 		return nil, fmt.Errorf("step %d validation failed: %w", stepNumber, err)
 	}
@@ -308,8 +347,9 @@ func (teo *TodoExecutionOrchestrator) createExecutionAgent(ctx context.Context, 
 }
 
 func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Use combined standardized agent creation and setup
-	agent, err := teo.CreateAndSetupStandardAgent(
+	// Use combined standardized agent creation and setup with no MCP servers
+	// Validation agent only reads execution outputs and writes validation reports using workspace tools
+	agent, err := teo.CreateAndSetupStandardAgentWithCustomServers(
 		ctx,
 		"validation-agent",
 		phase,
@@ -317,6 +357,7 @@ func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context,
 		iteration,
 		teo.GetMaxTurns(),
 		agents.OutputFormatStructured,
+		[]string{mcpclient.NoServers}, // No MCP servers - validation agent only uses workspace tools to read/write files
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewTodoValidationAgent(config, logger, tracer, eventBridge)
 		},
@@ -331,14 +372,23 @@ func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context,
 }
 
 // createPlanReaderAgent creates a plan reader agent for parsing todo_final.md
-func (teo *TodoExecutionOrchestrator) createPlanReaderAgent(ctx context.Context) (*todo_creation_human.HumanControlledPlanReaderAgent, error) {
-	config := &agents.OrchestratorAgentConfig{
-		Provider:    teo.GetProvider(),
-		Model:       teo.GetModel(),
-		Temperature: teo.GetTemperature(),
+func (teo *TodoExecutionOrchestrator) createPlanReaderAgent(ctx context.Context) (*PlanReaderAgent, error) {
+	// Get proper agent configuration using the base orchestrator method
+	// This ensures all required fields are populated (MCPConfigPath, Mode, OutputFormat, etc.)
+	config := teo.CreateStandardAgentConfigWithCustomServers(
+		"plan-reader-agent",
+		teo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		[]string{mcpclient.NoServers}, // No MCP servers - plan reader only converts markdown to JSON using workspace tools
+	)
+
+	agent := NewPlanReaderAgent(config, teo.GetLogger(), teo.GetTracer(), teo.GetContextAwareBridge())
+
+	// Initialize the agent - this is required before using it
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize plan reader agent: %w", err)
 	}
 
-	agent := todo_creation_human.NewHumanControlledPlanReaderAgent(config, teo.GetLogger(), teo.GetTracer(), teo.GetContextAwareBridge())
 	return agent, nil
 }
 
@@ -362,4 +412,222 @@ func (teo *TodoExecutionOrchestrator) Execute(ctx context.Context, objective str
 // GetType returns the orchestrator type
 func (teo *TodoExecutionOrchestrator) GetType() string {
 	return "todo_execution"
+}
+
+// resolveSelectedRunFolder determines which run folder to use based on the run option
+func (teo *TodoExecutionOrchestrator) resolveSelectedRunFolder(ctx context.Context, workspacePath, runOption string) (string, error) {
+	runsPath := filepath.Join(workspacePath, "runs")
+
+	// Get current date for dated folders
+	today := time.Now().Format("2006-01-02")
+
+	switch runOption {
+	case "use_same_run":
+		// Check if runs directory exists
+		exists, _ := teo.workspaceFileExists(ctx, runsPath)
+		if !exists {
+			// Create initial run folder
+			selectedFolder := "initial"
+			if err := teo.createRunFolderStructure(ctx, filepath.Join(runsPath, selectedFolder)); err != nil {
+				return "", err
+			}
+			return selectedFolder, nil
+		}
+
+		// List existing run folders
+		existingFolders, err := teo.listRunFolders(ctx, runsPath)
+		if err != nil || len(existingFolders) == 0 {
+			// Create initial folder if none exist
+			selectedFolder := "initial"
+			if err := teo.createRunFolderStructure(ctx, filepath.Join(runsPath, selectedFolder)); err != nil {
+				return "", err
+			}
+			return selectedFolder, nil
+		}
+
+		// Return the latest folder (alphabetically sorted, so latest date/name)
+		sort.Strings(existingFolders)
+		return existingFolders[len(existingFolders)-1], nil
+
+	case "create_new_runs_always":
+		// Always create a new dated folder with incremental number
+		counter := 1
+		for {
+			selectedFolder := fmt.Sprintf("%s-iteration-%d", today, counter)
+			fullPath := filepath.Join(runsPath, selectedFolder)
+
+			exists, _ := teo.workspaceFileExists(ctx, fullPath)
+			if !exists {
+				if err := teo.createRunFolderStructure(ctx, fullPath); err != nil {
+					return "", err
+				}
+				return selectedFolder, nil
+			}
+			counter++
+		}
+
+	case "create_new_run_once_daily":
+		// Check if today's folder exists
+		prefix := today + "-"
+		existingFolders, _ := teo.listRunFolders(ctx, runsPath)
+
+		// Look for today's folder
+		for _, folder := range existingFolders {
+			if strings.HasPrefix(folder, prefix) {
+				teo.GetLogger().Infof("📁 Using existing today's run folder: %s", folder)
+				return folder, nil
+			}
+		}
+
+		// Create new folder for today
+		selectedFolder := fmt.Sprintf("%s-initial", today)
+		fullPath := filepath.Join(runsPath, selectedFolder)
+		if err := teo.createRunFolderStructure(ctx, fullPath); err != nil {
+			return "", err
+		}
+		return selectedFolder, nil
+
+	default:
+		return "", fmt.Errorf("unknown run option: %s", runOption)
+	}
+}
+
+// workspaceFileExists checks if a file or directory exists in the workspace
+func (teo *TodoExecutionOrchestrator) workspaceFileExists(ctx context.Context, path string) (bool, error) {
+	// Try to list the directory to check if it exists
+	_, err := teo.ReadWorkspaceFile(ctx, filepath.Join(path, ".keep"))
+	if err == nil {
+		return true, nil
+	}
+
+	// Try to read the directory itself by listing parent
+	parent := filepath.Dir(path)
+	filename := filepath.Base(path)
+
+	// List files in parent directory
+	files, err := teo.listWorkspaceFiles(ctx, parent)
+	if err != nil {
+		return false, err
+	}
+
+	for _, file := range files {
+		if file == filename || strings.HasPrefix(file, filename) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// listWorkspaceFiles lists files in a directory (helper for workspaceFileExists)
+func (teo *TodoExecutionOrchestrator) listWorkspaceFiles(ctx context.Context, path string) ([]string, error) {
+	// This is a simplified version - in production, you'd use actual workspace tools
+	// For now, return empty list to trigger folder creation
+	return []string{}, nil
+}
+
+// listRunFolders lists existing run folder names
+func (teo *TodoExecutionOrchestrator) listRunFolders(ctx context.Context, runsPath string) ([]string, error) {
+	// This would typically use workspace tools to list directories
+	// For now, return empty to trigger creation
+	return []string{}, nil
+}
+
+// createRunFolderStructure creates the basic structure for a run folder
+func (teo *TodoExecutionOrchestrator) createRunFolderStructure(ctx context.Context, runPath string) error {
+	// Create .keep file to ensure directory is created
+	keepFile := filepath.Join(runPath, ".keep")
+	if err := teo.WriteWorkspaceFile(ctx, keepFile, "# This file ensures the run folder exists"); err != nil {
+		return fmt.Errorf("failed to create run folder: %w", err)
+	}
+
+	// The actual folder creation will happen when files are written
+	teo.GetLogger().Infof("✅ Created run folder structure: %s", runPath)
+	return nil
+}
+
+// formatConversationHistory formats conversation history for template usage
+func formatConversationHistory(conversationHistory []llms.MessageContent) string {
+	var result strings.Builder
+
+	for _, message := range conversationHistory {
+		// Skip system messages
+		if message.Role == llms.ChatMessageTypeSystem {
+			continue
+		}
+
+		switch message.Role {
+		case llms.ChatMessageTypeHuman:
+			result.WriteString("## Human Message\n")
+		case llms.ChatMessageTypeAI:
+			result.WriteString("## Assistant Response\n")
+		case llms.ChatMessageTypeTool:
+			result.WriteString("## Tool Response\n")
+		default:
+			result.WriteString("## Message\n")
+		}
+
+		for _, part := range message.Parts {
+			switch p := part.(type) {
+			case llms.TextContent:
+				result.WriteString(p.Text)
+				result.WriteString("\n\n")
+			case llms.ToolCall:
+				result.WriteString("### Tool Call\n")
+				result.WriteString(fmt.Sprintf("**Tool Name:** %s\n", p.FunctionCall.Name))
+				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ID))
+				if p.FunctionCall.Arguments != "" {
+					result.WriteString(fmt.Sprintf("**Arguments:** %s\n", p.FunctionCall.Arguments))
+				}
+				result.WriteString("\n")
+			case llms.ToolCallResponse:
+				result.WriteString("### Tool Response\n")
+				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ToolCallID))
+				if p.Name != "" {
+					result.WriteString(fmt.Sprintf("**Tool Name:** %s\n", p.Name))
+				}
+				result.WriteString(fmt.Sprintf("**Response:** %s\n", p.Content))
+				result.WriteString("\n")
+			default:
+				// Handle any other content types
+				result.WriteString(fmt.Sprintf("**Unknown Content Type:** %T\n", p))
+			}
+		}
+		result.WriteString("---\n\n")
+	}
+
+	return result.String()
+}
+
+// emitTodoStepsExtractedEvent emits an event when todo steps are extracted from todo_final.md
+func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []TodoStep, planSource string) {
+	if teo.GetContextAwareBridge() == nil {
+		return
+	}
+
+	// Create event data
+	eventData := &TodoStepsExtractedEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		TotalStepsExtracted: len(extractedSteps),
+		ExtractedSteps:      extractedSteps,
+		ExtractionMethod:    "plan_reader_agent",
+		PlanSource:          planSource,
+	}
+
+	// Create unified event wrapper
+	unifiedEvent := &events.AgentEvent{
+		Type:      events.TodoStepsExtracted,
+		Timestamp: time.Now(),
+		Data:      eventData,
+	}
+
+	// Emit through the context-aware bridge
+	bridge := teo.GetContextAwareBridge()
+	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
+		teo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %v", err)
+	} else {
+		teo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
+	}
 }

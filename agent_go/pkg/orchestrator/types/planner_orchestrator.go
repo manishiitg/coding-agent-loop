@@ -1152,14 +1152,16 @@ func (po *PlannerOrchestrator) generateParallelReport(ctx context.Context, organ
 
 // createConditionalLLM creates a conditional LLM on-demand with planner-specific configuration
 func (po *PlannerOrchestrator) createConditionalLLM() (*llm.ConditionalLLM, error) {
-	// Create config for conditional LLM using planner-specific settings
-	conditionalConfig := &agents.OrchestratorAgentConfig{
-		Provider:      po.GetProvider(),
-		Model:         po.GetModel(),
-		Temperature:   po.GetTemperature(),
-		ServerNames:   po.GetSelectedServers(),
-		MCPConfigPath: po.GetMCPConfigPath(),
-	}
+	// Get proper agent configuration using the base orchestrator method
+	// This ensures all required fields are populated (MaxRetries, ToolChoice, etc.)
+	conditionalConfig := po.CreateStandardAgentConfig("conditional-llm", 3, agents.OutputFormatText)
+
+	// Override with planner-specific settings
+	conditionalConfig.Provider = po.GetProvider()
+	conditionalConfig.Model = po.GetModel()
+	conditionalConfig.Temperature = po.GetTemperature()
+	conditionalConfig.ServerNames = po.GetSelectedServers()
+	conditionalConfig.MCPConfigPath = po.GetMCPConfigPath()
 
 	// Create conditional LLM with planner-specific context
 	conditionalLLM, err := llm.CreateConditionalLLMWithEventBridge(conditionalConfig, po.GetContextAwareBridge(), po.GetLogger(), po.GetTracer())

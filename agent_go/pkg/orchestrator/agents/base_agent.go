@@ -411,6 +411,12 @@ func (ba *BaseAgent) GetConfigurationSummary() map[string]interface{} {
 // AskStructured is a standalone generic function that provides type-safe structured output
 // This gives us the clean generic API without needing to modify the BaseAgent struct
 func AskStructured[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llms.MessageContent) (T, error) {
+	// Check if ba is nil
+	if ba == nil {
+		var zero T
+		return zero, fmt.Errorf("BaseAgent is nil - Initialize() must be called before using the agent")
+	}
+
 	if ba.agent == nil {
 		var zero T
 		return zero, fmt.Errorf("underlying agent not initialized")

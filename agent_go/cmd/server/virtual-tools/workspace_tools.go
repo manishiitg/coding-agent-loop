@@ -48,19 +48,20 @@ func CreateWorkspaceTools() []llms.Tool {
 		Type: "function",
 		Function: &llms.FunctionDefinition{
 			Name:        "list_workspace_files",
-			Description: "List all files and folders in the workspace. Can filter by folder and control hierarchical depth.",
+			Description: "List all files and folders in the workspace.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"folder": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional folder path to filter results (e.g., 'docs', 'examples', 'folder/subfolder')",
+						"description": "Folder path to filter results (e.g., 'docs', 'examples', 'folder/subfolder')",
 					},
 					"max_depth": map[string]interface{}{
 						"type":        "integer",
 						"description": "Maximum depth of hierarchical structure to return (default: 3, max: 10)",
 					},
 				},
+				"required": []string{"folder"},
 			},
 		},
 	}
@@ -324,9 +325,9 @@ func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args ma
 // handleListWorkspaceFiles handles the list_workspace_files tool execution
 func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Extract parameters
-	folder := ""
-	if f, ok := args["folder"].(string); ok {
-		folder = f
+	folder, ok := args["folder"].(string)
+	if !ok || folder == "" {
+		return "", fmt.Errorf("folder is required and must be a string")
 	}
 
 	maxDepth := 3
@@ -351,9 +352,7 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 
 	// Add query parameters
 	q := req.URL.Query()
-	if folder != "" {
-		q.Add("folder", folder)
-	}
+	q.Add("folder", folder)
 	q.Add("max_depth", fmt.Sprintf("%d", maxDepth))
 	req.URL.RawQuery = q.Encode()
 

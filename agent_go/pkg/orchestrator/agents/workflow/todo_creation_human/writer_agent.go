@@ -19,6 +19,7 @@ type HumanControlledTodoPlannerWriterTemplate struct {
 	Objective       string
 	WorkspacePath   string
 	TotalIterations string
+	VariableNames   string // Available variables for masking
 }
 
 // HumanControlledTodoPlannerWriterAgent creates optimal todo list based on execution experience in human-controlled mode
@@ -48,6 +49,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context
 	objective := templateVars["Objective"]
 	workspacePath := templateVars["WorkspacePath"]
 	totalIterations := templateVars["TotalIterations"]
+	variableNames := templateVars["VariableNames"] // Optional - may be empty if no variables
 	if strings.TrimSpace(totalIterations) == "" {
 		totalIterations = "1"
 	}
@@ -59,11 +61,17 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context
 		"TotalIterations": totalIterations,
 	}
 
+	// Add variable names if provided
+	if variableNames != "" {
+		writerTemplateVars["VariableNames"] = variableNames
+	}
+
 	// Create template data for validation
 	templateData := HumanControlledTodoPlannerWriterTemplate{
 		Objective:       objective,
 		WorkspacePath:   workspacePath,
 		TotalIterations: totalIterations,
+		VariableNames:   variableNames,
 	}
 
 	// Execute using template validation
@@ -81,6 +89,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 		Objective:       templateVars["Objective"],
 		WorkspacePath:   templateVars["WorkspacePath"],
 		TotalIterations: totalIterationsForTemplate,
+		VariableNames:   templateVars["VariableNames"], // Optional - may be empty
 	}
 
 	// Define the template - structured format matching planner agent for LLM execution
@@ -91,14 +100,13 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Writer Agent
-- **Responsibility**: Create structured, execution-ready todo list based on execution results and learnings
+- **Responsibility**: Create structured, execution-ready todo list based on original plan and learnings
 - **Mode**: Structured synthesis (create step-by-step plan format that another LLM can efficiently execute)
 
 ## 📁 FILE PERMISSIONS (Writer Agent)
 
 **READ:**
-- planning/plan.md (original plan)
-- validation/step_*_validation_report.md (all step validation reports with execution summaries)
+- planning/plan.md (original plan - primary source)
 - learnings/success_patterns.md (success learning insights - if exists)
 - learnings/failure_analysis.md (failure patterns to avoid - if exists)
 - learnings/step_*_learning.md (per-step learning details - if exists)
@@ -107,14 +115,36 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 - todo_final.md (final structured todo list - writes to workspace root: {{.WorkspacePath}}/todo_final.md)
 
 **RESTRICTIONS:**
-- Read from todo_creation_human/ folder (planning/, validation/, learnings/)
-- Validation reports contain execution summaries from execution agent
+- Read from todo_creation_human/ folder (planning/ and learnings/ only)
+- Focus on extracting patterns and insights from plan.md and learnings (ignore execution/validation data)
 - Write todo_final.md to workspace root (NOT inside todo_creation_human/)
 - Format MUST be parseable and executable by another LLM
 - Handle missing learning files gracefully (they may not exist for all steps)
 
+{{if .VariableNames}}
+## 🔑 VARIABLE MASKING REQUIREMENT
+
+**IMPORTANT**: plan.md, success_learnings, and failure_learnings files may contain ACTUAL VALUES (like real account IDs, URLs, etc.)
+
+Available variables to mask:
+{{.VariableNames}}
+
+**CRITICAL INSTRUCTIONS**:
+- **REPLACE** any actual values from ALL sources (plan.md, learning files) with the corresponding {{"{{"}}VARIABLE{{"}}"}} placeholder
+- **PRESERVE** any {{"{{"}}VARIABLE{{"}}"}} placeholders already in plan.md
+- The final todo_final.md must use ONLY placeholders like {{"{{"}}VARIABLE_NAME{{"}}"}}, NEVER actual values
+- Match actual values to their variable names and replace with the appropriate {{"{{"}}VARIABLE_NAME{{"}}"}} placeholder
+- Apply masking to all content: plan descriptions, success patterns, failure patterns, and step details
+
+**Examples**:
+- If plan.md has actual value "account-123456" and variable name is "AWS_ACCOUNT_ID" → todo_final.md should have {{"{{"}}AWS_ACCOUNT_ID{{"}}"}}
+- If learning files have actual URL "https://example.com/repo/abc123" and variable name is "REPO_URL" → todo_final.md should have {{"{{"}}REPO_URL{{"}}"}}
+- If source files have actual ID "xyz789" and variable name is "DEPLOYMENT_ID" → todo_final.md should have {{"{{"}}DEPLOYMENT_ID{{"}}"}}
+
+{{end}}
+
 ## 📋 SYNTHESIS GUIDELINES
-- **Read All Execution Data**: Review plan.md, validation reports (which include execution summaries), and all learning files
+- **Read Original Plan and Learnings**: Review plan.md and all learning files to extract patterns and insights
 - **Extract Success Patterns**: From learnings/success_patterns.md - capture what worked, which tools, which approaches
 - **Extract Failure Patterns**: From learnings/failure_analysis.md - capture what failed, which tools to avoid, anti-patterns
 - **Use Structured Format**: Each step must have: title, description, success_criteria, why_this_step, context_dependencies, context_output, success_patterns, failure_patterns
@@ -137,89 +167,65 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 
 **CREATE** {{.WorkspacePath}}/todo_final.md
 
----
+**CRITICAL: Output format is JSON, saved in a .md file (not markdown!):**
 
-# 📋 Structured Todo List: {{.Objective}}
+The JSON structure must be:
+{
+  "steps": [
+    {
+      "title": "[Step title from plan]",
+      "description": "[Detailed description including specific tools, MCP servers, commands, arguments that worked]",
+      "success_criteria": "[How to verify completion]",
+      "why_this_step": "[Purpose and value]",
+      "context_dependencies": ["List of files from previous steps"],
+      "context_output": "[What this step produces]",
+      "success_patterns": ["Approach that worked", "Tool that succeeded"],
+      "failure_patterns": ["Approach that failed", "Tool to avoid"]
+    },
+    {
+      "title": "[Step 2]",
+      "description": "...",
+      "success_criteria": "...",
+      "why_this_step": "...",
+      "context_dependencies": ["step_1_results.md"],
+      "context_output": "...",
+      "success_patterns": [...],
+      "failure_patterns": [...]
+    }
+  ]
+}
 
-**Date**: [Current date/time]
-**Status**: Ready for Execution
-**Based On**: Validated execution results and learning analysis
+**IMPORTANT FORMATTING RULES**:
+- Output ONLY valid JSON - no markdown, no explanations
+- Each step must include all 8 fields: title, description, success_criteria, why_this_step, context_dependencies, context_output, success_patterns, failure_patterns
+- context_dependencies is an array of strings (file paths from previous steps)
+- success_patterns and failure_patterns are arrays of strings
+- If no dependencies/patterns exist, use empty arrays []
+- Use proper JSON escaping for quotes and special characters
+- The entire output must be valid, parseable JSON
 
-## 🎯 Objective
-{{.Objective}}
+**Extraction Guidelines**:
+- Read planning/plan.md to get all steps with their structure
+- Read learnings/success_patterns.md to extract successful approaches for success_patterns arrays
+- Read learnings/failure_analysis.md to extract failed approaches for failure_patterns arrays
+- Read learnings/step_*_learning.md for per-step specific learnings
+- Each step must be converted to the JSON structure above
 
-## 📊 Execution 
-**Total Steps Completed**: [X steps]
-**Success Rate**: [X% based on validation]
-**Key Learnings Applied**: [Brief summary of main insights]
+**Variable Masking (CRITICAL)**:
+- Match actual values to variable names and replace with {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders
+- Use FUZZY MATCHING: If URL looks like https://github.com/user/repo → replace with {{"{{"}}GITHUB_REPO_URL{{"}}"}} even if not exact
+- If ID looks like "account-123" → replace with {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} even if slightly different
+- If URL pattern similar to a variable → replace it (e.g., any github.com URL → {{"{{"}}GITHUB_REPO_URL{{"}}"}})
+- Replace ANY value that matches a variable pattern, even if not 100% exact match
 
----
+**File Path Handling**:
+- All file paths must be RELATIVE (not absolute)
+- Relative to workspace root: Use "docs/file.md" not "/workspace/docs/file.md"
+- Use "config.json" not "/full/path/to/config.json"
+- context_dependencies arrays should contain relative paths only
+- context_output should be relative path only
 
-## 📝 Step-by-Step Execution Plan
-
-### Step 1: [Step Title]
-
-**Description:**
-[Detailed description of what needs to be done. Include specific tools, MCP servers, and approaches that worked during execution. Be explicit about the exact commands, arguments, or methods to use.]
-
-**Success Criteria:**
-- [Specific, measurable criterion 1]
-- [Specific, measurable criterion 2]
-- [Specific, measurable criterion 3]
-
-**Why This Step:**
-[Explain the purpose and value of this step. Why is it necessary? What problem does it solve?]
-
-**Context Dependencies:**
-- [What must be completed before this step]
-- [Any files, data, or setup required]
-
-**Context Output:**
-[What this step produces that subsequent steps will need]
-
-**Success Patterns (What Worked):**
-- [Specific tool/approach that succeeded: e.g., "Used fileserver.read_file with path argument to read configuration"]
-- [Specific MCP server/tool combination that worked]
-- [Any successful techniques or methods from execution]
-- [Include exact tool names and arguments that proved successful]
-
-**Failure Patterns (What to Avoid):**
-- [Specific tool/approach that failed: e.g., "Avoid using grep without proper escaping"]
-- [Specific MCP server/tool combination that didn't work]
-- [Any unsuccessful techniques or anti-patterns]
-- [Include exact scenarios or approaches to avoid]
-
----
-
-[Continue with Step 2, Step 3, etc. using the same format as Step 1 above]
-
----
-
-## 🎯 Execution Guidelines for Next LLM
-
-### How to Use This Todo List
-1. **Read Each Step Sequentially**: Execute steps in order due to dependencies
-2. **Check Context Dependencies**: Ensure prerequisites are met before starting each step
-3. **Use Success Patterns**: Follow the approaches that worked during validation
-4. **Avoid Failure Patterns**: Do not repeat approaches that failed
-5. **Verify Success Criteria**: After each step, validate against the success criteria
-6. **Capture Context Output**: Ensure each step produces the expected output for subsequent steps
-
-### Key Success Factors
-- **Follow Success Patterns Exactly**: The tools and approaches listed have been validated
-- **Respect Dependencies**: Context dependencies are critical for successful execution
-- **Validate Thoroughly**: Check success criteria after each step
-- **Learn from Failures**: Avoid all listed failure patterns
-
-### Recommended Execution Approach
-- Execute steps sequentially (Step 1 → Step 2 → Step 3 → ...)
-- Validate after each step before proceeding
-- If a step fails, review success patterns and try the proven approach
-- If uncertain, refer to the "Why This Step" section for context
-
----
-
-**Note**: This todo list is structured for efficient LLM execution. Each step contains validated approaches (success patterns) and anti-patterns to avoid (failure patterns). Follow the success patterns exactly as they have been tested and validated during execution.`
+**Return ONLY the JSON object, nothing else.**`
 
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_writer").Parse(templateStr)

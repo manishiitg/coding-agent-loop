@@ -2,6 +2,7 @@ package todo_creation_human
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"text/template"
@@ -25,16 +26,47 @@ type HumanControlledTodoPlannerPlanningAgent struct {
 	*agents.BaseOrchestratorAgent
 }
 
+// FlexibleContextOutput handles both string and array types for context_output field
+// This prevents JSON parsing errors when LLM returns arrays instead of strings
+type FlexibleContextOutput string
+
+// UnmarshalJSON implements custom unmarshaling for FlexibleContextOutput
+// Handles both string and array formats to prevent parsing errors
+func (f *FlexibleContextOutput) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = FlexibleContextOutput(s)
+		return nil
+	}
+
+	// Try to unmarshal as array
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		// Join array elements with comma and space
+		*f = FlexibleContextOutput(strings.Join(arr, ", "))
+		return nil
+	}
+
+	// If both fail, return the error from string unmarshal
+	return fmt.Errorf("failed to unmarshal context_output as string or array")
+}
+
+// String returns the string value
+func (f FlexibleContextOutput) String() string {
+	return string(f)
+}
+
 // PlanStep represents a step in the planning output
 type PlanStep struct {
-	Title               string   `json:"title"`
-	Description         string   `json:"description"`
-	SuccessCriteria     string   `json:"success_criteria"`
-	WhyThisStep         string   `json:"why_this_step"`
-	ContextDependencies []string `json:"context_dependencies"`
-	ContextOutput       string   `json:"context_output"`
-	SuccessPatterns     []string `json:"success_patterns,omitempty"` // NEW - what worked (includes tools)
-	FailurePatterns     []string `json:"failure_patterns,omitempty"` // NEW - what failed (includes tools to avoid)
+	Title               string                `json:"title"`
+	Description         string                `json:"description"`
+	SuccessCriteria     string                `json:"success_criteria"`
+	WhyThisStep         string                `json:"why_this_step"`
+	ContextDependencies []string              `json:"context_dependencies"`
+	ContextOutput       FlexibleContextOutput `json:"context_output"`             // Use flexible type to handle string or array
+	SuccessPatterns     []string              `json:"success_patterns,omitempty"` // NEW - what worked (includes tools)
+	FailurePatterns     []string              `json:"failure_patterns,omitempty"` // NEW - what failed (includes tools to avoid)
 }
 
 // PlanningResponse represents the structured response from planning

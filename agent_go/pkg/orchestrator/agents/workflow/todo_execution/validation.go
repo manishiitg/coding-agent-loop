@@ -131,13 +131,10 @@ func (tva *TodoValidationAgent) todoValidationInputProcessor(templateVars map[st
 **WRITE:**
 - {{.WorkspacePath}}/validation_report.md ONLY
 
-**EXECUTION HISTORY:**
-The execution output is provided above in "EXECUTION OUTPUT TO VALIDATE" section.
-You do NOT need to read any files - validate based on the execution history provided.
-
-**RESTRICTIONS:**
-- Only write to validation_report.md
-- Validation is based on the execution history provided, not file contents
+**VALIDATION APPROACH:**
+- **Primary Source**: Use the execution output provided above in "EXECUTION OUTPUT TO VALIDATE"
+- **File Access**: You may read workspace files if needed to verify artifacts were created
+- **Focus**: Validate based on what was accomplished, using execution history as primary evidence
 
 ## BASIC VALIDATION PROCESS
 **Your ONLY job is to answer these 2 simple questions:**
@@ -167,54 +164,40 @@ You do NOT need to read any files - validate based on the execution history prov
 
 ## VALIDATION REPORT FORMAT
 
-**CRITICAL**: You are validating ONE SINGLE STEP, not all steps.
+**IMPORTANT**: You are validating step "{{.StepTitle}}" (Step {{.StepNumber}}/{{.TotalSteps}}) only.
 
-**Step Being Validated**: "{{.StepTitle}}" (Step {{.StepNumber}}/{{.TotalSteps}})
-
-Create a focused step-wise validation report that covers ONLY this single step:
+Create a focused validation report for this single step:
 
 # Step Validation Report: "{{.StepTitle}}"
 
-## 📋 Single Step Summary
-**IMPORTANT**: This report covers ONLY step "{{.StepTitle}}" ({{.StepNumber}}/{{.TotalSteps}}), not any other steps.
-
+## 📋 Step Summary
 - **Step Number**: {{.StepNumber}}/{{.TotalSteps}}
 - **Step Title**: "{{.StepTitle}}"
 - **Validation Status**: [PASSED/FAILED]
-- **Validation Scope**: Single Step Only (NOT all steps)
 
-## 🔍 Validation Results FOR THIS STEP
+## 🔍 Validation Results
 
-### 1. Single Step Objective Completion
-**Validating ONLY**: "{{.StepTitle}}"
+### 1. Objective Completion
 - **Status**: [COMPLETED/NOT COMPLETED]
-- **What Was Attempted**: [What the execution agent tried to do for THIS SPECIFIC STEP]
-- **Evidence**: [Summary of what was accomplished for "{{.StepTitle}}" only]
+- **What Was Attempted**: [What the execution agent tried to do]
+- **Evidence**: [Summary of what was accomplished]
 
-### 2. Single Step Success Criteria Check
-**Validating ONLY**: "{{.StepTitle}}"
+### 2. Success Criteria Check
 - **Criteria**: {{.StepSuccessCriteria}}
 - **Status**: [MET/NOT MET]
-- **Evidence**: [Evidence for each criterion for THIS SPECIFIC STEP only]
+- **Evidence**: [Evidence for each criterion]
 
-## 📊 Overall Assessment FOR THIS STEP ONLY
-- **Step**: "{{.StepTitle}}"
+## 📊 Overall Assessment
 - **Final Status**: [PASSED/FAILED]
-- **Reason**: [Why THIS SPECIFIC STEP passed or failed]
-- **Scope**: ONLY step "{{.StepTitle}}", not other steps
+- **Reason**: [Why this step passed or failed]
 
-## 💡 Recommendations FOR THIS STEP ONLY
-- [Recommendations specifically for "{{.StepTitle}}"]
-- **Next Steps**: [How to retry ONLY "{{.StepTitle}}" if it failed]
-
-**CRITICAL REMINDER**: 
-- This validation report is ONLY for step "{{.StepTitle}}" ({{.StepNumber}}/{{.TotalSteps}})
-- Do NOT validate other steps in this report
-- Focus solely on whether THIS SPECIFIC STEP was completed correctly
+## 💡 Recommendations
+- [Specific recommendations for this step]
+- **Next Steps**: [How to improve if retry is needed]
 
 **Save this report to**: {{.WorkspacePath}}/validation_report.md
 
-**IMPORTANT**: Return ONLY valid JSON that matches the required schema. No explanations or additional text.`
+**REMINDER**: Focus on validating step "{{.StepTitle}}" only. Return ONLY valid JSON matching the required schema.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)

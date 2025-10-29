@@ -101,9 +101,6 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 5. **Produce Context Output**: Ensure this step produces what subsequent steps need
 6. **Verify Success Criteria**: Confirm all criteria are met before completion
 
-- **Only work within {{.WorkspacePath}}/**: All files must be written inside the workspace folder
-- **Create outputs only if needed**: Only create files in outputs/ if required by the step itself
-
 ` + GetTodoExecutionMemoryRequirements() + `
 
 **IMPORTANT**: 

@@ -110,45 +110,86 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 		return "", fmt.Errorf("failed to read todo_final.md: %w", err)
 	}
 
-	// Use plan reader agent to parse todo_final.md
-	planReaderAgent, err := teo.createPlanReaderAgent(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create plan reader agent: %w", err)
-	}
+	// Revision loop for plan reader with human feedback
+	maxPlanRevisions := 5
+	var humanFeedback string
+	var conversationHistory []llms.MessageContent
+	var steps []TodoStep
 
-	// Prepare template variables for plan reader agent
-	templateVars := map[string]string{
-		"Objective":     objective,
-		"WorkspacePath": workspacePath,
-		"PlanMarkdown":  content,
-		"FileType":      "todo_final",
-	}
+	for revisionAttempt := 1; revisionAttempt <= maxPlanRevisions; revisionAttempt++ {
+		teo.GetLogger().Infof("🔄 Plan reader revision attempt %d/%d", revisionAttempt, maxPlanRevisions)
 
-	// Execute plan reader agent to get structured response
-	planningResponse, err := planReaderAgent.ExecuteStructured(ctx, templateVars, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse todo_final.md with plan reader agent: %w", err)
-	}
+		// Use plan reader agent to parse todo_final.md
+		planReaderAgent, err := teo.createPlanReaderAgent(ctx, revisionAttempt)
+		if err != nil {
+			return "", fmt.Errorf("failed to create plan reader agent: %w", err)
+		}
 
-	// Convert PlanningResponse.Steps to TodoStep array
-	steps := make([]TodoStep, len(planningResponse.Steps))
-	for i, step := range planningResponse.Steps {
-		steps[i] = TodoStep{
-			Title:               step.Title,
-			Description:         step.Description,
-			SuccessCriteria:     step.SuccessCriteria,
-			WhyThisStep:         step.WhyThisStep,
-			ContextDependencies: step.ContextDependencies,
-			ContextOutput:       string(step.ContextOutput), // Convert FlexibleContextOutput to string
-			SuccessPatterns:     step.SuccessPatterns,
-			FailurePatterns:     step.FailurePatterns,
+		// Prepare template variables for plan reader agent
+		templateVars := map[string]string{
+			"Objective":     objective,
+			"WorkspacePath": workspacePath,
+			"PlanMarkdown":  content,
+			"FileType":      "todo_final",
+		}
+
+		// Add human feedback to conversation if provided
+		if humanFeedback != "" {
+			feedbackMessage := llms.MessageContent{
+				Role:  llms.ChatMessageTypeHuman,
+				Parts: []llms.ContentPart{llms.TextContent{Text: humanFeedback}},
+			}
+			conversationHistory = append(conversationHistory, feedbackMessage)
+			teo.GetLogger().Infof("📝 Added human feedback to conversation history for revision %d", revisionAttempt)
+		}
+
+		// Execute plan reader agent to get structured response
+		// The agent will detect variables and use human_feedback tool internally
+		// The agent handles variable resolution internally and doesn't need conversation history accumulation
+		planningResponse, err := planReaderAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse todo_final.md with plan reader agent: %w", err)
+		}
+
+		// Convert PlanningResponse.Steps to TodoStep array
+		steps = make([]TodoStep, len(planningResponse.Steps))
+		for i, step := range planningResponse.Steps {
+			steps[i] = TodoStep{
+				Title:               step.Title,
+				Description:         step.Description,
+				SuccessCriteria:     step.SuccessCriteria,
+				WhyThisStep:         step.WhyThisStep,
+				ContextDependencies: step.ContextDependencies,
+				ContextOutput:       string(step.ContextOutput), // Convert FlexibleContextOutput to string
+				SuccessPatterns:     step.SuccessPatterns,
+				FailurePatterns:     step.FailurePatterns,
+			}
+		}
+
+		teo.GetLogger().Infof("📋 Parsed %d steps from todo_final.md (attempt %d)", len(steps), revisionAttempt)
+
+		// Emit todo steps extracted event (so frontend can display the extracted steps)
+		teo.emitTodoStepsExtractedEvent(ctx, steps, "todo_final_md")
+
+		// Request human approval for the extracted steps
+		approved, feedback, err := teo.requestStepsApproval(ctx, steps, revisionAttempt)
+		if err != nil {
+			return "", fmt.Errorf("failed to get approval for extracted steps: %w", err)
+		}
+
+		if approved {
+			teo.GetLogger().Infof("✅ Steps approved by user on attempt %d, proceeding with execution", revisionAttempt)
+			break // Exit revision loop
+		}
+
+		// User rejected with feedback - prepare for retry
+		teo.GetLogger().Infof("🔄 User requested revision (attempt %d/%d): %s", revisionAttempt, maxPlanRevisions, feedback)
+		humanFeedback = feedback // Store feedback for next attempt
+
+		if revisionAttempt >= maxPlanRevisions {
+			return fmt.Sprintf("Max plan reader revision attempts (%d) reached. Final feedback: %s", maxPlanRevisions, feedback), nil
 		}
 	}
-
-	teo.GetLogger().Infof("📋 Parsed %d steps from todo_final.md", len(steps))
-
-	// Emit todo steps extracted event
-	teo.emitTodoStepsExtractedEvent(ctx, steps, "todo_final_md")
 
 	// Execute each step individually with validation feedback loop
 	var executionResults []string
@@ -372,21 +413,32 @@ func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context,
 }
 
 // createPlanReaderAgent creates a plan reader agent for parsing todo_final.md
-func (teo *TodoExecutionOrchestrator) createPlanReaderAgent(ctx context.Context) (*PlanReaderAgent, error) {
-	// Get proper agent configuration using the base orchestrator method
-	// This ensures all required fields are populated (MCPConfigPath, Mode, OutputFormat, etc.)
-	config := teo.CreateStandardAgentConfigWithCustomServers(
+func (teo *TodoExecutionOrchestrator) createPlanReaderAgent(ctx context.Context, revisionAttempt int) (*PlanReaderAgent, error) {
+	// Use CreateAndSetupStandardAgentWithCustomServers instead of manual initialization
+	// This ensures custom tools (workspace + human) are properly registered
+	agentInterface, err := teo.CreateAndSetupStandardAgentWithCustomServers(
+		ctx,
 		"plan-reader-agent",
+		"plan_reading",
+		0,               // No step number (plan reader reads all steps)
+		revisionAttempt, // Use revision attempt as iteration
 		teo.GetMaxTurns(),
 		agents.OutputFormatStructured,
 		[]string{mcpclient.NoServers}, // No MCP servers - plan reader only converts markdown to JSON using workspace tools
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewPlanReaderAgent(config, logger, tracer, eventBridge)
+		},
+		teo.WorkspaceTools,
+		teo.WorkspaceToolExecutors,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create plan reader agent: %w", err)
+	}
 
-	agent := NewPlanReaderAgent(config, teo.GetLogger(), teo.GetTracer(), teo.GetContextAwareBridge())
-
-	// Initialize the agent - this is required before using it
-	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize plan reader agent: %w", err)
+	// Cast to PlanReaderAgent
+	agent, ok := agentInterface.(*PlanReaderAgent)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast agent to PlanReaderAgent")
 	}
 
 	return agent, nil
@@ -630,4 +682,31 @@ func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Co
 	} else {
 		teo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
 	}
+}
+
+// requestStepsApproval requests human approval for extracted steps before execution
+// Returns: (approved bool, feedback string, error)
+func (teo *TodoExecutionOrchestrator) requestStepsApproval(ctx context.Context, steps []TodoStep, revisionAttempt int) (bool, string, error) {
+	teo.GetLogger().Infof("⏸️ Requesting human approval for %d extracted steps (revision attempt %d)", len(steps), revisionAttempt)
+
+	// Generate unique request ID
+	requestID := fmt.Sprintf("steps_approval_%d_%d", revisionAttempt, time.Now().UnixNano())
+
+	// Request human approval using base orchestrator method
+	// Simple question without detailed context (details are in the event)
+	var question string
+	if revisionAttempt == 1 {
+		question = fmt.Sprintf("Review the %d extracted steps and approve to proceed with execution, or provide feedback for revision.", len(steps))
+	} else {
+		question = fmt.Sprintf("Review the revised steps (attempt %d). Approve to proceed or provide additional feedback.", revisionAttempt)
+	}
+
+	return teo.RequestHumanFeedback(
+		ctx,
+		requestID,
+		question,
+		"Steps have been extracted and displayed above. Can we proceed with execution?", // Simple context
+		"todo_execution_session",
+		teo.GetObjective(),
+	)
 }

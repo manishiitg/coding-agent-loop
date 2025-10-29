@@ -217,12 +217,20 @@ func (pra *PlanReaderAgent) planReaderInputProcessor(templateVars map[string]str
 - Look for patterns like VARIABLE_NAME wrapped in double curly braces
 - Common variables: AWS_ACCOUNT_ID, GITHUB_REPO_URL, DB_PASSWORD, etc.
 - Extract each unique variable name
-- **Use the human_feedback tool** to ask: "Please provide the value for variable: VARIABLE_NAME"
-- **Generate a unique_id** (UUID) for each feedback request
-- **Replace variable placeholders** with the actual value provided by the human
-- **Continue this process** for ALL variables until the plan has no more placeholders
 
-**Tool Usage Example**:x
+**VARIABLE RESOLUTION STRATEGY**:
+1. **Detect all variables** in the markdown content (patterns like {{VARIABLE_NAME}})
+2. **Try to infer from context first**: Look for values mentioned in the plan itself
+   - Check if the variable value appears elsewhere in the content
+   - Look for default values, examples, or hints in the plan text
+   - Example: If plan mentions "AWS account 123456789012", use that for {{AWS_ACCOUNT_ID}}
+3. **Ask human only if needed**: Use human_feedback tool if value cannot be inferred
+   - Generate a unique_id (UUID) for each feedback request
+   - Ask specific question about the variable
+4. **Replace placeholders**: Once resolved (inferred or provided), replace in the content
+5. **Repeat for all variables** until no placeholders remain
+
+**Tool Usage Example**:
 ` + "```json" + `
 {
   "unique_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -249,14 +257,12 @@ func (pra *PlanReaderAgent) planReaderInputProcessor(templateVars map[string]str
 5. Return structured JSON response
 
 {{if .VariableNames}}
-## 🔑 AVAILABLE VARIABLES
+## 🔑 KNOWN VARIABLES
 
-These variables may appear in the plan as placeholders (see list below):
+These variables are tracked in the system:
 {{.VariableNames}}
 
-**CRITICAL**: When converting the plan to JSON, preserve ALL variable placeholders exactly as written. 
-DO NOT replace them with actual values. Keep placeholders like AWS_ACCOUNT_ID or GITHUB_REPO_URL intact.
-The output JSON must maintain variable placeholders, not resolved values.
+**NOTE**: Variables should already be resolved in STEP 1 before conversion. If you still see placeholders like {{VARIABLE_NAME}} after resolution, convert them as-is to JSON.
 {{end}}
 
 **DO NOT**:

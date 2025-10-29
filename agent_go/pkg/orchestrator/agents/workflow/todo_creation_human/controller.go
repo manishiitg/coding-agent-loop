@@ -123,7 +123,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 		BaseOrchestrator:      baseOrchestrator,
 		sessionID:             fmt.Sprintf("session_%d", time.Now().UnixNano()),
 		workflowID:            fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
-		skipPlanningExecution: true, // Default to testing mode - skip planning/execution
+		skipPlanningExecution: false, // Run normal planning and execution workflow
 	}, nil
 }
 

@@ -16,6 +16,11 @@ export const OPENAI_MODELS = [
   "gpt-5-mini",
 ];
 
+export const VERTEX_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-pro"
+];
+
 // Get available models for a provider
 export const getAvailableModels = (provider: string): string[] => {
   switch (provider) {
@@ -31,6 +36,8 @@ export const getAvailableModels = (provider: string): string[] => {
       return BEDROCK_MODELS;
     case "openai":
       return OPENAI_MODELS;
+    case "vertex":
+      return VERTEX_MODELS;
     default:
       return [];
   }
@@ -72,6 +79,13 @@ export const getAllAvailableLLMs = (): LLMOption[] => {
       model,
       label: `OpenAI - ${model}`,
       description: 'OpenAI model'
+    })),
+    // Vertex models
+    ...VERTEX_MODELS.map(model => ({
+      provider: 'vertex' as const,
+      model,
+      label: `Vertex - ${model}`,
+      description: 'Google Vertex AI Gemini model'
     }))
   ];
 };
@@ -79,9 +93,13 @@ export const getAllAvailableLLMs = (): LLMOption[] => {
 // Get fallback providers for a given provider
 export const getFallbackProviders = (currentProvider: string): string[] => {
   if (currentProvider === "openrouter") {
-    return ["openai", "bedrock"];
+    return ["openai", "bedrock", "vertex"];
   } else if (currentProvider === "bedrock") {
-    return ["openrouter", "openai"];
+    return ["openrouter", "openai", "vertex"];
+  } else if (currentProvider === "openai") {
+    return ["openrouter", "bedrock", "vertex"];
+  } else if (currentProvider === "vertex") {
+    return ["openrouter", "openai", "bedrock"];
   }
   return [];
 };

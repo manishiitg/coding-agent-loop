@@ -2,55 +2,46 @@ package testing
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
+
+	"mcp-agent/agent_go/internal/llm"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/googleai"
 )
 
 var vertexCmd = &cobra.Command{
 	Use:   "vertex",
-	Short: "Test Vertex AI (Gemini) tool calling",
-	Long:  "Test Google Vertex AI LLM with tool calling capabilities",
+	Short: "Test Vertex AI (Gemini) with API key and tool calling",
 	Run:   runVertex,
 }
 
-// vertexTestFlags holds the vertex test specific flags
 type vertexTestFlags struct {
-	model        string
-	apiKey       string
-	verbose      bool
-	showResponse bool
+	model     string
+	apiKey    string
+	withTools bool
 }
 
 var vertexFlags vertexTestFlags
 
 func init() {
-	// Vertex test specific flags
 	vertexCmd.Flags().StringVar(&vertexFlags.model, "model", "gemini-2.5-flash", "Gemini model to test")
 	vertexCmd.Flags().StringVar(&vertexFlags.apiKey, "api-key", "", "Google API key (or set VERTEX_API_KEY env var)")
-	vertexCmd.Flags().BoolVar(&vertexFlags.verbose, "verbose", false, "enable verbose output")
-	vertexCmd.Flags().BoolVar(&vertexFlags.showResponse, "show-response", true, "show full response")
+	vertexCmd.Flags().BoolVar(&vertexFlags.withTools, "with-tools", false, "enable tool calling")
 }
 
 func runVertex(cmd *cobra.Command, args []string) {
-	// Get logging configuration from viper
 	logFile := viper.GetString("log-file")
 	logLevel := viper.GetString("log-level")
-
-	// Initialize test logger
 	InitTestLogger(logFile, logLevel)
 	logger := GetTestLogger()
-
-	logger.Info("🚀 Testing Vertex AI (Gemini) Tool Calling...")
 
 	// Get API key
 	apiKey := vertexFlags.apiKey
 	if apiKey == "" {
-		// Try environment variables
 		if key := os.Getenv("VERTEX_API_KEY"); key != "" {
 			apiKey = key
 		} else if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
@@ -61,16 +52,37 @@ func runVertex(cmd *cobra.Command, args []string) {
 		log.Fatal("API key required: set --api-key flag or VERTEX_API_KEY/GOOGLE_API_KEY environment variable")
 	}
 
-	// Create Google AI LLM with API key
-	llm, err := googleai.New(context.Background(),
-		googleai.WithAPIKey(apiKey),
-		googleai.WithDefaultModel(vertexFlags.model),
-	)
-	if err != nil {
-		log.Fatalf("Failed to create Vertex LLM: %v", err)
+	// Set API key as environment variable for internal LLM provider to pick up
+	os.Setenv("VERTEX_API_KEY", apiKey)
+
+	ctx := context.Background()
+
+	testType := "plain generation"
+	if vertexFlags.withTools {
+		testType = "tool calling"
+	}
+	logger.Info(fmt.Sprintf("🚀 Testing Vertex AI (%s)", testType))
+
+	// Set default model if not specified
+	modelID := vertexFlags.model
+	if modelID == "" {
+		modelID = "gemini-2.5-flash"
 	}
 
-	// Define a simple tool
+	// Initialize Vertex AI LLM using internal provider
+	// The internal provider automatically uses vertex.New() which switches to BackendGeminiAPI with API key
+	llmInstance, err := llm.InitializeLLM(llm.Config{
+		Provider:    llm.ProviderVertex,
+		ModelID:     modelID,
+		Temperature: 0.7,
+		Logger:      logger,
+		Context:     ctx,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize Vertex LLM: %v", err)
+	}
+
+	// Define a simple weather tool
 	weatherTool := llms.Tool{
 		Type: "function",
 		Function: &llms.FunctionDefinition{
@@ -89,24 +101,42 @@ func runVertex(cmd *cobra.Command, args []string) {
 		},
 	}
 
-	// Test messages
 	messages := []llms.MessageContent{
-		llms.TextParts(llms.ChatMessageTypeHuman, "What's the weather like in Tokyo?"),
+		llms.TextParts(llms.ChatMessageTypeHuman, "What's the weather in Tokyo?"),
 	}
 
-	ctx := context.Background()
+	// Call with or without tools
+	var resp *llms.ContentResponse
+	if vertexFlags.withTools {
+		resp, err = llmInstance.GenerateContent(ctx, messages,
+			llms.WithModel(modelID),
+			llms.WithTools([]llms.Tool{weatherTool}))
+	} else {
+		resp, err = llmInstance.GenerateContent(ctx, messages, llms.WithModel(modelID))
+	}
 
-	// Call with tool
-	logger.Info("📞 Calling Vertex AI with tool...")
-	resp, err := llm.GenerateContent(ctx, messages,
-		llms.WithModel("gemini-2.5-flash"),
-		llms.WithTools([]llms.Tool{weatherTool}),
-	)
 	if err != nil {
-		logger.Fatal("❌ Tool call failed", map[string]interface{}{"error": err.Error()})
+		log.Fatalf("❌ Error: %v", err)
 	}
 
-	logger.Info("✅ Response received", map[string]interface{}{
-		"response": resp.Choices[0].Content,
-	})
+	if len(resp.Choices) == 0 {
+		log.Fatal("❌ No choices returned")
+	}
+
+	choice := resp.Choices[0]
+
+	// Check for tool calls
+	if len(choice.ToolCalls) > 0 {
+		logger.Info(fmt.Sprintf("✅ Success! Detected %d tool call(s)", len(choice.ToolCalls)))
+		for i, toolCall := range choice.ToolCalls {
+			logger.Info(fmt.Sprintf("🔧 Tool #%d", i+1), map[string]interface{}{
+				"name":      toolCall.FunctionCall.Name,
+				"arguments": toolCall.FunctionCall.Arguments,
+			})
+		}
+	} else if len(choice.Content) > 0 {
+		logger.Info("✅ Success! Response received", map[string]interface{}{
+			"content": choice.Content,
+		})
+	}
 }

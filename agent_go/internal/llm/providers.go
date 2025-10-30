@@ -17,6 +17,7 @@ import (
 	"github.com/tmc/langchaingo/llms/anthropic"
 	"github.com/tmc/langchaingo/llms/bedrock"
 	"github.com/tmc/langchaingo/llms/googleai"
+	"github.com/tmc/langchaingo/llms/googleai/vertex"
 	"github.com/tmc/langchaingo/llms/openai"
 )
 
@@ -531,7 +532,7 @@ func initializeVertex(config Config) (llms.Model, error) {
 	}
 
 	logger := config.Logger
-	logger.Infof("Initializing Google AI (Gemini) LLM with API key - model_id: %s", modelID)
+	logger.Infof("Initializing Vertex AI (Gemini) LLM with API key - model_id: %s", modelID)
 
 	// Use provided context or use background context
 	ctx := config.Context
@@ -539,12 +540,17 @@ func initializeVertex(config Config) (llms.Model, error) {
 		ctx = context.Background()
 	}
 
-	// Create Google AI LLM with API key and configuration options
-	llm, err := googleai.New(ctx,
-		googleai.WithAPIKey(apiKey),
+	// Set API key as environment variable for vertex.New() to pick up
+	// vertex.New() automatically detects API key from VERTEX_API_KEY or GOOGLE_API_KEY env vars
+	// and switches to BackendGeminiAPI when API key is present
+	os.Setenv("VERTEX_API_KEY", apiKey)
+
+	// Create Vertex AI LLM - automatically uses BackendGeminiAPI with API key
+	// Supports both API key authentication and OAuth/ADC authentication
+	llm, err := vertex.New(ctx,
 		googleai.WithDefaultModel(modelID),
 		googleai.WithDefaultTemperature(config.Temperature),
-		googleai.WithDefaultMaxTokens(40000), // Large token limit for Google AI
+		googleai.WithDefaultMaxTokens(40000), // Large token limit for Vertex AI
 	)
 
 	if err != nil {

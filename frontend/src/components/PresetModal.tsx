@@ -53,7 +53,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
     setLlmConfig({
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
+      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
       model_id: llm.model
     });
   }, []);

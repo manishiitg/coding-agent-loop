@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -10,10 +11,8 @@ import (
 
 // Workflow status constants
 const (
-	WorkflowStatusPreVerification                  = "pre-verification"
-	WorkflowStatusPostVerification                 = "post-verification"
-	WorkflowStatusPostVerificationTodoRefinement   = "post-verification-todo-refinement"
-	WorkflowStatusPostVerificationReportGeneration = "post-verification-report-generation"
+	WorkflowStatusPreVerification  = "pre-verification"
+	WorkflowStatusPostVerification = "post-verification"
 )
 
 // Agent mode constants
@@ -118,7 +117,8 @@ type PresetQuery struct {
 	Label           string          `json:"label" db:"label"`
 	Query           string          `json:"query" db:"query"`
 	SelectedServers string          `json:"selected_servers" db:"selected_servers"` // JSON array
-	SelectedFolder  string          `json:"selected_folder" db:"selected_folder"`   // Single folder path
+	SelectedTools   string          `json:"selected_tools" db:"selected_tools"`     // JSON array of "server:tool" format
+	SelectedFolder  sql.NullString  `json:"selected_folder" db:"selected_folder"`   // Single folder path
 	AgentMode       string          `json:"agent_mode" db:"agent_mode"`             // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig       json.RawMessage `json:"llm_config" db:"llm_config"`             // JSON configuration for LLM settings
 	IsPredefined    bool            `json:"is_predefined" db:"is_predefined"`
@@ -127,11 +127,49 @@ type PresetQuery struct {
 	CreatedBy       string          `json:"created_by" db:"created_by"`
 }
 
+// MarshalJSON implements json.Marshaler for PresetQuery to handle sql.NullString properly
+func (p PresetQuery) MarshalJSON() ([]byte, error) {
+	result := struct {
+		ID              string          `json:"id"`
+		Label           string          `json:"label"`
+		Query           string          `json:"query"`
+		SelectedServers string          `json:"selected_servers"`
+		SelectedTools   string          `json:"selected_tools"`
+		SelectedFolder  *string         `json:"selected_folder,omitempty"`
+		AgentMode       string          `json:"agent_mode"`
+		LLMConfig       json.RawMessage `json:"llm_config"`
+		IsPredefined    bool            `json:"is_predefined"`
+		CreatedAt       time.Time       `json:"created_at"`
+		UpdatedAt       time.Time       `json:"updated_at"`
+		CreatedBy       string          `json:"created_by"`
+	}{
+		ID:              p.ID,
+		Label:           p.Label,
+		Query:           p.Query,
+		SelectedServers: p.SelectedServers,
+		SelectedTools:   p.SelectedTools,
+		AgentMode:       p.AgentMode,
+		LLMConfig:       p.LLMConfig,
+		IsPredefined:    p.IsPredefined,
+		CreatedAt:       p.CreatedAt,
+		UpdatedAt:       p.UpdatedAt,
+		CreatedBy:       p.CreatedBy,
+	}
+
+	// Convert sql.NullString to *string
+	if p.SelectedFolder.Valid {
+		result.SelectedFolder = &p.SelectedFolder.String
+	}
+
+	return json.Marshal(result)
+}
+
 // CreatePresetQueryRequest represents a request to create a new preset query
 type CreatePresetQueryRequest struct {
 	Label           string           `json:"label"`
 	Query           string           `json:"query"`
 	SelectedServers []string         `json:"selected_servers,omitempty"`
+	SelectedTools   []string         `json:"selected_tools,omitempty"`  // Array of "server:tool" strings
 	SelectedFolder  string           `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
 	AgentMode       string           `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig       *PresetLLMConfig `json:"llm_config,omitempty"`      // LLM configuration for this preset
@@ -196,6 +234,7 @@ type UpdatePresetQueryRequest struct {
 	Label           string           `json:"label,omitempty"`
 	Query           string           `json:"query,omitempty"`
 	SelectedServers []string         `json:"selected_servers,omitempty"`
+	SelectedTools   []string         `json:"selected_tools,omitempty"`  // Array of "server:tool" strings
 	SelectedFolder  string           `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
 	AgentMode       string           `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig       *PresetLLMConfig `json:"llm_config,omitempty"`      // LLM configuration for this preset

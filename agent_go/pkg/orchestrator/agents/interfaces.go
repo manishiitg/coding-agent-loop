@@ -12,8 +12,8 @@ import (
 
 // OrchestratorAgent defines the interface for all orchestrator agents
 type OrchestratorAgent interface {
-	// Execute executes the agent with the given template variables and returns the result
-	Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error)
+	// Execute executes the agent with the given template variables and returns the result and updated conversation history
+	Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error)
 
 	// GetType returns the agent type (planning, execution, validation, plan_organizer)
 	GetType() string
@@ -31,9 +31,6 @@ type OrchestratorAgent interface {
 
 	// GetBaseAgent returns the base agent for event listener attachment
 	GetBaseAgent() *BaseAgent
-
-	// SetOrchestratorContext sets the orchestrator context for event emission
-	SetOrchestratorContext(stepIndex, iteration int, objective, agentName string)
 }
 
 // OutputFormat represents the output format for an agent
@@ -47,10 +44,6 @@ const (
 
 // OrchestratorAgentConfig defines the configuration for an orchestrator agent
 type OrchestratorAgentConfig struct {
-	// Required Agent identity
-	Name string `json:"name" validate:"required"`
-	Type string `json:"type" validate:"required"`
-
 	// Required LLM configuration
 	Provider    string  `json:"provider" validate:"required"`
 	Model       string  `json:"model" validate:"required"`
@@ -66,6 +59,7 @@ type OrchestratorAgentConfig struct {
 
 	// Required MCP configuration
 	ServerNames   []string `json:"server_names" validate:"required"`
+	SelectedTools []string `json:"selected_tools,omitempty"` // Array of "server:tool" strings
 	MCPConfigPath string   `json:"mcp_config_path" validate:"required"`
 	ToolChoice    string   `json:"tool_choice" validate:"required"`
 	MaxTurns      int      `json:"max_turns" validate:"required"`
@@ -96,10 +90,8 @@ type CrossProviderFallback struct {
 }
 
 // NewOrchestratorAgentConfig creates a new agent configuration with minimal defaults
-func NewOrchestratorAgentConfig(agentType, name string) *OrchestratorAgentConfig {
+func NewOrchestratorAgentConfig(name string) *OrchestratorAgentConfig {
 	return &OrchestratorAgentConfig{
-		Name:        name,
-		Type:        agentType,
 		Provider:    "", // Must be set by caller
 		Model:       "", // Must be set by caller
 		Temperature: 0.0,
@@ -118,8 +110,8 @@ func NewOrchestratorAgentConfig(agentType, name string) *OrchestratorAgentConfig
 }
 
 // LoadOrchestratorAgentConfigFromEnv creates a new agent configuration with values from environment variables
-func LoadOrchestratorAgentConfigFromEnv(agentType, name string) *OrchestratorAgentConfig {
-	config := NewOrchestratorAgentConfig(agentType, name)
+func LoadOrchestratorAgentConfigFromEnv(name string) *OrchestratorAgentConfig {
+	config := NewOrchestratorAgentConfig(name)
 
 	// Load from environment variables if available
 	if provider := os.Getenv("ORCHESTRATOR_PROVIDER"); provider != "" {
@@ -170,14 +162,6 @@ func LoadOrchestratorAgentConfigFromEnv(agentType, name string) *OrchestratorAge
 // ValidateOrchestratorAgentConfig validates that all required fields are provided
 func ValidateOrchestratorAgentConfig(config *OrchestratorAgentConfig) error {
 	var errors []string
-
-	// Check required agent identity
-	if config.Name == "" {
-		errors = append(errors, "Name is required")
-	}
-	if config.Type == "" {
-		errors = append(errors, "Type is required")
-	}
 
 	// Check required LLM configuration
 	if config.Provider == "" {

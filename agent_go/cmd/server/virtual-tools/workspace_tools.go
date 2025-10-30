@@ -48,19 +48,20 @@ func CreateWorkspaceTools() []llms.Tool {
 		Type: "function",
 		Function: &llms.FunctionDefinition{
 			Name:        "list_workspace_files",
-			Description: "List all files and folders in the workspace. Can filter by folder and control hierarchical depth.",
+			Description: "List all files and folders in the workspace.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"folder": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional folder path to filter results (e.g., 'docs', 'examples', 'folder/subfolder')",
+						"description": "Folder path to filter results (e.g., 'docs', 'examples', 'folder/subfolder')",
 					},
 					"max_depth": map[string]interface{}{
 						"type":        "integer",
 						"description": "Maximum depth of hierarchical structure to return (default: 3, max: 10)",
 					},
 				},
+				"required": []string{"folder"},
 			},
 		},
 	}
@@ -114,50 +115,6 @@ func CreateWorkspaceTools() []llms.Tool {
 	}
 	workspaceTools = append(workspaceTools, updateFileTool)
 
-	// Add patch_workspace_file tool (comprehensive patching) - COMMENTED OUT
-	/*
-		patchFileTool := llms.Tool{
-			Type: "function",
-			Function: &llms.FunctionDefinition{
-				Name:        "patch_workspace_file",
-				Description: "Patch content in an existing file in the workspace. Supports append, prepend, replace, insert_after, and insert_before operations. Use get_workspace_file_nested first to find available targets.",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"filepath": map[string]interface{}{
-							"type":        "string",
-							"description": "Full file path of the file to patch (e.g., 'docs/guide.md', 'configs/settings.json')",
-						},
-						"operation": map[string]interface{}{
-							"type":        "string",
-							"description": "Operation to perform: 'append' (add after target), 'prepend' (add before target), 'replace' (replace target), 'insert_after' (insert after target), 'insert_before' (insert before target). Defaults to 'append' if not provided.",
-							"enum":        []string{"append", "prepend", "replace", "insert_after", "insert_before"},
-						},
-						"target_type": map[string]interface{}{
-							"type":        "string",
-							"description": "Type of target to operate on: 'heading', 'table', 'list', 'paragraph', 'code_block'. Defaults to 'heading' if not provided.",
-							"enum":        []string{"heading", "table", "list", "paragraph", "code_block"},
-						},
-						"target_selector": map[string]interface{}{
-							"type":        "string",
-							"description": "Target to operate on (heading text, table index, list index, etc.). Use get_workspace_file_nested to find available headings.",
-						},
-						"content": map[string]interface{}{
-							"type":        "string",
-							"description": "Content to add or replace",
-						},
-						"commit_message": map[string]interface{}{
-							"type":        "string",
-							"description": "Optional commit message for version control",
-						},
-					},
-					"required": []string{"filepath", "target_selector", "content"},
-				},
-			},
-		}
-		workspaceTools = append(workspaceTools, patchFileTool)
-	*/
-
 	// Add diff_patch_workspace_file tool (unified diff patching)
 	diffPatchFileTool := llms.Tool{
 		Type: "function",
@@ -193,24 +150,24 @@ func CreateWorkspaceTools() []llms.Tool {
 		Type: "function",
 		Function: &llms.FunctionDefinition{
 			Name:        "regex_search_workspace_files",
-			Description: "Search files in the workspace using regex patterns across full content. Always searches all text-based files with regex support. Can optionally search within a specific folder.",
+			Description: "Search files in the workspace using regex patterns across full content. Searches text-based files within the specified folder only. Requires 'folder' parameter.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"query": map[string]interface{}{
 						"type":        "string",
-						"description": "Regex search query to find in files (e.g., 'docker', 'test.*file', '\\d{4}-\\d{2}-\\d{2}', '(error|exception)', 'markdown')",
+						"description": "Regex search query to find in files (e.g., 'docker', 'test.*file', \\d{4}-\\d{2}-\\d{2}', '(error|exception)', 'markdown')",
 					},
 					"folder": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional folder path to search within (e.g., 'docs', 'src', 'configs'). If not specified, searches all files in workspace.",
+						"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). Required.",
 					},
 					"limit": map[string]interface{}{
 						"type":        "integer",
 						"description": "Maximum number of results to return (default: 20, max: 100)",
 					},
 				},
-				"required": []string{"query"},
+				"required": []string{"query", "folder"},
 			},
 		},
 	}
@@ -368,9 +325,9 @@ func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args ma
 // handleListWorkspaceFiles handles the list_workspace_files tool execution
 func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Extract parameters
-	folder := ""
-	if f, ok := args["folder"].(string); ok {
-		folder = f
+	folder, ok := args["folder"].(string)
+	if !ok || folder == "" {
+		return "", fmt.Errorf("folder is required and must be a string")
 	}
 
 	maxDepth := 3
@@ -395,9 +352,7 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 
 	// Add query parameters
 	q := req.URL.Query()
-	if folder != "" {
-		q.Add("folder", folder)
-	}
+	q.Add("folder", folder)
 	q.Add("max_depth", fmt.Sprintf("%d", maxDepth))
 	req.URL.RawQuery = q.Encode()
 
@@ -601,6 +556,9 @@ func handleRegexSearchWorkspaceFiles(ctx context.Context, args map[string]interf
 	}
 
 	folder := getStringValue(args, "folder")
+	if folder == "" {
+		return "", fmt.Errorf("folder is required and must be a string")
+	}
 
 	limit := getIntValue(args, "limit")
 	if limit == 0 {
@@ -620,9 +578,7 @@ func handleRegexSearchWorkspaceFiles(ctx context.Context, args map[string]interf
 	// Add query parameters with proper encoding
 	q := u.Query()
 	q.Set("query", query)
-	if folder != "" {
-		q.Set("folder", folder)
-	}
+	q.Set("folder", folder)
 	q.Set("limit", fmt.Sprintf("%d", limit))
 	u.RawQuery = q.Encode()
 

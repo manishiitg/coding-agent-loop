@@ -7,6 +7,7 @@ interface ToolCallStartEventProps {
 }
 
 export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ event }) => {
+  
   // Check if this is a workspace tool
   const isWorkspaceTool = (toolName: string): boolean => {
     const workspaceToolNames = [
@@ -23,7 +24,8 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
       // 'delete_workspace_file',
       // 'move_workspace_file'
     ]
-    return workspaceToolNames.includes(toolName)
+    const isWorkspace = workspaceToolNames.includes(toolName)
+    return isWorkspace
   }
 
   // Check if this is a human feedback tool

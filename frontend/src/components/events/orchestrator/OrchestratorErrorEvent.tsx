@@ -15,6 +15,13 @@ export const OrchestratorErrorEventDisplay: React.FC<OrchestratorErrorEventDispl
     return new Date(timestamp).toLocaleTimeString();
   };
 
+  const getLabel = () => {
+    const t = event.orchestrator_type
+    if (t === 'planner') return 'Planner Orchestrator'
+    if (t === 'workflow') return 'Workflow Orchestrator'
+    return 'Orchestrator'
+  }
+
   return (
     <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
       {/* Header with single-line layout */}
@@ -23,7 +30,7 @@ export const OrchestratorErrorEventDisplay: React.FC<OrchestratorErrorEventDispl
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
-              ❌ Deep Search Error{' '}
+              ❌ {getLabel()} Error{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Duration: {formatDuration(event.duration || 0)}
                 {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}

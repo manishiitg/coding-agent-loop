@@ -11,14 +11,18 @@ export const OrchestratorContext: React.FC<OrchestratorContextProps> = ({
   metadata, 
   className = "" 
 }) => {
-  if (!metadata) return null;
+  if (!metadata) {
+    return null;
+  }
 
   const orchestratorPhase = metadata.orchestrator_phase as string;
   const step = metadata.orchestrator_step as number;
   const iteration = metadata.orchestrator_iteration as number;
   const agentName = metadata.orchestrator_agent_name as string;
 
-  if (!orchestratorPhase) return null;
+  if (!orchestratorPhase) {
+    return null;
+  }
 
   const getPhaseInfo = (phase: string) => {
     const phases = {

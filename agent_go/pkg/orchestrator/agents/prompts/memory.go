@@ -1,7 +1,6 @@
 package prompts
 
 import (
-	"mcp-agent/agent_go/pkg/orchestrator/memory"
 	"mcp-agent/agent_go/pkg/utils"
 )
 
@@ -188,12 +187,6 @@ You are part of a multi-agent orchestrator system with these agents:
 ` + utils.GetCommonFileInstructions() + `
 
 `
-}
-
-// GetLongTermMemoryRequirements returns requirements for Graph RAG memory operations only
-func (mm *MemoryManagement) GetLongTermMemoryRequirements() string {
-	ltm := memory.NewLongTermMemory()
-	return ltm.GetLongTermMemoryRequirements()
 }
 
 // GetBasePromptTemplate returns a standardized prompt template for all orchestrator agents

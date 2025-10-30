@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { MessageCircle, Search, Workflow, Settings, ExternalLink } from 'lucide-react'
 import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
-import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
+import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
@@ -49,7 +49,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onModeSelect
 }) => {
   const { selectedModeCategory } = useModeStore()
-  const { enabledServers } = useMCPStore()
+  const enabledServers = useMCPStore(state => state.enabledServers)
   
   // Use the new global preset store
   const { 
@@ -76,7 +76,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
 
   // Preset click handler - now uses the global store
-  const handlePresetClick = (preset: CustomPreset | PredefinedPreset) => {
+  const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
     const result = applyPreset(preset, selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
     
     if (result.success) {
@@ -84,7 +84,41 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     } else {
       console.error('Failed to apply preset:', result.error)
     }
-  }
+  }, [applyPreset, selectedModeCategory]);
+
+  // Memoized callbacks for PresetModal
+  const handleClosePresetModal = useCallback(() => {
+    setShowPresetModal(false)
+    setEditingPreset(null)
+  }, [])
+
+  const handleSavePreset = useCallback(async (
+    label: string, 
+    query: string, 
+    selectedServers?: string[], 
+    selectedTools?: string[],
+    agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', 
+    selectedFolder?: PlannerFile,
+    llmConfig?: PresetLLMConfig
+  ) => {
+    try {
+      if (editingPreset) {
+        // Editing existing preset - use the existing agent mode
+        await updatePreset(editingPreset.id, label, query, selectedServers, selectedTools, editingPreset.agentMode, selectedFolder, llmConfig)
+      } else {
+        // Creating new preset - allow agent mode selection
+        const newPreset = await addPreset(label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig)
+        // Apply the new preset immediately
+        if (newPreset) {
+          handlePresetClick(newPreset)
+        }
+      }
+      setShowPresetModal(false)
+      setEditingPreset(null)
+    } catch (error) {
+      console.error('Failed to save preset:', error)
+    }
+  }, [editingPreset, updatePreset, addPreset, handlePresetClick])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -292,6 +326,26 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                       {showPresetDropdown && (
                         <div className="preset-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
                           <div className="p-2 space-y-1">
+                            {/* No Preset Option - only show for chat mode */}
+                            {selectedModeCategory === 'chat' && (
+                              <button
+                                onClick={() => {
+                                  useGlobalPresetStore.getState().clearActivePreset('chat')
+                                  setShowPresetDropdown(false)
+                                }}
+                                className={`w-full text-left p-2 rounded-md text-sm transition-colors ${
+                                  !activePreset
+                                    ? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+                                    : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                                  <span className="font-medium">No Preset</span>
+                                </div>
+                              </button>
+                            )}
+                            
                             {/* Add New Preset Option */}
                             <button
                               onClick={() => {
@@ -405,29 +459,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       {/* Preset Modal */}
       <PresetModal
         isOpen={showPresetModal}
-        onClose={() => {
-          setShowPresetModal(false)
-          setEditingPreset(null)
-        }}
-        onSave={async (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
-          try {
-            if (editingPreset) {
-              // Editing existing preset - use the existing agent mode
-              await updatePreset(editingPreset.id, label, query, selectedServers, editingPreset.agentMode, selectedFolder, llmConfig)
-            } else {
-              // Creating new preset - allow agent mode selection
-              const newPreset = await addPreset(label, query, selectedServers, agentMode, selectedFolder, llmConfig)
-              // Apply the new preset immediately
-              if (newPreset) {
-                handlePresetClick(newPreset)
-              }
-            }
-            setShowPresetModal(false)
-            setEditingPreset(null)
-          } catch (error) {
-            console.error('Failed to save preset:', error)
-          }
-        }}
+        onClose={handleClosePresetModal}
+        onSave={handleSavePreset}
         editingPreset={editingPreset}
         availableServers={enabledServers}
         hideAgentModeSelection={!!editingPreset}

@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 
 	"github.com/tmc/langchaingo/llms"
@@ -20,7 +21,7 @@ type OrchestratorReportAgent struct {
 }
 
 // NewOrchestratorReportAgent creates a new report agent
-func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorReportAgent {
+func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *OrchestratorReportAgent {
 	reportPrompts := prompts.NewReportPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -37,13 +38,8 @@ func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.Ex
 	}
 }
 
-// Initialize initializes the report agent (delegates to base)
-func (ra *OrchestratorReportAgent) Initialize(ctx context.Context) error {
-	return ra.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the report agent with report-specific input processing
-func (ra *OrchestratorReportAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (ra *OrchestratorReportAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	return ra.ExecuteWithInputProcessor(ctx, templateVars, ra.reportInputProcessor, conversationHistory)
 }
 
@@ -66,6 +62,3 @@ func (ra *OrchestratorReportAgent) reportInputProcessor(templateVars map[string]
 
 	return result.String()
 }
-
-// All other methods (GetType, GetConfig, Close, BaseAgent, GetBaseAgent, createLLM)
-// are now inherited from BaseOrchestratorAgent

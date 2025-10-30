@@ -88,6 +88,7 @@ func (es *EventStore) AddEvent(observerID string, event Event) {
 	if len(es.events[observerID]) > es.maxEvents {
 		es.events[observerID] = es.events[observerID][len(es.events[observerID])-es.maxEvents:]
 	}
+
 }
 
 // InitializeObserver creates an empty event list for an observer
@@ -116,6 +117,15 @@ func (es *EventStore) GetNextEventCounter(observerID string) int {
 	// Increment and return the counter
 	es.eventCounters[observerID]++
 	return es.eventCounters[observerID]
+}
+
+// getObserverKeys returns a list of observer keys for debugging
+func (es *EventStore) getObserverKeys() []string {
+	keys := make([]string, 0, len(es.events))
+	for k := range es.events {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // GetEvents retrieves events for an observer since a specific index

@@ -14,6 +14,11 @@ import (
 	"github.com/tmc/langchaingo/llms"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+const orchestratorIDKey contextKey = "orchestrator_id"
+
 // AgentMode represents the mode of operation for an agent
 type AgentMode string
 
@@ -32,6 +37,7 @@ const (
 	ValidationAgentType        AgentType = "validation"
 	PlanOrganizerAgentType     AgentType = "plan_organizer"
 	PlanBreakdownAgentType     AgentType = "plan_breakdown" // Analyzes dependencies and creates independent steps
+	PlanReaderAgentType        AgentType = "plan_reader"    // Reads plan markdown and returns structured JSON (read-only)
 
 	// Orchestrator types
 	PlannerOrchestratorAgentType  AgentType = "planner_orchestrator"  // AI-controlled planner orchestrator
@@ -46,22 +52,23 @@ const (
 	DataCritiqueAgentType      AgentType = "data_critique"       // Critiques any input data for factual accuracy and analytical quality
 	ReportGenerationAgentType  AgentType = "report_generation"   // Generates comprehensive reports from workflow execution
 	TodoOptimizationAgentType  AgentType = "todo_optimization"   // Orchestrates optimization processes (refinement, critique, reports)
-	TodoReporterAgentType      AgentType = "todo_reporter"       // Orchestrates report generation processes
 
 	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
-	TodoPlannerPlanningAgentType   AgentType = "todo_planner_planning"   // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType  AgentType = "todo_planner_execution"  // Executes first step of plan
-	TodoPlannerValidationAgentType AgentType = "todo_planner_validation" // Validates execution results
-	TodoPlannerWriterAgentType     AgentType = "todo_planner_writer"     // Creates optimal todo list
-	TodoPlannerCleanupAgentType    AgentType = "todo_planner_cleanup"    // Manages workspace cleanup
-	TodoPlannerCritiqueAgentType   AgentType = "todo_planner_critique"   // Critiques execution/validation data for planning
-	ConditionalLLMAgentType        AgentType = "conditional_llm"         // Makes conditional decisions
+	VariableExtractionAgentType         AgentType = "variable_extraction"           // Extracts variables from objective
+	TodoPlannerPlanningAgentType        AgentType = "todo_planner_planning"         // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType       AgentType = "todo_planner_execution"        // Executes first step of plan
+	TodoPlannerValidationAgentType      AgentType = "todo_planner_validation"       // Validates execution results
+	TodoPlannerWriterAgentType          AgentType = "todo_planner_writer"           // Creates optimal todo list
+	TodoPlannerCleanupAgentType         AgentType = "todo_planner_cleanup"          // Manages workspace cleanup
+	TodoPlannerCritiqueAgentType        AgentType = "todo_planner_critique"         // Critiques execution/validation data for planning
+	TodoPlannerSuccessLearningAgentType AgentType = "todo_planner_success_learning" // Analyzes successful executions to capture best practices
+	ConditionalLLMAgentType             AgentType = "conditional_llm"               // Makes conditional decisions
 )
 
 // BaseAgentInterface defines the interface for base agent operations
 type BaseAgentInterface interface {
 	// Core execution
-	Execute(ctx context.Context, templateVars map[string]string) (string, error)
+	Execute(ctx context.Context, userMessage string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error)
 
 	// Agent information
 	GetType() AgentType
@@ -126,6 +133,7 @@ func NewBaseAgent(
 	llm llms.Model,
 	instructions string,
 	serverNames []string,
+	selectedTools []string, // NEW parameter
 	mode AgentMode,
 	tracer observability.Tracer,
 	traceID observability.TraceID,
@@ -160,6 +168,16 @@ func NewBaseAgent(
 		mcpagent.WithMaxTurns(maxTurns),
 		mcpagent.WithProvider(internalLLM.Provider(provider)),
 		mcpagent.WithCacheOnly(cacheOnly),
+	}
+
+	// Add selected servers for "all tools" mode determination
+	if len(serverNames) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithSelectedServers(serverNames))
+	}
+
+	// Add selected tools if provided
+	if len(selectedTools) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(selectedTools))
 	}
 
 	// Enable smart routing for all agents
@@ -208,25 +226,9 @@ func NewBaseAgent(
 	return baseAgent, nil
 }
 
-// Execute executes the agent with template variables and returns the response with comprehensive logging
-func (ba *BaseAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+// Execute executes the agent with user message and conversation history
+func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	ba.logger.Infof("🚀 Executing %s agent: %s", ba.agentType, ba.name)
-
-	// For base agent, we expect the template variables to already be processed
-	// This is a fallback for agents that don't override Execute
-	userMessage := "Template variables provided but not processed by agent"
-	if len(templateVars) > 0 {
-		// Look for userMessage template variable first, then fall back to any value
-		if msg, exists := templateVars["userMessage"]; exists {
-			userMessage = msg
-		} else {
-			// Just use the first value as a simple fallback
-			for _, value := range templateVars {
-				userMessage = value
-				break
-			}
-		}
-	}
 
 	// Event emission now handled by unified events system
 
@@ -235,42 +237,50 @@ func (ba *BaseAgent) Execute(ctx context.Context, templateVars map[string]string
 	// Note: Conversation history is handled by AskWithHistory method
 	// The history will be passed directly to AskWithHistory below
 
-	// Create a single user message for the question
-	userMessageContent := llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: userMessage}},
-	}
-
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
-	// Prepare messages with conversation history
-	messages := []llms.MessageContent{}
+	// Prepare messages: add userMessage (instructions) ONLY on first turn
+	// On subsequent turns, conversationHistory already contains the full conversation context
+	var messages []llms.MessageContent
 
-	// Add conversation history if provided
+	// Copy existing conversation history if present
 	if len(conversationHistory) > 0 {
-		messages = append(messages, conversationHistory...)
+		// Continuing conversation - use history as-is, don't add instructions again
+		// IMPORTANT: Do NOT append userMessage here because:
+		// 1. Instructions are already in history from iteration 1
+		// 2. Adding instructions again would create duplicate instructions
+		// 3. Human feedback needs to be the last message, not instructions
+		messages = make([]llms.MessageContent, len(conversationHistory))
+		copy(messages, conversationHistory)
+		ba.logger.Infof("📝 Continuing existing conversation with %d messages (instructions already in history)", len(conversationHistory))
+	} else {
+		// First turn - add instructions as initial user message
+		// This is the ONLY place we add instructions to the conversation
+		ba.logger.Infof("📝 Starting new conversation with template message")
+		userMessageContent := llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: userMessage}},
+		}
+		messages = append(messages, userMessageContent)
 	}
 
-	// Add the current user message
-	messages = append(messages, userMessageContent)
-
 	// Execute the agent with orchestrator context and conversation history
-	answer, _, err := ba.agent.AskWithHistory(orchestratorCtx, messages)
+	answer, updatedConversationHistory, err := ba.agent.AskWithHistory(orchestratorCtx, messages)
 
 	executionTime := time.Since(startTime)
 
 	if err != nil {
 		// Event emission now handled by unified events system
 
-		return "", fmt.Errorf("agent execution failed: %w", err)
+		return "", nil, fmt.Errorf("agent execution failed: %w", err)
 	}
 
 	// Event emission now handled by unified events system
 
 	ba.logger.Infof("✅ %s agent execution completed: %s (duration: %s)", ba.agentType, ba.name, executionTime)
-	return answer, nil
+	return answer, updatedConversationHistory, nil
 }
 
 // GetType returns the agent type
@@ -301,7 +311,7 @@ func (ba *BaseAgent) AskStructured(ctx context.Context, question string, result 
 	}
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
 	// Use the underlying MCP agent's AskStructured method
@@ -319,7 +329,7 @@ func (ba *BaseAgent) Ask(ctx context.Context, question string) (string, error) {
 	}
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
 	return ba.agent.Ask(orchestratorCtx, question)
@@ -399,23 +409,48 @@ func (ba *BaseAgent) GetConfigurationSummary() map[string]interface{} {
 	}
 }
 
-// AskStructured is a standalone generic function that provides type-safe structured output
+// AskStructuredTyped is a standalone generic function that provides type-safe structured output
 // This gives us the clean generic API without needing to modify the BaseAgent struct
-func AskStructured[T any](ba *BaseAgent, ctx context.Context, question string, schema string) (T, error) {
+func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llms.MessageContent) (T, error) {
+	// Check if ba is nil
+	if ba == nil {
+		var zero T
+		return zero, fmt.Errorf("BaseAgent is nil - Initialize() must be called before using the agent")
+	}
+
 	if ba.agent == nil {
 		var zero T
 		return zero, fmt.Errorf("underlying agent not initialized")
 	}
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, "orchestrator_id", fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
-	// The MCP agent's AskStructured expects: (agent, ctx, question, schema, schemaString)
+	// Prepare messages: add question ONLY on first turn (when history is empty)
+	var messages []llms.MessageContent
+
+	if len(conversationHistory) > 0 {
+		// Continuing conversation - use history as-is, don't add question again
+		// IMPORTANT: Do NOT append question here - it would create duplicate messages
+		// Instructions are already in history from iteration 1
+		messages = make([]llms.MessageContent, len(conversationHistory))
+		copy(messages, conversationHistory)
+	} else {
+		// First turn - add question as initial user message
+		userMessage := llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: question}},
+		}
+		messages = append(messages, userMessage)
+	}
+
+	// The MCP agent's AskWithHistoryStructured expects: (agent, ctx, messages, schema, schemaString)
 	// where schema is the type, not the result variable
 	// We create a zero value of type T to pass as the schema parameter
 	var schemaType T
 
-	// Call the MCP agent's generic AskStructured function
-	return mcpagent.AskStructured(ba.agent, orchestratorCtx, question, schemaType, schema)
+	// Call the MCP agent's generic AskWithHistoryStructured function
+	result, _, err := mcpagent.AskWithHistoryStructured(ba.agent, orchestratorCtx, messages, schemaType, schema)
+	return result, err
 }

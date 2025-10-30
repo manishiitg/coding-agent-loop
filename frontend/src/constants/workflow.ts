@@ -42,8 +42,7 @@ export const getWorkflowPhaseById = async (id: string): Promise<APIWorkflowPhase
 export const WORKFLOW_PHASES = {
   PRE_VERIFICATION: 'pre-verification',
   POST_VERIFICATION: 'post-verification',
-  POST_VERIFICATION_TODO_REFINEMENT: 'post-verification-todo-refinement',
-  POST_VERIFICATION_REPORT_GENERATION: 'post-verification-report-generation'
+  POST_VERIFICATION_TODO_REFINEMENT: 'post-verification-todo-refinement'
 } as const
 
 

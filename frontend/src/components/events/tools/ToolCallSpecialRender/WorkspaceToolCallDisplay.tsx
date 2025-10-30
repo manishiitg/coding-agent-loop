@@ -53,7 +53,7 @@ export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> =
   if (toolName === 'read_workspace_file') {
     const filepath = (parsedArgs.filepath as string) || ''
     
-    return (
+    const component = (
       <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -87,6 +87,8 @@ export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> =
         )}
       </div>
     )
+    
+    return component
   }
 
   // Handle list_workspace_files tool
@@ -291,11 +293,11 @@ export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> =
               </div>
               
               {showContent && (
-                <div className="text-sm text-gray-800 dark:text-gray-200 mt-2">
+                <div className="text-xs text-gray-800 dark:text-gray-200 mt-2">
                   {isMarkdownContent(content) ? (
                     <ToolMarkdownRenderer content={content} maxHeight="400px" />
                   ) : (
-                    <pre className="whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded border max-h-96 overflow-y-auto">
+                    <pre className="text-xs whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded border max-h-96 overflow-y-auto">
                       {content}
                     </pre>
                   )}

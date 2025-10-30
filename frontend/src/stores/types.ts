@@ -53,7 +53,7 @@ export interface Toast {
 export type AgentMode = 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
 
 // Workflow Types
-export type WorkflowPhase = 'pre-verification' | 'post-verification' | 'post-verification-todo-refinement' | 'post-verification-report-generation'
+export type WorkflowPhase = 'pre-verification' | 'post-verification' | 'post-verification-todo-refinement'
 
 // Store Action Types
 export interface StoreActions {

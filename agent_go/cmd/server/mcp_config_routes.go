@@ -28,14 +28,14 @@ type MCPConfigResponse struct {
 // handleGetMCPConfig handles GET requests to retrieve current MCP config (base + user additions)
 func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
-	if err := api.mcpConfig.ReloadConfig(api.configPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
 		api.logger.Errorf("Failed to reload base MCP config: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Load user additions (if any)
-	userConfigPath := strings.Replace(api.configPath, ".json", "_user.json", 1)
+	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
 	userConfig, err := mcpclient.LoadConfig(userConfigPath)
 	if err != nil {
 		// User config doesn't exist yet, use empty config
@@ -138,7 +138,7 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 	userAdditions := &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
 
 	// Reload base config to get current base servers
-	if err := api.mcpConfig.ReloadConfig(api.configPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
 		api.logger.Errorf("Failed to reload base config: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
 		return
@@ -152,7 +152,7 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Save only user additions to user config file
-	userConfigPath := strings.Replace(api.configPath, ".json", "_user.json", 1)
+	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
 	if err := mcpclient.SaveConfig(userConfigPath, userAdditions); err != nil {
 		api.logger.Errorf("Failed to save user MCP config: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to save user config: %v", err), http.StatusInternalServerError)
@@ -262,12 +262,12 @@ func (api *StreamingAPI) validateMCPConfig(config *mcpclient.MCPConfig) error {
 // loadMergedConfig loads the merged configuration (base + user additions)
 func (api *StreamingAPI) loadMergedConfig() (*mcpclient.MCPConfig, error) {
 	// Reload base config to get latest version
-	if err := api.mcpConfig.ReloadConfig(api.configPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
 		return nil, fmt.Errorf("failed to reload base config: %w", err)
 	}
 
 	// Load user additions (if any)
-	userConfigPath := strings.Replace(api.configPath, ".json", "_user.json", 1)
+	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
 	api.logger.Debugf("🔍 Attempting to load user config from: %s", userConfigPath)
 
 	userConfig, err := mcpclient.LoadConfig(userConfigPath)
@@ -355,14 +355,14 @@ func (api *StreamingAPI) triggerMCPDiscovery() {
 // handleGetMCPConfigStatus handles GET requests to get config status
 func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
-	if err := api.mcpConfig.ReloadConfig(api.configPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
 		api.logger.Errorf("Failed to reload base MCP config: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Load user additions
-	userConfigPath := strings.Replace(api.configPath, ".json", "_user.json", 1)
+	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
 	userConfig, err := mcpclient.LoadConfig(userConfigPath)
 	if err != nil {
 		// User config doesn't exist yet
@@ -385,7 +385,7 @@ func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http
 	api.discoveryMux.RUnlock()
 
 	status := map[string]interface{}{
-		"config_path":        api.configPath,
+		"config_path":        api.mcpConfigPath,
 		"user_config_path":   userConfigPath,
 		"base_servers":       len(api.mcpConfig.MCPServers),
 		"user_servers":       len(userConfig.MCPServers),

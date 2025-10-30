@@ -21,6 +21,7 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     'conversation_end',
     'workflow_end',
     'request_human_feedback',
+    'blocking_human_feedback',
     'orchestrator_end',
     'agent_end',
     'workflow_start'
@@ -163,7 +164,7 @@ export const useChatStore = create<ChatState>()(
       // Initial state
       isStreaming: false,
       observerId: '',
-      lastEventIndex: 0,
+      lastEventIndex: -1,
       pollingInterval: null,
       totalEvents: 0,
       lastEventCount: 0,
@@ -331,7 +332,7 @@ export const useChatStore = create<ChatState>()(
         set({
           isStreaming: false,
           observerId: '',
-          lastEventIndex: 0,
+          lastEventIndex: -1,
           pollingInterval: null,
           totalEvents: 0,
           lastEventCount: 0,
@@ -360,18 +361,6 @@ export const useChatStore = create<ChatState>()(
       isAtBottom: (element) => {
         const threshold = 50 // Increased threshold for more lenient detection
         const isAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - threshold
-        
-        // Debug logging to help troubleshoot
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[AUTO_SCROLL] Bottom detection:', {
-            scrollTop: element.scrollTop,
-            clientHeight: element.clientHeight,
-            scrollHeight: element.scrollHeight,
-            threshold,
-            isAtBottom,
-            distanceFromBottom: element.scrollHeight - element.scrollTop - element.clientHeight
-          });
-        }
         
         return isAtBottom;
       },

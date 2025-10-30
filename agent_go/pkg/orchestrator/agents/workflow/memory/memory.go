@@ -2,52 +2,44 @@ package memory
 
 import "mcp-agent/agent_go/pkg/utils"
 
-// GetWorkflowMemoryRequirements returns memory management requirements for workflow agents
+// GetWorkflowMemoryRequirements returns generic memory management requirements for ALL workflow agents
 func GetWorkflowMemoryRequirements() string {
 	return `
 ## 📁 WORKSPACE MEMORY MANAGEMENT
 
-### **Workspace Directory Structure**
-- **Workflow Root**: Workflow/[FolderName]/ (specified in objective input)
-- **Evidence Storage**: Workflow/[FolderName]/evidence/ (execution outputs, results, artifacts)
-- **Progress Tracking**: Workflow/[FolderName]/progress/ (completion status, step tracking)
-- **Context Storage**: Workflow/[FolderName]/context/ (requirements, constraints, specifications)
-- **Reports**: Workflow/[FolderName]/reports/ (final deliverables, summaries)
-- **Archive**: Workflow/[FolderName]/archive/ (completed work, historical data)
+### **Workspace Boundaries**
+- **Workspace Root**: {{.WorkspacePath}}/ (provided in template variables)
+- **STRICT BOUNDARY**: ONLY work within {{.WorkspacePath}}/ - never access other folders
+- **Security**: Never touch .env files, root configs, secrets, or system files outside workspace
+- **Isolation**: Do not access other workspace folders unless explicitly specified
 
 ### **Memory Integration Requirements**
-- **Read Operations**: Check existing files in Workflow/[FolderName]/ for context and previous work
-- **Write Operations**: Store results in appropriate subdirectories (evidence/, progress/, etc.)
+- **Read Operations**: Check existing files in {{.WorkspacePath}}/ for context and previous work
+- **Write Operations**: Store results in appropriate subdirectories within {{.WorkspacePath}}/
 - **Update Operations**: Modify existing files to track progress and maintain state
-- **Archive Operations**: Move completed work to archive/ to maintain clean workspace
+- **Archive Operations**: Move completed work to archive subdirectories to maintain clean workspace
 
-### **File Organization Guidelines**
-- **Evidence Files**: Store execution outputs, tool results, and artifacts in evidence/
-- **Progress Files**: Track completion status and step progress in progress/
-- **Context Files**: Maintain requirements and specifications in context/
-- **Report Files**: Generate final deliverables in reports/
-- **Naming Convention**: Use descriptive names with timestamps when appropriate
-
-### **Memory Boundaries**
-- **STRICT BOUNDARY**: ONLY work within the specified Workflow/[FolderName] folder - do not access other folders
-- **Write Bounds**: Only read/write within Workflow/[FolderName]/; never touch .env, root configs, secrets
-- **Subdirectory Access**: Can access all subdirectories within the specified Workflow/[FolderName] folder
-- **Cross-Folder Access**: Do not access other Workflow/[OtherFolder] directories unless explicitly specified
+### **File Organization Principles**
+- **Descriptive Names**: Use clear, descriptive file names that indicate purpose
+- **Timestamps**: Include timestamps (YYYY-MM-DD format) for time-based organization
+- **Subdirectories**: Organize related files in subdirectories for better structure
+- **Consistent Structure**: Maintain consistent naming and organization patterns
+- **Documentation**: Include README or index files to explain directory structure
 
 ### **🔍 File Discovery & Search**
 **Use these tools to efficiently find files:**
 
 - **list_workspace_files**: List files and directories to check existence and structure
   - Use for: checking if files/folders exist, exploring directory structure, finding file names
-  - Example: list_workspace_files(folder="Workflow/MyWorkflow") to see what's in the workflow folder
+  - Example: list_workspace_files(folder="{{.WorkspacePath}}") to see what's in the workspace
   
 - **regex_search_workspace_files**: Regex/text-based search for exact matches
   - Use for: finding specific text, file names, patterns, exact keywords, complex regex patterns
-  - Example: regex_search_workspace_files(query="TODO", folder="Workflow/MyWorkflow")
+  - Example: regex_search_workspace_files(query="TODO", folder="{{.WorkspacePath}}")
   
 - **semantic_search_workspace_files**: AI-powered semantic search for meaning-based discovery
   - Use for: finding conceptually related content, understanding context
-  - Example: semantic_search_workspace_files(query="error handling patterns", folder="Workflow/MyWorkflow")
+  - Example: semantic_search_workspace_files(query="error handling patterns", folder="{{.WorkspacePath}}")
 
 **Search Strategy:**
 1. **Start with listing** to see what files and folders exist in the directory

@@ -81,3 +81,5 @@ gitleaks-maintenance.json
 .gitleaks-cache/
 
 .cursor/mcp.json
+
+gcp-oauth.keys.json

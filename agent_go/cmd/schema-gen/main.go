@@ -146,6 +146,9 @@ type EventData struct {
 
 	// Human Verification Events
 	RequestHumanFeedbackEvent *events.RequestHumanFeedbackEvent `json:"request_human_feedback,omitempty"`
+
+	// Todo Creation Events
+	TodoStepsExtracted *events.TodoStepsExtractedEvent `json:"todo_steps_extracted,omitempty"`
 }
 
 func writeSchema(filename string, v any) error {

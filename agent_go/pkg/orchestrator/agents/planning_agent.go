@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 
 	"github.com/tmc/langchaingo/llms"
@@ -20,7 +21,7 @@ type OrchestratorPlanningAgent struct {
 }
 
 // NewOrchestratorPlanningAgent creates a new planning agent
-func NewOrchestratorPlanningAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorPlanningAgent {
+func NewOrchestratorPlanningAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *OrchestratorPlanningAgent {
 	planningPrompts := prompts.NewPlanningPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -37,13 +38,8 @@ func NewOrchestratorPlanningAgent(config *OrchestratorAgentConfig, logger utils.
 	}
 }
 
-// Initialize initializes the planning agent (delegates to base)
-func (pa *OrchestratorPlanningAgent) Initialize(ctx context.Context) error {
-	return pa.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the planning agent with planning-specific input processing
-func (pa *OrchestratorPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (pa *OrchestratorPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	return pa.ExecuteWithInputProcessor(ctx, templateVars, pa.planningInputProcessor, conversationHistory)
 }
 

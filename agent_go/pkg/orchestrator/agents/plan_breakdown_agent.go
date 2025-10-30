@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 
 	"github.com/tmc/langchaingo/llms"
@@ -20,7 +21,7 @@ type PlanBreakdownAgent struct {
 }
 
 // NewPlanBreakdownAgent creates a new plan breakdown agent
-func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *PlanBreakdownAgent {
+func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *PlanBreakdownAgent {
 	breakdownPrompts := prompts.NewPlanBreakdownPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -35,11 +36,6 @@ func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.Extende
 		BaseOrchestratorAgent: baseAgent,
 		breakdownPrompts:      breakdownPrompts,
 	}
-}
-
-// Initialize initializes the plan breakdown agent (delegates to base)
-func (pba *PlanBreakdownAgent) Initialize(ctx context.Context) error {
-	return pba.BaseOrchestratorAgent.Initialize(ctx)
 }
 
 // ExecuteStructured executes the plan breakdown agent and returns structured output
@@ -85,7 +81,7 @@ func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVa
 	}`
 
 	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := ExecuteStructured[BreakdownResponse](pba.BaseOrchestratorAgent, ctx, templateVars, pba.breakdownInputProcessor, conversationHistory, schema)
+	result, err := ExecuteStructuredWithInputProcessor[BreakdownResponse](pba.BaseOrchestratorAgent, ctx, templateVars, pba.breakdownInputProcessor, conversationHistory, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +90,7 @@ func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVa
 }
 
 // Execute executes the plan breakdown agent using the standard agent pattern
-func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
 	return pba.ExecuteWithInputProcessor(ctx, templateVars, pba.breakdownInputProcessor, conversationHistory)
@@ -132,19 +128,4 @@ type BreakdownStep struct {
 // BreakdownResponse represents the structured response from breakdown analysis
 type BreakdownResponse struct {
 	Steps []BreakdownStep `json:"steps"`
-}
-
-// GetAgentType returns the agent type
-func (pba *PlanBreakdownAgent) GetAgentType() AgentType {
-	return PlanBreakdownAgentType
-}
-
-// GetAgentName returns a human-readable name for the agent
-func (pba *PlanBreakdownAgent) GetAgentName() string {
-	return "Plan Breakdown Agent"
-}
-
-// GetAgentDescription returns a description of what this agent does
-func (pba *PlanBreakdownAgent) GetAgentDescription() string {
-	return "Analyzes execution plans and identifies independent steps that can be executed in parallel"
 }

@@ -75,13 +75,17 @@ export const ChatInput = React.memo<ChatInputProps>(({
     
     setPrimaryConfig({
       ...currentPrimaryConfig, // ✅ Preserve all existing configuration
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
+      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
       model_id: llm.model
     })
   }, [setPrimaryConfig])
 
   // Computed values
   const primaryLLM = getCurrentLLMOption()
+  
+  // Check if a preset is active for the current mode
+  const chatActivePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+  
   const isRequiredFolderSelected = useMemo(() => {
     if (agentMode !== 'orchestrator' && agentMode !== 'workflow') return true; // No validation needed for other modes
     
@@ -130,6 +134,48 @@ export const ChatInput = React.memo<ChatInputProps>(({
   // No need to add to file context here as it's handled by workspace selection
 
   // Debug logging for currentQuery prop changes
+
+  // Get active preset for current mode - directly reactive to store changes
+  const activePreset = useMemo(() => {
+    if (agentMode === 'workflow') {
+      const presetId = activePresetIds['workflow']
+      if (!presetId) return null
+      
+      // Find preset in custom or predefined presets
+      const customPreset = customPresets.find(p => p.id === presetId)
+      if (customPreset) return customPreset
+      
+      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
+      if (predefinedPreset) return predefinedPreset
+      
+      return null
+    } else if (agentMode === 'orchestrator') {
+      const presetId = activePresetIds['deep-research']
+      if (!presetId) return null
+      
+      // Find preset in custom or predefined presets
+      const customPreset = customPresets.find(p => p.id === presetId)
+      if (customPreset) return customPreset
+      
+      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
+      if (predefinedPreset) return predefinedPreset
+      
+      return null
+    }
+    return null
+  }, [agentMode, activePresetIds, customPresets, predefinedPresets])
+
+  // Consolidated query selection logic
+  const queryToSubmit = useMemo(() => {
+    return (agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset 
+      ? activePreset.query 
+      : localQuery
+  }, [agentMode, activePreset, localQuery])
+
+  // Guard to prevent submission before observer is ready
+  const canSubmit = useMemo(() => {
+    return queryToSubmit?.trim() && !isStreaming && observerId
+  }, [queryToSubmit, isStreaming, observerId])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -200,11 +246,14 @@ export const ChatInput = React.memo<ChatInputProps>(({
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
-      if (localQuery?.trim() && !isStreaming) {
-        // Clear local state immediately for UI responsiveness
-        setLocalQuery('')
+      
+      if (canSubmit) {
+        // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
+        if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
+          setLocalQuery('')
+        }
         // Call onSubmit with the query directly - no global state coordination needed!
-        onSubmit(localQuery)
+        onSubmit(queryToSubmit)
       }
     }
     // Handle CTRL+Enter (Windows/Linux) or CMD+Enter (Mac) to add new line
@@ -223,17 +272,20 @@ export const ChatInput = React.memo<ChatInputProps>(({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, isStreaming, onSubmit, showFileDialog])
+  }, [localQuery, onSubmit, showFileDialog, agentMode, observerId, canSubmit, queryToSubmit])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
-    if (localQuery?.trim() && !isStreaming && isRequiredFolderSelected) {
-      // Clear local state immediately for UI responsiveness
-      setLocalQuery('')
+    
+    if (canSubmit && isRequiredFolderSelected) {
+      // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
+      if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
+        setLocalQuery('')
+      }
       // Call onSubmit with the query directly - no global state coordination needed!
-      onSubmit(localQuery)
+      onSubmit(queryToSubmit)
     }
-  }, [localQuery, isStreaming, onSubmit, isRequiredFolderSelected])
+  }, [canSubmit, isRequiredFolderSelected, agentMode, observerId, queryToSubmit, onSubmit])
 
   // File selection handlers
   const handleFileSelect = useCallback((file: PlannerFile) => {
@@ -285,36 +337,6 @@ export const ChatInput = React.memo<ChatInputProps>(({
 
   // State for editing preset query
   const [isEditingQuery, setIsEditingQuery] = useState(false)
-  
-  // Get active preset for current mode - directly reactive to store changes
-  const activePreset = useMemo(() => {
-    if (agentMode === 'workflow') {
-      const presetId = activePresetIds['workflow']
-      if (!presetId) return null
-      
-      // Find preset in custom or predefined presets
-      const customPreset = customPresets.find(p => p.id === presetId)
-      if (customPreset) return customPreset
-      
-      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
-      if (predefinedPreset) return predefinedPreset
-      
-      return null
-    } else if (agentMode === 'orchestrator') {
-      const presetId = activePresetIds['deep-research']
-      if (!presetId) return null
-      
-      // Find preset in custom or predefined presets
-      const customPreset = customPresets.find(p => p.id === presetId)
-      if (customPreset) return customPreset
-      
-      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
-      if (predefinedPreset) return predefinedPreset
-      
-      return null
-    }
-    return null
-  }, [agentMode, activePresetIds, customPresets, predefinedPresets])
 
   // Handle editing preset query
   const handleEditQuery = useCallback(() => {
@@ -400,8 +422,16 @@ export const ChatInput = React.memo<ChatInputProps>(({
   // Check if deep research mode requires preset selection
   const isDeepResearchReady = agentMode !== 'orchestrator' || (getActivePreset('deep-research') && isRequiredFolderSelected)
   
-  // Debug the submit button disable condition
-  const submitButtonDisabled = !localQuery?.trim() || !observerId || !isRequiredFolderSelected || !isWorkflowReady || !isDeepResearchReady
+  // Preset modes require a non-empty preset query; chat modes require non-empty local input
+  const hasValidQuery =
+    (agentMode === 'workflow' || agentMode === 'orchestrator')
+      ? Boolean(activePreset?.query?.trim())
+      : Boolean(localQuery?.trim())
+  
+  const readyForMode =
+    agentMode === 'workflow' ? isWorkflowReady :
+    agentMode === 'orchestrator' ? isDeepResearchReady : true
+  const submitButtonDisabled = !hasValidQuery || !observerId || !readyForMode
   
 
   // Memoized placeholder to prevent re-computation
@@ -565,8 +595,16 @@ export const ChatInput = React.memo<ChatInputProps>(({
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => onSubmit(localQuery || activePreset?.query || '')}
-                            disabled={!observerId || !isRequiredFolderSelected || !(localQuery || activePreset?.query)}
+                            onClick={() => {
+                              if (canSubmit) {
+                                // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
+                                if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
+                                  setLocalQuery('')
+                                }
+                                onSubmit(queryToSubmit)
+                              }
+                            }}
+                            disabled={!observerId || !isRequiredFolderSelected}
                             className="px-2 py-0.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                           >
                             {getButtonText()}
@@ -678,8 +716,8 @@ export const ChatInput = React.memo<ChatInputProps>(({
                   </div>
                 )}
                 
-                {/* Server and LLM Selection for Simple/ReAct modes */}
-                {(agentMode === 'simple' || agentMode === 'ReAct') && (
+                {/* Server and LLM Selection for Simple/ReAct modes - only show when no preset is active */}
+                {(agentMode === 'simple' || agentMode === 'ReAct') && !chatActivePreset && (
                   <div className="flex items-center gap-2">
                     <ServerSelectionDropdown
                       availableServers={availableServers}

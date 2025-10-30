@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Checkbox } from './ui/checkbox';
 import { Folder, Plus, X, Settings } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
+import { ToolSelectionSection } from './ToolSelectionSection';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
@@ -15,14 +15,14 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
   fixedAgentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow';
 }
 
-const PresetModal: React.FC<PresetModalProps> = ({
+const PresetModal: React.FC<PresetModalProps> = React.memo(({
   isOpen,
   onClose,
   onSave,
@@ -34,63 +34,50 @@ const PresetModal: React.FC<PresetModalProps> = ({
   const [label, setLabel] = useState('');
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [agentMode, setAgentMode] = useState<'simple' | 'ReAct' | 'orchestrator' | 'workflow'>('ReAct');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
 
-  // Store subscriptions
-  const { 
-    primaryConfig, 
-    availableLLMs, 
-    getCurrentLLMOption, 
-    setPrimaryConfig,
-    refreshAvailableLLMs 
-  } = useLLMStore();
+  // Store subscriptions - using selectors for stable references
+  const primaryConfig = useLLMStore(state => state.primaryConfig);
+  const availableLLMs = useLLMStore(state => state.availableLLMs);
+  const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
+  const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
 
   // Calculate effective agent mode that always honors fixedAgentMode when provided
   const effectiveAgentMode = fixedAgentMode || agentMode;
 
-  // LLM selection handler
+  // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
-    // Update the primary config in the store
-    setPrimaryConfig({
-      ...primaryConfig,
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
-      model_id: llm.model
-    });
-    
-    // Update the local LLM config state
     setLlmConfig({
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
+      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
       model_id: llm.model
     });
-  }, [primaryConfig, setPrimaryConfig]);
+  }, []);
 
-  // Convert preset LLM config to LLMOption for display
-  const getPresetLLMOption = useCallback(() => {
-    console.log('[PRESET MODAL] Getting preset LLM option, llmConfig:', llmConfig);
+  // Get current LLM option for display
+  const currentLLMOption = useMemo(() => {
     if (llmConfig) {
       // Find the matching LLM option from available LLMs
       const matchingLLM = availableLLMs.find(llm => 
         llm.provider === llmConfig.provider && llm.model === llmConfig.model_id
       );
-      console.log('[PRESET MODAL] Matching LLM found:', matchingLLM);
       return matchingLLM || null;
     }
-    console.log('[PRESET MODAL] No llmConfig, using current LLM option');
     return getCurrentLLMOption();
   }, [llmConfig, availableLLMs, getCurrentLLMOption]);
 
-  const currentLLMOption = getPresetLLMOption();
-
   useEffect(() => {
     if (editingPreset) {
-      console.log('[PRESET MODAL] Editing preset:', editingPreset);
+      console.log('[PresetModal] Loading preset:', editingPreset);
+      console.log('[PresetModal] Selected tools from preset:', editingPreset.selectedTools);
       setLabel(editingPreset.label);
       setQuery(editingPreset.query);
       setSelectedServers(editingPreset.selectedServers || []);
+      setSelectedTools(editingPreset.selectedTools || []); // NEW
       setAgentMode(editingPreset.agentMode || 'ReAct');
       setSelectedFolder(editingPreset.selectedFolder || null);
       setLlmConfig(editingPreset.llmConfig || {
@@ -101,6 +88,7 @@ const PresetModal: React.FC<PresetModalProps> = ({
       setLabel('');
       setQuery('');
       setSelectedServers([]);
+      setSelectedTools([]); // NEW
       setAgentMode(fixedAgentMode || 'ReAct');
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
@@ -110,14 +98,6 @@ const PresetModal: React.FC<PresetModalProps> = ({
       });
     }
   }, [editingPreset, fixedAgentMode, primaryConfig]);
-
-  const handleServerToggle = (server: string) => {
-    setSelectedServers(prev => 
-      prev.includes(server)
-        ? prev.filter(s => s !== server)
-        : [...prev, server]
-    );
-  };
 
   const handleSelectFolders = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -137,18 +117,27 @@ const PresetModal: React.FC<PresetModalProps> = ({
     setSelectedFolder(null);
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (label.trim() && query.trim()) {
       if ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder) {
         alert('Folder selection is required for Deep Search and workflow presets');
         return;
       }
-      console.log('[PRESET MODAL] Saving preset with llmConfig:', llmConfig);
-      onSave(label.trim(), query.trim(), selectedServers, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
+      
+      // Debug: Log what we're sending
+      console.log('[PresetModal] Saving preset with:', {
+        selectedServers,
+        selectedTools,
+        label,
+        agentMode: effectiveAgentMode
+      });
+      
+      // Use the local LLM config (either from editing preset or user selection)
+      onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
       onClose();
     }
-  };
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -162,19 +151,22 @@ const PresetModal: React.FC<PresetModalProps> = ({
       document.addEventListener('keydown', handleEscape);
       return () => document.removeEventListener('keydown', handleEscape);
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose]);
+
+  // Memoized backdrop click handler
+  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
+    // Only close if clicking on the backdrop, not on the card
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  }, [onClose]);
 
   if (!isOpen) return null;
 
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      onClick={(e) => {
-        // Only close if clicking on the backdrop, not on the card
-        if (e.target === e.currentTarget) {
-          onClose();
-        }
-      }}
+      onClick={handleBackdropClick}
     >
       <Card 
         className="w-full max-w-6xl mx-4 p-6 max-h-[90vh] overflow-y-auto"
@@ -251,17 +243,17 @@ const PresetModal: React.FC<PresetModalProps> = ({
                   <div className="space-y-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                        Primary LLM
+                        Select LLM for this preset
                       </label>
-                              <LLMSelectionDropdown
-                                availableLLMs={availableLLMs}
-                                selectedLLM={currentLLMOption}
-                                onLLMSelect={handleLLMSelect}
-                                onRefresh={refreshAvailableLLMs}
-                                disabled={false}
-                                inModal={true}
-                                openDirection="down"
-                              />
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={currentLLMOption}
+                        onLLMSelect={handleLLMSelect}
+                        onRefresh={refreshAvailableLLMs}
+                        disabled={false}
+                        inModal={true}
+                        openDirection="down"
+                      />
                     </div>
                     <div className="text-xs text-gray-500">
                       This preset will use the selected LLM configuration
@@ -269,6 +261,17 @@ const PresetModal: React.FC<PresetModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* MCP Servers and Tools Selection */}
+              {availableServers.length > 0 && (
+                <ToolSelectionSection
+                  availableServers={availableServers}
+                  selectedServers={selectedServers}
+                  selectedTools={selectedTools}
+                  onServerChange={setSelectedServers}
+                  onToolChange={setSelectedTools}
+                />
+              )}
 
               {/* Folder Selection */}
               <div>
@@ -376,36 +379,6 @@ const PresetModal: React.FC<PresetModalProps> = ({
                   </div>
                 </div>
               )}
-
-              {availableServers.length > 0 && (
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    MCP Servers (Optional - Leave empty to use all servers)
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded-md p-3">
-                    {availableServers.map((server) => (
-                      <div key={server} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`server-${server}`}
-                          checked={selectedServers.includes(server)}
-                          onCheckedChange={() => handleServerToggle(server)}
-                        />
-                        <label
-                          htmlFor={`server-${server}`}
-                          className="text-sm cursor-pointer"
-                        >
-                          {server}
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                  {selectedServers.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Selected: {selectedServers.join(', ')}
-                    </p>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         </form>
@@ -422,6 +395,8 @@ const PresetModal: React.FC<PresetModalProps> = ({
       </Card>
     </div>
   );
-};
+});
+
+PresetModal.displayName = 'PresetModal';
 
 export default PresetModal;

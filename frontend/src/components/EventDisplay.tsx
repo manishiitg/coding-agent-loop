@@ -3,6 +3,7 @@ import { EventList } from './events'
 import { Card, CardContent } from './ui/Card'
 import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores'
+import { agentApi } from '../services/api'
 
 // Isolated event display component that can re-render without affecting input
 export const EventDisplay = React.memo(() => {
@@ -14,6 +15,28 @@ export const EventDisplay = React.memo(() => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     isApprovingWorkflow: _isApproving
   } = useChatStore()
+
+  // Handle workflow approval
+  const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
+    try {
+      // Submit "Approve" response to unblock the orchestrator
+      await agentApi.submitHumanFeedback(requestId, "Approve")
+      console.log('Workflow approved:', requestId)
+    } catch (error) {
+      console.error('Failed to approve workflow:', error)
+    }
+  }, [])
+
+  // Handle feedback submission
+  const handleSubmitFeedback = React.useCallback(async (requestId: string, feedback: string) => {
+    try {
+      // Submit feedback response to unblock the orchestrator
+      await agentApi.submitHumanFeedback(requestId, feedback)
+      console.log('Feedback submitted:', requestId, feedback)
+    } catch (error) {
+      console.error('Failed to submit feedback:', error)
+    }
+  }, [])
 
   // Debug: Log events received by EventDisplay
   React.useEffect(() => {
@@ -37,6 +60,9 @@ export const EventDisplay = React.memo(() => {
           <div className="min-w-0">
             <EventList 
               events={events} 
+              onApproveWorkflow={handleApproveWorkflow}
+              onSubmitFeedback={handleSubmitFeedback}
+              isApproving={false}
             />
           </div>
         </div>

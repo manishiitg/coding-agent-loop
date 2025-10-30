@@ -17,8 +17,8 @@ const ADVANCED_MODE_EVENTS = new Set([
   'react_reasoning_end',
   'cache_event',
   'comprehensive_cache_event',
-  'orchestrator_start',
-  'orchestrator_end',
+  // 'orchestrator_start',
+  // 'orchestrator_end',
   // Add more advanced events here as needed
 ]);
 
@@ -34,8 +34,6 @@ const ORCHESTRATOR_MODE_EVENTS = new Set([
 
 // Workflow mode events - only show workflow-specific events
 const WORKFLOW_MODE_EVENTS = new Set([
-  'workflow_start',
-  'workflow_end',
   'orchestrator_agent_start',
   'orchestrator_agent_end',
   'orchestrator_agent_error',
@@ -49,22 +47,26 @@ export const EventModeProvider: React.FC<{ children: ReactNode }> = ({ children 
     if (mode === 'advanced') {
       return true; // Show all events in advanced mode
     }
-    
+
     if (mode === 'orchestrator') {
       // In Deep Search mode, only show Deep Search-specific events
-      return ORCHESTRATOR_MODE_EVENTS.has(eventType);
+      const shouldShow = ORCHESTRATOR_MODE_EVENTS.has(eventType);
+      return shouldShow;
     }
-    
+
     if (mode === 'workflow') {
       // In workflow mode, only show workflow-specific events
-      return WORKFLOW_MODE_EVENTS.has(eventType);
+      const shouldShow = WORKFLOW_MODE_EVENTS.has(eventType);
+      return shouldShow;
     }
-    
+
     // In basic mode, show all events EXCEPT the ones in ADVANCED_MODE_EVENTS
-    return !ADVANCED_MODE_EVENTS.has(eventType)
-  }, [mode]);
+    const shouldShow = !ADVANCED_MODE_EVENTS.has(eventType);
+    return shouldShow;
+  }, [mode, agentMode]);
 
   // Expose global function for event mode cycling with conditional logic
+
   React.useEffect(() => {
     // Expose global function for event mode cycling
     (window as Window & { cycleEventMode?: () => void }).cycleEventMode = () => {

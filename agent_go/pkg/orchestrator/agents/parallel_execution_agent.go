@@ -10,6 +10,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 )
 
@@ -20,7 +21,7 @@ type OrchestratorParallelExecutionAgent struct {
 }
 
 // NewOrchestratorParallelExecutionAgent creates a new parallel execution agent
-func NewOrchestratorParallelExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorParallelExecutionAgent {
+func NewOrchestratorParallelExecutionAgent(ctx context.Context, config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *OrchestratorParallelExecutionAgent {
 	parallelExecutionPrompts := prompts.NewParallelExecutionPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -37,13 +38,8 @@ func NewOrchestratorParallelExecutionAgent(ctx context.Context, config *Orchestr
 	}
 }
 
-// Initialize initializes the parallel execution agent (delegates to base)
-func (pea *OrchestratorParallelExecutionAgent) Initialize(ctx context.Context) error {
-	return pea.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the parallel execution agent using the standard agent pattern
-func (pea *OrchestratorParallelExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (pea *OrchestratorParallelExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
 	return pea.ExecuteWithInputProcessor(ctx, templateVars, pea.parallelExecutionInputProcessor, conversationHistory)
@@ -69,14 +65,4 @@ func (pea *OrchestratorParallelExecutionAgent) parallelExecutionInputProcessor(t
 	return result.String()
 }
 
-// GetType returns the agent type
-func (pea *OrchestratorParallelExecutionAgent) GetType() string {
-	return string(ParallelExecutionAgentType)
-}
-
 // Event system - now handled by unified events system
-
-// BaseAgent returns the underlying base agent for direct access
-func (pea *OrchestratorParallelExecutionAgent) BaseAgent() *BaseAgent {
-	return pea.AgentTemplate.baseAgent
-}

@@ -4,6 +4,7 @@ import { agentApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { processHierarchicalFiles } from '../utils/fileUtils'
+import { isValidJSON } from '../utils/event-helpers'
 import GitSyncStatus from './workspace/GitSyncStatus'
 import SemanticSearchSync from './workspace/SemanticSearchSync'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
@@ -191,6 +192,8 @@ export default function Workspace({
         
         if (response.success && response.data) {
           let processedContent = response.data.content
+          let isJsonFile = false
+          let formattedJson = null
           
           // Check if this is an image file
           if (response.data.is_image && processedContent.startsWith('data:image/')) {
@@ -202,9 +205,30 @@ export default function Workspace({
               .replace(/\\n/g, '\n')  // Convert \n to actual newlines
               .replace(/\\t/g, '\t')  // Convert \t to actual tabs
               .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
+            
+            // Check if this is a JSON file (by extension OR content)
+            const extensionIsJson = file.filepath.toLowerCase().endsWith('.json')
+            const contentIsJson = isValidJSON(processedContent)
+            isJsonFile = extensionIsJson || contentIsJson
+            
+            // If it's a JSON file, try to parse and format it
+            if (isJsonFile) {
+              try {
+                const parsed = JSON.parse(processedContent)
+                formattedJson = JSON.stringify(parsed, null, 2)
+              } catch (parseError) {
+                // If JSON parsing fails, keep the original content
+                console.warn('Failed to parse JSON file:', parseError)
+                formattedJson = null
+              }
+            }
           }
           
+          // Store both original content and formatted JSON (if applicable)
           setFileContent(processedContent)
+          if (formattedJson) {
+            setFileContent(formattedJson)
+          }
           setShowFileContent(true)
         } else {
           setError(response.message || 'Failed to load file content')

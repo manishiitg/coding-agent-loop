@@ -8,6 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
 
 	"github.com/tmc/langchaingo/llms"
@@ -20,7 +21,7 @@ type OrchestratorValidationAgent struct {
 }
 
 // NewOrchestratorValidationAgent creates a new validation agent
-func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge interface{}) *OrchestratorValidationAgent {
+func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *OrchestratorValidationAgent {
 	validationPrompts := prompts.NewValidationPrompts()
 
 	baseAgent := NewBaseOrchestratorAgentWithEventBridge(
@@ -37,13 +38,8 @@ func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger util
 	}
 }
 
-// Initialize initializes the validation agent (delegates to base)
-func (va *OrchestratorValidationAgent) Initialize(ctx context.Context) error {
-	return va.BaseOrchestratorAgent.Initialize(ctx)
-}
-
 // Execute executes the validation agent with validation-specific input processing
-func (va *OrchestratorValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, error) {
+func (va *OrchestratorValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	return va.ExecuteWithInputProcessor(ctx, templateVars, va.validationInputProcessor, conversationHistory)
 }
 

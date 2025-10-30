@@ -95,6 +95,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(comprehensiveReactCmd)
 	TestingCmd.AddCommand(langfuseCmd)
 	TestingCmd.AddCommand(bedrockCmd)
+	TestingCmd.AddCommand(vertexCmd)
 	TestingCmd.AddCommand(awsTestCmd)
 	TestingCmd.AddCommand(mcpCacheTestCmd) // MCP Connection Caching Test
 	TestingCmd.AddCommand(exaTestCmd)

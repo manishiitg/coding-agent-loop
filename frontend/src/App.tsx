@@ -8,6 +8,7 @@ import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
 import { resetSessionId } from "./services/api";
 import type { ActiveSessionInfo } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
+import { isValidJSON } from "./utils/event-helpers";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
@@ -281,17 +282,18 @@ function App() {
           </div>
 
           {/* Middle Chat Area */}
-          <div className="flex-1 flex flex-col min-w-0">
-            {/* ChatArea - always rendered, hidden when showing file content */}
-            <div className={`flex-1 flex flex-col h-full min-w-0 ${showFileContent ? 'hidden' : 'flex'}`}>
+          <div className="flex-1 flex flex-col min-w-0 relative">
+            {/* ChatArea - always rendered and mounted to preserve state */}
+            <div className="flex-1 flex flex-col h-full min-w-0">
               <ChatArea
                 ref={chatAreaRef}
                 onNewChat={startNewChat}
               />
             </div>
             
-            {/* File Content View - always rendered, hidden when showing chat */}
-            <div className={`flex-1 flex flex-col h-full min-w-0 ${showFileContent ? 'flex' : 'hidden'}`}>
+            {/* File Content View - overlay when showing file content */}
+            {showFileContent && (
+              <div className="absolute inset-0 bg-white dark:bg-gray-900 z-10 flex flex-col">
               {/* Fixed Header */}
               <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
                 <div className="flex items-center gap-3">
@@ -343,20 +345,44 @@ function App() {
                             <p className="text-sm text-gray-500 mt-2">Image file</p>
                           </div>
                         )
+                      } else if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
+                        // Check if content looks like formatted JSON (has proper indentation)
+                        const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')
+                        
+                        return (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                              <span className="font-medium">📄 JSON File</span>
+                              {isFormattedJson && (
+                                <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
+                                  Formatted
+                                </span>
+                              )}
+                            </div>
+                            <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                              <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
+                                {fileContent}
+                              </pre>
+                            </div>
+                          </div>
+                        )
                       } else {
                         return (
-                          <MarkdownRenderer 
-                            content={fileContent} 
-                            className="prose-sm max-w-none dark:prose-invert"
-                            showScrollbar={true}
-                          />
+                          <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
+                            <MarkdownRenderer 
+                              content={fileContent} 
+                              className="max-w-none"
+                              showScrollbar={true}
+                            />
+                          </div>
                         )
                       }
                     })()}
                   </div>
                 )}
               </div>
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Right Workspace Area */}

@@ -108,6 +108,10 @@ func (api *StreamingAPI) handleGetEvents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	for i, event := range events {
+		api.logger.Debugf("  [%d] %s", i, event.Type)
+	}
+
 	response := GetEventsResponse{
 		Events:         events,
 		LastEventIndex: totalEvents,

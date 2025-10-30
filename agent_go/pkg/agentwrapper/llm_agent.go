@@ -47,6 +47,7 @@ type LLMAgentConfig struct {
 	ToolTimeout        time.Duration      // Tool execution timeout (default: 5 minutes)
 	AgentMode          mcpagent.AgentMode // Agent mode (Simple or ReAct)
 	CacheOnly          bool               // If true, only use cached servers (skip servers without cache)
+	SelectedTools      []string           // Selected tools in "server:tool" format
 
 	// Smart routing configuration
 	EnableSmartRouting     bool // Enable smart routing for tool filtering
@@ -181,6 +182,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		agentOptions = append(agentOptions, mcpagent.WithCrossProviderFallback(crossProviderFallback))
 		logger.Infof("🔄 Cross-provider fallback configured - Provider: %s, Models: %v",
 			crossProviderFallback.Provider, crossProviderFallback.Models)
+	}
+
+	// Add selected tools if provided
+	if len(config.SelectedTools) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(config.SelectedTools))
+		logger.Infof("🔧 Selected tools configured: %d tools", len(config.SelectedTools))
 	}
 
 	// Add smart routing options if enabled
@@ -683,9 +690,8 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 
 	// Add cross-provider fallback models if configured
 	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.CrossProviderFallback.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Infof("Added cross-provider fallback models for %s: %v", config.CrossProviderFallback.Provider, crossProviderFallbacks)
+		fallbackModels = append(fallbackModels, config.CrossProviderFallback.Models...)
+		logger.Infof("Added cross-provider fallback models for %s: %v", config.CrossProviderFallback.Provider, config.CrossProviderFallback.Models)
 	} else {
 		// Add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)

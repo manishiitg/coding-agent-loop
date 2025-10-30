@@ -19,6 +19,7 @@ export const EventWithOrchestratorContext: React.FC<EventWithOrchestratorContext
   metadata, 
   className = "" 
 }) => {
+  
   return (
     <div className={className}>
       {/* Automatically add orchestrator context if metadata exists */}

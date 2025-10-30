@@ -116,7 +116,7 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	}
 
 	// Use the agent's built-in structured output capability
-	result, err := AskStructured[T](baseAgent, ctx, userMessage, schema, conversationHistory)
+	result, err := AskStructuredTyped[T](baseAgent, ctx, userMessage, schema, conversationHistory)
 
 	duration := time.Since(startTime)
 

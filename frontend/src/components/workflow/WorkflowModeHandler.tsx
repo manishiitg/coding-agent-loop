@@ -43,9 +43,6 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   // Get active preset for workflow mode
   const activeWorkflowPreset = getActivePreset('workflow')
   const selectedWorkflowPreset = activeWorkflowPreset?.id || null
-
-  // Use Zustand store for selectedPresetId
-  const { selectedPresetId } = useAppStore();
   
   const [availablePresets, setAvailablePresets] = useState<Preset[]>([])
   const [hasAttemptedLoad, setHasAttemptedLoad] = useState<boolean>(false)
@@ -93,13 +90,13 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
     }
   }, [agentMode, onPresetCleared, onWorkflowPhaseChange])
 
-  // Handle preset selection from sidebar
+  // Handle preset restoration when switching to workflow mode
   useEffect(() => {
-    if (agentMode === 'workflow' && selectedPresetId) {
+    if (agentMode === 'workflow' && selectedWorkflowPreset) {
       // Find the preset in available presets
-      const selectedPreset = availablePresets.find(p => p.id === selectedPresetId)
+      const selectedPreset = availablePresets.find(p => p.id === selectedWorkflowPreset)
       if (selectedPreset) {
-        onPresetSelected(selectedPresetId, selectedPreset.description)
+        onPresetSelected(selectedWorkflowPreset, selectedPreset.description)
         onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
       } else {
         // If preset not found, load presets first
@@ -117,9 +114,9 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
               setAvailablePresets(presets)
               
               // Now try to find the selected preset
-              const foundPreset = presets.find(p => p.id === selectedPresetId)
+              const foundPreset = presets.find(p => p.id === selectedWorkflowPreset)
               if (foundPreset) {
-                onPresetSelected(selectedPresetId, foundPreset.description)
+                onPresetSelected(selectedWorkflowPreset, foundPreset.description)
                 onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
               }
             } catch (error) {
@@ -131,7 +128,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
         }
       }
     }
-  }, [agentMode, selectedPresetId, selectedWorkflowPreset, availablePresets, hasAttemptedLoad, onPresetSelected, onWorkflowPhaseChange])
+  }, [agentMode, selectedWorkflowPreset, availablePresets, hasAttemptedLoad, onPresetSelected, onWorkflowPhaseChange])
 
   // Step 1: Create workflow with objective (generates todo list)
   const handleObjectiveSubmit = useCallback(async (objective: string) => {

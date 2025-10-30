@@ -27,7 +27,7 @@ func NewHumanControlledPlanReaderAgent(config *agents.OrchestratorAgentConfig, l
 		config,
 		logger,
 		tracer,
-		agents.PlanBreakdownAgentType,
+		agents.PlanReaderAgentType,
 		eventBridge,
 	)
 

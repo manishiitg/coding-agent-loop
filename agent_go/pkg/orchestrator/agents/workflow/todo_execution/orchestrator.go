@@ -15,6 +15,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/shared"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -192,8 +193,6 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 	}
 
 	// Execute each step individually with validation feedback loop
-	var executionResults []string
-	var validationResults []string
 
 	for i, step := range steps {
 		teo.GetLogger().Infof("🔄 Executing step %d/%d: %s", i+1, len(steps), step.Title)
@@ -220,14 +219,12 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 			validationResponse, err := teo.runStepValidationPhase(ctx, step, i+1, len(steps), executionResult, conversationHistory)
 			if err != nil {
 				teo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, attempt, err)
-				validationResult = fmt.Sprintf("Step %d validation failed (attempt %d): %v", i+1, attempt, err)
 				break
 			}
 
 			// Check if validation passed
 			if validationResponse.IsObjectiveSuccessCriteriaMet {
-				teo.GetLogger().Infof("✅ Step %d completed successfully on attempt %d", i+1, attempt)
-				validationResult = fmt.Sprintf("Step %d validation passed: %s", i+1, validationResponse.Feedback)
+				teo.GetLogger().Infof("✅ Step %d completed successfully on attempt %d: %s", i+1, attempt, validationResponse.Feedback)
 				break
 			} else {
 				teo.GetLogger().Infof("⚠️ Step %d validation failed on attempt %d: %s", i+1, attempt, validationResponse.Feedback)
@@ -236,22 +233,20 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 				if attempt < maxAttempts {
 					teo.GetLogger().Infof("🔄 Retrying step %d with feedback: %s", i+1, validationResponse.Feedback)
 				} else {
-					teo.GetLogger().Warnf("❌ Step %d failed after %d attempts", i+1, maxAttempts)
-					validationResult = fmt.Sprintf("Step %d failed after %d attempts. Final feedback: %s", i+1, maxAttempts, validationResponse.Feedback)
+					teo.GetLogger().Warnf("❌ Step %d failed after %d attempts. Final feedback: %s", i+1, maxAttempts, validationResponse.Feedback)
 				}
 			}
 
 			attempt++
 		}
 
-		executionResults = append(executionResults, executionResult)
-		validationResults = append(validationResults, validationResult)
+		// Results are logged and used for validation within the loop; no aggregation needed
 	}
 
 	duration := time.Since(teo.GetStartTime())
 	teo.GetLogger().Infof("✅ Multi-agent todo execution completed in %v", duration)
 
-	return teo.formatStepResults(executionResults, validationResults, len(steps)), nil
+	return "Execution Completed", nil
 }
 
 // runStepExecutionPhase executes a single step using the execution agent
@@ -303,7 +298,7 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 	}
 
 	// Format conversation history as string for template variable
-	conversationHistoryStr := formatConversationHistory(conversationHistory)
+	conversationHistoryStr := shared.FormatConversationHistory(conversationHistory)
 
 	// Prepare template variables for this specific step
 	templateVars := map[string]string{
@@ -324,44 +319,7 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 	return validationResponse, nil
 }
 
-// formatStepResults formats the step-by-step execution results
-func (teo *TodoExecutionOrchestrator) formatStepResults(executionResults, validationResults []string, totalSteps int) string {
-	return fmt.Sprintf(`# Todo Execution Report
-
-## Execution Summary
-- **Objective**: %s
-- **Duration**: %v
-- **Workspace**: %s
-- **Total Steps**: %d
-- **Steps Executed**: %d
-
-## Step-by-Step Results
-
-%s
-
-## Overall Status
-All steps have been executed and validated individually. Each step was processed with its specific Success Patterns and Failure Patterns from the structured todo_final.md format.
-
-## Evidence Files
-- **Runs Folder**: %s/runs/
-- **Execution Logs**: Available in runs folder
-- **Results**: Available in runs folder
-- **Evidence**: Available in runs folder
-
-Focus on executing each step effectively using proven approaches and avoiding failed patterns.`,
-		teo.GetObjective(), time.Since(teo.GetStartTime()), teo.GetWorkspacePath(), totalSteps, len(executionResults),
-		func() string {
-			var result strings.Builder
-			for i := 0; i < len(executionResults); i++ {
-				result.WriteString(fmt.Sprintf("### Step %d\n", i+1))
-				result.WriteString(fmt.Sprintf("**Execution**: %s\n\n", executionResults[i]))
-				if i < len(validationResults) {
-					result.WriteString(fmt.Sprintf("**Validation**: %s\n\n", validationResults[i]))
-				}
-			}
-			return result.String()
-		}(), teo.GetWorkspacePath())
-}
+// formatStepResults removed; returning simple completion message instead
 
 // Agent creation methods
 func (teo *TodoExecutionOrchestrator) createExecutionAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
@@ -598,58 +556,7 @@ func (teo *TodoExecutionOrchestrator) createRunFolderStructure(ctx context.Conte
 	return nil
 }
 
-// formatConversationHistory formats conversation history for template usage
-func formatConversationHistory(conversationHistory []llms.MessageContent) string {
-	var result strings.Builder
-
-	for _, message := range conversationHistory {
-		// Skip system messages
-		if message.Role == llms.ChatMessageTypeSystem {
-			continue
-		}
-
-		switch message.Role {
-		case llms.ChatMessageTypeHuman:
-			result.WriteString("## Human Message\n")
-		case llms.ChatMessageTypeAI:
-			result.WriteString("## Assistant Response\n")
-		case llms.ChatMessageTypeTool:
-			result.WriteString("## Tool Response\n")
-		default:
-			result.WriteString("## Message\n")
-		}
-
-		for _, part := range message.Parts {
-			switch p := part.(type) {
-			case llms.TextContent:
-				result.WriteString(p.Text)
-				result.WriteString("\n\n")
-			case llms.ToolCall:
-				result.WriteString("### Tool Call\n")
-				result.WriteString(fmt.Sprintf("**Tool Name:** %s\n", p.FunctionCall.Name))
-				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ID))
-				if p.FunctionCall.Arguments != "" {
-					result.WriteString(fmt.Sprintf("**Arguments:** %s\n", p.FunctionCall.Arguments))
-				}
-				result.WriteString("\n")
-			case llms.ToolCallResponse:
-				result.WriteString("### Tool Response\n")
-				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ToolCallID))
-				if p.Name != "" {
-					result.WriteString(fmt.Sprintf("**Tool Name:** %s\n", p.Name))
-				}
-				result.WriteString(fmt.Sprintf("**Response:** %s\n", p.Content))
-				result.WriteString("\n")
-			default:
-				// Handle any other content types
-				result.WriteString(fmt.Sprintf("**Unknown Content Type:** %T\n", p))
-			}
-		}
-		result.WriteString("---\n\n")
-	}
-
-	return result.String()
-}
+// conversation history formatting moved to shared.FormatConversationHistory
 
 // emitTodoStepsExtractedEvent emits an event when todo steps are extracted from todo_final.md
 func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []TodoStep, planSource string) {

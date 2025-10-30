@@ -75,7 +75,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
     
     setPrimaryConfig({
       ...currentPrimaryConfig, // ✅ Preserve all existing configuration
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai',
+      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
       model_id: llm.model
     })
   }, [setPrimaryConfig])

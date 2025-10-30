@@ -80,7 +80,7 @@ func NewPlanReaderAgent(config *agents.OrchestratorAgentConfig, logger utils.Ext
 		config,
 		logger,
 		tracer,
-		agents.PlanBreakdownAgentType,
+		agents.PlanReaderAgentType,
 		eventBridge,
 	)
 
@@ -190,7 +190,7 @@ func (pra *PlanReaderAgent) planReaderInputProcessor(templateVars map[string]str
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- **{{.WorkspacePath}}/../../todo_final.md** (read markdown todo list)
+ - **{{.WorkspacePath}}/todo_final.md** (read markdown todo list)
 
 **NO WRITE PERMISSIONS:**
 - This agent does NOT write any files - only reads and converts
@@ -247,6 +247,13 @@ func (pra *PlanReaderAgent) planReaderInputProcessor(templateVars map[string]str
 
 **NOTE**: The human_feedback tool will pause execution and wait for the human to respond. Use this for every variable that needs a value.
 
+## 🔒 PRIVACY AND LOGGING SAFEGUARDS
+
+- Do NOT log resolved variable values anywhere (including secrets).
+- Keep conversation history and markdown content with placeholders intact; do NOT echo resolved values back.
+- Perform replacement only for the final JSON output; original content remains unchanged.
+- Do NOT persist, cache, or store resolved values beyond what is required to produce the JSON output.
+
 ## 📋 STEP 2 - CONVERSION GUIDELINES
 
 **Your ONLY Job** (after variables are resolved):
@@ -262,7 +269,7 @@ func (pra *PlanReaderAgent) planReaderInputProcessor(templateVars map[string]str
 These variables are tracked in the system:
 {{.VariableNames}}
 
-**NOTE**: Variables should already be resolved in STEP 1 before conversion. If you still see placeholders like {{VARIABLE_NAME}} after resolution, convert them as-is to JSON.
+**NOTE**: Variables should already be resolved in STEP 1 before conversion. Only list variable NAMES here; do NOT display actual values. If any placeholders like {{VARIABLE_NAME}} remain, convert them verbatim as-is to JSON, and do not attempt to infer or log their values.
 {{end}}
 
 **DO NOT**:

@@ -3,11 +3,11 @@ import type { PollingEventSchema } from '../generated/events-bridge'
 
 // LLM Configuration types
 export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock' | 'openai'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex'
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'openrouter'
+    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex'
     models: string[]
   }
   // API keys for each provider
@@ -38,7 +38,7 @@ export type OrchestratorExecutionMode = typeof EXECUTION_MODES[keyof typeof EXEC
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  provider?: 'bedrock' | 'openai' | 'openrouter'
+  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex'
   model_id?: string
   temperature?: number
   max_turns?: number
@@ -67,16 +67,18 @@ export interface LLMDefaultsResponse {
   openrouter_config: ExtendedLLMConfiguration
   bedrock_config: ExtendedLLMConfiguration
   openai_config: ExtendedLLMConfiguration
+  vertex_config?: ExtendedLLMConfiguration
   available_models: {
     bedrock: string[]
     openrouter: string[]
     openai: string[]
+    vertex?: string[]
   }
 }
 
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
-  provider: 'openrouter' | 'openai' | 'bedrock'
+  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex'
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
 }
@@ -450,7 +452,7 @@ export interface UpdateChatSessionRequest {
 
 // Preset LLM Configuration types
 export interface PresetLLMConfig {
-  provider: 'openrouter' | 'bedrock' | 'openai'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex'
   model_id: string
 }
 

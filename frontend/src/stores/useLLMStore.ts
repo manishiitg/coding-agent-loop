@@ -15,6 +15,7 @@ interface LLMState extends StoreActions {
   openrouterConfig: ExtendedLLMConfiguration
   bedrockConfig: ExtendedLLMConfiguration
   openaiConfig: ExtendedLLMConfiguration
+  vertexConfig: ExtendedLLMConfiguration
   
   // Custom models for each provider
   customBedrockModels: string[]
@@ -25,6 +26,7 @@ interface LLMState extends StoreActions {
   availableBedrockModels: string[]
   availableOpenRouterModels: string[]
   availableOpenAIModels: string[]
+  availableVertexModels: string[]
   
   // Modal state
   showLLMModal: boolean
@@ -42,6 +44,7 @@ interface LLMState extends StoreActions {
   setOpenrouterConfig: (config: ExtendedLLMConfiguration) => void
   setBedrockConfig: (config: ExtendedLLMConfiguration) => void
   setOpenaiConfig: (config: ExtendedLLMConfiguration) => void
+  setVertexConfig: (config: ExtendedLLMConfiguration) => void
   setShowLLMModal: (show: boolean) => void
   loadDefaultsFromBackend: () => Promise<void>
   
@@ -61,7 +64,7 @@ interface LLMState extends StoreActions {
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
-  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock', apiKey: string, modelId?: string) => Promise<{valid: boolean, error: string | null}>
+  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex', apiKey: string, modelId?: string) => Promise<{valid: boolean, error: string | null}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -102,6 +105,13 @@ export const useLLMStore = create<LLMState>()(
           cross_provider_fallback: undefined,
           api_key: ''
         },
+        vertexConfig: {
+          provider: 'vertex',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: ''
+        },
         
         // Custom models for each provider
         customBedrockModels: [],
@@ -112,6 +122,7 @@ export const useLLMStore = create<LLMState>()(
         availableBedrockModels: [],
         availableOpenRouterModels: [],
         availableOpenAIModels: [],
+        availableVertexModels: [],
         
         // Modal state
         showLLMModal: false,
@@ -136,6 +147,10 @@ export const useLLMStore = create<LLMState>()(
 
         setOpenaiConfig: (config) => {
           set({ openaiConfig: config, error: null })
+        },
+
+        setVertexConfig: (config) => {
+          set({ vertexConfig: config, error: null })
         },
 
         setShowLLMModal: (show) => {
@@ -190,9 +205,17 @@ export const useLLMStore = create<LLMState>()(
               openrouterConfig: defaults.openrouter_config,
               bedrockConfig: defaults.bedrock_config,
               openaiConfig: defaults.openai_config,
+              vertexConfig: defaults.vertex_config || {
+                provider: 'vertex',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+              },
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter,
               availableOpenAIModels: defaults.available_models.openai,
+              availableVertexModels: defaults.available_models.vertex || [],
               defaultsLoaded: true,
               error: null,
               isLoadingLLMs: false
@@ -372,6 +395,13 @@ export const useLLMStore = create<LLMState>()(
               cross_provider_fallback: undefined,
               api_key: ''
             },
+            vertexConfig: {
+              provider: 'vertex',
+              model_id: '',
+              fallback_models: [],
+              cross_provider_fallback: undefined,
+              api_key: ''
+            },
             showLLMModal: false,
             availableLLMs: [],
             isLoadingLLMs: false,
@@ -395,6 +425,7 @@ export const useLLMStore = create<LLMState>()(
           openrouterConfig: state.openrouterConfig,
           bedrockConfig: state.bedrockConfig,
           openaiConfig: state.openaiConfig,
+          vertexConfig: state.vertexConfig,
           customBedrockModels: state.customBedrockModels,
           customOpenRouterModels: state.customOpenRouterModels,
           customOpenAIModels: state.customOpenAIModels,

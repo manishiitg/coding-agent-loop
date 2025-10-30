@@ -37,6 +37,7 @@ const (
 	ValidationAgentType        AgentType = "validation"
 	PlanOrganizerAgentType     AgentType = "plan_organizer"
 	PlanBreakdownAgentType     AgentType = "plan_breakdown" // Analyzes dependencies and creates independent steps
+	PlanReaderAgentType        AgentType = "plan_reader"    // Reads plan markdown and returns structured JSON (read-only)
 
 	// Orchestrator types
 	PlannerOrchestratorAgentType  AgentType = "planner_orchestrator"  // AI-controlled planner orchestrator
@@ -67,7 +68,7 @@ const (
 // BaseAgentInterface defines the interface for base agent operations
 type BaseAgentInterface interface {
 	// Core execution
-	Execute(ctx context.Context, templateVars map[string]string) (string, []llms.MessageContent, error)
+	Execute(ctx context.Context, userMessage string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error)
 
 	// Agent information
 	GetType() AgentType
@@ -408,9 +409,9 @@ func (ba *BaseAgent) GetConfigurationSummary() map[string]interface{} {
 	}
 }
 
-// AskStructured is a standalone generic function that provides type-safe structured output
+// AskStructuredTyped is a standalone generic function that provides type-safe structured output
 // This gives us the clean generic API without needing to modify the BaseAgent struct
-func AskStructured[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llms.MessageContent) (T, error) {
+func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llms.MessageContent) (T, error) {
 	// Check if ba is nil
 	if ba == nil {
 		var zero T

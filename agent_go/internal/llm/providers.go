@@ -16,6 +16,8 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
 	"github.com/tmc/langchaingo/llms/bedrock"
+	"github.com/tmc/langchaingo/llms/googleai"
+	"github.com/tmc/langchaingo/llms/googleai/vertex"
 	"github.com/tmc/langchaingo/llms/openai"
 )
 
@@ -27,6 +29,7 @@ const (
 	ProviderOpenAI     Provider = "openai"
 	ProviderAnthropic  Provider = "anthropic"
 	ProviderOpenRouter Provider = "openrouter"
+	ProviderVertex     Provider = "vertex"
 )
 
 // Config holds configuration for LLM initialization
@@ -41,6 +44,8 @@ type Config struct {
 	MaxRetries     int
 	// Logger for structured logging
 	Logger utils.ExtendedLogger
+	// Context for LLM initialization (optional, uses background with timeout if not provided)
+	Context context.Context
 }
 
 // InitializeLLM creates and initializes an LLM based on the provider configuration
@@ -57,6 +62,8 @@ func InitializeLLM(config Config) (llms.Model, error) {
 		llm, err = initializeAnthropic(config)
 	case ProviderOpenRouter:
 		llm, err = initializeOpenRouterWithFallback(config)
+	case ProviderVertex:
+		llm, err = initializeVertexWithFallback(config)
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider: %s", config.Provider)
 	}
@@ -160,6 +167,37 @@ func initializeOpenRouterWithFallback(config Config) (llms.Model, error) {
 
 	// If all models fail, return the original error
 	return nil, fmt.Errorf("all OpenRouter models failed: %w", err)
+}
+
+// initializeVertexWithFallback creates a Vertex AI LLM with fallback models for rate limiting
+func initializeVertexWithFallback(config Config) (llms.Model, error) {
+	// Try primary model first
+	llm, err := initializeVertex(config)
+	if err == nil {
+		return llm, nil
+	}
+
+	// If primary fails and we have fallback models, try them
+	if len(config.FallbackModels) > 0 {
+		logger := config.Logger
+		logger.Infof("Primary Vertex model failed, trying fallback models - primary_model: %s, fallback_models: %v, error: %s", config.ModelID, config.FallbackModels, err.Error())
+
+		for _, fallbackModel := range config.FallbackModels {
+			fallbackConfig := config
+			fallbackConfig.ModelID = fallbackModel
+
+			llm, err := initializeVertex(fallbackConfig)
+			if err == nil {
+				logger.Infof("Successfully initialized fallback Vertex model - fallback_model: %s", fallbackModel)
+				return llm, nil
+			}
+
+			logger.Infof("Fallback Vertex model failed - fallback_model: %s, error: %s", fallbackModel, err.Error())
+		}
+	}
+
+	// If all models fail, return the original error
+	return nil, fmt.Errorf("all Vertex models failed: %w", err)
 }
 
 // initializeBedrock creates and configures a Bedrock LLM instance
@@ -460,6 +498,96 @@ func initializeOpenRouter(config Config) (llms.Model, error) {
 	return llm, nil
 }
 
+// initializeVertex creates and configures a Vertex AI (Gemini) LLM instance
+func initializeVertex(config Config) (llms.Model, error) {
+	// LLM Initialization event data - use typed structure directly
+	llmMetadata := LLMMetadata{
+		ModelVersion: config.ModelID,
+		MaxTokens:    0, // Will be set at call time
+		TopP:         config.Temperature,
+		User:         "vertex_user",
+		CustomFields: map[string]string{
+			"provider":  "vertex",
+			"operation": "llm_initialization",
+		},
+	}
+
+	// Emit LLM initialization start event
+	emitLLMInitializationStart(config.Tracers, string(config.Provider), config.ModelID, config.Temperature, config.TraceID, llmMetadata)
+
+	// Check for API key from environment
+	apiKey := os.Getenv("VERTEX_API_KEY")
+	if apiKey == "" {
+		// Try alternative environment variable names
+		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required")
+	}
+
+	// Set default model if not specified
+	modelID := config.ModelID
+	if modelID == "" {
+		modelID = "gemini-2.5-flash"
+	}
+
+	logger := config.Logger
+	logger.Infof("Initializing Vertex AI (Gemini) LLM with API key - model_id: %s", modelID)
+
+	// Use provided context or use background context
+	ctx := config.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Set API key as environment variable for vertex.New() to pick up
+	// vertex.New() automatically detects API key from VERTEX_API_KEY or GOOGLE_API_KEY env vars
+	// and switches to BackendGeminiAPI when API key is present
+	os.Setenv("VERTEX_API_KEY", apiKey)
+
+	// Create Vertex AI LLM - automatically uses BackendGeminiAPI with API key
+	// Supports both API key authentication and OAuth/ADC authentication
+	llm, err := vertex.New(ctx,
+		googleai.WithDefaultModel(modelID),
+		googleai.WithDefaultTemperature(config.Temperature),
+		googleai.WithDefaultMaxTokens(40000), // Large token limit for Vertex AI
+	)
+
+	if err != nil {
+		logger.Errorf("Failed to create Vertex LLM: %v", err)
+
+		// Emit LLM initialization error event - use typed structure directly
+		errorMetadata := LLMMetadata{
+			ModelVersion: modelID,
+			User:         "vertex_user",
+			CustomFields: map[string]string{
+				"provider":  "vertex",
+				"operation": OperationLLMInitialization,
+				"error":     err.Error(),
+				"status":    StatusLLMFailed,
+			},
+		}
+		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
+
+		return nil, fmt.Errorf("create vertex LLM: %w", err)
+	}
+
+	// Emit LLM initialization success event - use typed structure directly
+	successMetadata := LLMMetadata{
+		ModelVersion: modelID,
+		User:         "vertex_user",
+		CustomFields: map[string]string{
+			"provider":     "vertex",
+			"status":       StatusLLMInitialized,
+			"capabilities": CapabilityTextGeneration + "," + CapabilityToolCalling,
+		},
+	}
+	emitLLMInitializationSuccess(config.Tracers, string(config.Provider), modelID, CapabilityTextGeneration+","+CapabilityToolCalling, config.TraceID, successMetadata)
+
+	logger.Infof("Initialized Vertex AI LLM - model_id: %s", modelID)
+	return llm, nil
+}
+
 // GetDefaultModel returns the default model for each provider from environment variables
 func GetDefaultModel(provider Provider) string {
 	switch provider {
@@ -487,6 +615,12 @@ func GetDefaultModel(provider Provider) string {
 			return primaryModel
 		}
 		return "moonshotai/kimi-k2"
+	case ProviderVertex:
+		// Get primary model from environment variable
+		if primaryModel := os.Getenv("VERTEX_PRIMARY_MODEL"); primaryModel != "" {
+			return primaryModel
+		}
+		return "gemini-2.5-flash"
 	default:
 		return ""
 	}
@@ -524,6 +658,19 @@ func GetDefaultFallbackModels(provider Provider) []string {
 	case ProviderOpenRouter:
 		// Get fallback models from environment variable
 		fallbackModelsEnv := os.Getenv("OPENROUTER_FALLBACK_MODELS")
+		if fallbackModelsEnv != "" {
+			// Split by comma and trim whitespace
+			models := strings.Split(fallbackModelsEnv, ",")
+			for i, model := range models {
+				models[i] = strings.TrimSpace(model)
+			}
+			return models
+		}
+		// No fallback models if environment variable is not set
+		return []string{}
+	case ProviderVertex:
+		// Get fallback models from environment variable
+		fallbackModelsEnv := os.Getenv("VERTEX_FALLBACK_MODELS")
 		if fallbackModelsEnv != "" {
 			// Split by comma and trim whitespace
 			models := strings.Split(fallbackModelsEnv, ",")
@@ -579,10 +726,10 @@ func GetCrossProviderFallbackModels(provider Provider) []string {
 // ValidateProvider checks if the provider is supported
 func ValidateProvider(provider string) (Provider, error) {
 	switch Provider(provider) {
-	case ProviderBedrock, ProviderOpenAI, ProviderAnthropic, ProviderOpenRouter:
+	case ProviderBedrock, ProviderOpenAI, ProviderAnthropic, ProviderOpenRouter, ProviderVertex:
 		return Provider(provider), nil
 	default:
-		return "", fmt.Errorf("unsupported provider: %s. Supported providers: bedrock, openai, anthropic, openrouter", provider)
+		return "", fmt.Errorf("unsupported provider: %s. Supported providers: bedrock, openai, anthropic, openrouter, vertex", provider)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/shared"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -187,8 +188,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepProgress(ctx conte
 
 // CreateTodoList orchestrates the human-controlled todo planning process
 // - Single execution (no iterations)
-// - Skips validation phase
-// - Skips critique phase
+// - Includes validation phase (runs later in the workflow)
+// - Includes critique phase during writer validation loop
 // - Skips cleanup phase
 // - Simple direct planning approach
 // - NEW: Includes human approval loop with iterative plan refinement
@@ -1013,7 +1014,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					"StepWhyThisStep":     step.WhyThisStep,
 					"StepContextOutput":   step.ContextOutput,
 					"WorkspacePath":       hcpo.GetWorkspacePath(),
-					"ExecutionHistory":    hcpo.formatConversationHistory(executionConversationHistory),
+					"ExecutionHistory":    shared.FormatConversationHistory(executionConversationHistory),
 				}
 
 				// Add context dependencies as a comma-separated string
@@ -1384,7 +1385,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		"StepWhyThisStep":     step.WhyThisStep,
 		"StepContextOutput":   step.ContextOutput,
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
-		"ExecutionHistory":    hcpo.formatConversationHistory(executionHistory),
+		"ExecutionHistory":    shared.FormatConversationHistory(executionHistory),
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
 	}
@@ -1436,7 +1437,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		"StepWhyThisStep":     step.WhyThisStep,
 		"StepContextOutput":   step.ContextOutput,
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
-		"ExecutionHistory":    hcpo.formatConversationHistory(executionHistory),
+		"ExecutionHistory":    shared.FormatConversationHistory(executionHistory),
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
 	}
@@ -1961,58 +1962,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) addUserFeedbackToHistory(fee
 	*conversationHistory = append(*conversationHistory, feedbackMessage)
 }
 
-// formatConversationHistory formats conversation history for template usage
-func (hcpo *HumanControlledTodoPlannerOrchestrator) formatConversationHistory(conversationHistory []llms.MessageContent) string {
-	var result strings.Builder
-
-	for _, message := range conversationHistory {
-		// Skip system messages
-		if message.Role == llms.ChatMessageTypeSystem {
-			continue
-		}
-
-		switch message.Role {
-		case llms.ChatMessageTypeHuman:
-			result.WriteString("## Human Message\n")
-		case llms.ChatMessageTypeAI:
-			result.WriteString("## Assistant Response\n")
-		case llms.ChatMessageTypeTool:
-			result.WriteString("## Tool Response\n")
-		default:
-			result.WriteString("## Message\n")
-		}
-
-		for _, part := range message.Parts {
-			switch p := part.(type) {
-			case llms.TextContent:
-				result.WriteString(p.Text)
-				result.WriteString("\n\n")
-			case llms.ToolCall:
-				result.WriteString("### Tool Call\n")
-				result.WriteString(fmt.Sprintf("**Tool Name:** %s\n", p.FunctionCall.Name))
-				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ID))
-				if p.FunctionCall.Arguments != "" {
-					result.WriteString(fmt.Sprintf("**Arguments:** %s\n", p.FunctionCall.Arguments))
-				}
-				result.WriteString("\n")
-			case llms.ToolCallResponse:
-				result.WriteString("### Tool Response\n")
-				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ToolCallID))
-				if p.Name != "" {
-					result.WriteString(fmt.Sprintf("**Tool Name:** %s\n", p.Name))
-				}
-				result.WriteString(fmt.Sprintf("**Response:** %s\n", p.Content))
-				result.WriteString("\n")
-			default:
-				// Handle any other content types
-				result.WriteString(fmt.Sprintf("**Unknown Content Type:** %T\n", p))
-			}
-		}
-		result.WriteString("---\n\n")
-	}
-
-	return result.String()
-}
+// conversation history formatting moved to shared.FormatConversationHistory
 
 // requestPlanApproval requests human approval for the generated plan
 // Returns: (approved bool, feedback string, error)

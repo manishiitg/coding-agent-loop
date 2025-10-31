@@ -366,6 +366,14 @@ func buildHierarchicalStructure(documents []models.Document, queryFolder string)
 	return result
 }
 
+// normalizeFolderPath removes trailing slashes from folder path (except for root "/")
+func normalizeFolderPath(folder string) string {
+	if folder == "" || folder == "/" {
+		return folder
+	}
+	return strings.TrimRight(folder, "/")
+}
+
 // ListDocuments handles GET /api/documents
 func ListDocuments(c *gin.Context) {
 	var req models.ListDocumentsRequest
@@ -380,10 +388,14 @@ func ListDocuments(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
+	// Normalize folder path by removing trailing slashes
+	// This fixes issues where trailing slashes cause comparison failures in buildHierarchicalStructure
+	normalizedFolder := normalizeFolderPath(req.Folder)
+
 	// Build search path
 	var searchPath string
-	if req.Folder != "" {
-		searchPath = filepath.Join(docsDir, req.Folder)
+	if normalizedFolder != "" {
+		searchPath = filepath.Join(docsDir, normalizedFolder)
 	} else {
 		searchPath = docsDir
 	}
@@ -399,8 +411,8 @@ func ListDocuments(c *gin.Context) {
 		return
 	}
 
-	// Build hierarchical structure from flat list
-	hierarchicalDocuments := buildHierarchicalStructure(documents, req.Folder)
+	// Build hierarchical structure from flat list using normalized folder path
+	hierarchicalDocuments := buildHierarchicalStructure(documents, normalizedFolder)
 
 	c.JSON(http.StatusOK, models.APIResponse{
 		Success: true,

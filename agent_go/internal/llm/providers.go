@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -1101,9 +1102,55 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llms.
 			p.logger.Errorf("   First Choice Content Empty: %v", firstChoice.Content == "")
 			p.logger.Errorf("   First Choice Content Length: %d", len(firstChoice.Content))
 
+			// Detailed choice structure logging
+			p.logger.Errorf("🔍 DETAILED CHOICE STRUCTURE:")
+			p.logger.Errorf("   Choice.StopReason: %v", firstChoice.StopReason)
+			toolCallsCount := 0
+			if firstChoice.ToolCalls != nil {
+				toolCallsCount = len(firstChoice.ToolCalls)
+			}
+			p.logger.Errorf("   Choice.ToolCalls: %v (nil: %v, count: %d)", firstChoice.ToolCalls != nil, firstChoice.ToolCalls == nil, toolCallsCount)
+			if firstChoice.ToolCalls != nil && len(firstChoice.ToolCalls) > 0 {
+				for i, tc := range firstChoice.ToolCalls {
+					p.logger.Errorf("     ToolCall %d: ID=%s, Type=%s, FunctionName=%s, Arguments=%s",
+						i+1, tc.ID, tc.Type, tc.FunctionCall.Name, truncateString(tc.FunctionCall.Arguments, 200))
+				}
+			}
+			p.logger.Errorf("   Choice.FuncCall: %v", firstChoice.FuncCall != nil)
+			if firstChoice.FuncCall != nil {
+				p.logger.Errorf("     FuncCall Name: %s, Arguments: %s",
+					firstChoice.FuncCall.Name, truncateString(firstChoice.FuncCall.Arguments, 200))
+			}
+			p.logger.Errorf("   Choice.GenerationInfo: %v (nil: %v)", firstChoice.GenerationInfo != nil, firstChoice.GenerationInfo == nil)
+			if firstChoice.GenerationInfo != nil {
+				p.logger.Errorf("     GenerationInfo Keys: %v", getMapKeys(firstChoice.GenerationInfo))
+				for key, value := range firstChoice.GenerationInfo {
+					valueStr := fmt.Sprintf("%v", value)
+					if len(valueStr) > 200 {
+						valueStr = truncateString(valueStr, 200)
+					}
+					p.logger.Errorf("       %s: %s (type: %T)", key, valueStr, value)
+				}
+			}
+
 			// Log the ENTIRE response structure for comprehensive debugging
 			p.logger.Errorf("🔍 COMPLETE LLM RESPONSE STRUCTURE:")
 			p.logger.Errorf("   Full Response: %+v", resp)
+
+			// Serialize response to JSON for raw-like representation
+			// Note: This is the processed response from langchaingo, not the raw HTTP response
+			// but it gives us a JSON representation of what we received
+			if respJSON, err := json.MarshalIndent(resp, "   ", "  "); err == nil {
+				jsonStr := string(respJSON)
+				// Truncate if too long to avoid massive log files
+				if len(jsonStr) > 5000 {
+					jsonStr = jsonStr[:5000] + "\n   ... (truncated, total length: " + fmt.Sprintf("%d", len(jsonStr)) + " bytes)"
+				}
+				p.logger.Errorf("🔍 RAW RESPONSE AS JSON (processed by langchaingo):")
+				p.logger.Errorf("%s", jsonStr)
+			} else {
+				p.logger.Errorf("   ⚠️ Failed to serialize response to JSON: %v", err)
+			}
 
 			// Log the options that were passed to the LLM
 			p.logger.Errorf("🔍 LLM CALL OPTIONS:")

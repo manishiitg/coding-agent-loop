@@ -83,3 +83,5 @@ gitleaks-maintenance.json
 .cursor/mcp.json
 
 gcp-oauth.keys.json
+
+./agent_go/configs/mcp_servers_clean_user.json

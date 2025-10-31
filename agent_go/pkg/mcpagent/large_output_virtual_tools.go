@@ -269,15 +269,44 @@ func (a *Agent) handleQueryLargeOutput(ctx context.Context, args map[string]inte
 }
 
 // BuildLargeOutputFilePath builds the full path to a large output file
+// Accepts either:
+// - Full relative path: "tool_output_folder/session-id/filename.txt" (use directly)
+// - Just filename: "tool_20250721_091511_tavily-search.json" (build from current session)
 func (a *Agent) BuildLargeOutputFilePath(filename string) string {
-	// Validate filename format (should be like tool_20250721_091511_tavily-search.json)
+	if filename == "" {
+		return ""
+	}
+
+	// Normalize path separators
+	filename = strings.ReplaceAll(filename, "\\", "/")
+
+	// Check if this is already a full relative path (contains path separators)
+	if strings.Contains(filename, "/") {
+		// Full path provided - use it directly (handles session ID mismatch)
+		// Validate it starts with tool_output_folder
+		if strings.HasPrefix(filename, "tool_output_folder/") ||
+			strings.HasPrefix(filename, "./tool_output_folder/") {
+			return filename
+		}
+		// If it's a relative path that doesn't start with tool_output_folder,
+		// it might be a valid path, so allow it
+		if strings.HasPrefix(filename, "tool_") || strings.Contains(filename, "/tool_") {
+			return filename
+		}
+	}
+
+	// Just filename provided - validate format and build path from current session
 	if !strings.HasPrefix(filename, "tool_") {
 		return ""
 	}
 
-	// Build path based on session ID
+	// Build path based on current session ID
+	if a.toolOutputHandler == nil {
+		return ""
+	}
+
 	var basePath string
-	if a.toolOutputHandler != nil && a.toolOutputHandler.SessionID != "" {
+	if a.toolOutputHandler.SessionID != "" {
 		basePath = filepath.Join(a.toolOutputHandler.OutputFolder, a.toolOutputHandler.SessionID)
 	} else {
 		basePath = a.toolOutputHandler.OutputFolder

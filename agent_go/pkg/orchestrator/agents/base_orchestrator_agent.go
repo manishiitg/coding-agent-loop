@@ -21,13 +21,16 @@ import (
 
 // BaseOrchestratorAgent provides common functionality for all orchestrator agents
 type BaseOrchestratorAgent struct {
-	config       *OrchestratorAgentConfig
-	logger       utils.ExtendedLogger
-	baseAgent    *BaseAgent // set during init
-	tracer       observability.Tracer
-	agentType    AgentType
-	systemPrompt string
-	eventBridge  mcpagent.AgentEventListener // Event bridge for auto events
+	config                *OrchestratorAgentConfig
+	logger                utils.ExtendedLogger
+	baseAgent             *BaseAgent // set during init
+	tracer                observability.Tracer
+	agentType             AgentType
+	systemPrompt          string
+	eventBridge           mcpagent.AgentEventListener    // Event bridge for auto events
+	systemPromptProcessor func(map[string]string) string // Optional processor for dynamic system prompts
+	systemPromptSet       bool                           // Flag to track if system prompt was already appended
+	userMessageProcessor  func(map[string]string) string // Optional processor for user messages (replaces inputProcessor)
 }
 
 // NewBaseOrchestratorAgentWithEventBridge creates a new base orchestrator agent with event bridge
@@ -103,8 +106,19 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
-	// Process inputs using the provided processor function
-	userMessage := inputProcessor(templateVars)
+	// Ensure system prompt is processed on first execution
+	if err := boa.ensureSystemPromptProcessed(ctx, templateVars); err != nil {
+		var zero T
+		return zero, fmt.Errorf("failed to process system prompt: %w", err)
+	}
+
+	// Use userMessageProcessor if set, otherwise use provided inputProcessor
+	var userMessage string
+	if boa.userMessageProcessor != nil {
+		userMessage = boa.userMessageProcessor(templateVars)
+	} else {
+		userMessage = inputProcessor(templateVars)
+	}
 
 	// Get the base agent for structured output
 	baseAgent := boa.baseAgent
@@ -152,8 +166,18 @@ func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Cont
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
-	// Process inputs using the provided processor function
-	userMessage := inputProcessor(templateVars)
+	// Ensure system prompt is processed on first execution
+	if err := boa.ensureSystemPromptProcessed(ctx, templateVars); err != nil {
+		return "", nil, fmt.Errorf("failed to process system prompt: %w", err)
+	}
+
+	// Use userMessageProcessor if set, otherwise use provided inputProcessor
+	var userMessage string
+	if boa.userMessageProcessor != nil {
+		userMessage = boa.userMessageProcessor(templateVars)
+	} else {
+		userMessage = inputProcessor(templateVars)
+	}
 
 	// Validate template fields at compile time (skip validation if templateData is nil)
 	if templateData != nil {
@@ -221,6 +245,54 @@ func (boa *BaseOrchestratorAgent) GetTracer() observability.Tracer {
 // GetEventBridge returns the event bridge
 func (boa *BaseOrchestratorAgent) GetEventBridge() mcpagent.AgentEventListener {
 	return boa.eventBridge
+}
+
+// SetSystemPromptProcessor sets the system prompt processor function
+func (boa *BaseOrchestratorAgent) SetSystemPromptProcessor(processor func(map[string]string) string) {
+	boa.systemPromptProcessor = processor
+	boa.systemPromptSet = false // Reset flag when processor is set
+}
+
+// SetUserMessageProcessor sets the user message processor function
+func (boa *BaseOrchestratorAgent) SetUserMessageProcessor(processor func(map[string]string) string) {
+	boa.userMessageProcessor = processor
+}
+
+// GetUserMessageProcessor returns the user message processor if set, otherwise returns nil
+func (boa *BaseOrchestratorAgent) GetUserMessageProcessor() func(map[string]string) string {
+	return boa.userMessageProcessor
+}
+
+// SystemPromptProcessorSetter is an interface for setting system prompt processor
+type SystemPromptProcessorSetter interface {
+	SetSystemPromptProcessor(func(map[string]string) string)
+}
+
+// UserMessageProcessorSetter is an interface for setting user message processor
+type UserMessageProcessorSetter interface {
+	SetUserMessageProcessor(func(map[string]string) string)
+}
+
+// ensureSystemPromptProcessed ensures that system prompt processor is called and appended on first execution
+func (boa *BaseOrchestratorAgent) ensureSystemPromptProcessed(ctx context.Context, templateVars map[string]string) error {
+	if boa.systemPromptProcessor == nil || boa.systemPromptSet {
+		return nil // No processor or already set
+	}
+
+	if boa.baseAgent == nil || boa.baseAgent.Agent() == nil {
+		return fmt.Errorf("base agent or MCP agent not initialized")
+	}
+
+	// Process templateVars to generate system prompt
+	systemPrompt := boa.systemPromptProcessor(templateVars)
+
+	if systemPrompt != "" {
+		boa.baseAgent.Agent().AppendSystemPrompt(systemPrompt)
+		boa.systemPromptSet = true
+		boa.logger.Infof("✅ System prompt appended for agent %s (length: %d chars)", boa.agentType, len(systemPrompt))
+	}
+
+	return nil
 }
 
 // emitEvent emits an event through the event bridge

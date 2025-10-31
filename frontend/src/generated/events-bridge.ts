@@ -524,6 +524,8 @@ export interface ThrottlingDetectedEvent {
   attempt?: number;
   max_attempts?: number;
   duration?: string;
+  error_type?: string;   // "throttling", "empty_content", "connection_error", etc.
+  retry_delay?: string;  // Wait time before retry (e.g., "22.5s")
 }
 export interface TokenLimitExceededEvent {
   timestamp?: string;

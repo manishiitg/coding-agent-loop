@@ -27,9 +27,7 @@
     },
     "gmail": {
       "command": "npx",
-      "args": [
-        "@gongrzhe/server-gmail-autoauth-mcp"
-      ]
+      "args": ["@gongrzhe/server-gmail-autoauth-mcp"]
     },
     "playwright": {
       "command": "npx",
@@ -50,6 +48,17 @@
     "excel": {
       "command": "uvx",
       "args": ["excel-mcp-server", "stdio"]
+    },
+    "github": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ]
     }
   }
 }

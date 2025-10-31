@@ -233,8 +233,8 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
             </div>
           )}
           
-          {/* Feedback Input - hide when yesNoOnly is true */}
-          {!yesNoOnly && (
+          {/* Feedback Input - hide when yesNoOnly is true or threeChoiceMode is true */}
+          {!yesNoOnly && !threeChoiceMode && (
             <div className="mb-4">
               <label htmlFor="feedback-input" className="block text-xs font-medium text-yellow-900 dark:text-yellow-100 mb-1">
                 Your feedback:

@@ -28,6 +28,8 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	ValidationFeedback      string
 	LearningAgentOutput     string // Combined success/failure patterns and learning insights
 	PreviousHumanFeedback   string
+	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
+	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
 }
 
 // HumanControlledTodoPlannerExecutionAgent executes the objective using MCP servers in human-controlled mode
@@ -69,6 +71,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"WorkspacePath":           workspacePath,
 		"ValidationFeedback":      templateVars["ValidationFeedback"],
 		"LearningAgentOutput":     templateVars["LearningAgentOutput"],
+		"VariableNames":           templateVars["VariableNames"],  // May be empty if no variables
+		"VariableValues":          templateVars["VariableValues"], // May be empty if no variables
 	}
 
 	// Create template data for validation
@@ -84,6 +88,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		WorkspacePath:           executionTemplateVars["WorkspacePath"],
 		ValidationFeedback:      executionTemplateVars["ValidationFeedback"],
 		LearningAgentOutput:     executionTemplateVars["LearningAgentOutput"],
+		VariableNames:           executionTemplateVars["VariableNames"],
+		VariableValues:          executionTemplateVars["VariableValues"],
 	}
 
 	// Execute using template validation
@@ -106,6 +112,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		ValidationFeedback:      templateVars["ValidationFeedback"],
 		LearningAgentOutput:     templateVars["LearningAgentOutput"],
 		PreviousHumanFeedback:   templateVars["PreviousHumanFeedback"],
+		VariableNames:           templateVars["VariableNames"],
+		VariableValues:          templateVars["VariableValues"],
 	}
 
 	// 	## 📁 FILE PERMISSIONS
@@ -119,6 +127,20 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **STEP DESCRIPTION**: {{.StepDescription}}
 **WORKSPACE**: {{.WorkspacePath}}
 
+{{if .VariableNames}}
+## 📋 AVAILABLE VARIABLES
+
+**Variable Names and Descriptions:**
+{{.VariableNames}}
+
+{{if .VariableValues}}
+**Variable Values (for reference):**
+{{.VariableValues}}
+{{end}}
+
+**Important**: Variables have been resolved in step descriptions above. Use these variable names/values as reference when executing the step.
+{{end}}
+
 ## 🤖 AGENT IDENTITY
 - **Role**: Execution Agent
 - **Responsibility**: Execute a single step from the plan using MCP tools
@@ -127,23 +149,26 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 ## 📁 FILE PERMISSIONS (Execution Agent)
 
 **READ:**
-- planning/plan.md (current plan for reference)
-- Context files from previous steps (as specified in Context Dependencies)
-- Any workspace files needed for task execution
+- planning/plan.md (current plan for reference) - path: {{.WorkspacePath}}/todo_creation_human/planning/plan.md
+- Context files from previous steps (as specified in Context Dependencies) - paths are relative to {{.WorkspacePath}}/todo_creation_human/execution/
+- Any workspace files needed for task execution - paths must be relative to {{.WorkspacePath}}
 
 **WRITE:**
-- Context output files in {{.WorkspacePath}}/execution/ folder ONLY
-- Write context files to execution/ subfolder as specified in "Context Output" field
-- NO validation reports or documentation files
-- NO writing to any other folders or workspace root
+- **ONLY** context output files in {{.WorkspacePath}}/todo_creation_human/execution/ folder
+- When "Context Output" field specifies "step_X_results.md", write to: {{.WorkspacePath}}/todo_creation_human/execution/step_X_results.md
+- **ABSOLUTELY NO** writing to any other folders or locations outside {{.WorkspacePath}}/todo_creation_human/execution/
+- **ABSOLUTELY NO** validation reports or documentation files (validation agent handles those)
+- **ABSOLUTELY NO** writing to workspace root or any directory outside the todo_creation_human/ folder structure
 
 **RESTRICTIONS:**
 - Focus on executing the task using MCP tools
-- Read workspace files for context as needed
-- Create context output file in execution/ subfolder if specified in step
+- Read workspace files for context as needed (paths relative to {{.WorkspacePath}})
+- Create context output file ONLY in {{.WorkspacePath}}/todo_creation_human/execution/ subfolder if specified in step
 - Return execution results in your response
 - No documentation or report writing (validation agent handles that)
-- **CRITICAL**: Only write to {{.WorkspacePath}}/execution/ folder
+- **CRITICAL**: ALL file paths must be relative to {{.WorkspacePath}} - NEVER write outside this workspace path
+- **CRITICAL**: If Context Output is "step_X_results.md", the full path is {{.WorkspacePath}}/todo_creation_human/execution/step_X_results.md
+- **CRITICAL**: NEVER use absolute paths or write to directories outside {{.WorkspacePath}}
 
 ## 📝 EVIDENCE COLLECTION (When to Gather Evidence)
 
@@ -156,7 +181,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Example Evidence:**
 - "grep found 15 matches in 3 files"
 - "read_file returned 245 lines from config.json"
-- "Created context_output/step_1_results.md with 10 database URLs"
+- "Created {{.WorkspacePath}}/todo_creation_human/execution/step_1_results.md with 10 database URLs"
 
 {{if .LearningAgentOutput}}
 ## 🧠 LEARNING AGENT OUTPUT
@@ -237,19 +262,24 @@ Provide a clear execution summary in your response:
 **Status**: COMPLETED
 
 **Actions Taken**:
-- Used fileserver.read_file with path="config/database.json" to read database configuration
+- Used fileserver.read_file with path="{{.WorkspacePath}}/config/database.json" to read database configuration
 - Result: Successfully read 245 lines, found 3 database connection strings
 - Used grep.search with pattern="mongodb://.*" to extract MongoDB URLs
 - Result: Found 3 MongoDB URLs on lines 45, 78, 123
-- Used fileserver.write_file with path="execution/step_1_database_urls.md" to save results
+- Used fileserver.write_file with path="{{.WorkspacePath}}/todo_creation_human/execution/step_1_database_urls.md" to save results
 - Result: Created context output file with extracted database URLs and connection details
 
 **Success Criteria Check**: 
 - Criteria: Extract all database URLs from configuration files and save to context file
-- Met: Yes - Found 3 MongoDB URLs and saved to execution/step_1_database_urls.md
+- Met: Yes - Found 3 MongoDB URLs and saved to {{.WorkspacePath}}/todo_creation_human/execution/step_1_database_urls.md
 
 **Context Output**: 
-- execution/step_1_database_urls.md
+- {{.WorkspacePath}}/todo_creation_human/execution/step_1_database_urls.md
+
+**IMPORTANT PATH GUIDELINES:**
+- When Context Output field says "step_1_results.md", the FULL path is: {{.WorkspacePath}}/todo_creation_human/execution/step_1_results.md
+- When reading context dependencies like "step_1_results.md", the FULL path is: {{.WorkspacePath}}/todo_creation_human/execution/step_1_results.md
+- ALWAYS use {{.WorkspacePath}} as the base - NEVER write outside this path
 
 ---
 

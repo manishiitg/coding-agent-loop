@@ -326,6 +326,9 @@ func GetCachedOrFreshConnection(
 						"tools":     len(reloadedEntry.Tools),
 					})
 
+					// Normalize tools reloaded from disk to ensure all array parameters have 'items' field
+					mcpclient.NormalizeLLMTools(reloadedEntry.Tools)
+
 					// Use the reloaded entry
 					age := time.Since(reloadedEntry.CreatedAt)
 					serverStatus[srvName] = ServerCacheStatus{
@@ -538,6 +541,13 @@ func processCachedData(
 			result.ToolToServer[tool.Function.Name] = srvName
 		}
 
+		// Normalize cached tools to ensure all array parameters have 'items' field (required by Gemini)
+		// This fixes tools that were cached before normalization was added
+		// Normalize BEFORE appending to result so the fix propagates
+		mcpclient.NormalizeLLMTools(entry.Tools)
+
+		logger.Infof("[CACHE_NORMALIZE] Normalized tools for server %s: %d tools", srvName, len(entry.Tools))
+
 		// Aggregate all tools, prompts, and resources from cache
 		result.Tools = append(result.Tools, entry.Tools...)
 		if entry.Prompts != nil {
@@ -694,8 +704,11 @@ func performOriginalConnectionLogic(
 		srvTools := r.Tools
 		llmTools, err := mcpclient.ToolsAsLLM(srvTools)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("convert tools (%s): %w", srvName, err)
+			return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("convert tools (%s): %w", err)
 		}
+
+		// Tools are already normalized by ToolsAsLLM() during conversion
+		// No extra normalization needed since langchaingo bug is fixed
 
 		for _, t := range llmTools {
 			toolToServer[t.Function.Name] = srvName

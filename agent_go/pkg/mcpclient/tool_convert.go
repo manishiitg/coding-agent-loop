@@ -11,6 +11,154 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 )
 
+// normalizeArrayParameters recursively normalizes JSON Schema properties to ensure
+// all array types have an 'items' field (required by Gemini and some other LLM providers).
+// This function fixes array parameters that are missing the items field by defaulting to string type.
+func normalizeArrayParameters(schema map[string]interface{}) {
+	if schema == nil {
+		return
+	}
+
+	// Process properties if they exist
+	if properties, ok := schema["properties"].(map[string]interface{}); ok {
+		for _, propValue := range properties {
+			if propMap, ok := propValue.(map[string]interface{}); ok {
+				// Check if this property is an array type
+				if propType, typeExists := propMap["type"].(string); typeExists && propType == "array" {
+					// If items field is missing, add default string type
+					if _, itemsExists := propMap["items"]; !itemsExists {
+						propMap["items"] = map[string]interface{}{
+							"type": "string",
+						}
+					} else {
+						// If items exists, recursively normalize nested objects
+						if itemsMap, ok := propMap["items"].(map[string]interface{}); ok {
+							normalizeArrayParameters(itemsMap)
+						}
+					}
+				} else if propType == "object" {
+					// Recursively normalize nested objects
+					normalizeArrayParameters(propMap)
+				}
+			}
+		}
+	}
+}
+
+// NormalizeLLMTools normalizes array parameters in llms.Tool objects to ensure
+// all arrays have an 'items' field (required by Gemini and some other LLM providers).
+// This function normalizes tools in-place, modifying their Parameters schema.
+// Uses JSON round-trip to ensure structure preservation for langchaingo's Gemini conversion.
+func NormalizeLLMTools(tools []llms.Tool) {
+	fixedCount := 0
+	totalMissing := 0
+	totalFixed := 0
+
+	for i := range tools {
+		if tools[i].Function != nil && tools[i].Function.Parameters != nil {
+			toolName := tools[i].Function.Name
+			// Debug: log the actual type and structure
+			paramsBytes, _ := json.Marshal(tools[i].Function.Parameters)
+			if len(paramsBytes) > 200 {
+				paramsBytes = paramsBytes[:200]
+			}
+
+			// Handle different parameter types
+			switch params := tools[i].Function.Parameters.(type) {
+			case map[string]interface{}:
+				// CRITICAL: Use JSON round-trip to ensure structure is preserved for langchaingo
+				// langchaingo's Gemini conversion may lose nested map structure during processing
+				paramsBytes, err := json.Marshal(params)
+				if err == nil {
+					var normalizedParams map[string]interface{}
+					if err := json.Unmarshal(paramsBytes, &normalizedParams); err == nil {
+						// Debug: Check for specific problematic properties
+						if props, ok := normalizedParams["properties"].(map[string]interface{}); ok {
+							for propName := range props {
+								if propName == "assignees" || propName == "labels" || propName == "files" || propName == "reviewers" {
+									prop := props[propName]
+									if propMap, ok := prop.(map[string]interface{}); ok {
+										propType := propMap["type"]
+										hasItems := propMap["items"] != nil
+										fmt.Printf("[TOOL_NORMALIZE] Tool %s.%s: type=%v, hasItems=%v\n", toolName, propName, propType, hasItems)
+									}
+								}
+							}
+						}
+						beforeFix := countMissingItems(normalizedParams)
+						totalMissing += beforeFix
+						if beforeFix > 0 {
+							fmt.Printf("[TOOL_NORMALIZE] Tool %s has %d missing items fields\n", toolName, beforeFix)
+						}
+						normalizeArrayParameters(normalizedParams)
+						afterFix := countMissingItems(normalizedParams)
+						totalFixed += (beforeFix - afterFix)
+						if afterFix < beforeFix {
+							fixedCount++
+							fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s: %d -> %d missing items\n", toolName, beforeFix, afterFix)
+						}
+						// CRITICAL: Replace Parameters with normalized version from JSON round-trip
+						// This ensures the structure is preserved when langchaingo processes it
+						tools[i].Function.Parameters = normalizedParams
+					}
+				}
+			default:
+				// If Parameters is not a map, try to convert it
+				// This can happen when Parameters is stored in different formats
+				fmt.Printf("[TOOL_NORMALIZE] Tool %s has Parameters type: %T (not map[string]interface{})\n", toolName, params)
+				paramsBytes, err := json.Marshal(params)
+				if err == nil {
+					var paramsMap map[string]interface{}
+					if err := json.Unmarshal(paramsBytes, &paramsMap); err == nil {
+						beforeFix := countMissingItems(paramsMap)
+						totalMissing += beforeFix
+						normalizeArrayParameters(paramsMap)
+						afterFix := countMissingItems(paramsMap)
+						totalFixed += (beforeFix - afterFix)
+						if afterFix < beforeFix {
+							fixedCount++
+							fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s (converted): %d -> %d missing items\n", toolName, beforeFix, afterFix)
+						}
+						// Update the Parameters with normalized version
+						tools[i].Function.Parameters = paramsMap
+					} else {
+						fmt.Printf("[TOOL_NORMALIZE] Failed to unmarshal Parameters for tool %s: %v\n", toolName, err)
+					}
+				} else {
+					fmt.Printf("[TOOL_NORMALIZE] Failed to marshal Parameters for tool %s: %v\n", toolName, err)
+				}
+			}
+		}
+	}
+	if totalMissing > 0 {
+		fmt.Printf("[TOOL_NORMALIZE] Summary: Found %d missing items fields, fixed %d, %d tools affected\n", totalMissing, totalFixed, fixedCount)
+	} else {
+		fmt.Printf("[TOOL_NORMALIZE] Summary: All tools already have items fields\n")
+	}
+}
+
+// countMissingItems counts how many array properties are missing items field
+func countMissingItems(schema map[string]interface{}) int {
+	count := 0
+	if schema == nil {
+		return 0
+	}
+	if properties, ok := schema["properties"].(map[string]interface{}); ok {
+		for _, propValue := range properties {
+			if propMap, ok := propValue.(map[string]interface{}); ok {
+				if propType, typeExists := propMap["type"].(string); typeExists && propType == "array" {
+					if _, itemsExists := propMap["items"]; !itemsExists {
+						count++
+					}
+				} else if propType == "object" {
+					count += countMissingItems(propMap)
+				}
+			}
+		}
+	}
+	return count
+}
+
 // ToolsAsLLM converts MCP tools to langchaingo llms.Tool format for Bedrock
 func ToolsAsLLM(mcpTools []mcp.Tool) ([]llms.Tool, error) {
 	llmTools := make([]llms.Tool, len(mcpTools))
@@ -37,6 +185,9 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llms.Tool, error) {
 
 		// Add additional properties restriction for better validation
 		schema["additionalProperties"] = false
+
+		// Normalize array parameters to ensure all arrays have items field (required by Gemini)
+		normalizeArrayParameters(schema)
 
 		llmTools[i] = llms.Tool{
 			Type: "function",
@@ -78,6 +229,9 @@ func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llms.Tool, error) {
 
 		// Add additional properties restriction for better validation
 		schema["additionalProperties"] = false
+
+		// Normalize array parameters to ensure all arrays have items field (required by Gemini)
+		normalizeArrayParameters(schema)
 
 		llmTools[i] = llms.Tool{
 			Type: "function",

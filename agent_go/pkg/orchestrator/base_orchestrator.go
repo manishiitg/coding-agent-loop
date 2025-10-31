@@ -522,6 +522,222 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 	return agent, nil
 }
 
+// CreateAndSetupStandardAgentWithSystemPrompt creates and sets up an agent with system prompt and user message processors
+// This allows agents to have detailed system prompts while keeping user messages simple
+func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
+	ctx context.Context,
+	agentName string,
+	phase string,
+	step, iteration int,
+	maxTurns int,
+	outputFormat agents.OutputFormat,
+	systemPromptProcessor func(map[string]string) string,
+	userMessageProcessor func(map[string]string) string,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	customTools []llms.Tool,
+	customToolExecutors map[string]interface{},
+) (agents.OrchestratorAgent, error) {
+	// Create standardized agent configuration using agentName as agentType
+	config := bo.CreateStandardAgentConfig(agentName, maxTurns, outputFormat)
+
+	// Create agent using provided factory function
+	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
+
+	// Initialize and setup agent
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
+	}
+
+	// Set system prompt and user message processors if provided
+	// Since agents embed *BaseOrchestratorAgent, methods are promoted
+	if systemPromptProcessor != nil {
+		if settable, ok := agent.(agents.SystemPromptProcessorSetter); ok {
+			settable.SetSystemPromptProcessor(systemPromptProcessor)
+			bo.GetLogger().Infof("✅ System prompt processor set for %s", agentName)
+		} else {
+			bo.GetLogger().Warnf("⚠️ Could not set system prompt processor for %s - agent does not implement SystemPromptProcessorSetter", agentName)
+		}
+	}
+	if userMessageProcessor != nil {
+		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
+			settable.SetUserMessageProcessor(userMessageProcessor)
+			bo.GetLogger().Infof("✅ User message processor set for %s", agentName)
+		} else {
+			bo.GetLogger().Warnf("⚠️ Could not set user message processor for %s - agent does not implement UserMessageProcessorSetter", agentName)
+		}
+	}
+
+	// Validate essentials and connect event bridge
+	eventBridge := bo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+	}
+
+	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+	}
+
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+	}
+
+	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
+	baseAgentName := baseAgent.GetName()
+	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
+		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		mcpAgent.AddEventListener(cab)
+		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+	} else {
+		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+	}
+
+	// Register custom tools
+	if customTools != nil && customToolExecutors != nil {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+
+		for _, tool := range customTools {
+			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+				// Type assert parameters to map[string]interface{}
+				params, ok := tool.Function.Parameters.(map[string]interface{})
+				if !ok {
+					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					continue
+				}
+
+				// Type assert executor to function type
+				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+					mcpAgent.RegisterCustomTool(
+						tool.Function.Name,
+						tool.Function.Description,
+						params,
+						toolExecutor,
+					)
+				} else {
+					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+				}
+			}
+		}
+
+		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+	}
+
+	// Processors are now stored in BaseOrchestratorAgent, agent can use them directly
+	return agent, nil
+}
+
+// CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt creates and sets up an agent with custom servers, system prompt and user message processors
+func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt(
+	ctx context.Context,
+	agentName string,
+	phase string,
+	step, iteration int,
+	maxTurns int,
+	outputFormat agents.OutputFormat,
+	customServers []string,
+	systemPromptProcessor func(map[string]string) string,
+	userMessageProcessor func(map[string]string) string,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	customTools []llms.Tool,
+	customToolExecutors map[string]interface{},
+) (agents.OrchestratorAgent, error) {
+	// Create standardized agent configuration with custom servers
+	config := bo.CreateStandardAgentConfigWithCustomServers(agentName, maxTurns, outputFormat, customServers)
+
+	// Create agent using provided factory function
+	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
+
+	// Initialize and setup agent
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
+	}
+
+	// Set system prompt and user message processors if provided
+	// Since agents embed *BaseOrchestratorAgent, methods are promoted
+	if systemPromptProcessor != nil {
+		if settable, ok := agent.(agents.SystemPromptProcessorSetter); ok {
+			settable.SetSystemPromptProcessor(systemPromptProcessor)
+			bo.GetLogger().Infof("✅ System prompt processor set for %s", agentName)
+		} else {
+			bo.GetLogger().Warnf("⚠️ Could not set system prompt processor for %s - agent does not implement SystemPromptProcessorSetter", agentName)
+		}
+	}
+	if userMessageProcessor != nil {
+		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
+			settable.SetUserMessageProcessor(userMessageProcessor)
+			bo.GetLogger().Infof("✅ User message processor set for %s", agentName)
+		} else {
+			bo.GetLogger().Warnf("⚠️ Could not set user message processor for %s - agent does not implement UserMessageProcessorSetter", agentName)
+		}
+	}
+
+	// Validate essentials and connect event bridge
+	eventBridge := bo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+	}
+
+	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+	}
+
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+	}
+
+	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
+	baseAgentName := baseAgent.GetName()
+	if cab, ok := eventBridge.(interface {
+		SetOrchestratorContext(phase string, step, iteration int, agentName string)
+	}); ok {
+		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		mcpAgent.AddEventListener(eventBridge)
+		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+	} else {
+		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+	}
+
+	// Register custom tools
+	if customTools != nil && customToolExecutors != nil {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+
+		for _, tool := range customTools {
+			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+				// Type assert parameters to map[string]interface{}
+				params, ok := tool.Function.Parameters.(map[string]interface{})
+				if !ok {
+					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					continue
+				}
+
+				// Type assert executor to function type
+				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+					mcpAgent.RegisterCustomTool(
+						tool.Function.Name,
+						tool.Function.Description,
+						params,
+						toolExecutor,
+					)
+				} else {
+					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+				}
+			}
+		}
+
+		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+	}
+
+	// Processors are now stored in BaseOrchestratorAgent, agent can use them directly
+	return agent, nil
+}
+
 // SetupStandardAgent removed: setup is now performed inline in CreateAndSetupStandardAgent
 
 // setupAgent removed: logic is now inlined in CreateAndSetupStandardAgent
@@ -651,14 +867,26 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 		return "", fmt.Errorf("no content found in workspace response")
 	}
 
-	// Emit successful tool call end event
+	// Emit successful tool call end event with file content as JSON
+	// Frontend expects JSON format with "content" and "filepath" fields
+	resultData := map[string]interface{}{
+		"content":  fileContent,
+		"filepath": filePath,
+	}
+	resultJSON, err := json.Marshal(resultData)
+	if err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to marshal file result to JSON: %v", err)
+		// Fallback to plain text if JSON marshaling fails
+		resultJSON = []byte(fileContent)
+	}
+
 	toolCallEndEvent := &events.ToolCallEndEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Turn:       0,
 		ToolName:   "read_workspace_file",
-		Result:     fmt.Sprintf("Successfully read file (%d characters)", len(fileContent)),
+		Result:     string(resultJSON),
 		Duration:   duration,
 		ServerName: "workspace",
 	}
@@ -1110,5 +1338,89 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
 	bo.GetLogger().Infof("✅ Successfully deleted file: %s", filePath)
+	return nil
+}
+
+// CleanupDirectory deletes all files in a directory using list_workspace_files to enumerate files
+// then deletes each file found (skipping directories)
+func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string, dirName string) error {
+	bo.GetLogger().Infof("🧹 Cleaning up %s directory: %s", dirName, dirPath)
+
+	// Use list_workspace_files to enumerate all files in the directory, then delete them
+	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
+	if !exists {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor not found, skipping directory cleanup")
+		return nil
+	}
+
+	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor has wrong type, skipping directory cleanup")
+		return nil
+	}
+
+	// Call list_workspace_files to get all files in the directory
+	listArgs := map[string]interface{}{
+		"folder":    dirPath,
+		"max_depth": 1, // Only list files in this directory, not subdirectories
+	}
+
+	fileListJSON, err := listExecutor(ctx, listArgs)
+	if err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err)
+		return nil // Don't fail - directory may be empty or not exist
+	}
+
+	// Parse the JSON response to extract file paths
+	var filesList []map[string]interface{}
+	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err)
+		// Try alternative format - might be a single object with a "files" array
+		var altFormat map[string]interface{}
+		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil {
+			if filesArray, ok := altFormat["files"].([]interface{}); ok {
+				for _, fileInterface := range filesArray {
+					if fileMap, ok := fileInterface.(map[string]interface{}); ok {
+						filesList = append(filesList, fileMap)
+					}
+				}
+			}
+		}
+		if len(filesList) == 0 {
+			bo.GetLogger().Infof("ℹ️ No files found in %s directory (may be empty)", dirName)
+			return nil
+		}
+	}
+
+	// Delete each file found (skip directories)
+	deletedCount := 0
+	for _, fileInfo := range filesList {
+		filepath, ok := fileInfo["filepath"].(string)
+		if !ok || filepath == "" {
+			continue
+		}
+
+		// Skip directories - only delete files
+		if isDirectory, ok := fileInfo["is_directory"].(bool); ok && isDirectory {
+			bo.GetLogger().Infof("⏭️ Skipping directory: %s", filepath)
+			continue
+		}
+
+		// Delete the file
+		if err := bo.DeleteWorkspaceFile(ctx, filepath); err == nil {
+			deletedCount++
+			bo.GetLogger().Infof("🗑️ Deleted: %s", filepath)
+		} else {
+			// Log but don't fail - some files might already be deleted or have other issues
+			bo.GetLogger().Warnf("⚠️ Failed to delete %s: %v", filepath, err)
+		}
+	}
+
+	if deletedCount > 0 {
+		bo.GetLogger().Infof("✅ Cleaned up %d files from %s directory", deletedCount, dirName)
+	} else {
+		bo.GetLogger().Infof("ℹ️ No files found to delete in %s directory (may have been empty)", dirName)
+	}
+
 	return nil
 }

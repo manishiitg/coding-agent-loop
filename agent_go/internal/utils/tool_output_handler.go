@@ -171,6 +171,12 @@ func (h *ToolOutputHandler) CreateToolOutputMessageWithPreview(toolCallID, fileP
 	previewLength := h.Threshold / 2
 	preview := h.ExtractFirstNCharacters(actualContent, previewLength)
 
+	// Use the full relative path so LLM knows which session folder to use
+	// This fixes session ID mismatch issues when agent instances change
+	fullRelativePath := filePath
+	// Normalize path separators for cross-platform compatibility
+	fullRelativePath = strings.ReplaceAll(fullRelativePath, "\\", "/")
+
 	instructions := fmt.Sprintf(`
 The tool output was too large and has been saved to: %s
 
@@ -187,7 +193,11 @@ Available virtual tools:
 - query_large_output - execute jq queries on large JSON tool output files
 
 Example: "Read characters 1-100 from %s" or "Search for 'error' in %s" or "Query '.name' from %s" (using jq)
-`, filepath.Base(filePath), previewLength, preview, filepath.Base(filePath), filepath.Base(filePath), filepath.Base(filePath))
+
+NOTE: When using virtual tools, you can provide either:
+- The full path: "%s" (recommended - includes session folder)
+- Or just the filename: "%s" (will use current session folder)
+`, fullRelativePath, previewLength, preview, fullRelativePath, fullRelativePath, fullRelativePath, fullRelativePath, filepath.Base(filePath))
 
 	return instructions
 }

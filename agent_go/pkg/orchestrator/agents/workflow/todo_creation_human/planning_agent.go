@@ -93,18 +93,21 @@ func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgent
 func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
-	return hctppa.ExecuteWithInputProcessor(ctx, templateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory)
+	// Note: userMessageProcessor is set in controller, so this fallback won't be used, but required by signature
+	return hctppa.ExecuteWithInputProcessor(ctx, templateVars, func(map[string]string) string {
+		return "Create or update plan.md with a structured plan to execute the objective."
+	}, conversationHistory)
 }
 
-// humanControlledPlanningInputProcessor processes inputs specifically for fast, simplified planning
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningInputProcessor(templateVars map[string]string) string {
+// planningSystemPromptProcessor generates the detailed system prompt for planning
+func planningSystemPromptProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := HumanControlledTodoPlannerPlanningTemplate{
 		Objective:     templateVars["Objective"],
 		WorkspacePath: templateVars["WorkspacePath"],
 	}
 
-	// Define the template - simplified for direct planning with structured output
+	// Define the template - detailed system prompt for planning
 	templateStr := `## 🚀 PRIMARY TASK - CREATE STRUCTURED PLAN TO EXECUTE OBJECTIVE
 
 **OBJECTIVE**: {{.Objective}}

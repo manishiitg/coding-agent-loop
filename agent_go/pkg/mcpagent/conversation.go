@@ -439,6 +439,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 		// Use proper LLM function calling via llms.WithTools()
 		// Use the pre-filtered tools that were determined at conversation start
 		if len(a.filteredTools) > 0 {
+			// Tools are already normalized during conversion in ToolsAsLLM() and cache loading
+			// No need for extra normalization here since langchaingo bug is fixed
 			opts = append(opts, llms.WithTools(a.filteredTools))
 			if toolChoiceOpt := ConvertToolChoice(a.ToolChoice); toolChoiceOpt != nil {
 				opts = append(opts, llms.WithToolChoice(toolChoiceOpt))

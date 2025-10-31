@@ -1214,6 +1214,8 @@ type ThrottlingDetectedEvent struct {
 	Attempt     int    `json:"attempt"`
 	MaxAttempts int    `json:"max_attempts"`
 	Duration    string `json:"duration"`
+	ErrorType   string `json:"error_type,omitempty"`  // "throttling", "empty_content", "connection_error", etc.
+	RetryDelay  string `json:"retry_delay,omitempty"` // Wait time before retry (e.g., "22.5s")
 }
 
 func (e *ThrottlingDetectedEvent) GetEventType() EventType {
@@ -1267,8 +1269,10 @@ func NewFallbackModelUsedEvent(turn int, originalModel, fallbackModel, provider,
 }
 
 // NewThrottlingDetectedEvent creates a new ThrottlingDetectedEvent
-func NewThrottlingDetectedEvent(turn int, modelID, provider string, attempt, maxAttempts int, duration time.Duration) *ThrottlingDetectedEvent {
-	return &ThrottlingDetectedEvent{
+// errorType can be "throttling", "empty_content", "connection_error", etc.
+// retryDelay is the wait time before retry (e.g., "22.5s"), optional
+func NewThrottlingDetectedEvent(turn int, modelID, provider string, attempt, maxAttempts int, duration time.Duration, errorType string, retryDelay time.Duration) *ThrottlingDetectedEvent {
+	event := &ThrottlingDetectedEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 		},
@@ -1279,6 +1283,13 @@ func NewThrottlingDetectedEvent(turn int, modelID, provider string, attempt, max
 		MaxAttempts: maxAttempts,
 		Duration:    duration.String(),
 	}
+	if errorType != "" {
+		event.ErrorType = errorType
+	}
+	if retryDelay > 0 {
+		event.RetryDelay = retryDelay.String()
+	}
+	return event
 }
 
 // NewTokenLimitExceededEvent creates a new TokenLimitExceededEvent
@@ -1848,4 +1859,29 @@ type BlockingHumanFeedbackEvent struct {
 
 func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {
 	return BlockingHumanFeedback
+}
+
+// TodoStep represents a todo step in the execution
+type TodoStep struct {
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	SuccessCriteria     string   `json:"success_criteria"`
+	WhyThisStep         string   `json:"why_this_step"`
+	ContextDependencies []string `json:"context_dependencies"`
+	ContextOutput       string   `json:"context_output"`
+	SuccessPatterns     []string `json:"success_patterns,omitempty"` // what worked (includes tools)
+	FailurePatterns     []string `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
+}
+
+// TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
+type TodoStepsExtractedEvent struct {
+	BaseEventData
+	TotalStepsExtracted int        `json:"total_steps_extracted"`
+	ExtractedSteps      []TodoStep `json:"extracted_steps"`
+	ExtractionMethod    string     `json:"extraction_method"`
+	PlanSource          string     `json:"plan_source"` // "existing_plan" or "new_plan"
+}
+
+func (e *TodoStepsExtractedEvent) GetEventType() EventType {
+	return TodoStepsExtracted
 }

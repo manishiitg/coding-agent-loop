@@ -19,13 +19,14 @@ import (
 	"mcp-agent/agent_go/pkg/mcpcache"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // NewAgentConnection handles MCP config loading, server connection, tool discovery, and returns all connection artifacts for agent construction.
 // Now uses caching to avoid redundant connections and discoveries.
-func NewAgentConnection(ctx context.Context, llm llms.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger utils.ExtendedLogger, cacheOnly bool) (map[string]mcpclient.ClientInterface, map[string]string, []llms.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger utils.ExtendedLogger, cacheOnly bool) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Start timing the entire connection process
 	connectionStartTime := time.Now()
@@ -45,7 +46,7 @@ func NewAgentConnection(ctx context.Context, llm llms.Model, serverName, configP
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(event); err != nil {
-				logger.Warnf("Failed to emit connection start event to tracer: %v", err)
+				logger.Warnf("Failed to emit connection start event to tracer: %w", err)
 			}
 		}
 	}
@@ -78,12 +79,12 @@ func NewAgentConnection(ctx context.Context, llm llms.Model, serverName, configP
 
 			for _, tracer := range tracers {
 				if err := tracer.EmitEvent(event); err != nil {
-					logger.Warnf("Failed to emit connection failure event to tracer: %v", err)
+					logger.Warnf("Failed to emit connection failure event to tracer: %w", err)
 				}
 			}
 		}
 
-		logger.Errorf("❌ Connection failed: %v", err)
+		logger.Errorf("❌ Connection failed: %w", err)
 		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("connection failed: %w", err)
 	}
 
@@ -173,7 +174,7 @@ func NewAgentConnection(ctx context.Context, llm llms.Model, serverName, configP
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(event); err != nil {
-				logger.Warnf("Failed to emit connection complete event to tracer: %v", err)
+				logger.Warnf("Failed to emit connection complete event to tracer: %w", err)
 			}
 		}
 
@@ -192,7 +193,7 @@ func NewAgentConnection(ctx context.Context, llm llms.Model, serverName, configP
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(discoveryEvent); err != nil {
-				logger.Warnf("Failed to emit discovery complete event to tracer: %v", err)
+				logger.Warnf("Failed to emit discovery complete event to tracer: %w", err)
 			}
 		}
 	}

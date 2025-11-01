@@ -2,30 +2,29 @@ package shared
 
 import (
 	"fmt"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"strings"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
-// FormatConversationHistory converts a slice of llms.MessageContent into a
+// FormatConversationHistory converts a slice of llmtypes.MessageContent into a
 // markdown-formatted history string suitable for prompt/template variables.
 // - Skips system messages
 // - Labels sections by role (Human/Assistant/Tool)
 // - Renders text, tool calls, and tool call responses
-func FormatConversationHistory(conversationHistory []llms.MessageContent) string {
+func FormatConversationHistory(conversationHistory []llmtypes.MessageContent) string {
 	var result strings.Builder
 
 	for _, message := range conversationHistory {
-		if message.Role == llms.ChatMessageTypeSystem {
+		if message.Role == llmtypes.ChatMessageTypeSystem {
 			continue
 		}
 
 		switch message.Role {
-		case llms.ChatMessageTypeHuman:
+		case llmtypes.ChatMessageTypeHuman:
 			result.WriteString("## Human Message\n")
-		case llms.ChatMessageTypeAI:
+		case llmtypes.ChatMessageTypeAI:
 			result.WriteString("## Assistant Response\n")
-		case llms.ChatMessageTypeTool:
+		case llmtypes.ChatMessageTypeTool:
 			result.WriteString("## Tool Response\n")
 		default:
 			result.WriteString("## Message\n")
@@ -33,10 +32,10 @@ func FormatConversationHistory(conversationHistory []llms.MessageContent) string
 
 		for _, part := range message.Parts {
 			switch p := part.(type) {
-			case llms.TextContent:
+			case llmtypes.TextContent:
 				result.WriteString(p.Text)
 				result.WriteString("\n\n")
-			case llms.ToolCall:
+			case llmtypes.ToolCall:
 				result.WriteString("### Tool Call\n")
 				result.WriteString(fmt.Sprintf("**Tool Name:** %s\n", p.FunctionCall.Name))
 				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ID))
@@ -44,7 +43,7 @@ func FormatConversationHistory(conversationHistory []llms.MessageContent) string
 					result.WriteString(fmt.Sprintf("**Arguments:** %s\n", p.FunctionCall.Arguments))
 				}
 				result.WriteString("\n")
-			case llms.ToolCallResponse:
+			case llmtypes.ToolCallResponse:
 				result.WriteString("### Tool Response\n")
 				result.WriteString(fmt.Sprintf("**Tool ID:** %s\n", p.ToolCallID))
 				if p.Name != "" {

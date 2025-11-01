@@ -564,7 +564,7 @@ import "github.com/mark3labs/mcp-go/util"
 
 type LangchaingoStructuredOutputGenerator struct {
     config LangchaingoStructuredOutputConfig
-    llm    llms.Model
+    llm    llmtypes.Model
     logger util.Logger  // ← This should be utils.ExtendedLogger
 }
 ```

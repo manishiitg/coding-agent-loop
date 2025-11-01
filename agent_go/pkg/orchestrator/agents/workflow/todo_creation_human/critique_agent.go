@@ -11,7 +11,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // HumanControlledTodoPlannerCritiqueTemplate holds template variables for critique prompts
@@ -53,7 +53,7 @@ func NewHumanControlledTodoPlannerCritiqueAgent(config *agents.OrchestratorAgent
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctpca *HumanControlledTodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hctpca *HumanControlledTodoPlannerCritiqueAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables
 	workspacePath := templateVars["WorkspacePath"]
 	variableNames := templateVars["VariableNames"] // Optional - may be empty if no variables
@@ -79,7 +79,7 @@ func (hctpca *HumanControlledTodoPlannerCritiqueAgent) Execute(ctx context.Conte
 }
 
 // ExecuteStructured executes the critique agent and returns structured output
-func (hctpca *HumanControlledTodoPlannerCritiqueAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*CritiqueResponse, error) {
+func (hctpca *HumanControlledTodoPlannerCritiqueAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*CritiqueResponse, error) {
 	// Define the JSON schema for critique analysis
 	schema := `{
 		"type": "object",
@@ -362,12 +362,12 @@ Provide a comprehensive critique report:
 	// Parse and execute the template
 	tmpl, err := template.New("critique").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing critique template: %v", err)
+		return fmt.Sprintf("Error parsing critique template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing critique template: %v", err)
+		return fmt.Sprintf("Error executing critique template: %w", err)
 	}
 
 	return result.String()

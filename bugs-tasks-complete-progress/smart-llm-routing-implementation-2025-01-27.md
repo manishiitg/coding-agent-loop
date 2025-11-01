@@ -9,7 +9,7 @@
 ## 📋 **Problem Statement**
 
 ### **Current Architecture Issues** ✅ **RESOLVED**
-The MCP agent currently connects to all MCP servers and makes all discovered tools available to the LLM via `llms.WithTools(a.Tools)`. This approach had several problems that have now been resolved:
+The MCP agent currently connects to all MCP servers and makes all discovered tools available to the LLM via `llmtypes.WithTools(a.Tools)`. This approach had several problems that have now been resolved:
 
 1. **Tool Overload**: When there are >30 tools and >4 MCP servers, the LLM gets overwhelmed ✅ **FIXED**
 2. **Poor Performance**: Irrelevant tools increase token usage and slow down responses ✅ **FIXED**
@@ -82,7 +82,7 @@ func (a *Agent) shouldUseSmartRouting() bool {
 }
 
 // Tool filtering by relevance
-func (a *Agent) filterToolsByRelevance(ctx context.Context, userQuery string) ([]llms.Tool, error) {
+func (a *Agent) filterToolsByRelevance(ctx context.Context, userQuery string) ([]llmtypes.Tool, error) {
     relevantServers := a.determineRelevantServers(ctx, userQuery)
     return a.filterToolsByServers(relevantServers), nil
 }
@@ -104,8 +104,8 @@ func (a *Agent) determineRelevantServers(ctx context.Context, userQuery string) 
 #### **4. Tool Filtering Implementation**
 ```go
 // Filter tools to only include those from relevant servers
-func (a *Agent) filterToolsByServers(relevantServers []string) []llms.Tool {
-    var filteredTools []llms.Tool
+func (a *Agent) filterToolsByServers(relevantServers []string) []llmtypes.Tool {
+    var filteredTools []llmtypes.Tool
     
     for _, tool := range a.Tools {
         if serverName, exists := a.toolToServer[tool.Function.Name]; exists {
@@ -230,19 +230,19 @@ if a.shouldUseSmartRouting() {
     }
     
     // Use filtered tools instead of all tools
-    opts = append(opts, llms.WithTools(filteredTools))
+    opts = append(opts, llmtypes.WithTools(filteredTools))
     logger.Infof("Smart routing enabled: using %d filtered tools out of %d total", 
                  len(filteredTools), len(a.Tools))
 } else {
     // Use all tools as before
-    opts = append(opts, llms.WithTools(a.Tools))
+    opts = append(opts, llmtypes.WithTools(a.Tools))
 }
 ```
 
 ### **C. Enhanced Conversation Context Building**
 ```go
 // Build conversation context for smart routing
-func (a *Agent) buildConversationContext(messages []llms.MessageContent) string {
+func (a *Agent) buildConversationContext(messages []llmtypes.MessageContent) string {
     var contextBuilder strings.Builder
     
     // Include more context for better routing decisions
@@ -254,14 +254,14 @@ func (a *Agent) buildConversationContext(messages []llms.MessageContent) string 
     contextBuilder.WriteString("RECENT CONVERSATION:\n")
     for i := startIdx; i < len(messages); i++ {
         msg := messages[i]
-        if msg.Role == llms.ChatMessageTypeHuman {
+        if msg.Role == llmtypes.ChatMessageTypeHuman {
             content := a.extractTextContent(msg)
             // Truncate very long messages to avoid token bloat
             if len(content) > 200 {
                 content = content[:200] + "..."
             }
             contextBuilder.WriteString(fmt.Sprintf("User: %s\n", content))
-        } else if msg.Role == llms.ChatMessageTypeAI {
+        } else if msg.Role == llmtypes.ChatMessageTypeAI {
             content := a.extractTextContent(msg)
             if len(content) > 300 {
                 content = content[:300] + "..."
@@ -278,21 +278,21 @@ func (a *Agent) buildConversationContext(messages []llms.MessageContent) string 
 ```go
 // Make a quick LLM call for server selection
 func (a *Agent) makeLightweightLLMCall(ctx context.Context, prompt string) (string, error) {
-    messages := []llms.MessageContent{
+    messages := []llmtypes.MessageContent{
         {
-            Role:  llms.ChatMessageTypeSystem,
-            Parts: []llms.ContentPart{llms.TextContent{Text: "You are a tool routing assistant."}},
+            Role:  llmtypes.ChatMessageTypeSystem,
+            Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "You are a tool routing assistant."}},
         },
         {
-            Role:  llms.ChatMessageTypeHuman,
-            Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
+            Role:  llmtypes.ChatMessageTypeHuman,
+            Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: prompt}},
         },
     }
     
     // Use lower temperature and max tokens for consistent routing
-    opts := []llms.CallOption{
-        llms.WithTemperature(0.1),
-        llms.WithMaxTokens(200), // Minimal response needed
+    opts := []llmtypes.CallOption{
+        llmtypes.WithTemperature(0.1),
+        llmtypes.WithMaxTokens(200), // Minimal response needed
     }
     
     response, err := a.LLM.GenerateContent(ctx, messages, opts...)
@@ -300,7 +300,7 @@ func (a *Agent) makeLightweightLLMCall(ctx context.Context, prompt string) (stri
         return "", err
     }
     
-    return response.Choices[0].Content.Parts[0].(llms.TextContent).Text, nil
+    return response.Choices[0].Content.Parts[0].(llmtypes.TextContent).Text, nil
 }
 ```
 
@@ -417,7 +417,7 @@ type SmartRoutingEndEvent struct {
 #### **Event Emission in Smart Routing**
 ```go
 // In smart_routing.go, add event emission
-func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext string) ([]llms.Tool, error) {
+func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext string) ([]llmtypes.Tool, error) {
     // Emit smart routing start event
     startEvent := NewSmartRoutingStartEvent(
         len(a.Tools), 
@@ -461,14 +461,14 @@ func (a *Agent) determineRelevantServersWithReasoning(ctx context.Context, conve
 
 // Enhanced LLM call that captures reasoning
 func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt string) ([]string, string, error) {
-    messages := []llms.MessageContent{
+    messages := []llmtypes.MessageContent{
         {
-            Role:  llms.ChatMessageTypeSystem,
-            Parts: []llms.ContentPart{llms.TextContent{Text: "You are a tool routing assistant. Always respond with valid JSON."}},
+            Role:  llmtypes.ChatMessageTypeSystem,
+            Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "You are a tool routing assistant. Always respond with valid JSON."}},
         },
         {
-            Role:  llms.ChatMessageTypeHuman,
-            Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
+            Role:  llmtypes.ChatMessageTypeHuman,
+            Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: prompt}},
         },
     }
     
@@ -491,10 +491,10 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
         "required": []string{"relevant_servers", "reasoning"},
     }
     
-    opts := []llms.CallOption{
-        llms.WithTemperature(0.1),
-        llms.WithMaxTokens(300),
-        llms.WithStructuredOutput(schema),
+    opts := []llmtypes.CallOption{
+        llmtypes.WithTemperature(0.1),
+        llmtypes.WithMaxTokens(300),
+        llmtypes.WithStructuredOutput(schema),
     }
     
     response, err := a.LLM.GenerateContent(ctx, messages, opts...)
@@ -507,7 +507,7 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 }
 
 // Parse structured response with reasoning
-func (a *Agent) parseStructuredServerResponseWithReasoning(response *llms.ContentResponse) ([]string, string, error) {
+func (a *Agent) parseStructuredServerResponseWithReasoning(response *llmtypes.ContentResponse) ([]string, string, error) {
     if len(response.Choices) == 0 {
         return nil, "", fmt.Errorf("no response choices")
     }
@@ -519,14 +519,14 @@ func (a *Agent) parseStructuredServerResponseWithReasoning(response *llms.Conten
     
     // Handle structured output (JSON)
     for _, part := range choice.Content.Parts {
-        if jsonPart, ok := part.(llms.JSONContent); ok {
+        if jsonPart, ok := part.(llmtypes.JSONContent); ok {
             return a.parseJSONServerResponseWithReasoning(jsonPart.Data)
         }
     }
     
     // Fallback to text parsing if structured output fails
     if len(choice.Content.Parts) > 0 {
-        if textPart, ok := choice.Content.Parts[0].(llms.TextContent); ok {
+        if textPart, ok := choice.Content.Parts[0].(llmtypes.TextContent); ok {
             servers, err := a.parseTextServerResponse(textPart.Text)
             return servers, "Fallback text parsing used", err
         }
@@ -688,7 +688,7 @@ if a.shouldUseSmartRouting() {
 
 // In conversation loop - use pre-filtered tools
 for turn := 0; turn < a.MaxTurns; turn++ {
-    opts = append(opts, llms.WithTools(a.filteredTools)) // Use stored tools
+    opts = append(opts, llmtypes.WithTools(a.filteredTools)) // Use stored tools
 }
 ```
 
@@ -788,11 +788,11 @@ if a.shouldUseSmartRouting() {
         filteredTools = a.Tools // Fallback to all tools
     }
     
-    opts = append(opts, llms.WithTools(filteredTools))
+    opts = append(opts, llmtypes.WithTools(filteredTools))
     logger.Infof("Smart routing enabled: using %d filtered tools out of %d total", 
                  len(filteredTools), len(a.Tools))
 } else {
-    opts = append(opts, llms.WithTools(a.Tools))
+    opts = append(opts, llmtypes.WithTools(a.Tools))
 }
 ```
 
@@ -807,7 +807,7 @@ import (
     "strings"
     "time"
     
-    "github.com/tmc/langchaingo/llms"
+    "mcp-agent/agent_go/internal/llmtypes"
 )
 
 // Smart routing detection
@@ -818,7 +818,7 @@ func (a *Agent) shouldUseSmartRouting() bool {
 }
 
 // Build conversation context for smart routing
-func (a *Agent) buildConversationContext(messages []llms.MessageContent) string {
+func (a *Agent) buildConversationContext(messages []llmtypes.MessageContent) string {
     var contextBuilder strings.Builder
     
     // Always send FULL conversation context - no limits, no truncation
@@ -827,10 +827,10 @@ func (a *Agent) buildConversationContext(messages []llms.MessageContent) string 
     
     for i := 0; i < len(messages); i++ {
         msg := messages[i]
-        if msg.Role == llms.ChatMessageTypeHuman {
+        if msg.Role == llmtypes.ChatMessageTypeHuman {
             content := a.extractTextContent(msg)
             contextBuilder.WriteString(fmt.Sprintf("User: %s\n", content))
-        } else if msg.Role == llms.ChatMessageTypeAI {
+        } else if msg.Role == llmtypes.ChatMessageTypeAI {
             content := a.extractTextContent(msg)
             contextBuilder.WriteString(fmt.Sprintf("Assistant: %s\n", content))
         }
@@ -840,7 +840,7 @@ func (a *Agent) buildConversationContext(messages []llms.MessageContent) string 
 }
 
 // Tool filtering by relevance
-func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext string) ([]llms.Tool, error) {
+func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext string) ([]llmtypes.Tool, error) {
     relevantServers, err := a.determineRelevantServers(ctx, conversationContext)
     if err != nil {
         return nil, err
@@ -907,14 +907,14 @@ AVAILABLE SERVERS:`, serverList.String(), conversationContext)
 
 // Make lightweight LLM call for server selection with structured output
 func (a *Agent) makeLightweightLLMCall(ctx context.Context, prompt string) ([]string, error) {
-    messages := []llms.MessageContent{
+    messages := []llmtypes.MessageContent{
         {
-            Role:  llms.ChatMessageTypeSystem,
-            Parts: []llms.ContentPart{llms.TextContent{Text: "You are a tool routing assistant. Always respond with valid JSON."}},
+            Role:  llmtypes.ChatMessageTypeSystem,
+            Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "You are a tool routing assistant. Always respond with valid JSON."}},
         },
         {
-            Role:  llms.ChatMessageTypeHuman,
-            Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
+            Role:  llmtypes.ChatMessageTypeHuman,
+            Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: prompt}},
         },
     }
     
@@ -937,10 +937,10 @@ func (a *Agent) makeLightweightLLMCall(ctx context.Context, prompt string) ([]st
         "required": []string{"relevant_servers"},
     }
     
-    opts := []llms.CallOption{
-        llms.WithTemperature(0.1),
-        llms.WithMaxTokens(300),
-        llms.WithStructuredOutput(schema), // Use structured output for reliable parsing
+    opts := []llmtypes.CallOption{
+        llmtypes.WithTemperature(0.1),
+        llmtypes.WithMaxTokens(300),
+        llmtypes.WithStructuredOutput(schema), // Use structured output for reliable parsing
     }
     
     response, err := a.LLM.GenerateContent(ctx, messages, opts...)
@@ -953,7 +953,7 @@ func (a *Agent) makeLightweightLLMCall(ctx context.Context, prompt string) ([]st
 }
 
 // Parse structured server selection response
-func (a *Agent) parseStructuredServerResponse(response *llms.ContentResponse) ([]string, error) {
+func (a *Agent) parseStructuredServerResponse(response *llmtypes.ContentResponse) ([]string, error) {
     // Extract the structured content
     if len(response.Choices) == 0 {
         return nil, fmt.Errorf("no response choices")
@@ -966,14 +966,14 @@ func (a *Agent) parseStructuredServerResponse(response *llms.ContentResponse) ([
     
     // Handle structured output (JSON)
     for _, part := range choice.Content.Parts {
-        if jsonPart, ok := part.(llms.JSONContent); ok {
+        if jsonPart, ok := part.(llmtypes.JSONContent); ok {
             return a.parseJSONServerResponse(jsonPart.Data)
         }
     }
     
     // Fallback to text parsing if structured output fails
     if len(choice.Content.Parts) > 0 {
-        if textPart, ok := choice.Content.Parts[0].(llms.TextContent); ok {
+        if textPart, ok := choice.Content.Parts[0].(llmtypes.TextContent); ok {
             return a.parseTextServerResponse(textPart.Text)
         }
     }
@@ -1035,8 +1035,8 @@ func (a *Agent) parseTextServerResponse(response string) ([]string, error) {
 }
 
 // Filter tools by server
-func (a *Agent) filterToolsByServers(relevantServers []string) []llms.Tool {
-    var filteredTools []llms.Tool
+func (a *Agent) filterToolsByServers(relevantServers []string) []llmtypes.Tool {
+    var filteredTools []llmtypes.Tool
     
     for _, tool := range a.Tools {
         if serverName, exists := a.toolToServer[tool.Function.Name]; exists {
@@ -1053,10 +1053,10 @@ func (a *Agent) filterToolsByServers(relevantServers []string) []llms.Tool {
 }
 
 // Helper function to extract text content
-func (a *Agent) extractTextContent(msg llms.MessageContent) string {
+func (a *Agent) extractTextContent(msg llmtypes.MessageContent) string {
     var textParts []string
     for _, part := range msg.Parts {
-        if textPart, ok := part.(llms.TextContent); ok {
+        if textPart, ok := part.(llmtypes.TextContent); ok {
             textParts = append(textParts, textPart.Text)
         }
     }

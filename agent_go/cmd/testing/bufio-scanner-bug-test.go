@@ -7,12 +7,11 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/mcpclient"
-
-	"github.com/tmc/langchaingo/llms"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -54,27 +53,27 @@ which uses bufio.Scanner with default 64KB buffer limit.`,
 		logger.Infof("Loading config from: %s", configPath)
 		config, err := mcpclient.LoadMergedConfig(configPath, logger)
 		if err != nil {
-			return fmt.Errorf("failed to load merged config: %v", err)
+			return fmt.Errorf("failed to load merged config: %w", err)
 		}
 
 		// Test 1: Direct Playwright MCP Server Connection Test
 		logger.Info("\n--- Test 1: Direct Playwright MCP Server Connection ---")
 		if err := testDirectPlaywrightConnection(config, logger); err != nil {
-			logger.Errorf("❌ Direct Playwright connection test failed: %v", err)
+			logger.Errorf("❌ Direct Playwright connection test failed: %w", err)
 			// Continue with other tests even if this fails
 		}
 
 		// Test 2: Agent-based Playwright Test with Large Output Scenario
 		logger.Info("\n--- Test 2: Agent-based Playwright Test (MoneyControl Scenario) ---")
 		if err := testAgentPlaywrightScenario(config, logger); err != nil {
-			logger.Errorf("❌ Agent-based Playwright test failed: %v", err)
+			logger.Errorf("❌ Agent-based Playwright test failed: %w", err)
 			// Continue with other tests even if this fails
 		}
 
 		// Test 3: Large Output Stress Test
 		logger.Info("\n--- Test 3: Large Output Stress Test ---")
 		if err := testLargeOutputStress(config, logger); err != nil {
-			logger.Errorf("❌ Large output stress test failed: %v", err)
+			logger.Errorf("❌ Large output stress test failed: %w", err)
 			// Continue with other tests even if this fails
 		}
 
@@ -114,7 +113,7 @@ func testDirectPlaywrightConnection(config *mcpclient.MCPConfig, logger utils.Ex
 
 	logger.Info("🔧 Attempting to connect to Playwright MCP server...")
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect to Playwright MCP server: %v", err)
+		return fmt.Errorf("failed to connect to Playwright MCP server: %w", err)
 	}
 	defer client.Close()
 
@@ -124,7 +123,7 @@ func testDirectPlaywrightConnection(config *mcpclient.MCPConfig, logger utils.Ex
 	logger.Info("🔍 Listing available Playwright tools...")
 	tools, err := client.ListTools(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list Playwright tools: %v", err)
+		return fmt.Errorf("failed to list Playwright tools: %w", err)
 	}
 
 	logger.Infof("Found %d Playwright tools:", len(tools))
@@ -143,11 +142,11 @@ func testDirectPlaywrightConnection(config *mcpclient.MCPConfig, logger utils.Ex
 		"url": "https://www.moneycontrol.com",
 	})
 	if err != nil {
-		logger.Errorf("❌ Navigate tool call failed: %v", err)
+		logger.Errorf("❌ Navigate tool call failed: %w", err)
 		// This might be the bufio.Scanner error we're looking for
 		if strings.Contains(err.Error(), "bufio.Scanner") && strings.Contains(err.Error(), "token too long") {
 			logger.Error("🎯 SUCCESS! Reproduced bufio.Scanner: token too long error!")
-			logger.Errorf("   Error details: %v", err)
+			logger.Errorf("   Error details: %w", err)
 		}
 	} else {
 		logger.Info("✅ Navigate tool call completed")
@@ -170,7 +169,7 @@ func testAgentPlaywrightScenario(config *mcpclient.MCPConfig, logger utils.Exten
 	// Validate and get provider
 	llmProvider, err := llm.ValidateProvider(provider)
 	if err != nil {
-		return fmt.Errorf("invalid LLM provider: %v", err)
+		return fmt.Errorf("invalid LLM provider: %w", err)
 	}
 
 	// Set default model if not specified
@@ -213,7 +212,7 @@ func testAgentPlaywrightScenario(config *mcpclient.MCPConfig, logger utils.Exten
 	// Create the agent wrapper
 	testAgent, err := agent.NewLLMAgentWrapper(agentCtx, agentConfig, tracer, logger)
 	if err != nil {
-		return fmt.Errorf("failed to create agent: %v", err)
+		return fmt.Errorf("failed to create agent: %w", err)
 	}
 
 	logger.Info("✅ Agent created successfully", map[string]interface{}{
@@ -232,18 +231,18 @@ func testAgentPlaywrightScenario(config *mcpclient.MCPConfig, logger utils.Exten
 	defer testCancel()
 
 	logger.Info("🔧 Executing test query (this might trigger the bufio.Scanner error)...")
-	response, err := testAgent.InvokeWithHistory(testCtx, []llms.MessageContent{
+	response, err := testAgent.InvokeWithHistory(testCtx, []llmtypes.MessageContent{
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: testQuery}},
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: testQuery}},
 		},
 	})
 	if err != nil {
-		logger.Errorf("❌ Test query failed: %v", err)
+		logger.Errorf("❌ Test query failed: %w", err)
 		// Check if this is the bufio.Scanner error we're looking for
 		if strings.Contains(err.Error(), "bufio.Scanner") && strings.Contains(err.Error(), "token too long") {
 			logger.Error("🎯 SUCCESS! Reproduced bufio.Scanner: token too long error in agent!")
-			logger.Errorf("   Error details: %v", err)
+			logger.Errorf("   Error details: %w", err)
 		}
 		return err
 	}
@@ -283,7 +282,7 @@ func testLargeOutputStress(config *mcpclient.MCPConfig, logger utils.ExtendedLog
 	client := mcpclient.New(*playwrightConfig, logger)
 
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect for stress test: %v", err)
+		return fmt.Errorf("failed to connect for stress test: %w", err)
 	}
 	defer client.Close()
 
@@ -326,7 +325,7 @@ func testLargeOutputStress(config *mcpclient.MCPConfig, logger utils.ExtendedLog
 			if strings.Contains(err.Error(), "bufio.Scanner") && strings.Contains(err.Error(), "token too long") {
 				logger.Error("🎯 SUCCESS! Reproduced bufio.Scanner: token too long error in stress test!")
 				logger.Errorf("   Scenario: %s", scenario.name)
-				logger.Errorf("   Error details: %v", err)
+				logger.Errorf("   Error details: %w", err)
 			}
 		} else {
 			logger.Infof("✅ %s completed", scenario.name)

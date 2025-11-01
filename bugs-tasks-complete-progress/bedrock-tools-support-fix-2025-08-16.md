@@ -5,7 +5,7 @@
 The MCP agent was unable to execute tool calls when using AWS Bedrock (Claude models) because the langchaingo library's Bedrock implementation was not properly supporting function calling. 
 
 **Symptoms:**
-- Tools were passed to the LLM via `llms.WithTools()` but ignored
+- Tools were passed to the LLM via `llmtypes.WithTools()` but ignored
 - LLM generated text-based responses instead of structured tool calls
 - Agent detected "no tool calls" even when tools were available
 - Frontend showed no tool execution events
@@ -65,7 +65,7 @@ replace github.com/tmc/langchaingo => github.com/manishiitg/langchaingo v0.0.3
 ## **Testing Results**
 
 ### **Before Fix (v0.0.2):**
-- ❌ Tools passed via `llms.WithTools()` but ignored
+- ❌ Tools passed via `llmtypes.WithTools()` but ignored
 - ❌ LLM generated text responses like `<function_calls><invoke name="write_file">`
 - ❌ Agent detected "no tool calls detected"
 - ❌ No tool execution events

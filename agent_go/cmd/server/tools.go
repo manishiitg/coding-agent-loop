@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/pkg/mcpcache"
 	"mcp-agent/agent_go/pkg/mcpclient"
 )
@@ -53,79 +53,12 @@ type RemoveServerRequest struct {
 	Name string `json:"name"`
 }
 
-// --- TOOL MANAGEMENT FUNCTIONS ---
-
-// checkAllToolStatus checks the status of all tools
-func (api *StreamingAPI) checkAllToolStatus() {
-	// Use dynamic tool discovery instead of hardcoded tools
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	results := api.discoverAllTools(ctx)
-
-	api.toolStatusMux.Lock()
-	// Preserve existing results and update/add new ones
-	for _, result := range results {
-		api.toolStatus[result.Name] = result
-	}
-	api.toolStatusMux.Unlock()
-}
-
-// discoverAllTools connects to all configured MCP servers IN PARALLEL and
-// returns a consolidated slice of ToolStatus describing each server and its
-// available tools. This avoids the sequential connection penalty that
-// previously caused long wait-times when many servers were configured.
-func (api *StreamingAPI) discoverAllTools(ctx context.Context) []ToolStatus {
-	// Load merged config (base + user additions)
-	cfg, err := api.loadMergedConfig()
-	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %v", err)
-		// Fallback to base config only
-		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
-		cfg = api.mcpConfig
-	}
-	results := mcpclient.DiscoverAllToolsParallel(ctx, cfg, api.logger)
-	toolStatuses := make([]ToolStatus, 0, len(results))
-	for _, r := range results {
-		status := "ok"
-		errMsg := ""
-		fnNames := []string{}
-		desc := ""
-		if r.Error != nil {
-			status = "error"
-			errMsg = r.Error.Error()
-		} else {
-			for _, t := range r.Tools {
-				fnNames = append(fnNames, t.Name)
-			}
-		}
-		if srv, err := cfg.GetServer(r.ServerName); err == nil {
-			desc = srv.Description
-		}
-		toolStatuses = append(toolStatuses, ToolStatus{
-			Name:          r.ServerName,
-			Server:        r.ServerName,
-			Status:        status,
-			Error:         errMsg,
-			Description:   desc,
-			ToolsEnabled:  len(fnNames),
-			FunctionNames: fnNames,
-		})
-	}
-
-	// Note: Comprehensive cache events are emitted by the agent system
-	// during actual agent operations, not during administrative API calls
-	// This ensures proper event routing to the observer system
-
-	return toolStatuses
-}
-
 // discoverServerToolsDetailed connects to a specific MCP server and returns detailed tool information using mcpcache
 func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, serverName string) (*ToolStatus, error) {
 	// Load merged config to get server details
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %v", err)
+		api.logger.Errorf("Failed to load merged config: %w", err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -140,7 +73,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Create temporary merged config file for mcpcache
 	tmpConfigPath, err := api.createTempMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to create temp merged config: %v", err)
+		api.logger.Errorf("Failed to create temp merged config: %w", err)
 		// Fallback to base config path
 		tmpConfigPath = api.mcpConfigPath
 	} else {
@@ -178,7 +111,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	functionNames := make([]string, 0, len(serverTools))
 
 	for _, tool := range serverTools {
-		// llms.Tool has a Function field that contains the actual tool information
+		// llmtypes.Tool has a Function field that contains the actual tool information
 		if tool.Function != nil {
 			functionNames = append(functionNames, tool.Function.Name)
 
@@ -249,7 +182,7 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %v", err)
+		api.logger.Errorf("Failed to load merged config: %w", err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -434,7 +367,7 @@ func (api *StreamingAPI) initializeToolCache() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %v", err)
+		api.logger.Errorf("Failed to load merged config: %w", err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -485,7 +418,7 @@ func (api *StreamingAPI) convertCacheEntryToToolStatus(entry *mcpcache.CacheEntr
 	toolDetails := make([]mcpclient.ToolDetail, 0, len(entry.Tools))
 
 	for _, tool := range entry.Tools {
-		// llms.Tool has a Function field that contains the actual tool information
+		// llmtypes.Tool has a Function field that contains the actual tool information
 		if tool.Function != nil {
 			functionNames = append(functionNames, tool.Function.Name)
 
@@ -540,14 +473,14 @@ func (api *StreamingAPI) convertCacheEntryToToolStatus(entry *mcpcache.CacheEntr
 
 // convertToolStatusToCacheEntry converts a ToolStatus to mcpcache.CacheEntry
 func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, serverName string) *mcpcache.CacheEntry {
-	// Convert ToolDetail to llms.Tool format using the centralized conversion function
+	// Convert ToolDetail to llmtypes.Tool format using the centralized conversion function
 	llmTools, err := mcpclient.ToolDetailsAsLLM(toolStatus.Tools)
 	if err != nil {
-		api.logger.Errorf("Failed to convert tool details to LLM tools: %v", err)
+		api.logger.Errorf("Failed to convert tool details to LLM tools: %w", err)
 		// Return empty cache entry on error
 		return &mcpcache.CacheEntry{
 			ServerName:   serverName,
-			Tools:        []llms.Tool{},
+			Tools:        []llmtypes.Tool{},
 			Prompts:      []mcp.Prompt{},
 			Resources:    []mcp.Resource{},
 			SystemPrompt: "",
@@ -557,7 +490,7 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 			Protocol:     "unknown",
 			ServerInfo:   make(map[string]interface{}),
 			IsValid:      false,
-			ErrorMessage: fmt.Sprintf("Tool conversion error: %v", err),
+			ErrorMessage: fmt.Sprintf("Tool conversion error: %w", err),
 		}
 	}
 
@@ -584,8 +517,8 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 }
 
 // extractServerTools extracts tools specific to a server from the aggregated tool list
-func (api *StreamingAPI) extractServerTools(allTools []llms.Tool, toolToServer map[string]string, serverName string) []llms.Tool {
-	var serverTools []llms.Tool
+func (api *StreamingAPI) extractServerTools(allTools []llmtypes.Tool, toolToServer map[string]string, serverName string) []llmtypes.Tool {
+	var serverTools []llmtypes.Tool
 	for _, tool := range allTools {
 		if tool.Function != nil {
 			if srv, exists := toolToServer[tool.Function.Name]; exists && srv == serverName {
@@ -629,7 +562,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %v", err)
+		api.logger.Errorf("Failed to load merged config: %w", err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig

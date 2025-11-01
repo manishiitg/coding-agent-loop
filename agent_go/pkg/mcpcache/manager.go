@@ -16,8 +16,9 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // CacheEntry represents a cached MCP server connection and its metadata
@@ -26,10 +27,10 @@ type CacheEntry struct {
 	ServerName string `json:"server_name"`
 
 	// Connection data
-	Tools        []llms.Tool    `json:"tools"`
-	Prompts      []mcp.Prompt   `json:"prompts"`
-	Resources    []mcp.Resource `json:"resources"`
-	SystemPrompt string         `json:"system_prompt"`
+	Tools        []llmtypes.Tool `json:"tools"`
+	Prompts      []mcp.Prompt    `json:"prompts"`
+	Resources    []mcp.Resource  `json:"resources"`
+	SystemPrompt string          `json:"system_prompt"`
 
 	// Metadata
 	CreatedAt    time.Time              `json:"created_at"`
@@ -380,7 +381,7 @@ func (cm *CacheManager) loadExistingCache() {
 	files, err := os.ReadDir(cm.cacheDir)
 	if err != nil {
 		if cm.logger != nil {
-			cm.logger.Debugf("Cache directory does not exist or cannot be read: %v", err)
+			cm.logger.Debugf("Cache directory does not exist or cannot be read: %w", err)
 		}
 		return
 	}
@@ -434,6 +435,7 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 
 // loadFromFile loads a cache entry from the filesystem
 func (cm *CacheManager) loadFromFile(cacheFile string) *CacheEntry {
+	//nolint:gosec // G304: cacheFile path is generated internally from validated inputs
 	data, err := os.ReadFile(cacheFile)
 	if err != nil {
 		if cm.logger != nil {

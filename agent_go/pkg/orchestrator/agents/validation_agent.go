@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // OrchestratorValidationAgent extends BaseOrchestratorAgent with validation-specific functionality
@@ -39,7 +38,7 @@ func NewOrchestratorValidationAgent(config *OrchestratorAgentConfig, logger util
 }
 
 // Execute executes the validation agent with validation-specific input processing
-func (va *OrchestratorValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (va *OrchestratorValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return va.ExecuteWithInputProcessor(ctx, templateVars, va.validationInputProcessor, conversationHistory)
 }
 
@@ -51,13 +50,13 @@ func (va *OrchestratorValidationAgent) validationInputProcessor(templateVars map
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing validation template: %v", err)
+		return fmt.Sprintf("Error parsing validation template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing validation template: %v", err)
+		return fmt.Sprintf("Error executing validation template: %w", err)
 	}
 
 	return result.String()

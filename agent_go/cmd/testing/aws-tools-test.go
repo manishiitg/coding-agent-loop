@@ -10,7 +10,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -48,7 +48,7 @@ This test ensures the complete MCP agent functionality is working correctly.`,
 		logger.Infof("Loading merged config from: %s", configPath)
 		config, err := mcpclient.LoadMergedConfig(configPath, logger)
 		if err != nil {
-			return fmt.Errorf("failed to load merged config: %v", err)
+			return fmt.Errorf("failed to load merged config: %w", err)
 		}
 
 		// Test all servers in config
@@ -81,7 +81,7 @@ This test ensures the complete MCP agent functionality is working correctly.`,
 
 			// Connect (automatically handles SSE, stdio, HTTP)
 			if err := client.Connect(ctx); err != nil {
-				logger.Errorf("❌ Failed to connect: %v", err)
+				logger.Errorf("❌ Failed to connect: %w", err)
 				continue
 			}
 
@@ -98,7 +98,7 @@ This test ensures the complete MCP agent functionality is working correctly.`,
 			// List tools with details
 			tools, err := client.ListTools(ctx)
 			if err != nil {
-				logger.Errorf("❌ Failed to list tools: %v", err)
+				logger.Errorf("❌ Failed to list tools: %w", err)
 				client.Close()
 				continue
 			}
@@ -124,7 +124,7 @@ This test ensures the complete MCP agent functionality is working correctly.`,
 			logger.Infof("📝 Testing prompts discovery...")
 			prompts, err := client.ListPrompts(ctx)
 			if err != nil {
-				logger.Errorf("❌ Failed to list prompts: %v", err)
+				logger.Errorf("❌ Failed to list prompts: %w", err)
 			} else {
 				logger.Infof("✅ Found %d prompts:", len(prompts))
 				totalPrompts += len(prompts)
@@ -137,7 +137,7 @@ This test ensures the complete MCP agent functionality is working correctly.`,
 			logger.Infof("📁 Testing resources discovery...")
 			resources, err := client.ListResources(ctx)
 			if err != nil {
-				logger.Errorf("❌ Failed to list resources: %v", err)
+				logger.Errorf("❌ Failed to list resources: %w", err)
 			} else {
 				logger.Infof("✅ Found %d resources:", len(resources))
 				totalResources += len(resources)
@@ -165,7 +165,7 @@ This test ensures the complete MCP agent functionality is working correctly.`,
 		// Test virtual tools functionality
 		logger.Infof("\n=== Virtual Tools Test ===")
 		if err := testVirtualTools(); err != nil {
-			logger.Errorf("❌ Virtual tools test failed: %v", err)
+			logger.Errorf("❌ Virtual tools test failed: %w", err)
 			return err
 		}
 
@@ -190,7 +190,7 @@ func testVirtualTools() error {
 	// Validate and get provider
 	llmProvider, err := llm.ValidateProvider(provider)
 	if err != nil {
-		return fmt.Errorf("invalid LLM provider: %v", err)
+		return fmt.Errorf("invalid LLM provider: %w", err)
 	}
 
 	// Set default model if not specified
@@ -234,7 +234,7 @@ func testVirtualTools() error {
 	// Create the agent wrapper
 	testAgent, err := agent.NewLLMAgentWrapper(agentCtx, agentConfig, tracer, logger)
 	if err != nil {
-		return fmt.Errorf("failed to create agent: %v", err)
+		return fmt.Errorf("failed to create agent: %w", err)
 	}
 
 	logger.Info("✅ Agent created successfully", map[string]interface{}{
@@ -246,7 +246,7 @@ func testVirtualTools() error {
 
 	expectedVirtualTools := []string{"get_prompt", "get_resource"}
 
-	logger.Infof("📊 Expected virtual tools: %v", expectedVirtualTools)
+	logger.Infof("📊 Expected virtual tools: %w", expectedVirtualTools)
 
 	// Test prompt access functionality
 	logger.Infof("🧪 Testing prompt access functionality...")
@@ -259,14 +259,14 @@ func testVirtualTools() error {
 	testCtx, testCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer testCancel()
 
-	response, err := testAgent.InvokeWithHistory(testCtx, []llms.MessageContent{
+	response, err := testAgent.InvokeWithHistory(testCtx, []llmtypes.MessageContent{
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: testQuery}},
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: testQuery}},
 		},
 	})
 	if err != nil {
-		logger.Errorf("❌ Test query failed: %v", err)
+		logger.Errorf("❌ Test query failed: %w", err)
 		// Don't return error here as it might be due to AWS auth issues
 	} else {
 		logger.Infof("✅ Test query completed successfully")

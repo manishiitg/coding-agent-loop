@@ -16,6 +16,7 @@ interface LLMState extends StoreActions {
   bedrockConfig: ExtendedLLMConfiguration
   openaiConfig: ExtendedLLMConfiguration
   vertexConfig: ExtendedLLMConfiguration
+  anthropicConfig: ExtendedLLMConfiguration
   
   // Custom models for each provider
   customBedrockModels: string[]
@@ -27,6 +28,7 @@ interface LLMState extends StoreActions {
   availableOpenRouterModels: string[]
   availableOpenAIModels: string[]
   availableVertexModels: string[]
+  availableAnthropicModels: string[]
   
   // Modal state
   showLLMModal: boolean
@@ -45,6 +47,7 @@ interface LLMState extends StoreActions {
   setBedrockConfig: (config: ExtendedLLMConfiguration) => void
   setOpenaiConfig: (config: ExtendedLLMConfiguration) => void
   setVertexConfig: (config: ExtendedLLMConfiguration) => void
+  setAnthropicConfig: (config: ExtendedLLMConfiguration) => void
   setShowLLMModal: (show: boolean) => void
   loadDefaultsFromBackend: () => Promise<void>
   
@@ -64,7 +67,7 @@ interface LLMState extends StoreActions {
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
-  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex', apiKey: string, modelId?: string) => Promise<{valid: boolean, error: string | null}>
+  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string) => Promise<{valid: boolean, error: string | null}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -112,6 +115,13 @@ export const useLLMStore = create<LLMState>()(
           cross_provider_fallback: undefined,
           api_key: ''
         },
+        anthropicConfig: {
+          provider: 'anthropic',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: ''
+        },
         
         // Custom models for each provider
         customBedrockModels: [],
@@ -123,6 +133,7 @@ export const useLLMStore = create<LLMState>()(
         availableOpenRouterModels: [],
         availableOpenAIModels: [],
         availableVertexModels: [],
+        availableAnthropicModels: [],
         
         // Modal state
         showLLMModal: false,
@@ -151,6 +162,10 @@ export const useLLMStore = create<LLMState>()(
 
         setVertexConfig: (config) => {
           set({ vertexConfig: config, error: null })
+        },
+
+        setAnthropicConfig: (config) => {
+          set({ anthropicConfig: config, error: null })
         },
 
         setShowLLMModal: (show) => {
@@ -212,10 +227,18 @@ export const useLLMStore = create<LLMState>()(
                 cross_provider_fallback: undefined,
                 api_key: ''
               },
+              anthropicConfig: defaults.anthropic_config || {
+                provider: 'anthropic',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+              },
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter,
               availableOpenAIModels: defaults.available_models.openai,
               availableVertexModels: defaults.available_models.vertex || [],
+              availableAnthropicModels: defaults.available_models.anthropic || [],
               defaultsLoaded: true,
               error: null,
               isLoadingLLMs: false

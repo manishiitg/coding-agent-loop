@@ -112,7 +112,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	c.logger.Debugf("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type)
 	err := c.underlyingBridge.HandleEvent(ctx, event)
 	if err != nil {
-		c.logger.Warnf("⚠️ ContextAwareBridge: Error forwarding event %s: %v", event.Type, err)
+		c.logger.Warnf("⚠️ ContextAwareBridge: Error forwarding event %s: %w", event.Type, err)
 	} else {
 		c.logger.Debugf("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type)
 	}

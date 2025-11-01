@@ -8,8 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tmc/langchaingo/llms"
-
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 )
 
@@ -26,12 +25,12 @@ type LangchaingoStructuredOutputConfig struct {
 // LangchaingoStructuredOutputGenerator handles structured output generation using Langchaingo
 type LangchaingoStructuredOutputGenerator struct {
 	config LangchaingoStructuredOutputConfig
-	llm    llms.Model
+	llm    llmtypes.Model
 	logger utils.ExtendedLogger
 }
 
 // NewLangchaingoStructuredOutputGenerator creates a new structured output generator using Langchaingo
-func NewLangchaingoStructuredOutputGenerator(llm llms.Model, config LangchaingoStructuredOutputConfig, logger utils.ExtendedLogger) *LangchaingoStructuredOutputGenerator {
+func NewLangchaingoStructuredOutputGenerator(llm llmtypes.Model, config LangchaingoStructuredOutputConfig, logger utils.ExtendedLogger) *LangchaingoStructuredOutputGenerator {
 	return &LangchaingoStructuredOutputGenerator{
 		config: config,
 		llm:    llm,
@@ -47,17 +46,17 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 	sog.logger.Infof("Enhanced prompt length: %d chars", len(enhancedPrompt))
 
 	// Always use JSON mode for consistent output
-	messages := []llms.MessageContent{
+	messages := []llmtypes.MessageContent{
 		{
-			Role: llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{
-				llms.TextPart("You are a helpful assistant that generates structured JSON output according to the specified schema. Always respond with valid JSON only, no additional text or explanations."),
+			Role: llmtypes.ChatMessageTypeSystem,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "You are a helpful assistant that generates structured JSON output according to the specified schema. Always respond with valid JSON only, no additional text or explanations."},
 			},
 		},
 		{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextPart(enhancedPrompt),
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: enhancedPrompt},
 			},
 		},
 	}
@@ -71,15 +70,15 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 	}
 
 	// Generate response with JSON mode and max_tokens
-	opts := []llms.CallOption{
-		llms.WithJSONMode(),
-		llms.WithMaxTokens(maxTokens),
+	opts := []llmtypes.CallOption{
+		llmtypes.WithJSONMode(),
+		llmtypes.WithMaxTokens(maxTokens),
 	}
 
 	sog.logger.Infof("Structured output max_tokens: %d", maxTokens)
 	response, err := sog.llm.GenerateContent(ctx, messages, opts...)
 	if err != nil {
-		sog.logger.Errorf("LLM call failed: %v", err)
+		sog.logger.Errorf("LLM call failed: %w", err)
 		return "", fmt.Errorf("failed to generate structured output: %w", err)
 	}
 
@@ -87,7 +86,7 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 }
 
 // extractContent extracts content from the LLM response
-func (sog *LangchaingoStructuredOutputGenerator) extractContent(response *llms.ContentResponse) (string, error) {
+func (sog *LangchaingoStructuredOutputGenerator) extractContent(response *llmtypes.ContentResponse) (string, error) {
 	// Check if we have a valid response
 	if response == nil || len(response.Choices) == 0 {
 		sog.logger.Errorf("No response or choices")
@@ -283,9 +282,10 @@ func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput 
 	a.Logger.Infof("🔍 JSON PARSING DEBUG: JSON output length: %d chars", len(jsonOutput))
 	a.Logger.Infof("🔍 JSON PARSING DEBUG: JSON output content: %s", jsonOutput)
 
-	// Validate JSON before parsing
-	if err := json.Unmarshal([]byte(jsonOutput), &map[string]interface{}{}); err != nil {
-		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON validation failed: %v", err)
+	// Validate JSON before parsing (using interface{} to support both objects and arrays)
+	var jsonValidator interface{}
+	if err := json.Unmarshal([]byte(jsonOutput), &jsonValidator); err != nil {
+		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON validation failed: %w", err)
 		var zero T
 		return zero, fmt.Errorf("invalid JSON structure: %w", err)
 	}
@@ -294,7 +294,7 @@ func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput 
 	// Parse JSON back to the target type
 	var result T
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
-		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON unmarshaling failed: %v", err)
+		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON unmarshaling failed: %w", err)
 		var zero T
 		return zero, fmt.Errorf("failed to parse structured output: %w", err)
 	}

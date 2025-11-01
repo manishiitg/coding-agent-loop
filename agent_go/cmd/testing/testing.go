@@ -96,6 +96,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(langfuseCmd)
 	TestingCmd.AddCommand(bedrockCmd)
 	TestingCmd.AddCommand(vertexCmd)
+	TestingCmd.AddCommand(anthropicCmd)
 	TestingCmd.AddCommand(awsTestCmd)
 	TestingCmd.AddCommand(mcpCacheTestCmd) // MCP Connection Caching Test
 	TestingCmd.AddCommand(exaTestCmd)
@@ -105,6 +106,10 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(TokenUsageTestCmd)
 	TestingCmd.AddCommand(maxTokensFlexibilityCmd)
 	TestingCmd.AddCommand(llmToolCallTestCmd)
+	TestingCmd.AddCommand(openaiToolCallTestCmd)
+	TestingCmd.AddCommand(openaiMultiTurnToolTestCmd)
+	TestingCmd.AddCommand(genaiMultiTurnToolTestCmd)
+	TestingCmd.AddCommand(bedrockMultiTurnToolTestCmd)
 	TestingCmd.AddCommand(debugExternalCmd)
 	TestingCmd.AddCommand(customToolsTestCmd)
 	TestingCmd.AddCommand(streamingTracerCmd)

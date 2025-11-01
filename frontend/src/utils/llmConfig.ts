@@ -1,4 +1,5 @@
 // Shared LLM configuration utilities
+import type { LLMOption } from '../types/llm'
 
 // Available models for each provider (shared with sidebar)
 export const OPENROUTER_MODELS = [
@@ -21,6 +22,11 @@ export const VERTEX_MODELS = [
   "gemini-2.5-pro"
 ];
 
+export const ANTHROPIC_MODELS = [
+  "claude-sonnet-4-5-20250929",
+  "claude-haiku-4-5-20251001"
+];
+
 // Get available models for a provider
 export const getAvailableModels = (provider: string): string[] => {
   switch (provider) {
@@ -38,6 +44,8 @@ export const getAvailableModels = (provider: string): string[] => {
       return OPENAI_MODELS;
     case "vertex":
       return VERTEX_MODELS;
+    case "anthropic":
+      return ANTHROPIC_MODELS;
     default:
       return [];
   }
@@ -86,6 +94,13 @@ export const getAllAvailableLLMs = (): LLMOption[] => {
       model,
       label: `Vertex - ${model}`,
       description: 'Google Vertex AI Gemini model'
+    })),
+    // Anthropic models
+    ...ANTHROPIC_MODELS.map(model => ({
+      provider: 'anthropic' as const,
+      model,
+      label: `Anthropic - ${model}`,
+      description: 'Anthropic Claude model'
     }))
   ];
 };
@@ -93,13 +108,15 @@ export const getAllAvailableLLMs = (): LLMOption[] => {
 // Get fallback providers for a given provider
 export const getFallbackProviders = (currentProvider: string): string[] => {
   if (currentProvider === "openrouter") {
-    return ["openai", "bedrock", "vertex"];
+    return ["openai", "bedrock", "vertex", "anthropic"];
   } else if (currentProvider === "bedrock") {
-    return ["openrouter", "openai", "vertex"];
+    return ["openrouter", "openai", "vertex", "anthropic"];
   } else if (currentProvider === "openai") {
-    return ["openrouter", "bedrock", "vertex"];
+    return ["openrouter", "bedrock", "vertex", "anthropic"];
   } else if (currentProvider === "vertex") {
-    return ["openrouter", "openai", "bedrock"];
+    return ["openrouter", "openai", "bedrock", "anthropic"];
+  } else if (currentProvider === "anthropic") {
+    return ["openrouter", "openai", "bedrock", "vertex"];
   }
   return [];
 };

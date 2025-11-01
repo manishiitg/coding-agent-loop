@@ -8,9 +8,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"mcp-agent/agent_go/pkg/logger"
-	"mcp-agent/agent_go/pkg/mcpagent"
 )
 
 var maxTokensFlexibilityCmd = &cobra.Command{
@@ -44,7 +41,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	if logFile != "" {
 		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			log.Fatalf("Failed to open log file: %v", err)
+			log.Fatalf("Failed to open log file: %w", err)
 		}
 		defer file.Close()
 		log.SetOutput(file)
@@ -62,14 +59,9 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	log.Printf("🔧 Automatic Langfuse Setup - tracing_provider: langfuse, langfuse_debug: true")
 
 	// Initialize tracer based on environment (Langfuse if available, otherwise noop)
-	// Create a logger for the tracer initialization
-	testLogger, err := logger.CreateLogger("", "info", "text", false)
-	if err != nil {
-		log.Printf("⚠️ Failed to create logger for tracer: %v, using noop tracer", err)
-	} else {
-		_ = InitializeTracer(testLogger)
-		log.Printf("✅ Observability tracer initialized successfully")
-	}
+	// Use test logger which is already initialized via InitTestLogger above
+	// For now, we skip explicit tracer initialization since environment variables are set
+	// and the tracer will be initialized automatically when needed
 
 	// Parse servers
 	servers := parseServers(serversFlag)
@@ -80,7 +72,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 1: Test without max_tokens (flexible handling)
 	log.Printf("\n🧪 Test 1: Testing without explicit max_tokens")
 	if err := testWithoutMaxTokens(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 1 failed: %v", err)
+		log.Printf("❌ Test 1 failed: %w", err)
 	} else {
 		log.Printf("✅ Test 1 passed: APIs work without explicit max_tokens")
 	}
@@ -88,7 +80,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 2: Test with reasonable defaults
 	log.Printf("\n🧪 Test 2: Testing with reasonable default max_tokens")
 	if err := testWithReasonableDefaults(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 2 failed: %v", err)
+		log.Printf("❌ Test 2 failed: %w", err)
 	} else {
 		log.Printf("✅ Test 2 passed: APIs work with reasonable defaults")
 	}
@@ -96,7 +88,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 3: Test with flexible token handling
 	log.Printf("\n🧪 Test 3: Testing with flexible token handling")
 	if err := testFlexibleTokenHandling(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 3 failed: %v", err)
+		log.Printf("❌ Test 3 failed: %w", err)
 	} else {
 		log.Printf("✅ Test 3 passed: Flexible token handling works")
 	}
@@ -104,7 +96,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 4: Test provider-specific token handling
 	log.Printf("\n🧪 Test 4: Testing provider-specific token handling")
 	if err := testProviderSpecificTokenHandling(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 4 failed: %v", err)
+		log.Printf("❌ Test 4 failed: %w", err)
 	} else {
 		log.Printf("✅ Test 4 passed: Provider-specific token handling works")
 	}
@@ -112,7 +104,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 5: Test with very large prompts
 	log.Printf("\n🧪 Test 5: Testing with very large prompts")
 	if err := testLargePromptHandling(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 5 failed: %v", err)
+		log.Printf("❌ Test 5 failed: %w", err)
 	} else {
 		log.Printf("✅ Test 5 passed: Large prompt handling works")
 	}
@@ -401,60 +393,20 @@ func generateVeryLargePrompt() string {
 	return prompt.String()
 }
 
-func createTestAgent(provider string, servers []string, verbose bool) (*mcpagent.Agent, error) {
-	// For this test, we'll use a simpler approach that validates the concept
-	// without requiring full MCP server setup
-
-	if verbose {
-		log.Printf("  🔧 Validating max_tokens flexibility concept")
-		log.Printf("  🔧 This test demonstrates that hardcoded limits aren't required")
-	}
-
-	// Instead of creating a full agent, we'll validate the concept
-	// that max_tokens handling should be flexible
-
-	log.Printf("  ✅ Max tokens flexibility concept validated")
-	log.Printf("  ✅ APIs should work without explicit max_tokens constraints")
-	log.Printf("  ✅ Hardcoded token limits are not required for functionality")
-
-	// Return nil since we're focusing on concept validation
-	// In a real scenario, you would create the agent with proper MCP configuration
-	return nil, nil
-}
-
-func getDefaultModelForProvider(provider string) string {
-	switch provider {
-	case "bedrock":
-		return "anthropic.claude-3-5-sonnet-20241022-v1:0"
-	case "openai":
-		return "gpt-4o"
-	case "openrouter":
-		return "anthropic/claude-3-5-sonnet"
-	case "anthropic":
-		return "claude-3-5-sonnet-20241022"
-	default:
-		return "anthropic.claude-3-5-sonnet-20241022-v1:0"
-	}
-}
-
+// parseServers parses a comma-separated string of server names into a slice
 func parseServers(serversFlag string) []string {
 	if serversFlag == "" {
-		return []string{"citymall-aws-mcp"}
+		return []string{}
 	}
 
-	if serversFlag == "all" {
-		return []string{"citymall-aws-mcp", "citymall-github-mcp", "citymall-db-mcp"}
-	}
-
-	// Parse comma-separated list
-	servers := []string{}
-	for _, server := range strings.Split(serversFlag, ",") {
-		server = strings.TrimSpace(server)
-		if server != "" {
-			servers = append(servers, server)
+	parts := strings.Split(serversFlag, ",")
+	servers := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			servers = append(servers, trimmed)
 		}
 	}
-
 	return servers
 }
 

@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // CreateHumanTools creates human interaction tools
-func CreateHumanTools() []llms.Tool {
-	var humanTools []llms.Tool
+func CreateHumanTools() []llmtypes.Tool {
+	var humanTools []llmtypes.Tool
 
 	// Add human_feedback tool
-	humanFeedbackTool := llms.Tool{
+	humanFeedbackTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "human_feedback",
 			Description: "Use then when there is no option except to get human input, when you are stuck and need to ask a question that requires human input. This tool will pause execution until the user provides input via the UI. Ideal for things like OTP, 2FA, etc.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"message_for_user": map[string]interface{}{
@@ -31,7 +31,7 @@ func CreateHumanTools() []llms.Tool {
 					},
 				},
 				"required": []string{"message_for_user", "unique_id"},
-			},
+			}),
 		},
 	}
 	humanTools = append(humanTools, humanFeedbackTool)

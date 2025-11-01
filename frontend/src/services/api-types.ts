@@ -3,11 +3,11 @@ import type { PollingEventSchema } from '../generated/events-bridge'
 
 // LLM Configuration types
 export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex'
+    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
     models: string[]
   }
   // API keys for each provider
@@ -18,6 +18,7 @@ export interface LLMConfiguration {
       region: string
       // AWS credentials handled via IAM roles
     }
+    anthropic?: string
   }
 }
 
@@ -38,7 +39,7 @@ export type OrchestratorExecutionMode = typeof EXECUTION_MODES[keyof typeof EXEC
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex'
+  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic'
   model_id?: string
   temperature?: number
   max_turns?: number
@@ -68,17 +69,19 @@ export interface LLMDefaultsResponse {
   bedrock_config: ExtendedLLMConfiguration
   openai_config: ExtendedLLMConfiguration
   vertex_config?: ExtendedLLMConfiguration
+  anthropic_config?: ExtendedLLMConfiguration
   available_models: {
     bedrock: string[]
     openrouter: string[]
     openai: string[]
     vertex?: string[]
+    anthropic?: string[]
   }
 }
 
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
-  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex'
+  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic'
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
 }
@@ -452,7 +455,7 @@ export interface UpdateChatSessionRequest {
 
 // Preset LLM Configuration types
 export interface PresetLLMConfig {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
   model_id: string
 }
 

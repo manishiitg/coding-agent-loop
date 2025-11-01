@@ -8,7 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/utils"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // AgentEventType represents the type of event in the agent flow
@@ -130,8 +130,8 @@ type ToolInfo struct {
 	Server      string `json:"server"`
 }
 
-// ConvertToolsToToolInfo converts llms.Tool to ToolInfo slice
-func ConvertToolsToToolInfo(tools []llms.Tool, toolToServer map[string]string) []ToolInfo {
+// ConvertToolsToToolInfo converts llmtypes.Tool to ToolInfo slice
+func ConvertToolsToToolInfo(tools []llmtypes.Tool, toolToServer map[string]string) []ToolInfo {
 	var toolInfos []ToolInfo
 	for _, tool := range tools {
 		serverName := "unknown"
@@ -169,8 +169,8 @@ func (e *ConversationTurnEvent) GetEventType() EventType {
 	return ConversationTurn
 }
 
-// serializeMessage converts llms.MessageContent to SerializedMessage
-func serializeMessage(msg llms.MessageContent) SerializedMessage {
+// serializeMessage converts llmtypes.MessageContent to SerializedMessage
+func serializeMessage(msg llmtypes.MessageContent) SerializedMessage {
 	serialized := SerializedMessage{
 		Role:  string(msg.Role),
 		Parts: []MessagePart{},
@@ -181,21 +181,20 @@ func serializeMessage(msg llms.MessageContent) SerializedMessage {
 			messagePart := MessagePart{}
 
 			switch p := part.(type) {
-			case llms.TextContent:
+			case llmtypes.TextContent:
 				messagePart.Type = "text"
 				messagePart.Content = p.Text
-			case llms.ToolCall:
+			case llmtypes.ToolCall:
 				messagePart.Type = "tool_call"
 				messagePart.Content = map[string]interface{}{
 					"id":            p.ID,
 					"function_name": p.FunctionCall.Name,
 					"function_args": p.FunctionCall.Arguments,
 				}
-			case llms.ToolCallResponse:
+			case llmtypes.ToolCallResponse:
 				messagePart.Type = "tool_response"
 				messagePart.Content = map[string]interface{}{
 					"tool_call_id": p.ToolCallID,
-					"name":         p.Name,
 					"content":      p.Content,
 				}
 			default:
@@ -716,12 +715,12 @@ func NewConversationErrorEvent(question, error string, turn int, context string,
 }
 
 // NewConversationTurnEvent creates a new ConversationTurnEvent
-func NewConversationTurnEvent(turn int, question string, messagesCount int, hasToolCalls bool, toolCallsCount int, tools []ToolInfo, messages []llms.MessageContent) *ConversationTurnEvent {
-	// Convert llms.MessageContent to SerializedMessage, filtering out system messages
+func NewConversationTurnEvent(turn int, question string, messagesCount int, hasToolCalls bool, toolCallsCount int, tools []ToolInfo, messages []llmtypes.MessageContent) *ConversationTurnEvent {
+	// Convert llmtypes.MessageContent to SerializedMessage, filtering out system messages
 	var serializedMessages []SerializedMessage
 	for _, msg := range messages {
 		// Skip system messages
-		if msg.Role == llms.ChatMessageTypeSystem {
+		if msg.Role == llmtypes.ChatMessageTypeSystem {
 			continue
 		}
 		serializedMessages = append(serializedMessages, serializeMessage(msg))
@@ -1214,6 +1213,8 @@ type ThrottlingDetectedEvent struct {
 	Attempt     int    `json:"attempt"`
 	MaxAttempts int    `json:"max_attempts"`
 	Duration    string `json:"duration"`
+	ErrorType   string `json:"error_type,omitempty"`  // "throttling", "empty_content", "connection_error", etc.
+	RetryDelay  string `json:"retry_delay,omitempty"` // Wait time before retry (e.g., "22.5s")
 }
 
 func (e *ThrottlingDetectedEvent) GetEventType() EventType {
@@ -1267,8 +1268,10 @@ func NewFallbackModelUsedEvent(turn int, originalModel, fallbackModel, provider,
 }
 
 // NewThrottlingDetectedEvent creates a new ThrottlingDetectedEvent
-func NewThrottlingDetectedEvent(turn int, modelID, provider string, attempt, maxAttempts int, duration time.Duration) *ThrottlingDetectedEvent {
-	return &ThrottlingDetectedEvent{
+// errorType can be "throttling", "empty_content", "connection_error", etc.
+// retryDelay is the wait time before retry (e.g., "22.5s"), optional
+func NewThrottlingDetectedEvent(turn int, modelID, provider string, attempt, maxAttempts int, duration time.Duration, errorType string, retryDelay time.Duration) *ThrottlingDetectedEvent {
+	event := &ThrottlingDetectedEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 		},
@@ -1279,6 +1282,13 @@ func NewThrottlingDetectedEvent(turn int, modelID, provider string, attempt, max
 		MaxAttempts: maxAttempts,
 		Duration:    duration.String(),
 	}
+	if errorType != "" {
+		event.ErrorType = errorType
+	}
+	if retryDelay > 0 {
+		event.RetryDelay = retryDelay.String()
+	}
+	return event
 }
 
 // NewTokenLimitExceededEvent creates a new TokenLimitExceededEvent
@@ -1848,4 +1858,29 @@ type BlockingHumanFeedbackEvent struct {
 
 func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {
 	return BlockingHumanFeedback
+}
+
+// TodoStep represents a todo step in the execution
+type TodoStep struct {
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	SuccessCriteria     string   `json:"success_criteria"`
+	WhyThisStep         string   `json:"why_this_step"`
+	ContextDependencies []string `json:"context_dependencies"`
+	ContextOutput       string   `json:"context_output"`
+	SuccessPatterns     []string `json:"success_patterns,omitempty"` // what worked (includes tools)
+	FailurePatterns     []string `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
+}
+
+// TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
+type TodoStepsExtractedEvent struct {
+	BaseEventData
+	TotalStepsExtracted int        `json:"total_steps_extracted"`
+	ExtractedSteps      []TodoStep `json:"extracted_steps"`
+	ExtractionMethod    string     `json:"extraction_method"`
+	PlanSource          string     `json:"plan_source"` // "existing_plan" or "new_plan"
+}
+
+func (e *TodoStepsExtractedEvent) GetEventType() EventType {
+	return TodoStepsExtracted
 }

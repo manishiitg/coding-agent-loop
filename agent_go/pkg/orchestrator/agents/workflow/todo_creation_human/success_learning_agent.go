@@ -3,12 +3,11 @@ package todo_creation_human
 import (
 	"context"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerSuccessLearningTemplate holds template variables for success learning prompts
@@ -46,7 +45,7 @@ func NewHumanControlledTodoPlannerSuccessLearningAgent(config *agents.Orchestrat
 }
 
 // Execute implements the OrchestratorAgent interface
-func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables
 	stepTitle := templateVars["StepTitle"]
 	stepDescription := templateVars["StepDescription"]
@@ -59,6 +58,11 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 	validationResult := templateVars["ValidationResult"]
 	currentObjective := templateVars["CurrentObjective"]
 	variableNames := templateVars["VariableNames"]
+	learningDetailLevel := templateVars["LearningDetailLevel"]
+	// Default to "general" if not provided
+	if learningDetailLevel == "" {
+		learningDetailLevel = "general"
+	}
 
 	// Prepare template variables
 	successLearningTemplateVars := map[string]string{
@@ -73,6 +77,7 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 		"ValidationResult":        validationResult,
 		"CurrentObjective":        currentObjective,
 		"VariableNames":           variableNames,
+		"LearningDetailLevel":     learningDetailLevel,
 	}
 
 	// Create template data for success learning
@@ -96,6 +101,15 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 // successLearningInputProcessor creates the success learning analysis prompt
 func (agent *HumanControlledTodoPlannerSuccessLearningAgent) successLearningInputProcessor(templateVars map[string]string) string {
 	return `# Success Learning Analysis Agent
+
+## 🎚️ **LEARNING DETAIL LEVEL: ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `EXACT MCP TOOLS` + "`" + `
+Extract complete tool calls with full argument JSON from execution history.`
+		}
+		return `GENERAL PATTERNS` + "`" + `
+Extract high-level approaches, strategies, and workflow patterns.`
+	}() + `
 
 ## 📋 **STEP CONTEXT**
 - **Title**: ` + templateVars["StepTitle"] + `
@@ -131,18 +145,39 @@ The updated plan must maintain variable placeholders, not resolved values.
 
 ## 🧠 **YOUR TASK - SUCCESS ANALYSIS**
 
-This step was executed successfully! Analyze what made it work well and improve the plan.md file with these learnings.
+This step was executed successfully! Analyze what made it work well and document these learnings (do NOT update plan.md).
 
 ### **Success Analysis Process:**
-1. **Read current plan** - Examine plan.md to understand the current step
-2. **Parse ExecutionHistory** - Extract EXACT tool calls from the execution conversation history below
-3. **Identify success factors** - What exact tools with arguments, approaches, and patterns worked best
-4. **Extract tool calls** - Capture complete MCP tool invocations with ALL arguments that led to success
-5. **Update plan step** - Improve the step description, success criteria, and context dependencies based on what actually worked
-6. **Write improved plan** - Update plan.md with better step details
-7. **Document success patterns** - Write EXACT tool calls with arguments to learnings/success_patterns.md and learnings/step_X_learning.md
+1. **Read current plan** - Examine plan.md to understand the current step (read-only, do not modify)
+2. **Parse ExecutionHistory** - ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `Extract EXACT tool calls from the execution conversation history below`
+		}
+		return `Analyze the execution conversation to identify high-level approaches and patterns`
+	}() + `
+3. **Identify success factors** - ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `What exact tools with arguments, approaches, and patterns worked best`
+		}
+		return `What overall approaches, strategies, and patterns led to success`
+	}() + `
+4. **Extract learnings** - ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `Capture complete MCP tool invocations with ALL arguments that led to success`
+		}
+		return `Capture high-level paths to success, general patterns, and strategic approaches`
+	}() + `
+5. **Document success patterns** - ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `Write EXACT tool calls with arguments to learnings/success_patterns.md and learnings/step_X_learning.md`
+		}
+		return `Write general success patterns and approaches to learnings/success_patterns.md and learnings/step_X_learning.md`
+	}() + `
+6. **DO NOT update plan.md** - Plan updates are handled separately by other agents
 
-### **How to Extract Tool Calls from ExecutionHistory:**
+` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `### **How to Extract Tool Calls from ExecutionHistory:**
 The ExecutionHistory section below contains the complete execution conversation. Parse it to extract:
 
 **From "## Tool Call" sections, extract:**
@@ -163,110 +198,157 @@ Extract to Success Patterns:
 - fileserver.read_file with {"path":"/workspace/config.json","limit":100}
 ` + "```" + `
 
-**CRITICAL**: Extract the EXACT arguments JSON that was used, not a summary or description.
+**CRITICAL**: Extract the EXACT arguments JSON that was used, not a summary or description.`
+		}
+		return `### **How to Extract Success Patterns from ExecutionHistory:**
+The ExecutionHistory section below contains the complete execution conversation. Analyze it to identify:
 
-### **Plan Improvement Focus:**
-Update plan.md with the **final working approach** that achieved success by **enhancing the markdown content**:
+**Look for high-level patterns:**
+- **General Approach**: What overall strategy or method led to success
+- **Tool Categories**: What types of tools were most effective (e.g., file operations, API calls, database queries)
+- **Sequence Patterns**: What order or workflow was most successful
+- **Key Principles**: What general principles or best practices emerged
 
-**Example of Enhanced Step in Plan.md with EXACT Tool Calls:**
+**Example of General Pattern Extraction:**
+- Used file system tools to read configuration before making changes
+- Validated environment state before deploying
+- Used dry-run mode to test before applying changes
+- Checked resource status after operations to confirm success
 
-### Step 1: Deploy service
-- **Description**: Deploy using kubectl apply to production
-- **Success Criteria**: Service is running with all pods healthy (kubectl get pods shows 'Running' status for all pods), deployment rolled out successfully (kubectl rollout status returns 'successfully rolled out'), and endpoint is accessible (curl to service endpoint returns 200 OK response)
-- **Why This Step**: This step deploys the application to production. The dry-run validation is critical because it catches YAML syntax errors before applying. The rollout status check ensures the deployment progressed without errors. Pod health verification confirms the service is actually running.
-- **Context Dependencies**: ../validation/environment_check.md, ../execution/step_1_config.md
-- **Context Output**: ./execution/step_2_deployment.md
-- **Success Patterns** (EXACT tool calls with arguments extracted from execution):
-  - kubernetes.kubectl_apply with {"file":"deployment.yaml","namespace":"production","dry_run":"client"}
-  - kubernetes.kubectl_rollout_status with {"resource":"deployment","name":"myapp","namespace":"production"}
-  - kubernetes.kubectl_get with {"resource":"pods","namespace":"production","output":"json"}
-  - kubernetes.kubectl_get with {"resource":"namespace","name":"production","exists":true} to verify namespace
+**Focus**: Extract the general path to success, not specific tool arguments. Capture the "what" and "why" of the approach, not the exact "how" with specific parameters.`
+	}() + `
 
-**How to Enhance Markdown Plan:**
-1. **Description**: Keep concise, focus on core task
-2. **Success Criteria**: Add exact validation methods, expected outputs, and measurable indicators
-3. **Why This Step**: Explain why this specific approach worked and why each sub-step is important
-4. **Context Dependencies**: Update with actual files that were crucial for successful execution
-5. **Success Patterns**: 
-   - ONLY add this section if you identified specific tools, approaches, or patterns that led to success
-   - Extract EXACT tool names and arguments from ExecutionHistory
-   - Format: tool_name with {"argument1":"value1","argument2":"value2"}
-   - Include COMPLETE argument JSON from tool calls that worked
-   - Use exact format as shown in the example above
+### **Learning Documentation Focus:**
+Document the **final working approach** that achieved success in learnings files (do NOT update plan.md):
+
+**Example Enhanced Step:**
+` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `- **Description**: Deploy using kubectl apply to production
+- **Success Criteria**: All pods Running status, rollout successful, endpoint accessible
+- **Why This Step**: Dry-run catches syntax errors, rollout status ensures completion, health checks confirm service running
+- **Success Patterns**:
+  - kubernetes.kubectl_apply with {"file":"deployment.yaml","dry_run":"client"}
+  - kubernetes.kubectl_rollout_status with {"resource":"deployment","name":"myapp"}
+  - kubernetes.kubectl_get with {"resource":"pods","output":"json"}`
+		}
+		return `- **Description**: Deploy using kubectl apply to production
+- **Success Criteria**: All pods Running status, rollout successful, endpoint accessible
+- **Why This Step**: Dry-run validation prevents errors, status checks ensure completion, health verification confirms success
+- **Success Patterns**:
+  - Use dry-run validation before applying changes
+  - Verify prerequisites (namespace exists) before deployment
+  - Check status after operations to confirm success`
+	}() + `
+
+**Enhancement Guidelines:**
+- ONLY add Success Patterns if specific ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `tools with exact arguments`
+		}
+		return `approaches or strategies`
+	}() + ` were identified
+- Keep descriptions concise, focus on what worked
+- Integrate learnings directly into existing plan sections
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
 
 ## 📝 **REQUIRED OUTPUT FORMAT**
 
-Provide your response in this exact format:
-
 ## Success Analysis Summary
 
 ### What Worked Well:
-- [Specific tool or approach that was successful]
-- [Pattern or strategy that led to success]
-- [Key factor that made this execution successful]
-
-### Success Factors Identified:
-- [Tool that worked best for this type of task]
-- [Approach that was most effective]
-- [Context or dependency that was crucial]
+- [Key factors that made execution successful]
+- [Patterns or strategies that led to success]
 
 ### Best Practices Captured:
-- [Successful pattern that should be repeated]
-- [EXACT tool calls with complete arguments that led to success]
-- [Tool combination that worked well with specific configurations]
-- [Strategy that led to efficient execution]
+- ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `[Tool calls with complete arguments: tool_name with {"arg":"value"}]`
+		}
+		return `[General approaches and workflow patterns]`
+	}() + `
 
 ---
 
-## Plan Improvement Actions
+## Learning Documentation Actions
 
-### Plan Updates Made:
-- [Enhanced markdown step descriptions with specific tools, commands, and step-by-step approach that worked]
-- [Enhanced success criteria with exact validation methods and expected outputs]
-- [Enhanced why_this_step sections with insights about why this approach worked best]
-- [Updated context dependencies with actual files that were crucial for success]
-- [Added Success Patterns section with EXACT tool calls including complete argument JSON from ExecutionHistory]
-- [Extracted exact tool invocations: format tool_name with {"arg":"value"} from successful tool calls]
+### Learnings Documented:
+- [Success patterns captured: ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `specific tools, commands, and step-by-step approach that worked`
+		}
+		return `general approaches and strategies that led to success`
+	}() + `]
+- [Validation methods that worked: ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `exact validation methods and expected outputs`
+		}
+		return `validation approaches and expected outcomes (high-level)`
+	}() + `]
+- [Insights about why this approach worked best]
+- [Context dependencies that were crucial for success]
+- [Success Patterns documented with ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `EXACT tool calls including complete argument JSON from ExecutionHistory`
+		}
+		return `general patterns and approaches extracted from ExecutionHistory`
+	}() + `]
 
-**NOTE**: Update plan.md file - do NOT create new files or change file structure
+**NOTE**: Document learnings in learnings/ folder files - do NOT update plan.md file
 
-### Success Patterns Documented (EXACT tool calls extracted):
-- [Tool name with complete argument JSON: tool_name with {"arg":"value"}]
+### Success Patterns Documented (` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `EXACT tool calls extracted`
+		}
+		return `General patterns extracted`
+	}() + `):
+- ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `[Tool name with complete argument JSON: tool_name with {"arg":"value"}]
 - [Tool combinations that worked well with specific configurations]
 - [Patterns and best practices discovered from actual execution]
-- [Context dependencies that were crucial for success]
+- [Context dependencies that were crucial for success]`
+		}
+		return `[General approach or strategy that led to success]
+- [High-level workflow or sequence that worked well]
+- [Key principles or patterns discovered from execution]
+- [Context dependencies that were crucial for success]`
+	}() + `
 
 ---
 
 ## 📁 **FILE PERMISSIONS (Success Learning Agent)**
 
 **READ:**
-- planning/plan.md (current markdown plan)
-- validation/step_X_validation_report.md (validation results with execution summary)
+- planning/plan.md (current markdown plan) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/planning/plan.md
+- validation/step_X_validation_report.md (validation results with execution summary) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/validation/step_X_validation_report.md
 
 **WRITE:**
-- learnings/success_patterns.md (append cumulative success patterns)
-- learnings/step_X_learning.md (create detailed learning for this step)
-- planning/plan.md (update with improvements based on what worked)
+- learnings/success_patterns.md (append cumulative success patterns) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/success_patterns.md
+- learnings/step_X_learning.md (create detailed learning for this step) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/step_X_learning.md
 
 **RESTRICTIONS:**
-- Learning outputs go to learnings/ folder
-- Plan improvements go to planning/plan.md
+- Learning outputs go to learnings/ folder ONLY
+- **DO NOT** update or modify planning/plan.md (plan updates are handled separately)
+- **DO NOT** read or write files in execution/ folder (execution agent handles those)
 - Read execution details from validation reports (which contain execution conversation)
 - Focus on capturing success patterns and best practices
+- All file paths must be relative to ` + templateVars["WorkspacePath"] + `/todo_creation_human/
 
 ---
 
-**Important**: 
-1. **Focus on success**: Analyze what made this execution successful
-2. **Extract EXACT tools**: Parse ExecutionHistory and extract complete tool calls with full argument JSON
-3. **Update plan.md**: Improve the markdown plan by enhancing step descriptions, success criteria, and context dependencies
-4. **Markdown format**: Update the markdown plan.md file - do NOT create JSON files
-5. **Document in learnings/**: Write EXACT tool calls with arguments to learnings/success_patterns.md and step details to learnings/step_X_learning.md
-6. **Tool format**: Use exact format tool_name with {"arg":"value"} - extract COMPLETE argument JSON from ExecutionHistory
-7. **Success Patterns Section**: ONLY add "- **Success Patterns**:" section if you identified specific MCP tools with exact arguments. Extract the COMPLETE argument JSON from successful tool calls in ExecutionHistory. Do NOT add empty, generic, or summarized patterns.
+**Key Requirements:**
+- Analyze what made execution successful and document learnings
+- **DO NOT** update planning/plan.md (plan updates are handled separately)
+- Document learnings ONLY in learnings/ folder
+- Focus on capturing success patterns that can be referenced later
+- ONLY add Success Patterns if meaningful ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `tool calls were identified - include complete argument JSON`
+		}
+		return `patterns were identified - focus on what and why, not exact tools`
+	}() + `
 `
 }

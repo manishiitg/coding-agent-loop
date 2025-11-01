@@ -610,22 +610,6 @@ func runTestLangfuse(cmd *cobra.Command, args []string) {
 	fmt.Println("\n✅ All selected tests passed! Langfuse integration is working properly.")
 }
 
-// getMCPServerForOperation returns the appropriate MCP server for a given operation
-func getMCPServerForOperation(operation string) string {
-	switch operation {
-	case "web-search":
-		return "tavily-search"
-	case "airbnb-search":
-		return "airbnb"
-	case "file-creation", "file-verification":
-		return "filesystem"
-	case "memory-storage":
-		return "memory"
-	default:
-		return "unknown"
-	}
-}
-
 // displayObservationContent recursively displays the content of a map or slice
 func displayObservationContent(content interface{}, indent string) {
 	switch v := content.(type) {

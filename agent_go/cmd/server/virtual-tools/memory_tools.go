@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // MemoryAPIResponse represents the response structure from the memory API
@@ -41,16 +41,16 @@ type DeleteEpisodeRequest struct {
 }
 
 // CreateMemoryTools creates memory tools for React agents
-func CreateMemoryTools() []llms.Tool {
-	var memoryTools []llms.Tool
+func CreateMemoryTools() []llmtypes.Tool {
+	var memoryTools []llmtypes.Tool
 
 	// Add add_memory tool
-	addMemoryTool := llms.Tool{
+	addMemoryTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "add_memory",
 			Description: "Store important information in knowledge graph for future reference.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"name": map[string]interface{}{
@@ -72,18 +72,18 @@ func CreateMemoryTools() []llms.Tool {
 					},
 				},
 				"required": []string{"name", "content", "source_description"},
-			},
+			}),
 		},
 	}
 	memoryTools = append(memoryTools, addMemoryTool)
 
 	// Add search_episodes tool
-	searchEpisodesTool := llms.Tool{
+	searchEpisodesTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "search_memory",
 			Description: "Search knowledge graph for relevant past information and context.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"query": map[string]interface{}{
@@ -98,18 +98,18 @@ func CreateMemoryTools() []llms.Tool {
 					},
 				},
 				"required": []string{"query"},
-			},
+			}),
 		},
 	}
 	memoryTools = append(memoryTools, searchEpisodesTool)
 
 	// Add delete_memory tool
-	deleteMemoryTool := llms.Tool{
+	deleteMemoryTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "delete_memory",
 			Description: "Delete outdated or incorrect memories from the knowledge graph.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"episode_uuid": map[string]interface{}{
@@ -122,7 +122,7 @@ func CreateMemoryTools() []llms.Tool {
 					},
 				},
 				"required": []string{"episode_uuid"},
-			},
+			}),
 		},
 	}
 	memoryTools = append(memoryTools, deleteMemoryTool)

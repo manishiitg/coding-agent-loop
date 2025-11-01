@@ -57,8 +57,8 @@ This test ensures the Exa MCP server is working correctly with the specified too
 		// Connect to Exa server
 		logger.Infof("🔌 Connecting to Exa MCP server...")
 		if err := client.Connect(ctx); err != nil {
-			logger.Errorf("❌ Failed to connect to Exa server: %v", err)
-			return fmt.Errorf("exa server connection failed: %v", err)
+			logger.Errorf("❌ Failed to connect to Exa server: %w", err)
+			return fmt.Errorf("exa server connection failed: %w", err)
 		}
 
 		logger.Infof("✅ Successfully connected to Exa MCP server")
@@ -75,9 +75,9 @@ This test ensures the Exa MCP server is working correctly with the specified too
 		logger.Infof("\n🔧 Discovering Exa tools...")
 		tools, err := client.ListTools(ctx)
 		if err != nil {
-			logger.Errorf("❌ Failed to list tools: %v", err)
+			logger.Errorf("❌ Failed to list tools: %w", err)
 			client.Close()
-			return fmt.Errorf("failed to list exa tools: %v", err)
+			return fmt.Errorf("failed to list exa tools: %w", err)
 		}
 
 		logger.Infof("✅ Found %d tools:", len(tools))
@@ -175,7 +175,7 @@ This test ensures the Exa MCP server is working correctly with the specified too
 		// Test simple agent with Exa tools
 		logger.Infof("\n🤖 Testing simple agent with Exa tools...")
 		if err := testSimpleAgentWithExa(logger); err != nil {
-			logger.Warnf("Simple agent test failed: %v", err)
+			logger.Warnf("Simple agent test failed: %w", err)
 		}
 
 		return nil

@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // Variable represents a single variable definition
@@ -54,7 +53,7 @@ func NewVariableExtractionAgent(
 }
 
 // Execute extracts variables from objective
-func (vea *VariableExtractionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (vea *VariableExtractionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return vea.ExecuteWithInputProcessor(ctx, templateVars, vea.variableExtractionInputProcessor, conversationHistory)
 }
 
@@ -170,12 +169,12 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 	// Parse and execute the template
 	tmpl, err := template.New("variable_extraction").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing template: %v", err)
+		return fmt.Sprintf("Error parsing template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing template: %v", err)
+		return fmt.Sprintf("Error executing template: %w", err)
 	}
 
 	return result.String()

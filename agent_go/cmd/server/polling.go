@@ -56,7 +56,7 @@ func (api *StreamingAPI) handleRegisterObserver(w http.ResponseWriter, r *http.R
 
 	var req RegisterObserverRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
 		return
 	}
 
@@ -70,7 +70,7 @@ func (api *StreamingAPI) handleRegisterObserver(w http.ResponseWriter, r *http.R
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -120,7 +120,7 @@ func (api *StreamingAPI) handleGetEvents(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -157,7 +157,7 @@ func (api *StreamingAPI) handleGetObserverStatus(w http.ResponseWriter, r *http.
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -189,7 +189,7 @@ func (api *StreamingAPI) handleRemoveObserver(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -246,7 +246,7 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -283,7 +283,7 @@ func (api *StreamingAPI) handleReconnectSession(w http.ResponseWriter, r *http.R
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -321,7 +321,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 			return
 		}
 		return
@@ -339,7 +339,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }

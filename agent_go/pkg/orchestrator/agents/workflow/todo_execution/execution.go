@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // TodoExecutionTemplate holds template variables for todo execution prompts
@@ -113,7 +112,7 @@ Focus on executing this step effectively using proven approaches and avoiding fa
 	// Parse and execute the template
 	tmpl, err := template.New("todoExecution").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing template: %v", err)
+		return fmt.Sprintf("Error parsing template: %w", err)
 	}
 
 	var result strings.Builder
@@ -133,14 +132,14 @@ Focus on executing this step effectively using proven approaches and avoiding fa
 		"RunOption":               templateVars["RunOption"],
 	})
 	if err != nil {
-		return fmt.Sprintf("Error executing template: %v", err)
+		return fmt.Sprintf("Error executing template: %w", err)
 	}
 
 	return result.String()
 }
 
 // Execute processes the todo execution request using the input processor
-func (tea *TodoExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (tea *TodoExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use the base orchestrator agent's Execute method with our custom input processor
 	return tea.BaseOrchestratorAgent.ExecuteWithInputProcessor(ctx, templateVars, tea.todoExecutionInputProcessor, conversationHistory)
 }

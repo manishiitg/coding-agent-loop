@@ -17,7 +17,7 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/shared"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // TodoStepsExtractedEvent represents todo steps extracted from a plan
@@ -54,7 +54,7 @@ func NewTodoExecutionOrchestrator(
 	logger utils.ExtendedLogger,
 	_ observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (*TodoExecutionOrchestrator, error) {
 
@@ -114,7 +114,7 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 	// Revision loop for plan reader with human feedback
 	maxPlanRevisions := 5
 	var humanFeedback string
-	var conversationHistory []llms.MessageContent
+	var conversationHistory []llmtypes.MessageContent
 	var steps []TodoStep
 
 	for revisionAttempt := 1; revisionAttempt <= maxPlanRevisions; revisionAttempt++ {
@@ -136,9 +136,9 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 
 		// Add human feedback to conversation if provided
 		if humanFeedback != "" {
-			feedbackMessage := llms.MessageContent{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextContent{Text: humanFeedback}},
+			feedbackMessage := llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: humanFeedback}},
 			}
 			conversationHistory = append(conversationHistory, feedbackMessage)
 			teo.GetLogger().Infof("📝 Added human feedback to conversation history for revision %d", revisionAttempt)
@@ -207,7 +207,7 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 
 			// Execute this specific step
 			var err error
-			var conversationHistory []llms.MessageContent
+			var conversationHistory []llmtypes.MessageContent
 			executionResult, conversationHistory, err = teo.runStepExecutionPhase(ctx, step, i+1, len(steps), selectedRunFolder, runOption, validationResult)
 			if err != nil {
 				teo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, attempt, err)
@@ -250,7 +250,7 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 }
 
 // runStepExecutionPhase executes a single step using the execution agent
-func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, selectedRunFolder, runOption, previousFeedback string) (string, []llms.MessageContent, error) {
+func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, selectedRunFolder, runOption, previousFeedback string) (string, []llmtypes.MessageContent, error) {
 	executionAgent, err := teo.createExecutionAgent(ctx, step.Title, stepNumber, 0)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create execution agent: %w", err)
@@ -285,7 +285,7 @@ func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context,
 }
 
 // runStepValidationPhase validates a single step's execution using the validation agent
-func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, executionResult string, conversationHistory []llms.MessageContent) (*ValidationResponse, error) {
+func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, executionResult string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, error) {
 	validationAgent, err := teo.createValidationAgent(ctx, step.Title, stepNumber, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create validation agent: %w", err)
@@ -585,7 +585,7 @@ func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Co
 	// Emit through the context-aware bridge
 	bridge := teo.GetContextAwareBridge()
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		teo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %v", err)
+		teo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %w", err)
 	} else {
 		teo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
 	}

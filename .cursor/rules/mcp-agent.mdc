@@ -208,10 +208,10 @@ alwaysApply: true
 ### **Fallback LLM Streaming Logging Fix** ✅ **RESOLVED**
 **Issue**: Log files showed streaming-like behavior with fragmented debug messages even though no actual streaming was happening in the main code.
 
-**Root Cause**: The fallback LLM generation for ReAct agents was using streaming (`llms.WithStreamingFunc`) during fallback scenarios, causing each chunk to be logged individually via the `sendMessage` callback.
+**Root Cause**: The fallback LLM generation for ReAct agents was using streaming (`llmtypes.WithStreamingFunc`) during fallback scenarios, causing each chunk to be logged individually via the `sendMessage` callback.
 
 **Solution Applied**:
-1. **Removed Streaming from Fallback**: Eliminated `llms.WithStreamingFunc` usage in all fallback scenarios
+1. **Removed Streaming from Fallback**: Eliminated `llmtypes.WithStreamingFunc` usage in all fallback scenarios
 2. **Consistent Non-Streaming**: All agents now use non-streaming `GenerateContent` during fallback
 3. **Updated Comments**: Replaced outdated "For ReAct agents, use streaming in fallback" comments
 4. **Maintained Functionality**: Fallback logic still works, just without streaming overhead

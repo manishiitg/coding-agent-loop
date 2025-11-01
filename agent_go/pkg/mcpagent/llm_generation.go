@@ -6,17 +6,14 @@ import (
 	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/pkg/events"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/bedrock"
-	"github.com/tmc/langchaingo/llms/openai"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
-func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.MessageContent, opts []llms.CallOption, turn int, sendMessage func(string)) (*llms.ContentResponse, error, observability.UsageMetrics) {
+func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
 	// 🆕 DETAILED GENERATECONTENTWITHRETRY DEBUG LOGGING
 	logger := getLogger(a)
 	logger.Infof("🔄 [DEBUG] GenerateContentWithRetry START - Time: %v", time.Now())
@@ -394,13 +391,11 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// For ReAct agents, use streaming in fallback as well
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				if a.AgentMode == ReActAgent {
-					streamingOpts := append(opts, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
-						chunkStr := string(chunk)
-						sendMessage(chunkStr)
-						return nil
+					streamingOpts := append(opts, llmtypes.WithStreamingFunc(func(chunk string) {
+						sendMessage(chunk)
 					}))
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, streamingOpts...)
 				} else {
@@ -559,7 +554,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// For ReAct agents, use streaming in fallback as well
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					// Use non-streaming approach for all agents, including ReAct agents during fallback
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
@@ -653,8 +648,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 			if len(crossProviderFallbacks) > 0 {
 				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
 			}
-			sendMessage(fmt.Sprintf("   - Original error: %v", originalError))
-			sendMessage(fmt.Sprintf("   - Suggestion: Try reducing conversation history or input length"))
+			sendMessage("   - Original error: " + fmt.Sprint(originalError))
+			sendMessage("   - Suggestion: Try reducing conversation history or input length")
 
 			// Emit max token fallback all failed event (replaced span-based tracing)
 			maxTokenAllFailedEvent := &events.GenericEventData{
@@ -673,7 +668,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				},
 			}
 			a.EmitTypedEvent(ctx, maxTokenAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for max_token error: %v", originalError)
+			lastErr = fmt.Errorf("all fallback models failed for max_token error: %w", originalError)
 			break
 		}
 
@@ -688,7 +683,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 			throttlingStartTime := time.Now()
 
 			// Emit throttling detected event
-			throttlingEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(throttlingStartTime))
+			throttlingEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(throttlingStartTime), "throttling", 0)
 			a.EmitTypedEvent(ctx, throttlingEvent)
 
 			// Create throttling fallback event (replaced span-based tracing)
@@ -763,7 +758,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// Use non-streaming approach for all agents during fallback
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				// Use non-streaming approach for all agents, including ReAct agents during fallback
 				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
@@ -890,7 +885,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// Use non-streaming approach for all agents during fallback
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					// Use non-streaming approach for all agents, including ReAct agents during fallback
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
@@ -1076,11 +1071,11 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				},
 			}
 			a.EmitTypedEvent(ctx, throttlingMaxRetriesEvent)
-			lastErr = fmt.Errorf("all models failed after %d attempts: %v", maxRetries, err)
+			lastErr = fmt.Errorf("all models failed after %d attempts: %w", maxRetries, err)
 			break
 		}
 
-		// Handle empty content errors with fallback models
+		// Handle empty content errors with retry first (if retries available), then fallback models
 		if isEmptyContentError(err) {
 			logger.Infof("🔍 EMPTY CONTENT ERROR HANDLING STARTED")
 			logger.Infof("🔍 Error details: %s", err.Error())
@@ -1095,8 +1090,87 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 			// Track empty content error start time
 			emptyContentStartTime := time.Now()
 
-			// Emit empty content error event
-			emptyContentEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(emptyContentStartTime))
+			// 🆕 RETRY WITH SAME MODEL FIRST (if retries available)
+			// Use fixed 5 second delay for retries
+			if attempt < maxRetries-1 {
+				emptyContentRetryDelay := 5 * time.Second
+				if emptyContentRetryDelay > maxDelay {
+					emptyContentRetryDelay = maxDelay
+				}
+				logger.Infof("⏳ Empty content error: Waiting %v before retrying with same model %s (attempt %d/%d)", emptyContentRetryDelay, a.ModelID, attempt+1, maxRetries)
+
+				// Emit empty content error event with retry delay
+				emptyContentEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(emptyContentStartTime), "empty_content", emptyContentRetryDelay)
+				a.EmitTypedEvent(ctx, emptyContentEvent)
+
+				// Create retry delay event (replaced span-based tracing)
+				emptyContentRetryDelayEvent := &events.GenericEventData{
+					BaseEventData: events.BaseEventData{
+						Timestamp: time.Now(),
+					},
+					Data: map[string]interface{}{
+						"delay_duration": emptyContentRetryDelay.String(),
+						"attempt":        attempt + 1,
+						"max_retries":    maxRetries,
+						"operation":      "retry_delay",
+						"error_type":     "empty_content",
+						"model_id":       a.ModelID,
+						"provider":       string(a.provider),
+					},
+				}
+				a.EmitTypedEvent(ctx, emptyContentRetryDelayEvent)
+
+				sendMessage(fmt.Sprintf("\n⚠️ Empty content error detected (turn %d, attempt %d/%d). Waiting %v before retrying with same model...", turn, attempt+1, maxRetries, emptyContentRetryDelay))
+
+				// Wait with context cancellation support
+				retryTimer := time.NewTimer(emptyContentRetryDelay)
+				defer retryTimer.Stop()
+
+				select {
+				case <-ctx.Done():
+					logger.Infof("❌ Empty content retry cancelled - context done: %v", ctx.Err())
+					// Emit retry delay cancellation event
+					emptyContentRetryDelayCancelledEvent := &events.GenericEventData{
+						BaseEventData: events.BaseEventData{
+							Timestamp: time.Now(),
+						},
+						Data: map[string]interface{}{
+							"turn":       turn + 1,
+							"cancelled":  true,
+							"error":      ctx.Err().Error(),
+							"error_type": "empty_content",
+							"operation":  "retry_delay",
+						},
+					}
+					a.EmitTypedEvent(ctx, emptyContentRetryDelayCancelledEvent)
+					return nil, ctx.Err(), usage
+				case <-retryTimer.C:
+					logger.Infof("✅ Empty content retry delay completed, retrying with same model %s", a.ModelID)
+				}
+
+				// Emit retry delay completion event
+				emptyContentRetryDelayCompletedEvent := &events.GenericEventData{
+					BaseEventData: events.BaseEventData{
+						Timestamp: time.Now(),
+					},
+					Data: map[string]interface{}{
+						"turn":       turn + 1,
+						"completed":  true,
+						"error_type": "empty_content",
+						"operation":  "retry_delay",
+					},
+				}
+				a.EmitTypedEvent(ctx, emptyContentRetryDelayCompletedEvent)
+
+				sendMessage(fmt.Sprintf("\n🔄 Retrying with same model %s after %v delay (turn %d, attempt %d/%d)...", a.ModelID, emptyContentRetryDelay, turn, attempt+2, maxRetries))
+				continue // Retry in the main loop with same model
+			}
+
+			// No retries left, try fallback models
+			logger.Infof("❌ No retries left (attempt %d/%d), proceeding with fallback models", attempt+1, maxRetries)
+
+			// Emit empty content error event (no retry delay since we're going to fallback)
+			emptyContentEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(emptyContentStartTime), "empty_content", 0)
 			a.EmitTypedEvent(ctx, emptyContentEvent)
 
 			// Create empty content fallback event (replaced span-based tracing)
@@ -1116,7 +1190,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 			}
 			a.EmitTypedEvent(ctx, emptyContentFallbackEvent)
 
-			sendMessage(fmt.Sprintf("\n⚠️ Empty content error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries))
+			sendMessage("\n⚠️ Empty content error: All retries exhausted. Trying fallback models...")
 
 			// Phase 1: Try same-provider fallbacks first
 			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), string(a.provider)))
@@ -1168,7 +1242,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// Use non-streaming approach for all agents during fallback
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1296,7 +1370,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// Use non-streaming approach for all agents during fallback
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1376,8 +1450,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 			if len(crossProviderFallbacks) > 0 {
 				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
 			}
-			sendMessage(fmt.Sprintf("   - Original error: %v", err))
-			sendMessage(fmt.Sprintf("   - Suggestion: Try rephrasing your question or providing more context"))
+			sendMessage("   - Original error: " + err.Error())
+			sendMessage("   - Suggestion: Try rephrasing your question or providing more context")
 
 			// Emit empty content fallback all failed event (replaced span-based tracing)
 			emptyContentAllFailedEvent := &events.GenericEventData{
@@ -1397,7 +1471,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				},
 			}
 			a.EmitTypedEvent(ctx, emptyContentAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for empty content error: %v", err)
+			lastErr = fmt.Errorf("all fallback models failed for empty content error: %w", err)
 			break
 		}
 
@@ -1412,7 +1486,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 			connectionErrorStartTime := time.Now()
 
 			// Emit connection error detected event
-			connectionErrorEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(connectionErrorStartTime))
+			connectionErrorEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(connectionErrorStartTime), "connection_error", 0)
 			a.EmitTypedEvent(ctx, connectionErrorEvent)
 
 			// Create connection error fallback event
@@ -1486,7 +1560,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// Use non-streaming approach for all agents during fallback
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1579,7 +1653,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// Use non-streaming approach for all agents during fallback
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1623,8 +1697,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 			if len(crossProviderFallbacks) > 0 {
 				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
 			}
-			sendMessage(fmt.Sprintf("   - Original error: %v", err))
-			sendMessage(fmt.Sprintf("   - Suggestion: Check network connectivity and try again"))
+			sendMessage("   - Original error: " + err.Error())
+			sendMessage("   - Suggestion: Check network connectivity and try again")
 
 			// Emit connection error fallback all failed event
 			connectionErrorAllFailedEvent := &events.GenericEventData{
@@ -1644,7 +1718,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				},
 			}
 			a.EmitTypedEvent(ctx, connectionErrorAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for connection error: %v", err)
+			lastErr = fmt.Errorf("all fallback models failed for connection error: %w", err)
 			break
 		}
 
@@ -1678,7 +1752,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 }
 
 // handleErrorWithFallback is a generic function that handles any error type with fallback models
-func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llms.MessageContent, opts []llms.CallOption) (*llms.ContentResponse, error, observability.UsageMetrics) {
+func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
 	// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
 	if a.AgentMode == ReActAgent && a.reasoningTracker != nil {
 		a.reasoningTracker.Reset()
@@ -1688,7 +1762,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 	errorStartTime := time.Now()
 
 	// Emit error detected event
-	errorEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(errorStartTime))
+	errorEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(errorStartTime), errorType, 0)
 	a.EmitTypedEvent(ctx, errorEvent)
 
 	// Create error fallback event
@@ -1873,11 +1947,11 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 	}
 	a.EmitTypedEvent(ctx, errorAllFailedEvent)
 
-	return nil, fmt.Errorf("all fallback models failed for %s: %v", errorType, err), observability.UsageMetrics{}
+	return nil, fmt.Errorf("all fallback models failed for %s: %w", errorType, err), observability.UsageMetrics{}
 }
 
 // createFallbackLLM creates a fallback LLM instance for the given modelID
-func (a *Agent) createFallbackLLM(modelID string) (llms.Model, error) {
+func (a *Agent) createFallbackLLM(modelID string) (llmtypes.Model, error) {
 	// ✅ FIXED: Detect provider from model ID instead of using agent's provider
 	provider := detectProviderFromModelID(modelID)
 
@@ -1885,50 +1959,29 @@ func (a *Agent) createFallbackLLM(modelID string) (llms.Model, error) {
 	logger := getLogger(a)
 	logger.Infof("Creating fallback LLM using detected provider - model_id: %s, detected_provider: %s", modelID, provider)
 
-	// Create LLM based on detected provider with better error handling
-	switch provider {
-	case llm.ProviderOpenAI:
-		// Check for OpenAI API key
-		if os.Getenv("OPENAI_API_KEY") == "" {
-			return nil, fmt.Errorf("OPENAI_API_KEY environment variable is required for OpenAI fallback model: %s", modelID)
-		}
-
-		llmModel, err := openai.New(openai.WithModel(modelID))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create OpenAI fallback LLM for model %s: %w", modelID, err)
-		}
-		return llmModel, nil
-
-	case llm.ProviderBedrock:
-		// Create Bedrock fallback LLM
-		// Note: The Bedrock client has internal retries that may interfere with our fallback logic
-		// but we can't disable them through the API. Our fallback logic will still work
-		// when the client gives up after its internal retries.
-		llmModel, err := bedrock.New(bedrock.WithModel(modelID))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Bedrock fallback LLM for model %s: %w", modelID, err)
-		}
-		return llmModel, nil
-
-	case llm.ProviderOpenRouter:
-		// Check for OpenRouter API key
-		if os.Getenv("OPEN_ROUTER_API_KEY") == "" {
-			return nil, fmt.Errorf("OPEN_ROUTER_API_KEY environment variable is required for OpenRouter fallback model: %s", modelID)
-		}
-
-		llmModel, err := openai.New(
-			openai.WithModel(modelID),
-			openai.WithBaseURL("https://openrouter.ai/api/v1"),
-			openai.WithToken(os.Getenv("OPEN_ROUTER_API_KEY")),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create OpenRouter fallback LLM for model %s: %w", modelID, err)
-		}
-		return llmModel, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported provider '%s' for fallback model: %s", provider, modelID)
+	// Use InitializeLLM from providers.go for all providers for consistency
+	// This ensures proper initialization, logging, and event emission
+	// Use agent's temperature if available, otherwise default to 0.7
+	temperature := a.Temperature
+	if temperature == 0 {
+		temperature = 0.7
 	}
+
+	llmConfig := llm.Config{
+		Provider:    provider,
+		ModelID:     modelID,
+		Temperature: temperature,
+		Tracers:     a.Tracers,
+		TraceID:     a.TraceID,
+		Logger:      logger,
+		Context:     context.Background(),
+	}
+
+	llmModel, err := llm.InitializeLLM(llmConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create fallback LLM for provider %s, model %s: %w", provider, modelID, err)
+	}
+	return llmModel, nil
 }
 
 // detectProviderFromModelID detects the provider based on the model ID
@@ -1946,6 +1999,11 @@ func detectProviderFromModelID(modelID string) llm.Provider {
 	// Anthropic models: claude-* (for direct API, not Bedrock)
 	if strings.HasPrefix(modelID, "claude-") {
 		return llm.ProviderAnthropic
+	}
+
+	// Vertex/Gemini models: gemini-* (Google Vertex AI)
+	if strings.HasPrefix(modelID, "gemini-") {
+		return llm.ProviderVertex
 	}
 
 	// OpenRouter models: various model names with "/" separator

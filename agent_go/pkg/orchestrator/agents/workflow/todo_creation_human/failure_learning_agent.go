@@ -3,12 +3,11 @@ package todo_creation_human
 import (
 	"context"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerFailureLearningTemplate holds template variables for failure learning prompts
@@ -46,7 +45,7 @@ func NewHumanControlledTodoPlannerFailureLearningAgent(config *agents.Orchestrat
 }
 
 // Execute implements the OrchestratorAgent interface
-func (agent *HumanControlledTodoPlannerFailureLearningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (agent *HumanControlledTodoPlannerFailureLearningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables
 	stepTitle := templateVars["StepTitle"]
 	stepDescription := templateVars["StepDescription"]
@@ -59,6 +58,11 @@ func (agent *HumanControlledTodoPlannerFailureLearningAgent) Execute(ctx context
 	validationResult := templateVars["ValidationResult"]
 	currentObjective := templateVars["CurrentObjective"]
 	variableNames := templateVars["VariableNames"]
+	learningDetailLevel := templateVars["LearningDetailLevel"]
+	// Default to "general" if not provided
+	if learningDetailLevel == "" {
+		learningDetailLevel = "general"
+	}
 
 	// Prepare template variables
 	failureLearningTemplateVars := map[string]string{
@@ -73,6 +77,7 @@ func (agent *HumanControlledTodoPlannerFailureLearningAgent) Execute(ctx context
 		"ValidationResult":        validationResult,
 		"CurrentObjective":        currentObjective,
 		"VariableNames":           variableNames,
+		"LearningDetailLevel":     learningDetailLevel,
 	}
 
 	// Create template data for failure learning
@@ -96,6 +101,15 @@ func (agent *HumanControlledTodoPlannerFailureLearningAgent) Execute(ctx context
 // failureLearningInputProcessor creates the failure learning analysis prompt
 func (agent *HumanControlledTodoPlannerFailureLearningAgent) failureLearningInputProcessor(templateVars map[string]string) string {
 	return `# Failure Learning Analysis Agent
+
+## 🎚️ **LEARNING DETAIL LEVEL: ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `EXACT MCP TOOLS` + "`" + `
+Extract specific failed tool calls with complete argument JSON.`
+		}
+		return `GENERAL PATTERNS` + "`" + `
+Extract high-level failure patterns and approaches that didn't work.`
+	}() + `
 
 ## 📋 **STEP CONTEXT**
 - **Title**: ` + templateVars["StepTitle"] + `
@@ -134,11 +148,12 @@ The updated plan must maintain variable placeholders, not resolved values.
 This step execution failed validation. Analyze what went wrong and provide a refined task description for immediate retry.
 
 ### **Failure Analysis Process:**
-1. **Read current plan** - Examine plan.md to understand the current step
+1. **Read current plan** - Examine plan.md to understand the current step (read-only, do not modify)
 2. **Identify failure points** - What specific issues caused the validation to fail
 3. **Analyze root causes** - Why did the execution not meet the success criteria
-4. **Generate refined task** - Create an improved task description for retry
+4. **Generate refined task** - Create an improved task description for retry (for use in conversation, not plan update)
 5. **Document failure insights** - Write to learnings/failure_analysis.md and learnings/step_X_learning.md
+6. **DO NOT update plan.md** - Plan updates are handled separately by other agents
 
 ### **Root Cause Analysis:**
 Categorize the failure and identify root cause:
@@ -158,34 +173,38 @@ Categorize the failure and identify root cause:
 - **Prevention Strategy**: [How to avoid this]
 - **Alternative Approach**: [What to try instead]
 
-### **Plan Improvement Focus:**
-Update plan.md with **learnings from the failure** by **enhancing the markdown content**:
+### **Learning Documentation Focus:**
+Document **learnings from the failure** in learnings files (do NOT update plan.md):
 
-**Example of Enhanced Step After Failure Analysis:**
-
-### Step 1: Deploy service
-- **Description**: Deploy using kubectl apply to production
-- **Success Criteria**: Service is running with all pods healthy (kubectl get pods shows 'Running' status), deployment rolled out successfully (kubectl rollout status returns 'successfully rolled out'), and no error events (kubectl get events shows no errors in last 5m)
-- **Why This Step**: This step deploys the application. Previous failure showed that namespace validation is critical before deployment. The timeout on rollout status prevents hanging indefinitely.
-- **Context Dependencies**: ../validation/environment_check.md, ../execution/step_1_config.md, ../validation/namespace_verification.md
-- **Context Output**: ./execution/step_2_deployment.md
+**Example Enhanced Step After Failure:**
+` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `- **Description**: Deploy using kubectl apply to production
+- **Success Criteria**: All pods Running, rollout successful, no error events
+- **Why This Step**: Previous failure showed namespace validation is critical. Timeout prevents hanging.
 - **Failure Patterns**:
-  - Don't use docker.docker_run directly (use kubectl instead - previous failure)
+  - Don't use docker.docker_run with {"image":"myapp","command":["start"]} (use kubectl_apply)
+  - Don't skip kubectl_get with {"resource":"namespace"} validation (caused error)
+  - Always use kubectl_apply with {"dry_run":"client"} first`
+		}
+		return `- **Description**: Deploy using kubectl apply to production
+- **Success Criteria**: All pods Running, rollout successful, no error events
+- **Why This Step**: Previous failure showed namespace validation is critical. Timeout prevents hanging.
+- **Failure Patterns**:
+  - Don't use container runtime tools directly (use orchestration tools)
   - Don't skip namespace validation (caused deployment error)
-  - Don't apply without dry-run check (YAML syntax errors not caught)
-  - Don't skip timeout on rollout status (prevents hanging indefinitely)
+  - Always use dry-run check before applying changes`
+	}() + `
 
-**How to Enhance Markdown Plan Based on Failures:**
-1. **Description**: Keep concise, focus on core task
-2. **Success Criteria**: Add validation checks that would have caught the error, expected outputs with specific values
-3. **Why This Step**: Explain what went wrong in the previous attempt and why the new approach should work
-4. **Context Dependencies**: Add any missing dependencies that caused the failure
-5. **Failure Patterns**: ONLY add this section if you identified specific tools, approaches, or patterns that failed. Include specific MCP server.tool references and exact reasons why they failed.
-
-**Refinement Focus:**
-- **Specific Tool Recommendations**: Suggest alternative tools if original failed (integrate into description)
-- **Detailed Error Context**: Explain what error occurred and why (integrate into description and why_this_step)
-- **Step-by-Step Alternatives**: Provide refined approach with clear alternatives (integrate into description)
+**Enhancement Guidelines:**
+- ONLY add Failure Patterns if specific failures identified
+- Explain what went wrong and why new approach should work
+- Integrate ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `alternative tools with exact arguments`
+		}
+		return `alternative approaches and strategies`
+	}() + ` into description
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
@@ -209,16 +228,26 @@ Provide your response in this exact format:
 
 ---
 
-## Plan Improvement Actions
+## Learning Documentation Actions
 
-### Plan Updates Made:
-- [Enhanced markdown step descriptions with alternative tools, error explanations, and what to avoid based on failure]
-- [Enhanced success criteria with validation checks that would have caught the error]
-- [Enhanced why_this_step sections with failure analysis and why new approach should work]
-- [Updated context dependencies with missing dependencies that caused failure]
-- [Added Failure Patterns section ONLY if specific tools/approaches that failed were identified - include MCP server.tool references and failure reasons]
+### Learnings Documented:
+- [Failure patterns captured: ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `alternative tools with exact arguments, error explanations, and what to avoid based on failure`
+		}
+		return `alternative approaches, error explanations, and what to avoid based on failure`
+	}() + `]
+- [Validation checks that would have caught the error]
+- [Failure analysis insights and why new approach should work]
+- [Missing dependencies that caused failure]
+- [Failure Patterns documented ONLY if ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `specific tools/approaches that failed were identified - include MCP server.tool references with exact arguments and failure reasons`
+		}
+		return `clear patterns or approaches that failed were identified - include high-level descriptions of what didn't work and why`
+	}() + `]
 
-**NOTE**: Update plan.md file - do NOT create new files or change file structure
+**NOTE**: Document learnings in learnings/ folder files - do NOT update plan.md file
 
 ### Execution Insights Captured:
 - [Successful tools and approaches that worked well]
@@ -230,29 +259,28 @@ Provide your response in this exact format:
 ## 📁 **FILE PERMISSIONS (Failure Learning Agent)**
 
 **READ:**
-- planning/plan.md (current markdown plan)
-- validation/step_X_validation_report.md (validation results with execution summary)
+- planning/plan.md (current markdown plan) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/planning/plan.md
+- validation/step_X_validation_report.md (validation results with execution summary) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/validation/step_X_validation_report.md
 
 **WRITE:**
-- learnings/failure_analysis.md (append failure patterns and anti-patterns)
-- learnings/step_X_learning.md (create detailed failure analysis for this step)
-- planning/plan.md (update with improvements based on failure analysis)
+- learnings/failure_analysis.md (append failure patterns and anti-patterns) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/failure_analysis.md
+- learnings/step_X_learning.md (create detailed failure analysis for this step) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/step_X_learning.md
 
 **RESTRICTIONS:**
-- Learning outputs go to learnings/ folder
-- Plan improvements go to planning/plan.md
+- Learning outputs go to learnings/ folder ONLY
+- **DO NOT** update or modify planning/plan.md (plan updates are handled separately)
+- **DO NOT** read or write files in execution/ folder (execution agent handles those)
 - Read execution details from validation reports (which contain execution conversation)
 - Focus on failure analysis and retry guidance
+- All file paths must be relative to ` + templateVars["WorkspacePath"] + `/todo_creation_human/
 
 ---
 
-**Important**: 
-1. **Focus on failure**: Analyze what went wrong and why validation failed
-2. **Provide refined task**: Generate improved task description for immediate retry
-3. **Update plan.md**: Improve the markdown plan by enhancing step descriptions, success criteria, and context dependencies
-4. **Markdown format**: Update the markdown plan.md file - do NOT create JSON files
-5. **Document in learnings/**: Write failure patterns to learnings/failure_analysis.md and step details to learnings/step_X_learning.md
-6. **Prevent repetition**: Integrate failure analysis and alternatives directly into the markdown step descriptions
-7. **Failure Patterns Section**: ONLY add "- **Failure Patterns**:" section if you identified specific MCP tools, exact commands, or clear patterns that failed. Do NOT add empty or generic patterns.
+**Key Requirements:**
+- Analyze failure and provide refined task for immediate retry
+- **DO NOT** update planning/plan.md (plan updates are handled separately)
+- Document learnings ONLY in learnings/ folder
+- ONLY add Failure Patterns if meaningful failures identified
+- Focus on documenting what failed and what to avoid for future reference
 `
 }

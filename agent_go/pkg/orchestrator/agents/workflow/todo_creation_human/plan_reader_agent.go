@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledPlanReaderAgent reads markdown plan files and converts to structured JSON format
@@ -37,7 +36,7 @@ func NewHumanControlledPlanReaderAgent(config *agents.OrchestratorAgentConfig, l
 }
 
 // ExecuteStructured executes the plan reader agent and returns structured output
-func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*PlanningResponse, error) {
+func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*PlanningResponse, error) {
 	// Define the JSON schema for plan conversion
 	schema := `{
 		"type": "object",
@@ -106,7 +105,7 @@ func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Conte
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hcpra *HumanControlledPlanReaderAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hcpra *HumanControlledPlanReaderAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
 	return hcpra.ExecuteWithInputProcessor(ctx, templateVars, hcpra.planReaderInputProcessor, conversationHistory)
@@ -257,12 +256,12 @@ Convert the markdown plan to structured JSON format. Return ONLY the JSON object
 	// Parse and execute the template
 	tmpl, err := template.New("plan_reader").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing plan reader template: %v", err)
+		return fmt.Sprintf("Error parsing plan reader template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing plan reader template: %v", err)
+		return fmt.Sprintf("Error executing plan reader template: %w", err)
 	}
 
 	return result.String()

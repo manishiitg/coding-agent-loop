@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
@@ -15,8 +16,6 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_execution"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // WorkflowPhaseOption represents an option for a workflow phase
@@ -191,7 +190,7 @@ func NewWorkflowOrchestrator(
 	tracer observability.Tracer,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -300,7 +299,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		"Human Controlled Planning Complete",
 		"Approve Plan & Continue",
 		"Please review the generated todo list and approve to proceed with execution."); err != nil {
-		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %v", err)
+		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %w", err)
 	}
 
 	planningResult := fmt.Sprintf("Human controlled planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
@@ -521,7 +520,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 	// Call the existing executeFlow method with the extracted parameters
 	result, err := wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions)
 	if err != nil {
-		wo.GetLogger().Errorf("🚀 WORKFLOW EXECUTION ERROR - executeFlow failed: %v", err)
+		wo.GetLogger().Errorf("🚀 WORKFLOW EXECUTION ERROR - executeFlow failed: %w", err)
 		return "", err
 	}
 

@@ -10,7 +10,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // ConditionalResponse represents a true/false response with reasoning
@@ -31,7 +31,7 @@ type ConditionalLLM struct {
 
 // NewConditionalLLMWithEventBridge creates a new conditional LLM instance with mandatory event bridge
 func NewConditionalLLMWithEventBridge(
-	llm llms.Model,
+	llm llmtypes.Model,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
@@ -68,7 +68,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 	jsonOutput, err := generator.GenerateStructuredOutput(ctx, prompt, schema)
 	if err != nil {
 		duration := time.Since(startTime)
-		cl.GetLogger().Errorf("❌ Conditional decision failed: %v", err)
+		cl.GetLogger().Errorf("❌ Conditional decision failed: %w", err)
 
 		// Emit orchestrator agent error event
 		if cl.GetEventEmitter() != nil {
@@ -94,7 +94,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 	var result ConditionalResponse
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
 		duration := time.Since(startTime)
-		cl.GetLogger().Errorf("❌ Failed to parse conditional response: %v", err)
+		cl.GetLogger().Errorf("❌ Failed to parse conditional response: %w", err)
 
 		// Emit orchestrator agent error event
 		if cl.GetEventEmitter() != nil {

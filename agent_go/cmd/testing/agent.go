@@ -14,7 +14,7 @@ import (
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/mcpagent"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // agentCmd represents the agent test command
@@ -37,7 +37,7 @@ Streaming Options:
   --streaming         Enable streaming test (default false)
   --true-streaming    Use true LLM streaming vs simulated chunking
 
-True streaming uses llms.WithStreamingFunc to get real-time chunks as
+True streaming uses llmtypes.WithStreamingFunc to get real-time chunks as
 the LLM generates them, providing immediate feedback and lower latency.
 
 Examples:
@@ -400,6 +400,7 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 	if agentFlags.tokenTest {
 		logger.Info("🧪 Test 5: Token Management Test")
 
+		//nolint:gosec // G101: This is a test query string, not a credential
 		tokenTestQuery := "Create a very large file with detailed content, then read it back multiple times to test token management and conversation history optimization"
 
 		logger.Info("📝 Token Management Query", map[string]interface{}{"query": tokenTestQuery})
@@ -459,14 +460,14 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 		}()
 
 		systemPrompt := "You are an AI agent. Answer as helpfully as possible."
-		messageHistory := []llms.MessageContent{
+		messageHistory := []llmtypes.MessageContent{
 			{
-				Role:  llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{llms.TextContent{Text: systemPrompt}},
+				Role:  llmtypes.ChatMessageTypeSystem,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}},
 			},
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextContent{Text: "List the files in the current directory."}},
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "List the files in the current directory."}},
 			},
 		}
 
@@ -478,16 +479,16 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 		logger.Info("🤖 Agent", map[string]interface{}{"message": resp1})
 
 		// Add assistant reply to history
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{llms.TextContent{Text: resp1}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: resp1}},
 		})
 
 		// User follow-up
 		followup := "Now summarize the largest file."
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: followup}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: followup}},
 		})
 		logger.Info("👤 User", map[string]interface{}{"message": followup})
 		resp2, err := filesystemWrapper.InvokeWithHistory(context.Background(), messageHistory)
@@ -497,16 +498,16 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 		logger.Info("🤖 Agent", map[string]interface{}{"message": resp2})
 
 		// Add assistant reply to history
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{llms.TextContent{Text: resp2}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: resp2}},
 		})
 
 		// User clarification
 		clarification := "By 'largest', I mean the file with the most lines."
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: clarification}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: clarification}},
 		})
 		logger.Info("👤 User", map[string]interface{}{"message": clarification})
 		resp3, err := filesystemWrapper.InvokeWithHistory(context.Background(), messageHistory)
@@ -613,78 +614,6 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 	logger.Info("🏆 All tests completed successfully!")
 }
 
-// testAgentWithObservability tests the agent with configurable observability
-func testAgentWithObservability(cmd *cobra.Command, args []string) error {
-	logger := GetTestLogger()
-	logger.Info("Testing Agent with Configurable Observability")
-
-	// Observability is now handled automatically via environment variables
-	logger.Info("Observability Configuration", map[string]interface{}{
-		"provider": os.Getenv("TRACING_PROVIDER"),
-		"enabled":  os.Getenv("TRACING_PROVIDER") != "",
-	})
-
-	// Initialize LLM
-	llm, err := llm.InitializeLLM(llm.Config{
-		Provider:    "bedrock",
-		ModelID:     "claude-3-sonnet-20240229-v1:0",
-		Temperature: 0.7,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to initialize LLM: %w", err)
-	}
-
-	// Create agent with observability
-	agent, err := mcpagent.NewAgentWithObservability(
-		context.Background(),
-		llm,
-		"all",
-		"configs/mcp_servers.json",
-		"claude-3-sonnet-20240229-v1:0",
-		GetTestLogger(),
-		mcpagent.WithTemperature(0.7),
-		mcpagent.WithToolChoice("auto"),
-		mcpagent.WithMaxTurns(10),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create agent: %w", err)
-	}
-	defer agent.Close()
-
-	// Test question
-	question := "What is 2+2? Please provide a simple answer."
-	logger.Info("Testing Agent with Question", map[string]interface{}{"question": question})
-
-	// Run the agent
-	startTime := time.Now()
-	result, err := agent.Ask(context.Background(), question)
-	duration := time.Since(startTime)
-
-	if err != nil {
-		return fmt.Errorf("agent failed: %w", err)
-	}
-
-	logger.Info("Agent Response", map[string]interface{}{"result": result, "duration": duration.String()})
-
-	// Test with a more complex question that uses tools
-	logger.Info("Testing Agent with Tool Usage")
-	toolQuestion := "List files in the current directory"
-	logger.Info("Tool Question", map[string]interface{}{"question": toolQuestion})
-
-	startTime = time.Now()
-	toolResult, err := agent.Ask(context.Background(), toolQuestion)
-	toolDuration := time.Since(startTime)
-
-	if err != nil {
-		return fmt.Errorf("agent failed with tool usage: %w", err)
-	}
-
-	logger.Info("Tool Response", map[string]interface{}{"result": toolResult, "duration": toolDuration.String()})
-
-	logger.Info("Agent with Observability Test Completed Successfully")
-	return nil
-}
-
 // Helper functions
 func containsAny(text string, substrings []string) bool {
 	textLower := strings.ToLower(text)
@@ -710,20 +639,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// createDynamicAWSConfig creates a dynamic MCP configuration for AWS testing
-func createDynamicAWSConfig() map[string]interface{} {
-	return map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"citymall-aws-mcp": map[string]interface{}{
-				"url":       "http://localhost:9091/sse",
-				"transport": "sse",
-			},
-			"filesystem": map[string]interface{}{
-				"command": "npx",
-				"args":    []string{"-y", "@modelcontextprotocol/server-filesystem", "reports"},
-			},
-		},
-	}
 }

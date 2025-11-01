@@ -29,8 +29,8 @@ type MCPConfigResponse struct {
 func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
-		api.logger.Errorf("Failed to reload base MCP config: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
+		api.logger.Errorf("Failed to reload base MCP config: %w", err)
+		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -124,13 +124,13 @@ func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Reque
 func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Request) {
 	var req MCPConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
 		return
 	}
 
 	// Validate config
 	if err := api.validateMCPConfig(&req.Config); err != nil {
-		http.Error(w, fmt.Sprintf("Config validation failed: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Config validation failed: %w", err), http.StatusBadRequest)
 		return
 	}
 
@@ -139,8 +139,8 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 
 	// Reload base config to get current base servers
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
-		api.logger.Errorf("Failed to reload base config: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
+		api.logger.Errorf("Failed to reload base config: %w", err)
+		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -154,15 +154,15 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 	// Save only user additions to user config file
 	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
 	if err := mcpclient.SaveConfig(userConfigPath, userAdditions); err != nil {
-		api.logger.Errorf("Failed to save user MCP config: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to save user config: %v", err), http.StatusInternalServerError)
+		api.logger.Errorf("Failed to save user MCP config: %w", err)
+		http.Error(w, fmt.Sprintf("Failed to save user config: %w", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Clear cache to force fresh discovery
 	cacheManager := mcpcache.GetCacheManager(api.logger)
 	if err := cacheManager.Clear(); err != nil {
-		api.logger.Warnf("Failed to clear cache: %v", err)
+		api.logger.Warnf("Failed to clear cache: %w", err)
 	}
 
 	// Trigger background discovery
@@ -356,8 +356,8 @@ func (api *StreamingAPI) triggerMCPDiscovery() {
 func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
-		api.logger.Errorf("Failed to reload base MCP config: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
+		api.logger.Errorf("Failed to reload base MCP config: %w", err)
+		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
 	}
 

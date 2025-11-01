@@ -12,17 +12,17 @@
       "protocol": "sse",
       "url": "http://localhost:7002/sse"
     },
-    "citymall-github-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7009/sse"
-    },
     "citymall-grafana-mcp": {
       "command": "",
       "args": null,
       "protocol": "sse",
       "url": "http://localhost:7004/sse"
+    },
+    "citymall-github-mcp": {
+      "command": "",
+      "args": null,
+      "protocol": "sse",
+      "url": "http://localhost:7009/sse"
     },
     "citymall-k8s-mcp": {
       "command": "",

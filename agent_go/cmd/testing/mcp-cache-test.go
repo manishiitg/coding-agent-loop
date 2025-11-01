@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/mcpcache"
-
-	"github.com/tmc/langchaingo/llms"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -84,7 +83,7 @@ and ensures that the caching system works correctly with real MCP tools.`,
 
 		// Validate provider (done in createCacheTestAgent function)
 		if _, err := llm.ValidateProvider(provider); err != nil {
-			return fmt.Errorf("invalid LLM provider: %v", err)
+			return fmt.Errorf("invalid LLM provider: %w", err)
 		}
 
 		// Note: Model ID and provider validation is handled by createCacheTestAgent function
@@ -110,7 +109,7 @@ and ensures that the caching system works correctly with real MCP tools.`,
 		startTime := time.Now()
 		firstAgent, err := createCacheTestAgent(serverList, configPath, provider, tracer, logger)
 		if err != nil {
-			logger.Errorf("❌ Failed to create first agent: %v", err)
+			logger.Errorf("❌ Failed to create first agent: %w", err)
 			return fmt.Errorf("first agent creation failed: %w", err)
 		}
 		firstAgentDuration := time.Since(startTime)
@@ -127,14 +126,14 @@ and ensures that the caching system works correctly with real MCP tools.`,
 		testCtx, testCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer testCancel()
 
-		firstResponse, err := firstAgent.InvokeWithHistory(testCtx, []llms.MessageContent{
+		firstResponse, err := firstAgent.InvokeWithHistory(testCtx, []llmtypes.MessageContent{
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextContent{Text: testQuery}},
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: testQuery}},
 			},
 		})
 		if err != nil {
-			logger.Errorf("❌ First agent test failed: %v", err)
+			logger.Errorf("❌ First agent test failed: %w", err)
 			return fmt.Errorf("first agent test failed: %w", err)
 		}
 
@@ -180,15 +179,15 @@ and ensures that the caching system works correctly with real MCP tools.`,
 			})
 
 			// Test with a different query
-			testQuery := fmt.Sprintf("What MCP servers are you connected to? Please list them with their protocols.")
+			testQuery := "What MCP servers are you connected to? Please list them with their protocols."
 			logger.Infof("🧪 Testing agent %d with query: %s", i+1, testQuery)
 
 			testCtx, testCancel := context.WithTimeout(context.Background(), 60*time.Second)
 
-			response, err := subsequentAgent.InvokeWithHistory(testCtx, []llms.MessageContent{
+			response, err := subsequentAgent.InvokeWithHistory(testCtx, []llmtypes.MessageContent{
 				{
-					Role:  llms.ChatMessageTypeHuman,
-					Parts: []llms.ContentPart{llms.TextContent{Text: testQuery}},
+					Role:  llmtypes.ChatMessageTypeHuman,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: testQuery}},
 				},
 			})
 			testCancel()
@@ -262,7 +261,7 @@ and ensures that the caching system works correctly with real MCP tools.`,
 		// Test cleanup functionality
 		err = mcpcache.CleanupExpiredEntries(logger)
 		if err != nil {
-			logger.Warnf("⚠️  Cleanup failed: %v", err)
+			logger.Warnf("⚠️  Cleanup failed: %w", err)
 		} else {
 			logger.Infof("✅ Cache cleanup completed successfully")
 		}
@@ -326,7 +325,7 @@ func testTimestampPreservation(logger utils.ExtendedLogger) {
 	logger.Infof("📊 Timestamp Test Results:")
 	logger.Infof("   - Event start time: %s", startTime.Format(time.RFC3339Nano))
 	logger.Infof("   - Event timestamp: %s", event.Timestamp.Format(time.RFC3339Nano))
-	logger.Infof("   - Time difference: %v", event.Timestamp.Sub(startTime))
+	logger.Infof("   - Time difference: %w", event.Timestamp.Sub(startTime))
 
 	if event.Timestamp.Equal(startTime) {
 		logger.Infof("🎯 TIMESTAMP TEST PASSED: Event timestamp correctly preserved!")
@@ -346,7 +345,7 @@ func createCacheTestAgent(serverList, configPath, provider string, tracer observ
 	// Validate and get provider
 	llmProvider, err := llm.ValidateProvider(provider)
 	if err != nil {
-		return nil, fmt.Errorf("invalid LLM provider: %v", err)
+		return nil, fmt.Errorf("invalid LLM provider: %w", err)
 	}
 
 	// Get default model for provider

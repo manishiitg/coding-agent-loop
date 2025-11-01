@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // WorkspaceAPIResponse represents the response structure from the workspace API
@@ -40,16 +39,16 @@ func getWorkspaceAPIURL() string {
 }
 
 // CreateWorkspaceTools creates workspace-related virtual tools
-func CreateWorkspaceTools() []llms.Tool {
-	var workspaceTools []llms.Tool
+func CreateWorkspaceTools() []llmtypes.Tool {
+	var workspaceTools []llmtypes.Tool
 
 	// Add list_workspace_files tool
-	listFilesTool := llms.Tool{
+	listFilesTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "list_workspace_files",
 			Description: "List all files and folders in the workspace.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"folder": map[string]interface{}{
@@ -62,18 +61,18 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"folder"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, listFilesTool)
 
 	// Add read_workspace_file tool
-	readFileTool := llms.Tool{
+	readFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_workspace_file",
 			Description: "Read the content of a specific file from the workspace by filepath",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
@@ -82,18 +81,18 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"filepath"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, readFileTool)
 
 	// Add update_workspace_file tool
-	updateFileTool := llms.Tool{
+	updateFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "update_workspace_file",
 			Description: "Create a new file or update/replace the entire content of an existing file in the workspace (upsert behavior). If you are using existing file prefer to use diff_patch_workspace_file instead",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
@@ -110,18 +109,18 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"filepath", "content"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, updateFileTool)
 
 	// Add diff_patch_workspace_file tool (unified diff patching)
-	diffPatchFileTool := llms.Tool{
+	diffPatchFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "diff_patch_workspace_file",
 			Description: "🚨 CRITICAL WORKFLOW: 1) MANDATORY - Use read_workspace_file first to see exact current content 2) Generate diff using 'diff -U0' format with perfect context matching 3) Apply patch. This tool requires precise unified diff format - context lines must match file exactly. Use for targeted, surgical changes to specific file sections. ⚠️ FAILURE TO FOLLOW WORKFLOW WILL RESULT IN PATCH FAILURES.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
@@ -138,7 +137,7 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"filepath", "diff"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, diffPatchFileTool)
@@ -146,12 +145,12 @@ func CreateWorkspaceTools() []llms.Tool {
 	// get_workspace_file_nested tool removed - no longer needed
 
 	// Add regex_search_workspace_files tool
-	regexSearchTool := llms.Tool{
+	regexSearchTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "regex_search_workspace_files",
 			Description: "Search files in the workspace using regex patterns across full content. Searches text-based files within the specified folder only. Requires 'folder' parameter.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"query": map[string]interface{}{
@@ -168,18 +167,18 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"query", "folder"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, regexSearchTool)
 
 	// Add semantic_search_workspace_files tool
-	semanticSearchTool := llms.Tool{
+	semanticSearchTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "semantic_search_workspace_files",
 			Description: "Search files using AI-powered semantic similarity. Finds content by meaning, not just exact text matches. Uses embeddings to understand context and relationships between concepts. For exact text matches, use search_workspace_files tool instead.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"query": map[string]interface{}{
@@ -196,18 +195,18 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"query", "folder"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, semanticSearchTool)
 
 	// Add sync_workspace_to_github tool
-	syncGitHubTool := llms.Tool{
+	syncGitHubTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "sync_workspace_to_github",
 			Description: "Sync all workspace files to GitHub repository using standard git workflow: commit → pull → push. Always pulls first to ensure synchronization. Fails if merge conflicts are detected (requires manual resolution).",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"force": map[string]interface{}{
@@ -219,18 +218,18 @@ func CreateWorkspaceTools() []llms.Tool {
 						"description": "Custom commit message for the sync operation (optional)",
 					},
 				},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, syncGitHubTool)
 
 	// Add get_workspace_github_status tool
-	gitHubStatusTool := llms.Tool{
+	gitHubStatusTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_workspace_github_status",
 			Description: "Get the current GitHub sync status including pending changes, conflicts, and repository information. Uses git commands to check local repository status and connection to GitHub remote.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"show_pending": map[string]interface{}{
@@ -242,18 +241,18 @@ func CreateWorkspaceTools() []llms.Tool {
 						"description": "Show conflicts if any (default: true)",
 					},
 				},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, gitHubStatusTool)
 
 	// Add delete_workspace_file tool
-	deleteFileTool := llms.Tool{
+	deleteFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "delete_workspace_file",
 			Description: "Delete a specific file from the workspace permanently. This action cannot be undone. Use with caution.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
@@ -266,18 +265,18 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"filepath"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, deleteFileTool)
 
 	// Add move_workspace_file tool
-	moveFileTool := llms.Tool{
+	moveFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "move_workspace_file",
 			Description: "Move a file from one location to another in the workspace. Can be used to move files between folders or rename files.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"source_filepath": map[string]interface{}{
@@ -294,7 +293,7 @@ func CreateWorkspaceTools() []llms.Tool {
 					},
 				},
 				"required": []string{"source_filepath", "destination_filepath"},
-			},
+			}),
 		},
 	}
 	workspaceTools = append(workspaceTools, moveFileTool)
@@ -855,74 +854,6 @@ func handleMoveWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 	return result.String(), nil
 }
 
-// formatWorkspaceFileOperation formats the response for file operations (create, update, patch)
-func formatWorkspaceFileOperation(operation, filepath string, data interface{}, commitMessage string) (string, error) {
-	// Convert data to map for processing
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", data)
-	}
-
-	// Extract file metadata
-	lastModified := getTimeValue(dataMap, "last_modified")
-	folder := getStringValue(dataMap, "folder")
-	content := getStringValue(dataMap, "content")
-
-	// Format the response
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("✅ **File %s: `%s`**\n\n", operation, filepath))
-
-	// Add metadata
-	if folder != "" {
-		result.WriteString(fmt.Sprintf("**Folder**: `%s`\n", folder))
-	}
-	if !lastModified.IsZero() {
-		result.WriteString(fmt.Sprintf("**Last Modified**: %s\n", lastModified.Format("2006-01-02 15:04:05")))
-	}
-	if content != "" {
-		result.WriteString(fmt.Sprintf("**Size**: %d characters\n", len(content)))
-	}
-	if commitMessage != "" {
-		result.WriteString(fmt.Sprintf("**Commit Message**: %s\n", commitMessage))
-	}
-
-	result.WriteString(fmt.Sprintf("\n**Operation**: %s completed successfully", operation))
-
-	return result.String(), nil
-}
-
-// formatWorkspaceFileNested formats the nested content response for the LLM
-func formatWorkspaceFileNested(data interface{}, filepath string) (string, error) {
-	// Convert data to map for processing
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", data)
-	}
-
-	// Format the response
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("🌳 **Nested Content Structure: `%s`**\n\n", filepath))
-
-	// Add nested content information
-	if content, exists := dataMap["content"]; exists {
-		result.WriteString("## 📄 Content Structure\n")
-		result.WriteString("```\n")
-		result.WriteString(fmt.Sprintf("%v", content))
-		result.WriteString("\n```\n\n")
-	}
-
-	if metadata, exists := dataMap["metadata"]; exists {
-		result.WriteString("## 📊 Metadata\n")
-		if metadataMap, ok := metadata.(map[string]interface{}); ok {
-			for key, value := range metadataMap {
-				result.WriteString(fmt.Sprintf("- **%s**: %v\n", key, value))
-			}
-		}
-	}
-
-	return result.String(), nil
-}
-
 // formatWorkspaceSearchResults formats the search results response for the LLM
 func formatWorkspaceSearchResults(data interface{}, query string) (string, error) {
 	// Convert data to map for processing
@@ -1162,153 +1093,6 @@ func handleGetWorkspaceGitHubStatus(ctx context.Context, args map[string]interfa
 	return string(responseData), nil
 }
 
-// formatGitHubSyncResponse formats the GitHub sync response for the LLM
-func formatGitHubSyncResponse(data interface{}, force, resolveConflicts bool) (string, error) {
-	// Convert data to map for processing
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", data)
-	}
-
-	// Format the response
-	var result strings.Builder
-	result.WriteString("🔄 **GitHub Sync Completed**\n\n")
-
-	// Add sync details
-	if status, exists := dataMap["status"]; exists {
-		result.WriteString(fmt.Sprintf("**Status**: %s\n", status))
-	}
-	if message, exists := dataMap["message"]; exists {
-		result.WriteString(fmt.Sprintf("**Message**: %s\n", message))
-	}
-	if repository, exists := dataMap["repository"]; exists {
-		result.WriteString(fmt.Sprintf("**Repository**: %s\n", repository))
-	}
-	if branch, exists := dataMap["branch"]; exists {
-		result.WriteString(fmt.Sprintf("**Branch**: %s\n", branch))
-	}
-
-	// Add operation details
-	if force {
-		result.WriteString("**Force Sync**: Enabled\n")
-	}
-	if resolveConflicts {
-		result.WriteString("**Auto-resolve Conflicts**: Enabled\n")
-	}
-
-	// Add commit information if available
-	if commitHash, exists := dataMap["commit_hash"]; exists {
-		result.WriteString(fmt.Sprintf("**Commit Hash**: %s\n", commitHash))
-	}
-	if commitMessage, exists := dataMap["commit_message"]; exists {
-		result.WriteString(fmt.Sprintf("**Commit Message**: %s\n", commitMessage))
-	}
-
-	result.WriteString("\n✅ **Sync operation completed successfully**")
-
-	return result.String(), nil
-}
-
-// formatGitHubStatusResponse formats the GitHub status response for the LLM
-func formatGitHubStatusResponse(data interface{}, showPending, showConflicts bool) (string, error) {
-	// Convert data to map for processing
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", data)
-	}
-
-	// Format the response
-	var result strings.Builder
-	result.WriteString("📊 **GitHub Sync Status**\n\n")
-
-	// Add connection status
-	if isConnected, exists := dataMap["is_connected"]; exists {
-		if connected, ok := isConnected.(bool); ok && connected {
-			result.WriteString("🟢 **Status**: Connected to GitHub\n")
-		} else {
-			result.WriteString("🔴 **Status**: Not connected to GitHub\n")
-		}
-	}
-
-	// Add repository information
-	if repository, exists := dataMap["repository"]; exists {
-		result.WriteString(fmt.Sprintf("**Repository**: %s\n", repository))
-	}
-	if branch, exists := dataMap["branch"]; exists {
-		result.WriteString(fmt.Sprintf("**Branch**: %s\n", branch))
-	}
-
-	// Add last sync information
-	if lastSync, exists := dataMap["last_sync"]; exists {
-		if lastSyncStr, ok := lastSync.(string); ok {
-			if t, err := time.Parse(time.RFC3339, lastSyncStr); err == nil {
-				result.WriteString(fmt.Sprintf("**Last Sync**: %s\n", t.Format("2006-01-02 15:04:05")))
-			}
-		}
-	}
-
-	// Add pending changes if requested
-	if showPending {
-		if pendingChanges, exists := dataMap["pending_changes"]; exists {
-			if changes, ok := pendingChanges.(float64); ok {
-				result.WriteString(fmt.Sprintf("**Pending Changes**: %d\n", int(changes)))
-			}
-		}
-
-		// Add pending files if available
-		if pendingFiles, exists := dataMap["pending_files"]; exists {
-			if files, ok := pendingFiles.([]interface{}); ok && len(files) > 0 {
-				result.WriteString("\n📝 **Pending Files**:\n")
-				for i, file := range files {
-					if fileName, ok := file.(string); ok {
-						result.WriteString(fmt.Sprintf("  %d. %s\n", i+1, fileName))
-					}
-				}
-			}
-		}
-
-		// Add file statuses if available
-		if fileStatuses, exists := dataMap["file_statuses"]; exists {
-			if statuses, ok := fileStatuses.([]interface{}); ok && len(statuses) > 0 {
-				result.WriteString("\n📋 **File Statuses**:\n")
-				for _, status := range statuses {
-					if statusMap, ok := status.(map[string]interface{}); ok {
-						file := getStringValue(statusMap, "file")
-						status := getStringValue(statusMap, "status")
-						staged := getBoolValue(statusMap, "staged")
-						stagedText := "staged"
-						if !staged {
-							stagedText = "unstaged"
-						}
-						result.WriteString(fmt.Sprintf("  - %s (%s, %s)\n", file, status, stagedText))
-					}
-				}
-			}
-		}
-	}
-
-	// Add conflicts if requested and available
-	if showConflicts {
-		if conflicts, exists := dataMap["conflicts"]; exists {
-			if conflictList, ok := conflicts.([]interface{}); ok && len(conflictList) > 0 {
-				result.WriteString("\n⚠️ **Conflicts**:\n")
-				for i, conflict := range conflictList {
-					if conflictMap, ok := conflict.(map[string]interface{}); ok {
-						file := getStringValue(conflictMap, "file")
-						message := getStringValue(conflictMap, "message")
-						conflictType := getStringValue(conflictMap, "type")
-						result.WriteString(fmt.Sprintf("  %d. **%s** (%s): %s\n", i+1, file, conflictType, message))
-					}
-				}
-			}
-		}
-	}
-
-	result.WriteString("\n💡 **Tip**: Use `sync_workspace_to_github` to sync changes to GitHub.")
-
-	return result.String(), nil
-}
-
 // handleDiffPatchWorkspaceFile handles the diff_patch_workspace_file tool execution
 func handleDiffPatchWorkspaceFile(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Extract parameters
@@ -1446,15 +1230,6 @@ func getBoolValue(m map[string]interface{}, key string) bool {
 	return false
 }
 
-func getInt64Value(m map[string]interface{}, key string) int64 {
-	if val, exists := m[key]; exists {
-		if num, ok := val.(float64); ok {
-			return int64(num)
-		}
-	}
-	return 0
-}
-
 func getTimeValue(m map[string]interface{}, key string) time.Time {
 	if val, exists := m[key]; exists {
 		if str, ok := val.(string); ok {
@@ -1464,20 +1239,6 @@ func getTimeValue(m map[string]interface{}, key string) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-// formatFileSize formats file size in human-readable format
-func formatFileSize(size int64) string {
-	const unit = 1024
-	if size < unit {
-		return fmt.Sprintf("%d B", size)
-	}
-	div, exp := int64(unit), 0
-	for n := size / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }
 
 // formatSemanticSearchResults formats the semantic search results response for the LLM

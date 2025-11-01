@@ -7,12 +7,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerPlanningTemplate holds template variables for human-controlled planning prompts
@@ -90,21 +89,24 @@ func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgent
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
-	return hctppa.ExecuteWithInputProcessor(ctx, templateVars, hctppa.humanControlledPlanningInputProcessor, conversationHistory)
+	// Note: userMessageProcessor is set in controller, so this fallback won't be used, but required by signature
+	return hctppa.ExecuteWithInputProcessor(ctx, templateVars, func(map[string]string) string {
+		return "Create or update plan.md with a structured plan to execute the objective."
+	}, conversationHistory)
 }
 
-// humanControlledPlanningInputProcessor processes inputs specifically for fast, simplified planning
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) humanControlledPlanningInputProcessor(templateVars map[string]string) string {
+// planningSystemPromptProcessor generates the detailed system prompt for planning
+func planningSystemPromptProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := HumanControlledTodoPlannerPlanningTemplate{
 		Objective:     templateVars["Objective"],
 		WorkspacePath: templateVars["WorkspacePath"],
 	}
 
-	// Define the template - simplified for direct planning with structured output
+	// Define the template - detailed system prompt for planning
 	templateStr := `## 🚀 PRIMARY TASK - CREATE STRUCTURED PLAN TO EXECUTE OBJECTIVE
 
 **OBJECTIVE**: {{.Objective}}
@@ -214,12 +216,12 @@ The plan focuses on systematic analysis before implementation, with clear contex
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_planning").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing human-controlled planning template: %v", err)
+		return fmt.Sprintf("Error parsing human-controlled planning template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing human-controlled planning template: %v", err)
+		return fmt.Sprintf("Error executing human-controlled planning template: %w", err)
 	}
 
 	return result.String()

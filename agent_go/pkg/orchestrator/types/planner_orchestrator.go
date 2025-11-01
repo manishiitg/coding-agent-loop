@@ -15,7 +15,7 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/llm"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // ExecutionMode represents the execution mode for orchestrator operations
@@ -132,7 +132,7 @@ type PlannerOrchestrator struct {
 	selectedOptions *PlannerSelectedOptions // Selected execution options
 
 	// Conversation history for context
-	conversationHistory []llms.MessageContent
+	conversationHistory []llmtypes.MessageContent
 }
 
 // NewPlannerOrchestrator creates a new planner orchestrator with full configuration
@@ -149,7 +149,7 @@ func NewPlannerOrchestrator(
 	selectedServers []string,
 	selectedOptions *PlannerSelectedOptions,
 	selectedTools []string, // NEW parameter
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -287,7 +287,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		planningResult, _, err := planningAgent.Execute(ctx, planningTemplateVars, po.conversationHistory)
 
 		if err != nil {
-			po.GetLogger().Errorf("❌ Planning failed: %v", err)
+			po.GetLogger().Errorf("❌ Planning failed: %w", err)
 			emitOrchestratorError(err, "planning phase")
 			return "", fmt.Errorf("planning failed: %w", err)
 		}
@@ -309,7 +309,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Create execution agent on-demand
 		executionAgent, err := po.createDedicatedExecutionAgent(ctx, currentStepIndex, iteration)
 		if err != nil {
-			po.GetLogger().Errorf("❌ Failed to create execution agent: %v", err)
+			po.GetLogger().Errorf("❌ Failed to create execution agent: %w", err)
 			emitOrchestratorError(err, "execution phase")
 			return "", fmt.Errorf("failed to create execution agent: %w", err)
 		}
@@ -337,7 +337,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Create validation agent on-demand
 		validationAgent, err := po.createDedicatedValidationAgent(ctx, currentStepIndex)
 		if err != nil {
-			po.GetLogger().Errorf("❌ Failed to create validation agent: %v", err)
+			po.GetLogger().Errorf("❌ Failed to create validation agent: %w", err)
 			emitOrchestratorError(err, "validation phase")
 			return "", fmt.Errorf("failed to create validation agent: %w", err)
 		}
@@ -369,7 +369,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Create organizer agent on-demand
 		organizerAgent, err := po.createOrganizerAgent(ctx, currentStepIndex, iteration)
 		if err != nil {
-			po.GetLogger().Errorf("❌ Failed to create organizer agent: %v", err)
+			po.GetLogger().Errorf("❌ Failed to create organizer agent: %w", err)
 			emitOrchestratorError(err, "organization phase")
 			return "", fmt.Errorf("failed to create organizer agent: %w", err)
 		}
@@ -400,7 +400,7 @@ func (po *PlannerOrchestrator) executeSequential(ctx context.Context, objective 
 		// Create report agent on-demand
 		reportAgent, err := po.createReportAgent(ctx, currentStepIndex, iteration)
 		if err != nil {
-			po.GetLogger().Errorf("❌ Failed to create report agent: %v", err)
+			po.GetLogger().Errorf("❌ Failed to create report agent: %w", err)
 			emitOrchestratorError(err, "report generation phase")
 			return "", fmt.Errorf("failed to create report agent: %w", err)
 		}
@@ -760,7 +760,7 @@ func (po *PlannerOrchestrator) emitIndependentStepsSelectedEvent(ctx context.Con
 	// Emit through the context-aware bridge
 	bridge := po.GetContextAwareBridge()
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		po.GetLogger().Warnf("⚠️ Failed to emit independent steps selected event: %v", err)
+		po.GetLogger().Warnf("⚠️ Failed to emit independent steps selected event: %w", err)
 	} else {
 		po.GetLogger().Infof("✅ Emitted independent steps selected event: %d steps selected", len(selectedSteps))
 	}
@@ -1177,14 +1177,14 @@ func (po *PlannerOrchestrator) extractShouldContinue(ctx context.Context, rawRes
 	// Create conditional LLM on-demand
 	conditionalLLM, err := po.createConditionalLLM()
 	if err != nil {
-		po.GetLogger().Errorf("❌ Failed to create conditional LLM: %v", err)
+		po.GetLogger().Errorf("❌ Failed to create conditional LLM: %w", err)
 		return true // Default to continue if conditional LLM creation fails
 	}
 
 	// Use conditional LLM to make the objective achievement decision
 	result, err := conditionalLLM.Decide(ctx, rawResponse, "Are there any incomplete steps in the plan. Yes or no", 0, 0)
 	if err != nil {
-		po.GetLogger().Errorf("❌ Conditional LLM objective achievement check failed: %v", err)
+		po.GetLogger().Errorf("❌ Conditional LLM objective achievement check failed: %w", err)
 		return true // Default to continue if conditional LLM fails
 	}
 
@@ -1268,11 +1268,11 @@ func (po *PlannerOrchestrator) Execute(ctx context.Context, objective string, wo
 	po.GetLogger().Infof("🎯 Execution mode: %s", executionMode.String())
 
 	// Call executeFlow with empty conversation history and nil event bridge
-	return po.executeFlow(ctx, objective, []llms.MessageContent{}, nil)
+	return po.executeFlow(ctx, objective, []llmtypes.MessageContent{}, nil)
 }
 
 // executeFlow executes the orchestrator flow with conversation history and event bridge
-func (po *PlannerOrchestrator) executeFlow(ctx context.Context, objective string, conversationHistory []llms.MessageContent, eventBridge mcpagent.AgentEventListener) (string, error) {
+func (po *PlannerOrchestrator) executeFlow(ctx context.Context, objective string, conversationHistory []llmtypes.MessageContent, eventBridge mcpagent.AgentEventListener) (string, error) {
 	// Set conversation history
 	po.conversationHistory = conversationHistory
 

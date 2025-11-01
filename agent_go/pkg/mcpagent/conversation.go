@@ -12,7 +12,6 @@ package mcpagent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -28,7 +27,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)
@@ -75,15 +74,15 @@ func getToolExecutionTimeout(a *Agent) time.Duration {
 }
 
 // ensureSystemPrompt ensures that the system prompt is included in the messages
-func ensureSystemPrompt(a *Agent, messages []llms.MessageContent) []llms.MessageContent {
+func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
 	// Check if the first message is already a system message
-	if len(messages) > 0 && messages[0].Role == llms.ChatMessageTypeSystem {
+	if len(messages) > 0 && messages[0].Role == llmtypes.ChatMessageTypeSystem {
 		return messages
 	}
 
 	// Check if there's already a system message anywhere in the conversation
 	for _, msg := range messages {
-		if msg.Role == llms.ChatMessageTypeSystem {
+		if msg.Role == llmtypes.ChatMessageTypeSystem {
 			// System message already exists, don't add another one
 			return messages
 		}
@@ -93,17 +92,17 @@ func ensureSystemPrompt(a *Agent, messages []llms.MessageContent) []llms.Message
 	systemPrompt := a.SystemPrompt
 
 	// Create system message
-	systemMessage := llms.MessageContent{
-		Role:  llms.ChatMessageTypeSystem,
-		Parts: []llms.ContentPart{llms.TextContent{Text: systemPrompt}},
+	systemMessage := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeSystem,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}},
 	}
 
 	// Prepend system message to the beginning
-	return append([]llms.MessageContent{systemMessage}, messages...)
+	return append([]llmtypes.MessageContent{systemMessage}, messages...)
 }
 
 // AskWithHistory runs an interaction using the provided message history (multi-turn conversation).
-func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageContent) (string, []llms.MessageContent, error) {
+func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use agent's logger if available, otherwise use default
 	logger := getLogger(a)
 	logger.Infof("Entered AskWithHistory - message_count: %d", len(messages))
@@ -124,8 +123,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 	// ✅ CONTEXT-AWARE HIERARCHY: Initialize based on calling context
 	// This ensures hierarchy reflects the actual calling context
 	a.initializeHierarchyForContext(ctx)
-	logger.Infof("🔍 HIERARCHY DEBUG: Initialized hierarchy for context - Level=%d, ParentID=%s",
-		a.currentHierarchyLevel, a.currentParentEventID)
 
 	// Ensure system prompt is included in messages
 	messages = ensureSystemPrompt(a, messages)
@@ -133,7 +130,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 	// NEW: Set current query for hierarchy tracking (will be set later when lastUserMessage is extracted)
 
 	// Add cache validation AFTER the agent is fully initialized
-	if a.Tracers != nil && len(a.Tracers) > 0 && len(a.Clients) > 0 {
+	if len(a.Tracers) > 0 && len(a.Clients) > 0 {
 		// Debug: Log what's in the clients map
 		clientKeys := make([]string, 0, len(a.Clients))
 		for k := range a.Clients {
@@ -198,10 +195,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 	// Extract the last user message from the conversation history
 	var lastUserMessage string
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == llms.ChatMessageTypeHuman {
+		if messages[i].Role == llmtypes.ChatMessageTypeHuman {
 			// Get the text content from the message
 			for _, part := range messages[i].Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
 					lastUserMessage = textPart.Text
 					break
 				}
@@ -288,7 +285,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 		filteredTools, err := a.filterToolsByRelevance(ctx, conversationContext)
 		if err != nil {
-			logger.Warnf("Smart routing failed, using all tools: %v", err)
+			logger.Warnf("Smart routing failed, using all tools: %w", err)
 			a.filteredTools = a.Tools // Fallback to all tools
 		} else {
 			a.filteredTools = filteredTools
@@ -314,51 +311,32 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 		// Extract the last message from the conversation (could be user, assistant, or tool)
 		var lastMessage string
 
-		// 🔍 DEBUG: Log the current state of messages array
-		logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Messages array has %d messages", turn+1, len(messages))
-
 		if len(messages) > 0 {
 			lastMsg := messages[len(messages)-1]
-			logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Last message role: %s, has %d parts", turn+1, lastMsg.Role, len(lastMsg.Parts))
 
-			for i, part := range lastMsg.Parts {
-				logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Part %d type: %T", turn+1, i+1, part)
-				if textPart, ok := part.(llms.TextContent); ok {
+			for _, part := range lastMsg.Parts {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
 					lastMessage = textPart.Text
-					logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Found text content: %s", turn+1, truncateString(lastMessage, 100))
 					break
-				} else if toolResp, ok := part.(llms.ToolCallResponse); ok {
-					logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Found tool response: %s", turn+1, truncateString(toolResp.Content, 100))
+				} else if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
 					lastMessage = toolResp.Content
 					break
-				} else if toolCall, ok := part.(llms.ToolCall); ok {
-					logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Found tool call: %s", turn+1, toolCall.FunctionCall.Name)
+				} else if toolCall, ok := part.(llmtypes.ToolCall); ok {
 					lastMessage = fmt.Sprintf("Tool call: %s", toolCall.FunctionCall.Name)
 					break
 				}
 			}
-
-			if lastMessage == "" {
-				logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: No text content found in last message parts", turn+1)
-			}
-		} else {
-			logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Messages array is empty", turn+1)
 		}
 
 		// If no message found, use the last user message as fallback
 		if lastMessage == "" {
 			lastMessage = lastUserMessage
-			logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Using fallback lastUserMessage: %s", turn+1, truncateString(lastMessage, 100))
 		}
 
 		// Emit conversation turn event using typed event data
-		logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: filteredTools count: %d", turn+1, len(a.filteredTools))
-		logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: toolToServer count: %d", turn+1, len(a.toolToServer))
 		tools := events.ConvertToolsToToolInfo(a.filteredTools, a.toolToServer)
-		logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Converted tools count: %d", turn+1, len(tools))
 		conversationTurnEvent := events.NewConversationTurnEvent(turn+1, lastMessage, len(messages), false, 0, tools, messages)
 		a.EmitTypedEvent(ctx, conversationTurnEvent)
-		logger.Infof("[CONVERSATION_TURN DEBUG] Turn %d: Emitted conversation_turn event with lastMessage: %s", turn+1, truncateString(lastMessage, 100))
 
 		// Check for context cancellation at the start of each turn
 		if agentCtx.Err() != nil {
@@ -367,9 +345,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 			logger.Infof("Context cancelled at start of turn - turn: %d, error: %s, duration: %s", turn+1, agentCtx.Err().Error(), time.Since(conversationStartTime).String())
 			return "", messages, fmt.Errorf("conversation cancelled: %w", agentCtx.Err())
 		}
-
-		logger.Infof("[AGENT TRACE] AskWithHistory: turn %d loop entry", turn+1)
-		logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Calling LLM.GenerateContent with %d filtered tools (out of %d total)", turn+1, len(a.filteredTools), len(a.Tools))
 
 		// Use the current messages that include tool results from previous turns
 		llmMessages := messages
@@ -388,20 +363,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				contentLength := 0
 				if msg.Parts != nil {
 					for _, part := range msg.Parts {
-						if textPart, ok := part.(llms.TextContent); ok {
+						if textPart, ok := part.(llmtypes.TextContent); ok {
 							contentLength += len(textPart.Text)
 						}
 					}
 				}
 				logger.Infof("[TURN 2 DEBUG] 📤 Message %d - Role: %s, Content length: %d", i+1, msg.Role, contentLength)
 			}
-		}
-
-		// Before calling LLM.GenerateContent, log the message history as JSON
-		if msgBytes, err := json.MarshalIndent(llmMessages, "", "  "); err == nil {
-			// Use agent's logger if available, otherwise use default
-			logger := getLogger(a)
-			logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, message history before LLM call:\n%s", turn+1, string(msgBytes))
 		}
 
 		// Track start time for duration calculation
@@ -418,9 +386,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 			logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - Context has no deadline", turn+1)
 		}
 
-		opts := []llms.CallOption{}
+		opts := []llmtypes.CallOption{}
 		if !llm.IsO3O4Model(a.ModelID) {
-			opts = append(opts, llms.WithTemperature(a.Temperature))
+			opts = append(opts, llmtypes.WithTemperature(a.Temperature))
 		}
 
 		// Set a reasonable default max_tokens to prevent immediate completion
@@ -431,19 +399,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				maxTokens = parsed
 			}
 		}
-		opts = append(opts, llms.WithMaxTokens(maxTokens))
+		opts = append(opts, llmtypes.WithMaxTokens(maxTokens))
 
-		// 🆕 OPTIONS DEBUGGING
-		logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - LLM options: %d, MaxTokens: %d", turn+1, len(opts), maxTokens)
-
-		// Use proper LLM function calling via llms.WithTools()
+		// Use proper LLM function calling via llmtypes.WithTools()
 		// Use the pre-filtered tools that were determined at conversation start
 		if len(a.filteredTools) > 0 {
-			opts = append(opts, llms.WithTools(a.filteredTools))
+			// Tools are already normalized during conversion in ToolsAsLLM() and cache loading
+			// No need for extra normalization here since langchaingo bug is fixed
+			opts = append(opts, llmtypes.WithTools(a.filteredTools))
 			if toolChoiceOpt := ConvertToolChoice(a.ToolChoice); toolChoiceOpt != nil {
-				opts = append(opts, llms.WithToolChoice(toolChoiceOpt))
+				opts = append(opts, llmtypes.WithToolChoice(toolChoiceOpt))
 			}
-			logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Added %d tools to LLM options via llms.WithTools()", turn+1, len(a.filteredTools))
 		}
 		toolNames := make([]string, len(a.filteredTools))
 		for i, tool := range a.filteredTools {
@@ -454,9 +420,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 		// Build tool context from previous tool calls in this conversation
 		var toolContext []events.ToolContext
 		for _, msg := range messages {
-			if msg.Role == llms.ChatMessageTypeTool {
+			if msg.Role == llmtypes.ChatMessageTypeTool {
 				for _, part := range msg.Parts {
-					if toolResp, ok := part.(llms.ToolCallResponse); ok {
+					if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
 						toolContext = append(toolContext, events.ToolContext{
 							ToolName:   "previous_tool_call", // We don't have the original tool name here
 							ServerName: "unknown",            // We don't have the server name here
@@ -471,21 +437,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 		// NEW: Start LLM generation for hierarchy tracking
 		a.StartLLMGeneration(ctx)
 
-		// 🆕 DETAILED GENERATECONTENTWITHRETRY DEBUGGING
-		logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - About to call GenerateContentWithRetry - Time: %v", turn+1, time.Now())
-		logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - GenerateContentWithRetry params - Messages: %d, Options: %d", turn+1, len(llmMessages), len(opts))
-		logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - Agent details - Provider: %s, Model: %s", turn+1, string(a.GetProvider()), a.ModelID)
-		logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - Context check - Err: %v, Done: %v", turn+1, ctx.Err(), ctx.Done())
-
 		// Use GenerateContentWithRetry for robust fallback handling
-		generateContentStart := time.Now()
-		logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - Calling GenerateContentWithRetry NOW - Time: %v", turn+1, generateContentStart)
-
 		resp, genErr, usage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
-			// Use agent's logger if available, otherwise use default
-			logger := getLogger(a)
-			logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: %s", turn+1, msg)
-
 			// For ReAct agents, track reasoning in real-time
 			if a.AgentMode == ReActAgent {
 				// Create reasoning tracker if not already created
@@ -496,15 +449,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				a.reasoningTracker.ProcessChunk(msg)
 			}
 		})
-		generateContentDuration := time.Since(generateContentStart)
-
-		// 🆕 POST-GENERATECONTENTWITHRETRY DEBUGGING
-		logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - GenerateContentWithRetry completed - Duration: %v, Error: %v", turn+1, generateContentDuration, genErr != nil)
-		if genErr != nil {
-			logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - GenerateContentWithRetry failed - Error: %v, Error type: %T", turn+1, genErr, genErr)
-		} else {
-			logger.Infof("💬 [DEBUG] CONVERSATION Turn %d - GenerateContentWithRetry succeeded - Response: %v, Usage: %+v", turn+1, resp != nil, usage)
-		}
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
@@ -514,25 +458,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				TotalTokens:      usage.TotalTokens,
 			})
 		}
-
-		// 🆕 ENHANCED TURN 2 RESULT LOGGING
-		if turn+1 == 2 {
-			// Use agent's logger if available, otherwise use default
-			logger := getLogger(a)
-			logger.Infof("[TURN 2 DEBUG] 🔍 Turn 2 LLM generation completed")
-			logger.Infof("[TURN 2 DEBUG] 🔍 Response: %v", resp != nil)
-			logger.Infof("[TURN 2 DEBUG] 🔍 Error: %v", genErr)
-			if resp != nil {
-				logger.Infof("[TURN 2 DEBUG] 🔍 Response choices: %d", len(resp.Choices))
-				if len(resp.Choices) > 0 {
-					logger.Infof("[TURN 2 DEBUG] 🔍 First choice content length: %d", len(resp.Choices[0].Content))
-					logger.Infof("[TURN 2 DEBUG] 🔍 First choice content preview: %s", truncateString(resp.Choices[0].Content, 100))
-				}
-			}
-		}
-
-		// Use agent's logger if available, otherwise use default
-		logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: LLM.GenerateContent returned (err=%v, resp=%v)", turn+1, genErr, resp != nil)
 
 		// Check for context cancellation after LLM generation
 		// TEMPORARILY DISABLED: This check was causing issues with HTTP requests
@@ -591,7 +516,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 			}
 		}
 		if resp == nil || resp.Choices == nil || len(resp.Choices) == 0 {
-			logger.Errorf("[AGENT TRACE] AskWithHistory: turn %d, returning early due to no response choices", turn+1)
 
 			// 🎯 FIX: End the trace for error cases - replaced with event emission
 			conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "no response choices returned", turn+1, "no_choices", time.Since(conversationStartTime))
@@ -602,7 +526,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 		choice := resp.Choices[0]
 		lastResponse = choice.Content
-		logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, LLM response content: %s", turn+1, choice.Content)
 
 		// LLM generation end event is already emitted by EndLLMGeneration() method above
 
@@ -612,21 +535,19 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 		// Token usage is already included in the LLMGenerationEndEvent above
 
 		if len(choice.ToolCalls) > 0 {
-			logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, detected %d tool calls", turn+1, len(choice.ToolCalls))
 
 			// 1. Append the AI message (with tool_call) to the history
-			assistantParts := []llms.ContentPart{}
+			assistantParts := []llmtypes.ContentPart{}
 			if choice.Content != "" {
-				assistantParts = append(assistantParts, llms.TextContent{Text: choice.Content})
+				assistantParts = append(assistantParts, llmtypes.TextContent{Text: choice.Content})
 			}
 			for _, tc := range choice.ToolCalls {
 				assistantParts = append(assistantParts, tc)
 			}
-			messages = append(messages, llms.MessageContent{Role: llms.ChatMessageTypeAI, Parts: assistantParts})
+			messages = append(messages, llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeAI, Parts: assistantParts})
 
 			// 2. For each tool call, execute and append the tool result as a new message
-			for i, tc := range choice.ToolCalls {
-				logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Preparing to execute tool call %d: %s", turn+1, i+1, tc.FunctionCall.Name)
+			for _, tc := range choice.ToolCalls {
 
 				// Determine server name for tool call events
 				serverName := a.toolToServer[tc.FunctionCall.Name]
@@ -634,37 +555,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 					serverName = "virtual-tools"
 				}
 
-				// Debug: Check what arguments we're getting
-				getLogger(a).Info("🔧 DEBUG: Tool Call Arguments", map[string]interface{}{
-					"tool_name":        tc.FunctionCall.Name,
-					"arguments":        tc.FunctionCall.Arguments,
-					"arguments_length": len(tc.FunctionCall.Arguments),
-				})
-
 				// Emit tool call start event using typed event data with correlation
 				toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, tc.FunctionCall.Name, events.ToolParams{
 					Arguments: tc.FunctionCall.Arguments,
 				}, serverName, traceID, traceID) // Using traceID for both traceID and parentID correlation
 
-				// 🔧 DEBUG: Log tool call start event before emission
-				logger.Infof("[TOOL CALL START DEBUG] About to emit tool call start event: %s, type: %s", tc.FunctionCall.Name, toolStartEvent.GetEventType())
 				a.EmitTypedEvent(ctx, toolStartEvent)
-				logger.Infof("[TOOL CALL START DEBUG] Tool call start event emitted successfully: %s", tc.FunctionCall.Name)
-
-				// 🔧 COMPREHENSIVE TOOL CALL START LOGGING
-				getLogger(a).Info("🔧 TOOL CALL START LOGGING", map[string]interface{}{
-					"turn":            turn + 1,
-					"tool_name":       tc.FunctionCall.Name,
-					"tool_call_id":    tc.ID,
-					"tool_arguments":  tc.FunctionCall.Arguments,
-					"server_name":     serverName,
-					"span_id":         "",
-					"is_virtual_tool": isVirtualTool(tc.FunctionCall.Name),
-				})
-
-				// Log the complete tool call start for debugging
-				logger.Infof("[TOOL START LOG] Turn %d, Tool: %s, Arguments: %s", turn+1, tc.FunctionCall.Name, tc.FunctionCall.Arguments)
-				logger.Infof("[TOOL START LOG] Turn %d, Tool: %s, Server: %s, Virtual: %v", turn+1, tc.FunctionCall.Name, serverName, isVirtualTool(tc.FunctionCall.Name))
 
 				if tc.FunctionCall == nil {
 					logger.Errorf("[AGENT DEBUG] AskWithHistory Early return: invalid tool call: nil function call")
@@ -684,38 +580,38 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 					feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
 
 					// Emit tool call error event for observability (after tool start event)
-					toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", fmt.Sprintf("empty tool name"), "", time.Since(conversationStartTime))
+					toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
 					a.EmitTypedEvent(ctx, toolNameErrorEvent)
 
 					// Add feedback to conversation so LLM can correct itself
-					messages = append(messages, llms.MessageContent{
-						Role:  llms.ChatMessageTypeTool,
-						Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: tc.ID, Name: "", Content: feedbackMessage}},
+					toolName := ""
+					if tc.FunctionCall != nil {
+						toolName = tc.FunctionCall.Name
+					}
+					messages = append(messages, llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeTool,
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: toolName, Content: feedbackMessage}},
 					})
 
-					logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Added empty tool name feedback to conversation, continuing", turn+1)
 					continue
 				}
-				logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: About to parse tool arguments: %s", turn+1, tc.FunctionCall.Arguments)
 				args, err := mcpclient.ParseToolArguments(tc.FunctionCall.Arguments)
-				logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Finished parsing tool arguments. Args: %v, Err: %v", turn+1, args, err)
 				if err != nil {
-					logger.Errorf("[AGENT DEBUG] AskWithHistory Tool args parsing error: %v", err)
+					logger.Errorf("[AGENT DEBUG] AskWithHistory Tool args parsing error: %w", err)
 
 					// 🔧 ENHANCED: Instead of failing, provide feedback to LLM for self-correction
 					feedbackMessage := generateToolArgsParsingFeedback(tc.FunctionCall.Name, tc.FunctionCall.Arguments, err)
 
 					// Emit tool call error event for observability
-					toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
+					toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %w", err), "", time.Since(conversationStartTime))
 					a.EmitTypedEvent(ctx, toolArgsParsingErrorEvent)
 
 					// Add feedback to conversation so LLM can correct itself
-					messages = append(messages, llms.MessageContent{
-						Role:  llms.ChatMessageTypeTool,
-						Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+					messages = append(messages, llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeTool,
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
 					})
 
-					logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Added tool args parsing feedback to conversation, continuing", turn+1)
 					continue
 				}
 
@@ -724,7 +620,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				isCustomTool := false
 				if a.customTools != nil {
 					if _, exists := a.customTools[tc.FunctionCall.Name]; exists {
-						logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Found custom tool: %s, skipping MCP client lookup", turn+1, tc.FunctionCall.Name)
 						isCustomTool = true
 					}
 				}
@@ -732,28 +627,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				client := a.Client
 				if a.toolToServer != nil {
 					if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
-						logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Tool %s mapped to server: %s", turn+1, tc.FunctionCall.Name, mapped)
 						if a.Clients != nil {
 							if c, exists := a.Clients[mapped]; exists {
 								client = c
-								logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Using client for server: %s", turn+1, mapped)
-							} else {
-								logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Client not found for server: %s, using default client", turn+1, mapped)
 							}
-						} else {
-							logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: No clients map available, using default client", turn+1)
 						}
-					} else {
-						logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Tool %s not mapped to any server, using default client", turn+1, tc.FunctionCall.Name)
 					}
-				} else {
-					logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: No toolToServer map available, using default client", turn+1)
 				}
 				// Only check for client errors for non-custom tools and non-virtual tools
 				if !isCustomTool && !isVirtualTool(tc.FunctionCall.Name) && client == nil {
 					// Check if we're in cache-only mode with no active connections
 					if len(a.Clients) == 0 {
-						logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Cache-only mode detected - creating on-demand connection for tool %s", turn+1, tc.FunctionCall.Name)
 
 						// Create connection on-demand for the specific server
 						serverName := a.toolToServer[tc.FunctionCall.Name]
@@ -768,12 +652,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 							a.EmitTypedEvent(ctx, toolNotFoundEvent)
 
 							// Add feedback to conversation so LLM can correct itself
-							messages = append(messages, llms.MessageContent{
-								Role:  llms.ChatMessageTypeTool,
-								Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+							messages = append(messages, llmtypes.MessageContent{
+								Role:  llmtypes.ChatMessageTypeTool,
+								Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
 							})
 
-							logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Added tool not found feedback to conversation, continuing", turn+1)
 							continue
 						}
 
@@ -788,7 +671,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 						// Use the on-demand client
 						client = onDemandClient
-						logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Created on-demand connection for server %s", turn+1, serverName)
 					} else {
 						logger.Errorf("[AGENT DEBUG] AskWithHistory Early return: no MCP client found for tool %s", tc.FunctionCall.Name)
 
@@ -799,13 +681,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 						err := fmt.Errorf("no MCP client found for tool %s", tc.FunctionCall.Name)
 						return "", messages, err
 					}
-				}
-
-				// Log client type for debugging (only for non-custom tools)
-				if !isCustomTool {
-					clientType := "Client"
-					logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Using Client for tool %s", turn+1, tc.FunctionCall.Name)
-					logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Client type: %s for tool %s", turn+1, clientType, tc.FunctionCall.Name)
 				}
 
 				// Check for context cancellation before tool execution
@@ -821,11 +696,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				toolCtx, cancel := context.WithTimeout(ctx, toolTimeout)
 				defer cancel()
 
-				logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: About to call tool '%s' with args: %v (timeout: %s)", turn+1, tc.FunctionCall.Name, args, toolTimeout.String())
 				startTime := time.Now()
 
 				// Add cache hit event during tool execution to show cached connection usage
-				if a.Tracers != nil && len(a.Tracers) > 0 && serverName != "" && serverName != "virtual-tools" {
+				if len(a.Tracers) > 0 && serverName != "" && serverName != "virtual-tools" {
 					// Emit connection cache hit event to show we're using cached MCP server connection
 					// Note: We do NOT cache tool execution results - only server connections
 					connectionCacheHitEvent := events.NewCacheHitEvent(serverName, fmt.Sprintf("unified_%s", serverName), "unified_cache", 1, time.Duration(0))
@@ -918,65 +792,40 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 					recoveredResult, recoveredErr, recoveredDuration, wasRecovered := errorRecoveryHandler.HandleError(
 						ctx, &tc, serverName, toolErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
 
-					if wasRecovered {
-						// Use the recovered result if recovery was successful
-						if recoveredErr == nil {
-							logger.Infof("🔧 [ERROR RECOVERY] Successfully recovered from error for tool '%s'", tc.FunctionCall.Name)
-							result = recoveredResult
-							toolErr = nil
-							duration = recoveredDuration
-						} else {
+					if wasRecovered && recoveredErr == nil {
+						// Successfully recovered - use recovered result and continue normal flow
+						logger.Infof("🔧 [ERROR RECOVERY] Successfully recovered from error for tool '%s'", tc.FunctionCall.Name)
+						result = recoveredResult
+						toolErr = nil
+						duration = recoveredDuration
+						// Continue to normal result processing below (outside this if block)
+					} else {
+						// Recovery failed or not attempted - proceed with error handling
+						if wasRecovered {
 							logger.Errorf("🔧 [ERROR RECOVERY] Recovery failed for tool '%s': %v", tc.FunctionCall.Name, recoveredErr)
 							toolErr = recoveredErr
 							duration = recoveredDuration
 						}
+
+						// Emit tool call error event using typed event data
+						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
+						a.EmitTypedEvent(ctx, toolErrorEvent)
+
+						// Instead of failing the entire conversation, provide feedback to the LLM
+						errorResultText := fmt.Sprintf("Tool execution failed - %v", toolErr)
+
+						// Add the error result to the conversation so the LLM can continue
+						messages = append(messages, llmtypes.MessageContent{
+							Role:  llmtypes.ChatMessageTypeTool, // Use "tool" role for tool responses
+							Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: errorResultText}},
+						})
+
+						// Continue to next turn instead of returning error
+						continue
 					}
-
-					// Emit tool call error event using typed event data
-					toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
-					a.EmitTypedEvent(ctx, toolErrorEvent)
-
-					// 🔧 ENHANCED TOOL ERROR LOGGING
-					getLogger(a).Info("🔧 TOOL CALL ERROR LOGGING", map[string]interface{}{
-						"turn":               turn + 1,
-						"tool_name":          tc.FunctionCall.Name,
-						"tool_call_id":       tc.ID,
-						"error_message":      toolErr.Error(),
-						"error_type":         fmt.Sprintf("%T", toolErr),
-						"execution_duration": duration.String(),
-						"server_name":        serverName,
-						"context_cancelled":  agentCtx.Err() != nil,
-						"was_recovered":      wasRecovered,
-					})
-
-					// Log the complete tool error for debugging
-					logger.Infof("[TOOL ERROR LOG] Turn %d, Tool: %s, Error: %v", turn+1, tc.FunctionCall.Name, toolErr)
-					logger.Infof("[TOOL ERROR LOG] Turn %d, Tool: %s, Error Type: %T", turn+1, tc.FunctionCall.Name, toolErr)
-					logger.Infof("[TOOL ERROR LOG] Turn %d, Tool: %s, Duration: %v", turn+1, tc.FunctionCall.Name, duration)
-
-					logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Tool call '%s' returned error after %v: %v", turn+1, tc.FunctionCall.Name, duration, toolErr)
-
-					// Instead of failing the entire conversation, provide feedback to the LLM
-					errorResultText := fmt.Sprintf("Tool execution failed - %v", toolErr)
-
-					// Add the error result to the conversation so the LLM can continue
-					messages = append(messages, llms.MessageContent{
-						Role:  llms.ChatMessageTypeTool, // Use "tool" role for tool responses
-						Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: errorResultText}},
-					})
-
-					// Continue to next turn instead of returning error
-					logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Continuing conversation after tool error", turn+1)
-					continue
 				}
-				logger.Infof("[AGENT DEBUG] AskWithHistory Turn %d: Tool call '%s' returned result after %v: %v", turn+1, tc.FunctionCall.Name, duration, result)
 				var resultText string
 				if result != nil {
-					// CRITICAL DEBUG: About to process tool result in conversation.go (PATH 2)
-					getLogger(a).Info("CRITICAL DEBUG: About to process tool result in conversation.go (PATH 2)", map[string]interface{}{
-						"tool_name":  tc.FunctionCall.Name,
-						"result_nil": result == nil,
-					})
 
 					// Get the tool result as string (without prefix)
 					resultText = mcpclient.ToolResultAsString(result, getLogger(a))
@@ -1005,66 +854,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 						}
 					}
 
-					// 🔧 COMPREHENSIVE TOOL OUTPUT LOGGING
-					getLogger(a).Info("🔧 TOOL CALL RESPONSE LOGGING", map[string]interface{}{
-						"turn":               turn + 1,
-						"tool_name":          tc.FunctionCall.Name,
-						"tool_call_id":       tc.ID,
-						"result_text_length": len(resultText),
-						"result_text_preview": func() string {
-							if len(resultText) > 200 {
-								return resultText[:200] + "..."
-							}
-							return resultText
-						}(),
-						"full_result_text":   resultText,
-						"execution_duration": duration.String(),
-						"server_name":        a.toolToServer[tc.FunctionCall.Name],
-					})
-
-					// Log the complete tool output for debugging
-					logger.Infof("[TOOL OUTPUT LOG] Turn %d, Tool: %s, Response Length: %d chars", turn+1, tc.FunctionCall.Name, len(resultText))
-					logger.Infof("[TOOL OUTPUT LOG] Turn %d, Tool: %s, Response Preview: %s", turn+1, func() string {
-						if len(resultText) > 300 {
-							return resultText[:300] + "..."
-						}
-						return resultText
-					}())
-
-					// CRITICAL DEBUG: Tool result processed in conversation.go (PATH 2)
-					getLogger(a).Info("CRITICAL DEBUG: Tool result processed in conversation.go (PATH 2)", map[string]interface{}{
-						"tool_name":          tc.FunctionCall.Name,
-						"result_text_length": len(resultText),
-						"result_text_empty":  resultText == "",
-					})
-
 					// Check if this is a large tool output that should be written to file
 					if a.toolOutputHandler != nil {
-						getLogger(a).Info("CRITICAL DEBUG: ToolOutputHandler present in conversation.go (PATH 2)", map[string]interface{}{
-							"enabled":          a.toolOutputHandler.Enabled,
-							"server_available": a.toolOutputHandler.ServerAvailable,
-							"threshold":        a.toolOutputHandler.Threshold,
-						})
-
-						// Log tool output token count for debugging
-						tokenCount := a.toolOutputHandler.CountTokensForModel(resultText, a.ModelID)
-						getLogger(a).Info("📊 Tool output token count (conversation.go PATH 2)", map[string]interface{}{
-							"tool_name":        tc.FunctionCall.Name,
-							"content_length":   len(resultText),
-							"token_count":      tokenCount,
-							"threshold":        a.toolOutputHandler.Threshold,
-							"is_large":         tokenCount > a.toolOutputHandler.Threshold,
-							"server_available": a.toolOutputHandler.IsServerAvailable(),
-						})
-
 						// Check if this is a large tool output that should be written to file
 						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
-							getLogger(a).Info("CRITICAL DEBUG: Large tool output detected in conversation.go (PATH 2)", map[string]interface{}{
-								"tool_name":      tc.FunctionCall.Name,
-								"content_length": len(resultText),
-								"token_count":    tokenCount,
-								"threshold":      a.toolOutputHandler.Threshold,
-							})
 
 							// Emit large tool output detection event
 							detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
@@ -1087,30 +880,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 								// Replace the result text with the file message
 								resultText = fileMessage
 
-								getLogger(a).Info("CRITICAL DEBUG: Large tool output saved to file", map[string]interface{}{
-									"tool_name":      tc.FunctionCall.Name,
-									"file_path":      filePath,
-									"content_length": len(resultText),
-								})
 							} else {
 								// Emit file write error event
 								fileErrorEvent := events.NewLargeToolOutputFileWriteErrorEvent(tc.FunctionCall.Name, writeErr.Error(), len(resultText))
 								a.EmitTypedEvent(ctx, fileErrorEvent)
-
-								getLogger(a).Info("CRITICAL DEBUG: Failed to write large tool output to file", map[string]interface{}{
-									"tool_name": tc.FunctionCall.Name,
-									"error":     writeErr.Error(),
-								})
 							}
 						}
-					} else {
-						getLogger(a).Info("CRITICAL DEBUG: ToolOutputHandler is nil in conversation.go (PATH 2)", nil)
 					}
 				} else {
 					resultText = "Tool execution completed but no result returned"
 				}
 				// 3. Append the tool result as a new message (after the AI tool_call message)
-				logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, about to append tool result message to history", turn+1)
 				// Add recover block to catch panics
 				func() {
 					defer func() {
@@ -1119,13 +899,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 						}
 					}()
 					// Use the exact tool call ID from the LLM response
-					messages = append(messages, llms.MessageContent{
-						Role:  llms.ChatMessageTypeTool, // Use "tool" role for tool responses
-						Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText}},
+					messages = append(messages, llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeTool, // Use "tool" role for tool responses
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText}},
 					})
 				}()
-				logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, tool result message appended to history", turn+1)
-				logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, end of tool call handling for tool %s", turn+1, tc.FunctionCall.Name)
 
 				// End the tool execution span with output and error information
 				toolOutput := map[string]interface{}{
@@ -1155,21 +933,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 				// Note: Removed redundant tool_output and tool_response events
 				// tool_call_end now contains all necessary tool information
 
-				logger.Infof("Finished tool call - turn: %d, tool_call_index: %d, tool_name: %s", turn+1, i+1, tc.FunctionCall.Name)
 			}
 
-			logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, continuing to next turn after tool calls", turn+1)
 			continue
 		} else {
 			// No tool calls - add the assistant response to conversation history
 			// This is CRITICAL to prevent conversation loops
 			if choice.Content != "" {
-				assistantMessage := llms.MessageContent{
-					Role:  llms.ChatMessageTypeAI,
-					Parts: []llms.ContentPart{llms.TextContent{Text: choice.Content}},
+				assistantMessage := llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
 				}
 				messages = append(messages, assistantMessage)
-				logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, added assistant response to conversation history (no tool calls)", turn+1)
 			}
 
 			// Check if this is a ReAct agent and if it has a completion pattern
@@ -1205,9 +980,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 					// Append the final response to messages array for consistency
 					if choice.Content != "" {
-						assistantMessage := llms.MessageContent{
-							Role:  llms.ChatMessageTypeAI,
-							Parts: []llms.ContentPart{llms.TextContent{Text: choice.Content}},
+						assistantMessage := llmtypes.MessageContent{
+							Role:  llmtypes.ChatMessageTypeAI,
+							Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
 						}
 						messages = append(messages, assistantMessage)
 					}
@@ -1252,10 +1027,10 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 	a.EmitTypedEvent(ctx, maxTurnsEvent)
 
 	// Add a user message asking for final answer
-	finalUserMessage := llms.MessageContent{
-		Role: llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{
-			llms.TextContent{
+	finalUserMessage := llmtypes.MessageContent{
+		Role: llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{
+			llmtypes.TextContent{
 				Text: "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.",
 			},
 		},
@@ -1269,7 +1044,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 	a.EmitTypedEvent(ctx, finalUserMessageEvent)
 
 	// Make one final LLM call to get the final answer
-	var finalResp *llms.ContentResponse
+	var finalResp *llmtypes.ContentResponse
 	var err error
 
 	// Create options for final call with reasonable max_tokens
@@ -1280,11 +1055,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 		}
 	}
 
-	finalOpts := []llms.CallOption{
-		llms.WithMaxTokens(maxTokens), // Set reasonable default for final answer
+	finalOpts := []llmtypes.CallOption{
+		llmtypes.WithMaxTokens(maxTokens), // Set reasonable default for final answer
 	}
 	if !llm.IsO3O4Model(a.ModelID) {
-		finalOpts = append(finalOpts, llms.WithTemperature(a.Temperature))
+		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
 	finalResp, err, _ = GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns, func(msg string) {
@@ -1328,9 +1103,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 			// Append the final response to messages array for consistency
 			if lastResponse != "" {
-				assistantMessage := llms.MessageContent{
-					Role:  llms.ChatMessageTypeAI,
-					Parts: []llms.ContentPart{llms.TextContent{Text: lastResponse}},
+				assistantMessage := llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: lastResponse}},
 				}
 				messages = append(messages, assistantMessage)
 			}
@@ -1390,9 +1165,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 			// Append the final response to messages array for consistency
 			if finalChoice.Content != "" {
-				assistantMessage := llms.MessageContent{
-					Role:  llms.ChatMessageTypeAI,
-					Parts: []llms.ContentPart{llms.TextContent{Text: finalChoice.Content}},
+				assistantMessage := llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: finalChoice.Content}},
 				}
 				messages = append(messages, assistantMessage)
 			}
@@ -1422,20 +1197,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llms.MessageConten
 
 	// Append the final response to messages array for consistency
 	if finalChoice.Content != "" {
-		assistantMessage := llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{llms.TextContent{Text: finalChoice.Content}},
+		assistantMessage := llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: finalChoice.Content}},
 		}
 		messages = append(messages, assistantMessage)
 	}
 
 	return finalChoice.Content, messages, nil
-}
-
-// truncateString truncates a string to the specified length and adds "..." if truncated
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 )
 
@@ -212,94 +213,6 @@ func (e *LLMGenerationErrorEvent) GetTimestamp() time.Time { return e.Timestamp 
 // GetTraceID returns the trace ID
 func (e *LLMGenerationErrorEvent) GetTraceID() string { return e.TraceID }
 
-// convertToLLMMetadata converts a map[string]interface{} to LLMMetadata
-func convertToLLMMetadata(metadata map[string]interface{}) LLMMetadata {
-	if metadata == nil {
-		return LLMMetadata{}
-	}
-
-	typedMetadata := LLMMetadata{}
-
-	// Extract common fields
-	if modelVersion, ok := metadata["model_version"].(string); ok {
-		typedMetadata.ModelVersion = modelVersion
-	}
-	if maxTokens, ok := metadata["max_tokens"].(int); ok {
-		typedMetadata.MaxTokens = maxTokens
-	}
-	if topP, ok := metadata["top_p"].(float64); ok {
-		typedMetadata.TopP = topP
-	}
-	if freqPenalty, ok := metadata["frequency_penalty"].(float64); ok {
-		typedMetadata.FrequencyPenalty = freqPenalty
-	}
-	if presPenalty, ok := metadata["presence_penalty"].(float64); ok {
-		typedMetadata.PresencePenalty = presPenalty
-	}
-	if user, ok := metadata["user"].(string); ok {
-		typedMetadata.User = user
-	}
-
-	// Extract stop sequences if available
-	if stopSeqs, ok := metadata["stop_sequences"].([]string); ok {
-		typedMetadata.StopSequences = stopSeqs
-	}
-
-	// Extract custom fields
-	customFields := make(map[string]string)
-	for key, value := range metadata {
-		if key != "model_version" && key != "max_tokens" && key != "top_p" &&
-			key != "frequency_penalty" && key != "presence_penalty" && key != "stop_sequences" && key != "user" {
-			if strVal, ok := value.(string); ok {
-				customFields[key] = strVal
-			}
-		}
-	}
-	if len(customFields) > 0 {
-		typedMetadata.CustomFields = customFields
-	}
-
-	return typedMetadata
-}
-
-// convertToTokenUsage converts a map[string]interface{} to TokenUsage
-func convertToTokenUsage(tokenUsage map[string]interface{}) TokenUsage {
-	if tokenUsage == nil {
-		return TokenUsage{}
-	}
-
-	typedTokenUsage := TokenUsage{}
-
-	// Extract token counts
-	if inputTokens, ok := tokenUsage["input_tokens"].(int); ok {
-		typedTokenUsage.InputTokens = inputTokens
-	}
-	if outputTokens, ok := tokenUsage["output_tokens"].(int); ok {
-		typedTokenUsage.OutputTokens = outputTokens
-	}
-	if totalTokens, ok := tokenUsage["total_tokens"].(int); ok {
-		typedTokenUsage.TotalTokens = totalTokens
-	}
-
-	// Extract provider-specific fields and map them
-	if promptTokens, ok := tokenUsage["prompt_tokens"].(int); ok && typedTokenUsage.InputTokens == 0 {
-		typedTokenUsage.InputTokens = promptTokens
-	}
-	if completionTokens, ok := tokenUsage["completion_tokens"].(int); ok && typedTokenUsage.OutputTokens == 0 {
-		typedTokenUsage.OutputTokens = completionTokens
-	}
-
-	// Extract other fields
-	if unit, ok := tokenUsage["unit"].(string); ok {
-		typedTokenUsage.Unit = unit
-	}
-	if cost, ok := tokenUsage["cost"].(string); ok {
-		typedTokenUsage.Cost = cost
-	}
-
-	return typedTokenUsage
-}
-
 // emitLLMInitializationStart emits a typed start event for LLM initialization
 func emitLLMInitializationStart(tracers []observability.Tracer, provider string, modelID string, temperature float64, traceID observability.TraceID, metadata LLMMetadata) {
 	if len(tracers) == 0 {
@@ -380,32 +293,6 @@ func emitLLMInitializationError(tracers []observability.Tracer, provider string,
 	}
 }
 
-// emitLLMGenerationStart emits a typed start event for LLM generation
-func emitLLMGenerationStart(tracers []observability.Tracer, provider string, modelID string, operation string, messages int, temperature float64, messageContent string, traceID observability.TraceID, metadata LLMMetadata) {
-	if len(tracers) == 0 {
-		return
-	}
-
-	event := &LLMGenerationStartEvent{
-		ModelID:        modelID,
-		Provider:       provider,
-		Operation:      operation,
-		Messages:       messages,
-		Temperature:    temperature,
-		MessageContent: messageContent,
-		Timestamp:      time.Now(),
-		TraceID:        string(traceID),
-		Metadata:       metadata,
-	}
-
-	for _, tracer := range tracers {
-		if err := tracer.EmitLLMEvent(event); err != nil {
-			// Log error but continue with other tracers
-			continue
-		}
-	}
-}
-
 // emitLLMGenerationSuccess emits a typed success event for LLM generation
 func emitLLMGenerationSuccess(tracers []observability.Tracer, provider string, modelID string, operation string, messages int, temperature float64, messageContent string, responseLength int, choicesCount int, traceID observability.TraceID, metadata LLMMetadata) {
 	if len(tracers) == 0 {
@@ -476,70 +363,40 @@ func emitLLMGenerationError(tracers []observability.Tracer, provider string, mod
 }
 
 // extractTokenUsageFromGenerationInfo extracts token usage from GenerationInfo
-func extractTokenUsageFromGenerationInfo(generationInfo map[string]interface{}) observability.UsageMetrics {
+func extractTokenUsageFromGenerationInfo(generationInfo *llmtypes.GenerationInfo) observability.UsageMetrics {
 	usage := observability.UsageMetrics{Unit: "TOKENS"}
 
-	// Try standard field names first
-	if v, ok := generationInfo["input_tokens"]; ok {
-		if inputTokens, ok := v.(int); ok {
-			usage.InputTokens = inputTokens
-		}
-	}
-	if v, ok := generationInfo["output_tokens"]; ok {
-		if outputTokens, ok := v.(int); ok {
-			usage.OutputTokens = outputTokens
-		}
-	}
-	if v, ok := generationInfo["total_tokens"]; ok {
-		if totalTokens, ok := v.(int); ok {
-			usage.TotalTokens = totalTokens
-		}
+	if generationInfo == nil {
+		return usage
 	}
 
-	// Try OpenAI-specific field names
-	if v, ok := generationInfo["PromptTokens"]; ok {
-		if promptTokens, ok := v.(int); ok {
-			usage.InputTokens = promptTokens
-		}
-	}
-	if v, ok := generationInfo["CompletionTokens"]; ok {
-		if completionTokens, ok := v.(int); ok {
-			usage.OutputTokens = completionTokens
-		}
-	}
-	if v, ok := generationInfo["TotalTokens"]; ok {
-		if totalTokens, ok := v.(int); ok {
-			usage.TotalTokens = totalTokens
-		}
+	// Extract input tokens (check multiple naming conventions in priority order)
+	if generationInfo.InputTokens != nil {
+		usage.InputTokens = *generationInfo.InputTokens
+	} else if generationInfo.InputTokensCap != nil {
+		usage.InputTokens = *generationInfo.InputTokensCap
+	} else if generationInfo.PromptTokens != nil {
+		usage.InputTokens = *generationInfo.PromptTokens
+	} else if generationInfo.PromptTokensCap != nil {
+		usage.InputTokens = *generationInfo.PromptTokensCap
 	}
 
-	// Try Anthropic-specific field names (used by Bedrock)
-	if v, ok := generationInfo["InputTokens"]; ok {
-		if inputTokens, ok := v.(int); ok {
-			usage.InputTokens = inputTokens
-		}
-	}
-	if v, ok := generationInfo["OutputTokens"]; ok {
-		if outputTokens, ok := v.(int); ok {
-			usage.OutputTokens = outputTokens
-		}
+	// Extract output tokens (check multiple naming conventions in priority order)
+	if generationInfo.OutputTokens != nil {
+		usage.OutputTokens = *generationInfo.OutputTokens
+	} else if generationInfo.OutputTokensCap != nil {
+		usage.OutputTokens = *generationInfo.OutputTokensCap
+	} else if generationInfo.CompletionTokens != nil {
+		usage.OutputTokens = *generationInfo.CompletionTokens
+	} else if generationInfo.CompletionTokensCap != nil {
+		usage.OutputTokens = *generationInfo.CompletionTokensCap
 	}
 
-	// Try Bedrock-specific field names
-	if v, ok := generationInfo["inputTokens"]; ok {
-		if inputTokens, ok := v.(int); ok {
-			usage.InputTokens = inputTokens
-		}
-	}
-	if v, ok := generationInfo["outputTokens"]; ok {
-		if outputTokens, ok := v.(int); ok {
-			usage.OutputTokens = outputTokens
-		}
-	}
-	if v, ok := generationInfo["totalTokens"]; ok {
-		if totalTokens, ok := v.(int); ok {
-			usage.TotalTokens = totalTokens
-		}
+	// Extract total tokens (check multiple naming conventions in priority order)
+	if generationInfo.TotalTokens != nil {
+		usage.TotalTokens = *generationInfo.TotalTokens
+	} else if generationInfo.TotalTokensCap != nil {
+		usage.TotalTokens = *generationInfo.TotalTokensCap
 	}
 
 	// Calculate total tokens if not provided by the provider
@@ -551,30 +408,47 @@ func extractTokenUsageFromGenerationInfo(generationInfo map[string]interface{}) 
 }
 
 // ExtractTokenUsageWithCacheInfo extracts token usage with OpenRouter cache information
-func ExtractTokenUsageWithCacheInfo(generationInfo map[string]interface{}) (observability.UsageMetrics, float64, int, map[string]interface{}) {
+func ExtractTokenUsageWithCacheInfo(generationInfo *llmtypes.GenerationInfo) (observability.UsageMetrics, float64, int, map[string]interface{}) {
 	usage := extractTokenUsageFromGenerationInfo(generationInfo)
 
 	var cacheDiscount float64
 	var reasoningTokens int
 
-	// Extract OpenRouter cache discount
-	if v, ok := generationInfo["cache_discount"]; ok {
-		if discount, ok := v.(float64); ok {
-			cacheDiscount = discount
+	if generationInfo != nil {
+		// Extract OpenRouter cache discount
+		if generationInfo.CacheDiscount != nil {
+			cacheDiscount = *generationInfo.CacheDiscount
+		}
+
+		// Extract reasoning tokens (for models like o3)
+		if generationInfo.ReasoningTokens != nil {
+			reasoningTokens = *generationInfo.ReasoningTokens
 		}
 	}
 
-	// Extract reasoning tokens (for models like o3)
-	if v, ok := generationInfo["ReasoningTokens"]; ok {
-		if tokens, ok := v.(int); ok {
-			reasoningTokens = tokens
-		}
-	}
-
-	// Create a copy of generationInfo for logging
+	// Create a copy of generationInfo for logging (convert to map for backward compatibility)
 	infoCopy := make(map[string]interface{})
-	for k, v := range generationInfo {
-		infoCopy[k] = v
+	if generationInfo != nil {
+		// Convert typed fields to map for backward compatibility
+		if generationInfo.InputTokens != nil {
+			infoCopy["input_tokens"] = *generationInfo.InputTokens
+		}
+		if generationInfo.OutputTokens != nil {
+			infoCopy["output_tokens"] = *generationInfo.OutputTokens
+		}
+		if generationInfo.TotalTokens != nil {
+			infoCopy["total_tokens"] = *generationInfo.TotalTokens
+		}
+		if generationInfo.CacheDiscount != nil {
+			infoCopy["cache_discount"] = *generationInfo.CacheDiscount
+		}
+		if generationInfo.ReasoningTokens != nil {
+			infoCopy["ReasoningTokens"] = *generationInfo.ReasoningTokens
+		}
+		// Add any additional fields from the Additional map
+		for k, v := range generationInfo.Additional {
+			infoCopy[k] = v
+		}
 	}
 
 	return usage, cacheDiscount, reasoningTokens, infoCopy

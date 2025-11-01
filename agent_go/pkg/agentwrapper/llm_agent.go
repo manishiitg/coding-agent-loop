@@ -7,9 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
-
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -29,7 +28,7 @@ type LLMAgentWrapper struct {
 	logger  utils.ExtendedLogger
 
 	// In-memory conversation history for multi-turn state
-	history []llms.MessageContent
+	history []llmtypes.MessageContent
 }
 
 // LLMAgentConfig holds configuration for the LLM agent wrapper
@@ -310,9 +309,9 @@ func (w *LLMAgentWrapper) Invoke(ctx context.Context, prompt string) (string, er
 	}
 
 	// Add user message to wrapper history for tracking
-	w.history = append(w.history, llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
+	w.history = append(w.history, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: prompt}},
 	})
 	w.mu.Unlock()
 
@@ -321,7 +320,7 @@ func (w *LLMAgentWrapper) Invoke(ctx context.Context, prompt string) (string, er
 }
 
 // InvokeWithHistory allows multi-turn conversation by passing a full message history.
-func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llms.MessageContent) (string, error) {
+func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, error) {
 	w.mu.Lock()
 	if w.closed {
 		w.mu.Unlock()
@@ -547,10 +546,10 @@ func (w *LLMAgentWrapper) GetToolDefinitions() []map[string]interface{} {
 }
 
 // GetHistory returns a copy of the current conversation history
-func (w *LLMAgentWrapper) GetHistory() []llms.MessageContent {
+func (w *LLMAgentWrapper) GetHistory() []llmtypes.MessageContent {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	h := make([]llms.MessageContent, len(w.history))
+	h := make([]llmtypes.MessageContent, len(w.history))
 	copy(h, w.history)
 	return h
 }
@@ -570,9 +569,9 @@ func (w *LLMAgentWrapper) AppendUserMessage(text string) {
 		return
 	}
 	// Let the agent handle everything - just add user message to wrapper history for tracking
-	w.history = append(w.history, llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: text}},
+	w.history = append(w.history, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: text}},
 	})
 }
 
@@ -583,14 +582,14 @@ func (w *LLMAgentWrapper) AppendAssistantMessage(text string) {
 	if w.closed {
 		return
 	}
-	w.history = append(w.history, llms.MessageContent{
-		Role:  llms.ChatMessageTypeAI,
-		Parts: []llms.ContentPart{llms.TextContent{Text: text}},
+	w.history = append(w.history, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeAI,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: text}},
 	})
 }
 
 // AppendMessage adds a message to the conversation history
-func (w *LLMAgentWrapper) AppendMessage(msg llms.MessageContent) {
+func (w *LLMAgentWrapper) AppendMessage(msg llmtypes.MessageContent) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -668,7 +667,7 @@ func (w *LLMAgentWrapper) getLastErrorString() string {
 }
 
 // initializeLLMWithConfig initializes an LLM using detailed configuration from frontend
-func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, traceID observability.TraceID) (llms.Model, error) {
+func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, traceID observability.TraceID) (llmtypes.Model, error) {
 	// Validate and convert provider string to llm.Provider type
 	llmProvider, err := llm.ValidateProvider(string(config.Provider))
 	if err != nil {
@@ -712,17 +711,6 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 
 	// Initialize the LLM using the factory with detailed fallback support
 	return llm.InitializeLLM(llmConfig)
-}
-
-// initializeLLM initializes an LLM based on the provider, model ID and temperature (legacy function)
-func initializeLLM(provider, modelID string, temperature float64, logger utils.ExtendedLogger, tracer observability.Tracer, traceID observability.TraceID) (llms.Model, error) {
-	// Create a basic config and use the new function
-	config := LLMAgentConfig{
-		Provider:    llm.Provider(provider),
-		ModelID:     modelID,
-		Temperature: temperature,
-	}
-	return initializeLLMWithConfig(config, logger, tracer, traceID)
 }
 
 // GetEventDispatcher returns the agent's event dispatcher for direct event access

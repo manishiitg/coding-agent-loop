@@ -50,7 +50,7 @@ The test uses a long-running LLM operation to ensure cancellation can be observe
 		// Test context cancellation during LLM generation
 		logger.Info("\n--- Context Cancellation During LLM Generation ---")
 		if err := testContextCancellationDuringLLMGeneration(provider, logger); err != nil {
-			return fmt.Errorf("context cancellation during LLM generation test failed: %v", err)
+			return fmt.Errorf("context cancellation during LLM generation test failed: %w", err)
 		}
 
 		logger.Info("\n✅ All context cancellation tests passed!")
@@ -90,7 +90,7 @@ func testContextCancellationDuringLLMGeneration(provider string, logger utils.Ex
 	ctx := context.Background()
 	agent, err := external.NewAgent(ctx, config)
 	if err != nil {
-		return fmt.Errorf("failed to create agent: %v", err)
+		return fmt.Errorf("failed to create agent: %w", err)
 	}
 	defer agent.Close()
 
@@ -134,10 +134,10 @@ func testContextCancellationDuringLLMGeneration(provider string, logger utils.Ex
 		return fmt.Errorf("LLM generation should have been cancelled")
 	case err := <-errChan:
 		if isContextCancelledError(err) {
-			logger.Infof("✅ LLM generation was properly cancelled: %v", err)
+			logger.Infof("✅ LLM generation was properly cancelled: %w", err)
 			return nil
 		}
-		return fmt.Errorf("unexpected error during LLM generation: %v", err)
+		return fmt.Errorf("unexpected error during LLM generation: %w", err)
 	case <-time.After(5 * time.Second):
 		logger.Warnf("⚠️ Test timeout - LLM generation may not have been cancelled properly")
 		return fmt.Errorf("test timeout - LLM generation should have been cancelled within 5 seconds")

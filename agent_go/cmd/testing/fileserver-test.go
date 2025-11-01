@@ -38,7 +38,7 @@ var fileserverTestCmd = &cobra.Command{
 		logger.Infof("Loading merged config from: %s", configPath)
 		config, err := mcpclient.LoadMergedConfig(configPath, logger)
 		if err != nil {
-			return fmt.Errorf("failed to load merged config: %v", err)
+			return fmt.Errorf("failed to load merged config: %w", err)
 		}
 
 		// Find fileserver configuration
@@ -63,7 +63,7 @@ var fileserverTestCmd = &cobra.Command{
 		client := mcpclient.New(*fileserverConfig, logger)
 
 		if err := client.Connect(ctx); err != nil {
-			return fmt.Errorf("failed to connect to fileserver: %v", err)
+			return fmt.Errorf("failed to connect to fileserver: %w", err)
 		}
 		defer client.Close()
 
@@ -72,19 +72,19 @@ var fileserverTestCmd = &cobra.Command{
 		// Test 1: List available tools
 		logger.Info("\n--- Test 1: List Tools ---")
 		if err := testListTools(ctx, client, logger); err != nil {
-			return fmt.Errorf("list tools test failed: %v", err)
+			return fmt.Errorf("list tools test failed: %w", err)
 		}
 
 		// Test 2: Create test files and test fileserver tools
 		logger.Info("\n--- Test 2: Fileserver Tools Integration ---")
 		if err := testFileserverTools(ctx, client, logger); err != nil {
-			return fmt.Errorf("fileserver tools test failed: %v", err)
+			return fmt.Errorf("fileserver tools test failed: %w", err)
 		}
 
 		// Test 3: Test with existing files from tool output handler
 		logger.Info("\n--- Test 3: Test with Existing Tool Output Files ---")
 		if err := testWithExistingFiles(ctx, client, logger); err != nil {
-			return fmt.Errorf("existing files test failed: %v", err)
+			return fmt.Errorf("existing files test failed: %w", err)
 		}
 
 		logger.Info("\n✅ All fileserver tests passed!")
@@ -97,7 +97,7 @@ func testListTools(ctx context.Context, client *mcpclient.Client, logger utils.E
 	// List tools with details
 	tools, err := client.ListTools(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list tools: %v", err)
+		return fmt.Errorf("failed to list tools: %w", err)
 	}
 
 	logger.Infof("Found %d tools:", len(tools))
@@ -131,7 +131,7 @@ func testFileserverTools(ctx context.Context, client *mcpclient.Client, logger u
 	// Create test directory and files
 	testDir := "fileserver_test"
 	if err := os.MkdirAll(testDir, 0755); err != nil {
-		return fmt.Errorf("failed to create test directory: %v", err)
+		return fmt.Errorf("failed to create test directory: %w", err)
 	}
 	defer os.RemoveAll(testDir)
 
@@ -145,7 +145,7 @@ func testFileserverTools(ctx context.Context, client *mcpclient.Client, logger u
 	for filename, content := range testFiles {
 		filePath := filepath.Join(testDir, filename)
 		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create test file %s: %v", filename, err)
+			return fmt.Errorf("failed to create test file %s: %w", filename, err)
 		}
 		logger.Infof("Created test file: %s", filePath)
 	}
@@ -161,7 +161,7 @@ func testFileserverTools(ctx context.Context, client *mcpclient.Client, logger u
 			"end":   50,
 		})
 		if err != nil {
-			return fmt.Errorf("read_characters failed for %s: %v", filename, err)
+			return fmt.Errorf("read_characters failed for %s: %w", filename, err)
 		}
 		logger.Infof("Read characters for %s: %s", filename, mcpclient.ToolResultAsString(readCharsResult, logger))
 	}
@@ -173,7 +173,7 @@ func testFileserverTools(ctx context.Context, client *mcpclient.Client, logger u
 		"pattern": "line",
 	})
 	if err != nil {
-		return fmt.Errorf("search_regex_in_file failed: %v", err)
+		return fmt.Errorf("search_regex_in_file failed: %w", err)
 	}
 	logger.Infof("Search result: %s", mcpclient.ToolResultAsString(searchResult, logger))
 
@@ -184,7 +184,7 @@ func testFileserverTools(ctx context.Context, client *mcpclient.Client, logger u
 		"query": ".name",
 	})
 	if err != nil {
-		return fmt.Errorf("jq_query failed: %v", err)
+		return fmt.Errorf("jq_query failed: %w", err)
 	}
 	logger.Infof("jq query result for .name: %s", mcpclient.ToolResultAsString(jqResult, logger))
 
@@ -195,7 +195,7 @@ func testFileserverTools(ctx context.Context, client *mcpclient.Client, logger u
 		"query": ".items[]",
 	})
 	if err != nil {
-		return fmt.Errorf("jq_query array access failed: %v", err)
+		return fmt.Errorf("jq_query array access failed: %w", err)
 	}
 	logger.Infof("jq query result for .items[]: %s", mcpclient.ToolResultAsString(jqArrayResult, logger))
 
@@ -207,7 +207,7 @@ func testFileserverTools(ctx context.Context, client *mcpclient.Client, logger u
 		"compact": true,
 	})
 	if err != nil {
-		return fmt.Errorf("jq_query compact output failed: %v", err)
+		return fmt.Errorf("jq_query compact output failed: %w", err)
 	}
 	logger.Infof("jq query result with compact output: %s", mcpclient.ToolResultAsString(jqCompactResult, logger))
 
@@ -226,7 +226,7 @@ func testWithExistingFiles(ctx context.Context, client *mcpclient.Client, logger
 	// Find a session directory
 	sessionDirs, err := os.ReadDir(toolOutputDir)
 	if err != nil {
-		return fmt.Errorf("failed to read tool output directory: %v", err)
+		return fmt.Errorf("failed to read tool output directory: %w", err)
 	}
 
 	for _, sessionDir := range sessionDirs {
@@ -237,7 +237,7 @@ func testWithExistingFiles(ctx context.Context, client *mcpclient.Client, logger
 			// Test with first file found
 			files, err := os.ReadDir(sessionPath)
 			if err != nil {
-				logger.Infof("⚠️  Failed to read session directory: %v", err)
+				logger.Infof("⚠️  Failed to read session directory: %w", err)
 				continue
 			}
 

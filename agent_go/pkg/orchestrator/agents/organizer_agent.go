@@ -6,8 +6,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/tmc/langchaingo/llms"
-
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -41,7 +40,7 @@ func NewPlanOrganizerAgent(config *OrchestratorAgentConfig, logger utils.Extende
 }
 
 // Execute executes the plan organizer agent with organizer-specific input processing
-func (poa *PlanOrganizerAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (poa *PlanOrganizerAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return poa.ExecuteWithInputProcessor(ctx, templateVars, poa.organizerInputProcessor, conversationHistory)
 }
 
@@ -53,13 +52,13 @@ func (poa *PlanOrganizerAgent) organizerInputProcessor(templateVars map[string]s
 	// Parse and execute the template
 	tmpl, err := template.New("organizer").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing organizer template: %v", err)
+		return fmt.Sprintf("Error parsing organizer template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing organizer template: %v", err)
+		return fmt.Sprintf("Error executing organizer template: %w", err)
 	}
 
 	return result.String()

@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerValidationTemplate holds template variables for validation prompts
@@ -64,7 +63,7 @@ func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAge
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables
 	stepNumber := templateVars["StepNumber"]
 	totalSteps := templateVars["TotalSteps"]
@@ -110,7 +109,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 }
 
 // ExecuteStructured executes the validation agent and returns structured output
-func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*ValidationResponse, error) {
+func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, error) {
 	// Define the JSON schema for validation analysis
 	schema := `{
 		"type": "object",
@@ -294,12 +293,12 @@ Example JSON structure:
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing validation template: %v", err)
+		return fmt.Sprintf("Error parsing validation template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing validation template: %v", err)
+		return fmt.Sprintf("Error executing validation template: %w", err)
 	}
 
 	return result.String()

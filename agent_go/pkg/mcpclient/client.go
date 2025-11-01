@@ -95,7 +95,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		c.logger.Errorf("❌ Connection attempt failed for server %s (attempt %d): %v", c.getServerName(), attempt, err)
 
 		if attempt == maxRetries {
-			return fmt.Errorf("failed to connect to MCP server '%s' after %d attempts: %v", c.getServerName(), maxRetries, err)
+			return fmt.Errorf("failed to connect to MCP server '%s' after %d attempts: %w", c.getServerName(), maxRetries, err)
 		}
 	}
 
@@ -301,13 +301,13 @@ func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 	c.logger.Infof("🔧 [LISTTOOLS DEBUG] Making ListTools call with 5m timeout...")
 	result, err := c.mcpClient.ListTools(callCtx, mcp.ListToolsRequest{})
 
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] ListTools call returned: error=%v", err)
+	c.logger.Infof("🔧 [LISTTOOLS DEBUG] ListTools call returned: error=%w", err)
 
 	listDuration := time.Since(listStartTime)
 	c.logger.Infof("🔧 [LISTTOOLS DEBUG] ListTools call completed: duration=%s", listDuration.String())
 
 	if err != nil {
-		c.logger.Infof("❌ [LISTTOOLS DEBUG] Failed to list tools: %v", err)
+		c.logger.Infof("❌ [LISTTOOLS DEBUG] Failed to list tools: %w", err)
 		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
 

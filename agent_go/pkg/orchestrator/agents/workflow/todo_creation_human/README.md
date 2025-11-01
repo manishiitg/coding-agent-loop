@@ -1,590 +1,477 @@
-# Human-Controlled Todo Creation Multi-Agent Orchestrator
+# Human-Controlled Todo Creation Orchestrator
 
-## 📋 Overview
+Multi-agent system creating validated todo lists via step-by-step execution, learning, and synthesis.
 
-The Human-Controlled Todo Creation workflow is a multi-agent system that creates high-quality, validated todo lists by executing a plan step-by-step, learning from successes and failures, and synthesizing optimal execution strategies.
-
-**Key Features:**
-- 🎯 **Human-in-the-Loop**: Human approval at critical decision points
-- 🔄 **Learning-Based**: Captures success patterns and failure anti-patterns
-- 📊 **Validation-Driven**: Every step is validated before proceeding
-- 🤖 **Multi-Agent**: Specialized agents for planning, execution, validation, learning, and writing
-- 📝 **Markdown-Based**: Uses structured markdown for plans and outputs
+**Features**: 🎯 Human-in-loop • 🔄 Learning-based • 📊 Validation-driven • 🤖 Multi-agent • 📝 Markdown-based
 
 ---
 
-## 🏗️ Architecture Overview
+## ⚡ Quick Reference
 
-### **Agent Flow Diagram**
+| Phase | Agent | Output | Human Decision |
+|-------|-------|--------|---------------|
+| **0** | Variable Extraction | `variables.json` | Use/Extract new |
+| **1** | Planning → Reader | `plan.md` → JSON | Use/Create/Update |
+| **2** | Execute → Validate → Learn | Step results | Approve/Re-execute/Stop |
+| **3** | Writer → Critique | `todo_final.md` | Final approval |
+
+**Retry Limits**: Execution (3), Plan (20), Critique (3)  
+**Progress**: Auto-saved in `steps_done.json`
+
+---
+
+## 🏗️ Architecture
+
+### Main Workflow
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    HUMAN-CONTROLLED TODO CREATION                    │
-│                         Multi-Agent Workflow                         │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Phase 0: Variables                         │
+│  ┌──────────────────┐                       │
+│  │ Variable Agent   │ → variables.json      │
+│  └────────┬─────────┘                       │
+│           │ 👤 Verify                        │
+└───────────┼──────────────────────────────────┘
+            │
+┌───────────▼──────────────────────────────────┐
+│  Phase 1: Planning                           │
+│  ┌──────────────────┐                       │
+│  │ Planning Agent   │ → plan.md             │
+│  └────────┬─────────┘                       │
+│           │ 👤 3 Options:                   │
+│           │   • Use Existing                │
+│           │   • Create New                  │
+│           │   • Update Existing             │
+│           │                                │
+│  ┌────────▼─────────┐                       │
+│  │ Plan Reader       │ → JSON               │
+│  └────────┬─────────┘                       │
+│           │ 👤 Approve (max 20 rev)          │
+└───────────┼──────────────────────────────────┘
+            │
+┌───────────▼──────────────────────────────────┐
+│  Phase 2: Execution (per step)               │
+│  ┌──────────────────┐                       │
+│  │ Execute (x3)      │                       │
+│  │ → Validate        │                       │
+│  │ → Learn           │                       │
+│  └────────┬─────────┘                       │
+│           │ 👤 Approve/Re-execute/Stop      │
+└───────────┼──────────────────────────────────┘
+            │
+┌───────────▼──────────────────────────────────┐
+│  Phase 3: Synthesis                          │
+│  ┌──────────────────┐                       │
+│  │ Writer + Critique│ → todo_final.md      │
+│  └────────┬─────────┘                       │
+│           │ 👤 Review                        │
+└───────────┴──────────────────────────────────┘
+```
 
-┌─────────────────────────────────────────────────────────────────────┐
-│  Phase 1: PLANNING                                                   │
-└─────────────────────────────────────────────────────────────────────┘
+### Step Execution Loop - Detailed Flowchart
 
-    ┌──────────────────┐
-    │ Planning Agent   │  Creates initial plan
-    │                  │  → Writes plan.md
-    └────────┬─────────┘
-             │
-             ▼
-    ┌──────────────────┐
-    │ 👤 HUMAN REVIEW  │  Approves/Rejects/Modifies plan
-    └────────┬─────────┘
-             │
-             ▼
-    ┌──────────────────┐
-    │ Plan Reader      │  Converts plan.md → JSON
-    │    Agent         │  → Returns structured data
-    └────────┬─────────┘
-             │
-             ▼
+```mermaid
+flowchart TD
+    Start([Start Execution Phase]) --> CheckProgress{Check Progress}
+    
+    CheckProgress -->|Step Completed| Skip[⏭️ Skip Step]
+    CheckProgress -->|Step Not Done| Execute[📋 Execute Step]
+    
+    Skip --> NextStep{More Steps?}
+    
+    Execute --> RetryLoop[🔄 Retry Loop<br/>Attempt 1-3]
+    
+    RetryLoop --> CreateAgent[🤖 Create Execution Agent]
+    CreateAgent --> RunExecute[⚡ Execute Step with MCP Tools]
+    
+    RunExecute -->|Error| CheckRetry1{Retry < 3?}
+    CheckRetry1 -->|Yes| RetryLoop
+    CheckRetry1 -->|No| LogError[❌ Log Error<br/>Break Retry Loop]
+    
+    RunExecute -->|Success| CreateValid[🔍 Create Validation Agent]
+    
+    CreateValid -->|Error| CheckRetry2{Retry < 3?}
+    CheckRetry2 -->|Yes| RetryLoop
+    CheckRetry2 -->|No| LogError
+    
+    CreateValid -->|Success| Validate[✅ Validate Step]
+    
+    Validate -->|Error| CheckRetry3{Retry < 3?}
+    CheckRetry3 -->|Yes| RetryLoop
+    CheckRetry3 -->|No| LogError
+    
+    Validate -->|Success| CheckSuccess{Success<br/>Criteria Met?}
+    
+    CheckSuccess -->|Yes| SuccessPath[✅ PASS]
+    CheckSuccess -->|No| FailurePath[❌ FAIL]
+    
+    SuccessPath --> CheckFast{Fast Execute<br/>Mode?}
+    FailurePath --> CheckRetry4{Retry < 3?}
+    
+    CheckRetry4 -->|Yes| StoreFeedback[💾 Store Validation Feedback]
+    StoreFeedback --> RetryLoop
+    
+    CheckRetry4 -->|No| LogFailure[❌ Log Failure<br/>Break Retry Loop]
+    
+    CheckFast -->|Yes| AutoApprove[⚡ Auto-Approve]
+    CheckFast -->|No| HumanFeedback[👤 Request Human Feedback]
+    
+    LogError --> HumanFeedback
+    LogFailure --> HumanFeedback
+    
+    SuccessPath --> SuccessLearn[🧠 Success Learning Agent]
+    SuccessLearn --> UpdateSuccess[📝 Update plan.md<br/>with Success Patterns]
+    
+    FailurePath --> FailureLearn[🧠 Failure Learning Agent]
+    FailureLearn --> RootCause[🔍 Root Cause Analysis]
+    RootCause --> RefineTask[📝 Refine Task Description]
+    RefineTask --> UpdateFailure[📝 Update plan.md<br/>with Failure Patterns]
+    
+    UpdateSuccess --> HumanFeedback
+    UpdateFailure --> HumanFeedback
+    
+    HumanFeedback --> HumanDecision{Human Decision}
+    
+    HumanDecision -->|Approve| ApproveStep[✅ Approve Step]
+    HumanDecision -->|Re-execute| AddFeedback[💬 Add Feedback to History]
+    HumanDecision -->|Stop| EndWorkflow[🛑 Stop All Steps]
+    
+    AddFeedback --> RetryLoop
+    
+    ApproveStep --> SaveProgress[💾 Save Progress<br/>steps_done.json]
+    SaveProgress --> MarkComplete[✅ Mark Step Complete]
+    
+    AutoApprove --> SaveProgress
+    
+    MarkComplete --> NextStep
+    
+    NextStep -->|Yes| Execute
+    NextStep -->|No| WriterPhase[📝 Writer Phase]
+    
+    EndWorkflow --> WriterPhase
+    WriterPhase --> End([End Execution])
+    
+    style Start fill:#e1f5ff
+    style End fill:#fff4e1
+    style Execute fill:#ffe1f5
+    style RetryLoop fill:#e1ffe1
+    style SuccessPath fill:#90EE90
+    style FailurePath fill:#FFB6C1
+    style HumanFeedback fill:#FFE4B5
+    style ApproveStep fill:#98FB98
+    style EndWorkflow fill:#FF6347
+    style WriterPhase fill:#DDA0DD
+```
 
-┌─────────────────────────────────────────────────────────────────────┐
-│  Phase 2: STEP-BY-STEP EXECUTION (For Each Step)                    │
-└─────────────────────────────────────────────────────────────────────┘
+**Key Details**:
+- **Retry Loop**: Max 3 attempts with validation feedback
+- **Error Handling**: Proper break on max attempts (prevents infinite loops)
+- **Fast Mode**: Auto-approve completed steps
+- **Learning**: Success/Failure analysis after validation
+- **Progress**: Auto-saved to `steps_done.json` after approval
 
-    ┌──────────────────┐
-    │ Execution Agent  │  Executes step using MCP tools
-    │                  │  → Returns results
-    └────────┬─────────┘
-             │
-             ▼
-    ┌──────────────────┐
-    │ Validation Agent │  Validates success criteria
-    │                  │  → Creates validation report
-    └────────┬─────────┘
-             │
-        ┌────┴────┐
-        │         │
-    PASS│         │FAIL
-        │         │
-        ▼         ▼
-    ┌────────┐  ┌──────────────────┐
-    │Success │  │Failure Learning  │  Analyzes failure
-    │Learning│  │     Agent        │  → Updates plan.md
-    │ Agent  │  │                  │  → Provides retry guidance
-    └───┬────┘  └────────┬─────────┘
-        │                │
-        │                ▼
-        │       ┌──────────────────┐
-        │       │ 👤 HUMAN REVIEW  │  Reviews failure analysis
-        │       └────────┬─────────┘
-        │                │
-        │                ▼
-        │       ┌──────────────────┐
-        │       │ Execution Agent  │  Retries with improvements
-        │       │    (Retry)       │
-        │       └────────┬─────────┘
-        │                │
-        └────────────────┘
-                         │
-                         ▼
-              [Continue to next step]
+### Decision Points Flowchart
 
-┌─────────────────────────────────────────────────────────────────────┐
-│  Phase 3: SYNTHESIS                                                  │
-└─────────────────────────────────────────────────────────────────────┘
-
-    ┌──────────────────┐
-    │  Writer Agent    │  Reads all validation + learning
-    │                  │  → Creates todo_final.md
-    └────────┬─────────┘
-             │
-             ▼
-    ┌──────────────────┐
-    │ 👤 HUMAN REVIEW  │  Reviews final todo list
-    │    & EXECUTE     │
-    └──────────────────┘
+```mermaid
+flowchart TD
+    Start([Workflow Start]) --> CheckVars{variables.json<br/>Exists?}
+    
+    CheckVars -->|Yes| AskUseVars{Use Existing<br/>Variables?}
+    CheckVars -->|No| ExtractNew[📝 Extract New Variables]
+    
+    AskUseVars -->|Yes| UseVars[✅ Use Existing Variables]
+    AskUseVars -->|No| DeleteVars[🗑️ Delete variables.json]
+    DeleteVars --> ExtractNew
+    
+    ExtractNew --> VerifyVars[👤 Verify Variables]
+    UseVars --> CheckPlan{plan.md<br/>Exists?}
+    VerifyVars --> CheckPlan
+    
+    CheckPlan -->|Yes| PlanOptions[👤 3 Options]
+    CheckPlan -->|No| CreatePlan[📋 Create New Plan]
+    
+    PlanOptions --> Option1[1️⃣ Use Existing]
+    PlanOptions --> Option2[2️⃣ Create New]
+    PlanOptions --> Option3[3️⃣ Update Existing]
+    
+    Option1 --> PlanReader[📖 Plan Reader → JSON]
+    Option2 --> CleanupAll[🗑️ Delete:<br/>• plan.md<br/>• validation/<br/>• learnings/<br/>• execution/]
+    Option3 --> UpdateFeedback[💬 Ask: What to Update?]
+    
+    CleanupAll --> CreatePlan
+    UpdateFeedback --> CreatePlanUpdate[📋 Create Updated Plan<br/>Keep Artifacts]
+    
+    CreatePlan --> PlanReader
+    CreatePlanUpdate --> PlanReader
+    
+    PlanReader --> PlanApproval{Plan<br/>Approved?<br/>max 20 rev}
+    
+    PlanApproval -->|No| RevisePlan[📝 Revise Plan]
+    RevisePlan --> PlanReader
+    
+    PlanApproval -->|Yes| CheckProgress{Check<br/>Progress}
+    
+    CheckProgress -->|All Done| WriterPhase[📝 Writer Phase]
+    CheckProgress -->|Resume| ResumeOptions[👤 Resume Options]
+    CheckProgress -->|Start Fresh| ExecuteStep[⚡ Execute Step]
+    
+    ResumeOptions --> Resume[▶️ Resume]
+    ResumeOptions --> Fresh[🔄 Start Fresh]
+    ResumeOptions --> Fast[⚡ Fast Execute]
+    
+    Resume --> ExecuteStep
+    Fresh --> ExecuteStep
+    Fast --> ExecuteStep
+    
+    ExecuteStep --> Validate{Validation<br/>PASS?}
+    
+    Validate -->|Yes| SuccessLearn[🧠 Success Learning]
+    Validate -->|No| FailureLearn[🧠 Failure Learning]
+    
+    SuccessLearn --> StepApproval{Step<br/>Approved?}
+    FailureLearn --> Retry{Retry<br/>< 3?}
+    
+    Retry -->|Yes| ExecuteStep
+    Retry -->|No| StepApproval
+    
+    StepApproval -->|Approve| MarkDone[✅ Mark Complete<br/>Save Progress]
+    StepApproval -->|Re-execute| AddFeedback[💬 Add Feedback]
+    StepApproval -->|Stop| EndWorkflow[🛑 Stop Workflow]
+    
+    AddFeedback --> ExecuteStep
+    
+    MarkDone --> MoreSteps{More<br/>Steps?}
+    MoreSteps -->|Yes| ExecuteStep
+    MoreSteps -->|No| WriterPhase
+    
+    WriterPhase --> Critique{Critique<br/>Pass?<br/>max 3 rev}
+    Critique -->|No| ReviseTodo[📝 Revise Todo]
+    ReviseTodo --> WriterPhase
+    
+    Critique -->|Yes| FinalReview[👤 Final Review]
+    EndWorkflow --> FinalReview
+    
+    FinalReview -->|Approve| Complete([✅ Complete])
+    FinalReview -->|Revise| WriterPhase
+    
+    style Start fill:#e1f5ff
+    style Complete fill:#90EE90
+    style CheckVars fill:#FFE4B5
+    style CheckPlan fill:#FFE4B5
+    style PlanOptions fill:#DDA0DD
+    style Validate fill:#FFE4B5
+    style StepApproval fill:#FFE4B5
+    style Critique fill:#FFE4B5
+    style ExtractNew fill:#ffe1f5
+    style CreatePlan fill:#ffe1f5
+    style ExecuteStep fill:#ffe1f5
+    style WriterPhase fill:#DDA0DD
+    style EndWorkflow fill:#FF6347
+    style CleanupAll fill:#FFB6C1
 ```
 
 ---
 
-## 🤖 Agent Roles & Responsibilities
+## 🤖 Agents Overview
 
-### **1. Planning Agent**
-- **Role**: Create initial execution plan
-- **Input**: User objective, workspace path
-- **Output**: `planning/plan.md` (structured markdown plan)
-- **Responsibilities**:
-  - Break down objective into executable steps
-  - Define success criteria for each step
-  - Specify context dependencies and outputs
-  - Create logical execution order
-
-**File Permissions:**
-- **WRITE**: `planning/plan.md`
-
----
-
-### **2. Plan Reader Agent**
-- **Role**: Convert markdown plan to structured JSON
-- **Input**: `planning/plan.md`
-- **Output**: Structured JSON (PlanningResponse)
-- **Responsibilities**:
-  - Parse markdown plan structure
-  - Extract step details (title, description, success criteria, etc.)
-  - Convert to JSON for execution orchestrator
-  - Read-only agent (no file writing)
-
-**File Permissions:**
-- **READ**: `planning/plan.md`
-- **OUTPUT**: Returns JSON (no files written)
-
----
-
-### **3. Execution Agent**
-- **Role**: Execute individual plan steps using MCP tools
-- **Input**: Step details, context dependencies
-- **Output**: Execution results (in response)
-- **Responsibilities**:
-  - Use MCP tools to accomplish step objective
-  - Read context files from previous steps
-  - Create context output files for next steps
-  - Provide detailed execution summary
-  - Document tool usage and results
-
-**File Permissions:**
-- **READ**: `planning/plan.md`, context files from previous steps
-- **WRITE**: Context output files (if specified in step)
-
----
-
-### **4. Validation Agent**
-- **Role**: Verify step completion and success criteria
-- **Input**: Execution history, step details
-- **Output**: `validation/step_X_validation_report.md`, ValidationResponse (JSON)
-- **Responsibilities**:
-  - Check if success criteria was met
-  - Analyze execution evidence
-  - Identify issues and provide feedback
-  - Document validation results
-  - Return structured JSON verdict
-
-**File Permissions:**
-- **READ**: `planning/plan.md`, context files, execution output
-- **WRITE**: `validation/step_X_validation_report.md`
-
----
-
-### **5. Success Learning Agent**
-- **Role**: Capture best practices from successful executions
-- **Input**: Execution history, validation results (success)
-- **Output**: `learnings/success_patterns.md`, `learnings/step_X_learning.md`, updated `planning/plan.md`
-- **Responsibilities**:
-  - Identify what worked well
-  - Extract success patterns (tools, approaches)
-  - Update plan.md with success patterns
-  - Document best practices
-  - Improve step descriptions for future reference
-
-**File Permissions:**
-- **READ**: `planning/plan.md`, `validation/step_X_validation_report.md`
-- **WRITE**: `learnings/success_patterns.md`, `learnings/step_X_learning.md`, `planning/plan.md`
-
----
-
-### **6. Failure Learning Agent**
-- **Role**: Analyze failures and provide retry guidance
-- **Input**: Execution history, validation results (failure)
-- **Output**: `learnings/failure_analysis.md`, `learnings/step_X_learning.md`, updated `planning/plan.md`, refined task description
-- **Responsibilities**:
-  - Root cause analysis of failures
-  - Identify failure patterns (tools to avoid)
-  - Update plan.md with failure patterns
-  - Provide refined task description for retry
-  - Suggest alternative approaches
-
-**File Permissions:**
-- **READ**: `planning/plan.md`, `validation/step_X_validation_report.md`
-- **WRITE**: `learnings/failure_analysis.md`, `learnings/step_X_learning.md`, `planning/plan.md`
-
----
-
-### **7. Writer Agent**
-- **Role**: Synthesize final optimized todo list
-- **Input**: All validation reports, learning files, plan.md
-- **Output**: `todo_final.md` (workspace root)
-- **Responsibilities**:
-  - Read all execution data and learnings
-  - Extract success patterns and failure anti-patterns
-  - Create structured, executable todo list
-  - Include specific tool recommendations
-  - Provide execution guidelines for next LLM
-
-**File Permissions:**
-- **READ**: `planning/plan.md`, `validation/*.md`, `learnings/*.md`
-- **WRITE**: `todo_final.md` (workspace root)
+| # | Agent | Purpose | Key Files |
+|---|-------|---------|-----------|
+| 1 | **Variable Extraction** | Extract & verify `{{VARS}}` | `variables.json` |
+| 2 | **Planning** | Create execution plan | `plan.md` |
+| 3 | **Plan Reader** | Convert markdown → JSON | - |
+| 4 | **Execution** | Execute step (retry x3) | Context outputs |
+| 5 | **Validation** | Verify success criteria | `validation/*.md` |
+| 6 | **Success Learning** | Capture what worked | `learnings/*.md` |
+| 7 | **Failure Learning** | Root cause analysis | `learnings/*.md` |
+| 8 | **Writer** | Synthesize final todo | `todo_final.md` |
+| 9 | **Critique** | Quality validation (x3) | - |
 
 ---
 
 ## 📁 Workspace Structure
 
 ```
-{{WorkspacePath}}/
-├── todo_creation_human/              (Planning workspace - temporary)
-│   ├── planning/
-│   │   └── plan.md                   (Execution plan - created by Planning Agent)
-│   │
-│   ├── validation/
-│   │   ├── step_1_validation_report.md    (Created by Validation Agent)
-│   │   ├── step_2_validation_report.md
-│   │   └── step_N_validation_report.md
-│   │
-│   └── learnings/
-│       ├── success_patterns.md            (Created by Success Learning Agent)
-│       ├── failure_analysis.md            (Created by Failure Learning Agent)
-│       └── step_X_learning.md             (Per-step learning details)
+workspace/
+├── todo_creation_human/
+│   ├── variables/variables.json          # Phase 0 output
+│   ├── planning/plan.md                  # Phase 1 output
+│   ├── validation/step_X_*.md            # Per-step validation
+│   ├── learnings/                        # Success/failure patterns
+│   ├── execution/step_X_*.md            # Context outputs
+│   └── steps_done.json                   # Progress tracking
 │
-└── todo_final.md                     (Final todo list - created by Writer Agent)
+└── todo_final.md                         # Phase 3 output
 ```
 
 ---
 
-## 🔄 Detailed Workflow
+## 🔄 Phase Details
 
-### **Phase 1: Planning**
+### Phase 0: Variable Extraction
+**Flow**: Extract → Verify → Use  
+**Decision**: Use existing or extract new?  
+**Cleanup**: Delete `variables.json` if extracting new
 
-1. **Planning Agent** creates initial plan
-   - Analyzes user objective
-   - Breaks down into executable steps
-   - Defines success criteria, context dependencies
-   - Writes `planning/plan.md`
+### Phase 1: Planning
+**Flow**: Create → Human choice → Reader → Approve  
+**Decisions**:
+- **Use Existing**: Continue with current `plan.md`
+- **Create New**: Delete old plan + artifacts → Create fresh
+- **Update Existing**: Keep artifacts → Create updated plan → Ask what to update  
+**Iterations**: Up to 20 plan revisions
 
-2. **Human Reviews Plan**
-   - Approves: Continue to execution
-   - Rejects: Planning agent creates new plan
-   - Modifies: Human edits plan.md directly
+### Phase 2: Execution (Per Step)
+**Flow**: Execute → Validate → Learn → Human feedback  
+**Retry Logic**: 
+- Max 3 attempts per step
+- Uses validation feedback for retries
+- Proper break on max attempts (no infinite loops)
+**Learning**:
+- **PASS** → Success Learning (capture patterns)
+- **FAIL** → Failure Learning (root cause + retry guidance)
+**Human Options**: Approve / Re-execute / Stop
 
-3. **Plan Reader Agent** converts plan to JSON
-   - Parses markdown structure
-   - Extracts all step details
-   - Returns structured JSON for orchestrator
-
----
-
-### **Phase 2: Step-by-Step Execution**
-
-For each step in the plan:
-
-#### **2.1 Execution**
-- **Execution Agent** receives step details
-- Uses MCP tools to accomplish objective
-- Creates context output files if needed
-- Returns detailed execution summary
-
-#### **2.2 Validation**
-- **Validation Agent** receives execution history
-- Checks if success criteria was met
-- Analyzes tool usage and results
-- Creates validation report
-- Returns JSON verdict: PASS/FAIL/PARTIAL/INCOMPLETE
-
-#### **2.3a If Validation PASSES → Success Learning**
-- **Success Learning Agent** analyzes what worked
-- Extracts success patterns (specific tools, approaches)
-- Updates `plan.md` with success patterns
-- Documents learnings in `learnings/` folder
-- Continue to next step
-
-#### **2.3b If Validation FAILS → Failure Learning**
-- **Failure Learning Agent** performs root cause analysis
-- Identifies what went wrong and why
-- Updates `plan.md` with failure patterns
-- Provides refined task description for retry
-- **Human Reviews** failure analysis and retry guidance
-- **Execution Agent Retries** with improvements
-- Loop back to Validation
+### Phase 3: Synthesis
+**Flow**: Writer → Critique (x3) → Human review  
+**Output**: `todo_final.md` with success/failure patterns
 
 ---
 
-### **Phase 3: Synthesis**
+## 🔑 Key Features
 
-1. **Writer Agent** synthesizes final todo list
-   - Reads all validation reports
-   - Reads all learning files
-   - Extracts success patterns and failure anti-patterns
-   - Creates structured `todo_final.md` with:
-     - Detailed step descriptions
-     - Success criteria
-     - Context dependencies
-     - Success patterns (what worked)
-     - Failure patterns (what to avoid)
-     - Execution guidelines
+### Progress Tracking
+- **Auto-save**: `steps_done.json` after each step
+- **Resumable**: Continue from last completed step
+- **Resume Options**: Resume / Start fresh / Fast execute
+- **Fast Mode**: Auto-approve completed steps
 
-2. **Human Reviews** final todo list
-   - Ready for execution by another LLM
-   - Can be used as a template for similar tasks
+### Retry & Error Handling
+- **Auto-retry**: 3 attempts with validation feedback
+- **Smart break**: Exits retry loop after max attempts
+- **Error recovery**: Continues to human feedback on failure
 
----
+### Human Control Points
+1. **Variables**: Use existing or extract new?
+2. **Plan**: Use / Create / Update existing?
+3. **Plan Approval**: Approve or provide feedback (max 20 rev)
+4. **Step Approval**: Approve / Re-execute / Stop
+5. **Final Review**: Approve `todo_final.md`
 
-## 🔑 Key Design Principles
+### Learning System
+- **Success Patterns**: Tool recommendations, working approaches
+- **Failure Patterns**: What to avoid, root causes
+- **Plan Updates**: Continuously improved with learnings
 
-### **1. Separation of Concerns**
-Each agent has a single, well-defined responsibility:
-- Planning ≠ Execution ≠ Validation ≠ Learning ≠ Writing
-
-### **2. Context Sharing via Files**
-Agents communicate through workspace files:
-- No direct agent-to-agent output passing
-- All agents read from workspace independently
-- Clear file ownership and permissions
-
-### **3. Learning-Based Improvement**
-- Success patterns captured and propagated
-- Failure patterns identified and avoided
-- Plan continuously improves with learnings
-
-### **4. Human-in-the-Loop**
-Human intervention at critical points:
-- Plan approval/modification
-- Failure analysis review
-- Final todo list review
-
-### **5. Validation-Driven**
-Every step must pass validation:
-- Success criteria verification
-- Evidence-based validation
-- Retry with improvements on failure
+### Cleanup
+- **Create New Plan**: Deletes `plan.md` + `validation/` + `learnings/` + `execution/`
+- **Update Plan**: Preserves artifacts, only updates `plan.md`
+- **New Variables**: Deletes `variables.json` before extraction
 
 ---
 
 ## 📊 Data Flow
 
-### **Forward Flow (Planning → Execution → Writing)**
 ```
 Objective
-    │
-    ▼
-Planning Agent → plan.md
-    │
-    ▼
-Plan Reader Agent → JSON
-    │
-    ▼
-Execution Agent → Execution Results
-    │
-    ▼
-Validation Agent → validation_report.md
-    │
-    ▼
-Learning Agents → learnings/*.md + updated plan.md
-    │
-    ▼
-Writer Agent → todo_final.md
-```
-
-### **Feedback Loop (Failure → Retry)**
-```
-Validation FAIL
-    │
-    ▼
-Failure Learning Agent
-    │
-    ├─→ learnings/failure_analysis.md
-    ├─→ learnings/step_X_learning.md
-    └─→ Updated plan.md with failure patterns
-    │
-    ▼
-Human Review
-    │
-    ▼
-Execution Agent (Retry with improvements)
-    │
-    ▼
-Validation Agent
+  ↓
+Variables → variables.json
+  ↓
+Planning → plan.md → JSON
+  ↓
+For Each Step:
+  Execute → Validate → Learn → Feedback
+  ↓
+Writer → todo_final.md
 ```
 
 ---
 
-## 🎯 Example Walkthrough
+## 🎯 Example
 
-### **Objective**: "Extract database URLs from config files"
+**Objective**: "Extract database URLs from config files"
 
-### **Step 1: Planning**
-**Planning Agent** creates:
-```markdown
-# Plan: Extract Database URLs
-
-## Steps
-
-### Step 1: Read Configuration Files
-- **Description**: Use fileserver tools to read database config files
-- **Success Criteria**: All config files read and database sections identified
-- **Why This Step**: Need to access config data before extracting URLs
-- **Context Dependencies**: none
-- **Context Output**: step_1_config_contents.md
-```
-
-### **Step 2: Execution**
-**Execution Agent** executes:
-- Uses `fileserver.read_file` on `config/database.json`
-- Finds 3 database connection strings
-- Creates `step_1_config_contents.md` with results
-
-### **Step 3: Validation**
-**Validation Agent** checks:
-- ✅ Files were read successfully
-- ✅ Config contents documented
-- ✅ Context output file created
-- **Verdict**: PASS
-
-### **Step 4: Success Learning**
-**Success Learning Agent**:
-- Identifies: `fileserver.read_file` worked well
-- Updates `plan.md` with success pattern:
-  - "Use fileserver.read_file for config files (fast, reliable)"
-- Documents in `learnings/success_patterns.md`
-
-### **Step 5: Final Synthesis**
-**Writer Agent** creates `todo_final.md`:
-```markdown
-### Step 1: Read Configuration Files
-
-**Success Patterns (What Worked):**
-- Used fileserver.read_file with path="config/database.json"
-- Read operation completed in < 1 second
-- Successfully extracted 245 lines of config data
-```
+| Phase | Action | Result |
+|-------|--------|--------|
+| **0** | Extract variables | `{{CONFIG_PATH}}` |
+| **1** | Create plan | 2 steps: Read → Extract |
+| **2.1** | Execute step 1 | Read `config/database.json` |
+| **2.2** | Validate | ✅ PASS |
+| **2.3** | Success Learning | Pattern: "Use `fileserver.read_file`" |
+| **3** | Writer | `todo_final.md` with patterns |
 
 ---
 
 ## 🛠️ Configuration
 
-### **Shared Memory Requirements** (`memory.go`)
-- Workspace directory structure
-- Core principles (relative paths, file discovery)
-- Available to all agents
-
-### **Agent-Specific Requirements**
-- File permissions (read/write specific to each agent)
-- Evidence collection guidelines
-- Output format specifications
-- Embedded in individual agent prompts
+| Setting | Value | Location |
+|---------|-------|----------|
+| Retry Limit | 3 attempts | Per step |
+| Plan Revisions | 20 max | Phase 1 |
+| Critique Revisions | 3 max | Phase 3 |
+| Progress File | Auto-saved | `steps_done.json` |
 
 ---
 
-## 🚀 Benefits
+## 📚 File Formats
 
-### **For Users**
-- 🎯 **High-Quality Todos**: Validated, tested, and optimized
-- 🧠 **Learning-Based**: Captures what works and what doesn't
-- 👥 **Human Control**: Approval at critical decision points
-- 📊 **Evidence-Based**: All claims backed by execution evidence
-
-### **For LLMs**
-- 📝 **Clear Instructions**: Structured todo with success patterns
-- 🔧 **Tool Recommendations**: Specific MCP tools that worked
-- ⚠️ **Anti-Patterns**: Know what to avoid
-- 🎯 **Validated Approach**: Based on actual execution, not theory
-
-### **For Development**
-- 🔄 **Maintainable**: Each agent has single responsibility
-- 🧪 **Testable**: Clear inputs/outputs for each agent
-- 📦 **Modular**: Agents can be improved independently
-- 📊 **Observable**: File-based communication is easy to debug
-
----
-
-## 📚 File Format Specifications
-
-### **plan.md Format**
+### plan.md
 ```markdown
-# Plan: [Objective Title]
+# Plan: [Objective]
 
 ## Steps
-
-### Step 1: [Step Name]
-- **Description**: [Detailed description]
-- **Success Criteria**: [How to verify completion]
-- **Why This Step**: [Purpose and contribution]
-- **Context Dependencies**: [Files from previous steps]
-- **Context Output**: [File this step creates]
-- **Success Patterns**: [Optional - tools/approaches that worked]
-- **Failure Patterns**: [Optional - approaches to avoid]
+### Step 1: [Title]
+- **Description**: [Details]
+- **Success Criteria**: [Verification]
+- **Context Dependencies**: [Files]
+- **Context Output**: [Output file]
+- **Success Patterns**: [What worked]
+- **Failure Patterns**: [What to avoid]
 ```
 
-### **validation_report.md Format**
-Contains:
-- Step details
-- Execution conversation history
-- Success criteria analysis
-- Validation verdict (PASS/FAIL/PARTIAL/INCOMPLETE)
-- Feedback and recommendations
-
-### **todo_final.md Format**
-Structured todo list with:
-- Objective and context
-- Step-by-step execution plan
-- Success criteria for each step
-- Success patterns (what worked)
-- Failure patterns (what to avoid)
-- Execution guidelines for next LLM
+### steps_done.json
+```json
+{
+  "completed_step_indices": [0, 1],
+  "total_steps": 5,
+  "last_updated": "2025-01-27T12:00:00Z"
+}
+```
 
 ---
 
-## 🔍 Debugging & Observability
+## 🔍 Troubleshooting
 
-### **Workspace Inspection**
-All agent activities leave traces in workspace:
-- `planning/plan.md` - Shows current plan with learnings
-- `validation/*.md` - Shows execution history and validation results
-- `learnings/*.md` - Shows accumulated patterns and insights
-
-### **Human Review Points**
-1. After planning - Review `plan.md`
-2. After failure - Review failure analysis and retry guidance
-3. After synthesis - Review `todo_final.md`
-
-### **Common Issues & Solutions**
-
-| Issue | Cause | Solution |
+| Issue | Check | Solution |
 |-------|-------|----------|
-| Step fails validation | Success criteria not met | Failure learning agent analyzes and provides retry guidance |
-| Missing context files | Context dependencies incorrect | Update plan.md with correct dependencies |
-| Tool selection wrong | Incorrect approach | Learning agents update plan with correct tools |
-| Ambiguous success criteria | Criteria too vague | Human reviews and clarifies in plan.md |
+| Step fails | `validation/step_X_*.md` | Failure learning provides retry guidance |
+| Missing context | `plan.md` dependencies | Update context dependencies |
+| Wrong tools | `learnings/*.md` | Learning agents update plan with correct tools |
+| Infinite loop | Code retry logic | Fixed: proper break/continue |
+| Progress lost | `steps_done.json` | Auto-saved after each step |
+
+**Debug Files**:
+- `planning/plan.md` - Current plan with learnings
+- `validation/*.md` - Execution history & validation
+- `learnings/*.md` - Accumulated patterns
+- `steps_done.json` - Progress tracking
 
 ---
 
-## 📖 Usage Example
+## 📖 Usage
 
 ```bash
-# Orchestrator creates todo list
-./orchestrator todo-create \
-  --objective "Extract database URLs from config files" \
-  --workspace "./workspace" \
-  --mode human-controlled
+./orchestrator workflow \
+  --objective "Build CI/CD pipeline" \
+  --workspace "./workspace"
 
-# Workflow executes:
-# 1. Planning Agent creates plan.md
-# 2. Human reviews and approves
-# 3. Plan Reader converts to JSON
-# 4. Each step: Execute → Validate → Learn
-# 5. Writer Agent creates todo_final.md
-# 6. Human reviews final todo list
+# Human decisions:
+# 1. Variables: Use/Extract new?
+# 2. Plan: Use/Create/Update?
+# 3. Plan approval: Approve/Revise?
+# 4. Each step: Approve/Re-execute/Stop?
+# 5. Final todo: Approve?
 ```
 
 ---
 
-## 🤝 Contributing
-
-When adding new agents or modifying prompts:
-
-1. **Update memory.go** only for shared requirements
-2. **Add agent-specific content** to individual agent prompts
-3. **Update this README** with new agent roles
-4. **Test with real objectives** to validate workflow
-5. **Document new patterns** in learnings/
-
----
-
-## 📝 License
-
-Part of the MCP Agent project.
-
+**Part of the MCP Agent project**

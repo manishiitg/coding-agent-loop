@@ -48,7 +48,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 
 	var req WorkflowRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
 		return
 	}
 
@@ -61,7 +61,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 	// Check if workflow already exists for this preset
 	existingWorkflow, err := api.chatDB.GetWorkflowByPresetQueryID(r.Context(), req.PresetQueryID)
 	if err != nil && !strings.Contains(err.Error(), "workflow not found for preset query") {
-		http.Error(w, fmt.Sprintf("Failed to check existing workflow: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to check existing workflow: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -83,7 +83,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 
 	workflow, err := api.chatDB.CreateWorkflow(r.Context(), createReq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create workflow: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to create workflow: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -140,7 +140,7 @@ func (api *StreamingAPI) handleGetWorkflowStatus(w http.ResponseWriter, r *http.
 			json.NewEncoder(w).Encode(response)
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to get workflow: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to get workflow: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -186,7 +186,7 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 
 	var req WorkflowUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
 		return
 	}
 
@@ -216,7 +216,7 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 	// Update workflow in database
 	workflow, err := api.chatDB.UpdateWorkflow(r.Context(), req.PresetQueryID, updateReq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to update workflow: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to update workflow: %w", err), http.StatusInternalServerError)
 		return
 	}
 

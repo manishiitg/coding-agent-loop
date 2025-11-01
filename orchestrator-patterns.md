@@ -218,7 +218,7 @@ type BaseOrchestrator struct {
     *agents.BaseOrchestratorAgent
     eventBridge            interface{}
     fallbackLogger         utils.ExtendedLogger
-    WorkspaceTools         []llms.Tool
+    WorkspaceTools         []llmtypes.Tool
     WorkspaceToolExecutors map[string]interface{}
     conditionalLLM         *conditional.ConditionalLLM
     orchestratorType       OrchestratorType
@@ -415,7 +415,7 @@ All multi-agent orchestrators now automatically emit detailed events to the fron
 func (ou *OrchestratorUtils) setupAgent(
     agent agents.OrchestratorAgent,
     agentType, agentName string,
-    customTools []llms.Tool,
+    customTools []llmtypes.Tool,
     customToolExecutors map[string]interface{},
     eventBridge EventBridge,
 ) error {
@@ -730,7 +730,7 @@ The `orchestrator_utils.go` handles all agent setup automatically:
 func (ou *OrchestratorUtils) setupAgent(
     agent agents.OrchestratorAgent,
     agentType, agentName string,
-    customTools []llms.Tool,
+    customTools []llmtypes.Tool,
     customToolExecutors map[string]interface{},
     eventBridge EventBridge,
 ) error {
@@ -1388,7 +1388,7 @@ type BaseOrchestrator struct {
     *agents.BaseOrchestratorAgent
     eventBridge            interface{}
     fallbackLogger         utils.ExtendedLogger
-    WorkspaceTools         []llms.Tool
+    WorkspaceTools         []llmtypes.Tool
     WorkspaceToolExecutors map[string]interface{}
     conditionalLLM         *conditional.ConditionalLLM
     orchestratorType       OrchestratorType

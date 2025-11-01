@@ -10,7 +10,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // GenericStructuredResponse represents a generic structured response interface
@@ -36,7 +36,7 @@ type StructuredOutputLLM struct {
 
 // NewStructuredOutputLLMWithEventBridge creates a new structured output LLM with mandatory event bridge
 func NewStructuredOutputLLMWithEventBridge(
-	llm llms.Model,
+	llm llmtypes.Model,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,

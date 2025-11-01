@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 
 	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/observability"
@@ -21,7 +22,7 @@ import (
 
 // CustomTool represents a custom tool with its definition and execution function
 type CustomTool struct {
-	Definition llms.Tool
+	Definition llmtypes.Tool
 	Execution  func(ctx context.Context, args map[string]interface{}) (string, error)
 }
 
@@ -101,7 +102,7 @@ func WithToolTimeout(timeout time.Duration) AgentOption {
 }
 
 // WithCustomTools adds custom tools to the agent during creation
-func WithCustomTools(tools []llms.Tool) AgentOption {
+func WithCustomTools(tools []llmtypes.Tool) AgentOption {
 	return func(a *Agent) {
 		a.Tools = append(a.Tools, tools...)
 	}
@@ -200,9 +201,9 @@ type Agent struct {
 	// Map tool name → server name (quick dispatch)
 	toolToServer map[string]string
 
-	LLM     llms.Model
+	LLM     llmtypes.Model
 	Tracers []observability.Tracer // Support multiple tracers
-	Tools   []llms.Tool
+	Tools   []llmtypes.Tool
 
 	// Configuration knobs
 	MaxTurns        int
@@ -270,7 +271,7 @@ type Agent struct {
 	}
 
 	// Pre-filtered tools for smart routing (determined once at conversation start)
-	filteredTools []llms.Tool
+	filteredTools []llmtypes.Tool
 
 	// NEW: Track appended system prompts separately for smart routing
 	AppendedSystemPrompts []string // Track each appended prompt
@@ -336,7 +337,7 @@ func (a *Agent) SetToolOutputHandler(handler *utils.ToolOutputHandler) {
 }
 
 // NewAgent creates a new Agent with the given options
-func NewAgent(ctx context.Context, llm llms.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 
 	logger.Info("🔍 NewAgent started", map[string]interface{}{"config_path": configPath})
 
@@ -497,7 +498,7 @@ func NewAgent(ctx context.Context, llm llms.Model, serverName, configPath, model
 		}
 
 		// Filter tools: include specific tools OR all tools from servers without specific tools
-		var filteredTools []llms.Tool
+		var filteredTools []llmtypes.Tool
 		for _, tool := range allLLMTools {
 			// Get server name for this tool
 			serverName, exists := toolToServer[tool.Function.Name]
@@ -705,7 +706,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	// Load MCP configuration to get server configs for cache keys
 	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
 	if err != nil {
-		logger.Warnf("Failed to load MCP config for cache lookup: %v", err)
+		logger.Warnf("Failed to load MCP config for cache lookup: %w", err)
 		return fmt.Errorf("failed to load MCP config: %w", err)
 	}
 
@@ -768,7 +769,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 }
 
 // NewAgentWithObservability creates a new Agent with observability configuration
-func NewAgentWithObservability(ctx context.Context, llm llms.Model, serverName, configPath, modelID string, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 	logger.Info("[MCP AGENT DEBUG] Reading merged config from", map[string]interface{}{"config_path": configPath})
 
 	// Load merged MCP servers configuration (base + user)
@@ -863,11 +864,11 @@ func NewAgentWithObservability(ctx context.Context, llm llms.Model, serverName, 
 }
 
 // Convenience constructors for common use cases
-func NewSimpleAgent(ctx context.Context, llm llms.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(SimpleAgent))...)
 }
 
-func NewReActAgent(ctx context.Context, llm llms.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewReActAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(ReActAgent))...)
 }
 
@@ -920,7 +921,6 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 		// Orchestrator context: Start at level 2 (orchestrator_start -> orchestrator_agent_start -> system_prompt)
 		a.currentHierarchyLevel = 2
 		a.currentParentEventID = fmt.Sprintf("orchestrator_agent_start_%d", time.Now().UnixNano())
-		a.Logger.Infof("🔍 HIERARCHY DEBUG: Orchestrator context detected - Level=2, ParentID=%s", a.currentParentEventID)
 		return
 	}
 
@@ -929,7 +929,6 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 		// Server context: Start at level 0 (system_prompt is root)
 		a.currentHierarchyLevel = 0
 		a.currentParentEventID = ""
-		a.Logger.Infof("🔍 HIERARCHY DEBUG: Server context detected - Level=0, ParentID=''", a.currentParentEventID)
 		return
 	}
 
@@ -937,7 +936,6 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 	// This ensures consistent behavior until we implement proper context detection
 	a.currentHierarchyLevel = 0
 	a.currentParentEventID = ""
-	a.Logger.Infof("🔍 HIERARCHY DEBUG: Default context (no context values found) - Level=0, ParentID=''")
 }
 
 // EmitTypedEvent sends a typed event to all tracers AND all listeners
@@ -955,13 +953,8 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	event := events.NewAgentEvent(eventData)
 	event.TraceID = string(a.TraceID)
 
-	// Debug: Check the created event type
-	a.Logger.Infof("🔧 DEBUG: Created event type: %s", event.Type)
-	a.Logger.Infof("🔧 DEBUG: Event TraceID: %s", event.TraceID)
-
 	// Generate a unique SpanID for this event
 	event.SpanID = fmt.Sprintf("span_%s_%d", string(eventData.GetEventType()), time.Now().UnixNano())
-	a.Logger.Infof("🔧 DEBUG: Generated SpanID: %s", event.SpanID)
 
 	// ✅ COPY HIERARCHY FIELDS FROM EVENT DATA TO WRAPPER (SINGLE SOURCE OF TRUTH)
 	// Get hierarchy fields from the event data (which we just set above)
@@ -977,39 +970,29 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	// Update hierarchy for next event based on event type
 	eventType := events.EventType(eventData.GetEventType())
 
-	// Debug logging for hierarchy fields
-	a.Logger.Infof("🔍 HIERARCHY DEBUG: Event=%s, ParentID=%s, Level=%d, Component=%s",
-		string(eventType), event.ParentID, event.HierarchyLevel, event.Component)
-
 	if events.IsStartEvent(eventType) {
 		// ✅ SPECIAL HANDLING: conversation_turn should reset to level 2 (child of conversation_start)
 		if eventType == events.ConversationTurn {
 			a.currentHierarchyLevel = 2 // Reset to level 2 for new conversation turn
 			a.currentParentEventID = event.SpanID
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Conversation turn - reset to level %d, new parent=%s",
-				a.currentHierarchyLevel, a.currentParentEventID)
 		} else if eventType == events.ToolCallStart {
 			// ✅ SPECIAL HANDLING: tool_call_start should be sibling of llm_generation_end
 			// Don't increment level - use current level (same as llm_generation_end)
 			a.currentParentEventID = event.SpanID
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Tool call start - keeping level %d, new parent=%s",
-				a.currentHierarchyLevel, a.currentParentEventID)
 		} else {
 			// ✅ FIX: Increment level FIRST, then use it for next event
 			a.currentHierarchyLevel++
 			a.currentParentEventID = event.SpanID
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Start event - new parent=%s, level=%d",
-				a.currentParentEventID, a.currentHierarchyLevel)
 		}
 	} else if events.IsEndEvent(eventType) {
 		if eventType == events.ToolCallEnd {
 			// ✅ SPECIAL HANDLING: tool_call_end should be sibling of tool_call_start
 			// Don't change level - use same level as tool_call_start
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Tool call end - keeping level %d (sibling of tool_call_start)", a.currentHierarchyLevel)
+			// Level remains unchanged
 		} else {
 			// ✅ FIX: Don't decrement level immediately - let the next start event handle it
 			// This allows token_usage and tool_call_start to be siblings of llm_generation_end
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: End event - keeping level %d for potential siblings", a.currentHierarchyLevel)
+			// Level remains unchanged
 		}
 	}
 
@@ -1020,13 +1003,9 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 
 	// Send to all tracers (multiple tracer support)
 	// The streaming tracer will automatically forward events to subscribers
-	a.Logger.Infof("🔧 DEBUG: Sending event to %d tracers", len(a.Tracers))
-	for i, tracer := range a.Tracers {
-		a.Logger.Infof("🔧 DEBUG: Sending to tracer %d: %T", i, tracer)
+	for _, tracer := range a.Tracers {
 		if err := tracer.EmitEvent(event); err != nil {
 			a.Logger.Warnf("Failed to emit event to tracer %T: %v", tracer, err)
-		} else {
-			a.Logger.Infof("🔧 DEBUG: Successfully sent to tracer %T", tracer)
 		}
 	}
 
@@ -1037,13 +1016,9 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	copy(listeners, a.listeners)
 	a.mu.RUnlock()
 
-	a.Logger.Infof("🔧 DEBUG: Sending event to %d listeners", len(listeners))
-	for i, listener := range listeners {
-		a.Logger.Infof("🔧 DEBUG: Sending to listener %d: %T", i, listener)
+	for _, listener := range listeners {
 		if err := listener.HandleEvent(ctx, event); err != nil {
 			a.Logger.Warnf("Failed to emit event to listener %T: %v", listener, err)
-		} else {
-			a.Logger.Infof("🔧 DEBUG: Successfully sent to listener %T", listener)
 		}
 	}
 }
@@ -1177,37 +1152,37 @@ func (a *Agent) GetConnectionStats() map[string]interface{} {
 // Delegates to AskWithHistory with a single message
 func (a *Agent) Ask(ctx context.Context, question string) (string, error) {
 	// Create a single user message for the question
-	userMessage := llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: question}},
+	userMessage := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question}},
 	}
 
 	// Call AskWithHistory with the single message
-	answer, _, err := AskWithHistory(a, ctx, []llms.MessageContent{userMessage})
+	answer, _, err := AskWithHistory(a, ctx, []llmtypes.MessageContent{userMessage})
 	return answer, err
 }
 
 // AskWithHistory runs an interaction using the provided message history (multi-turn conversation).
 // Delegates to conversation.go
-func (a *Agent) AskWithHistory(ctx context.Context, messages []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (a *Agent) AskWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return AskWithHistory(a, ctx, messages)
 }
 
 // AskStructured runs a single-question interaction and converts the result to structured output
 func AskStructured[T any](a *Agent, ctx context.Context, question string, schema T, schemaString string) (T, error) {
 	// Create a single user message for the question
-	userMessage := llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: question}},
+	userMessage := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question}},
 	}
 
 	// Call AskWithHistoryStructured with the single message
-	answer, _, err := AskWithHistoryStructured(a, ctx, []llms.MessageContent{userMessage}, schema, schemaString)
+	answer, _, err := AskWithHistoryStructured(a, ctx, []llmtypes.MessageContent{userMessage}, schema, schemaString)
 	return answer, err
 }
 
 // AskWithHistoryStructured runs an interaction using message history and converts the result to structured output
-func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llms.MessageContent, schema T, schemaString string) (T, []llms.MessageContent, error) {
+func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error) {
 	// First, get the text response using the existing method
 	textResponse, updatedMessages, err := a.AskWithHistory(ctx, messages)
 	if err != nil {
@@ -1280,12 +1255,12 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	}
 
 	// Create the tool definition
-	tool := llms.Tool{
+	tool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        name,
 			Description: description,
-			Parameters:  parameters,
+			Parameters:  llmtypes.NewParameters(parameters),
 		},
 	}
 

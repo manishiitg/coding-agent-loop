@@ -20,7 +20,6 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	StepTitle               string
 	StepDescription         string
 	StepSuccessCriteria     string
-	StepWhyThisStep         string
 	StepContextDependencies string
 	StepContextOutput       string
 	WorkspacePath           string
@@ -64,7 +63,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"StepTitle":               templateVars["StepTitle"],
 		"StepDescription":         templateVars["StepDescription"],
 		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
-		"StepWhyThisStep":         templateVars["StepWhyThisStep"],
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"StepContextOutput":       templateVars["StepContextOutput"],
 		"WorkspacePath":           workspacePath,
@@ -81,7 +79,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		StepTitle:               executionTemplateVars["StepTitle"],
 		StepDescription:         executionTemplateVars["StepDescription"],
 		StepSuccessCriteria:     executionTemplateVars["StepSuccessCriteria"],
-		StepWhyThisStep:         executionTemplateVars["StepWhyThisStep"],
 		StepContextDependencies: executionTemplateVars["StepContextDependencies"],
 		StepContextOutput:       executionTemplateVars["StepContextOutput"],
 		WorkspacePath:           executionTemplateVars["WorkspacePath"],
@@ -104,7 +101,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		StepTitle:               templateVars["StepTitle"],
 		StepDescription:         templateVars["StepDescription"],
 		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
-		StepWhyThisStep:         templateVars["StepWhyThisStep"],
 		StepContextDependencies: templateVars["StepContextDependencies"],
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
@@ -207,13 +203,11 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 
 ### 📋 Complete Step Information
 **Success Criteria**: {{.StepSuccessCriteria}}
-**Why This Step**: {{.StepWhyThisStep}}
 **Context Dependencies**: {{.StepContextDependencies}}
 **Context Output**: {{.StepContextOutput}}
 
 ### 🔍 Step Context Analysis
 **Success Criteria**: Use the success criteria above to verify completion
-**Why This Step**: The why this step field explains how this contributes to the objective
 **Context Dependencies**: Check context dependencies for files from previous steps
 **Context Output**: Create the context output file specified above for other agents
 

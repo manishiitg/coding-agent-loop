@@ -1795,220 +1795,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "ReActReasoningEndEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "turn": {
-          "type": "integer"
-        },
-        "final_answer": {
-          "type": "string"
-        },
-        "total_steps": {
-          "type": "integer"
-        },
-        "reasoning_chain": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "ReActReasoningFinalEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "turn": {
-          "type": "integer"
-        },
-        "final_answer": {
-          "type": "string"
-        },
-        "content": {
-          "type": "string"
-        },
-        "reasoning": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "ReActReasoningStartEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "turn": {
-          "type": "integer"
-        },
-        "question": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "ReActReasoningStepEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "turn": {
-          "type": "integer"
-        },
-        "step_number": {
-          "type": "integer"
-        },
-        "thought": {
-          "type": "string"
-        },
-        "action": {
-          "type": "string"
-        },
-        "observation": {
-          "type": "string"
-        },
-        "conclusion": {
-          "type": "string"
-        },
-        "step_type": {
-          "type": "string"
-        },
-        "content": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "RequestHumanFeedbackEvent": {
       "properties": {
         "timestamp": {
@@ -2395,6 +2181,12 @@
           "type": "integer"
         },
         "duration": {
+          "type": "string"
+        },
+        "error_type": {
+          "type": "string"
+        },
+        "retry_delay": {
           "type": "string"
         }
       },
@@ -3059,18 +2851,6 @@
     },
     "context_cancelled": {
       "$ref": "#/$defs/ContextCancelledEvent"
-    },
-    "react_reasoning_start": {
-      "$ref": "#/$defs/ReActReasoningStartEvent"
-    },
-    "react_reasoning_step": {
-      "$ref": "#/$defs/ReActReasoningStepEvent"
-    },
-    "react_reasoning_final": {
-      "$ref": "#/$defs/ReActReasoningFinalEvent"
-    },
-    "react_reasoning_end": {
-      "$ref": "#/$defs/ReActReasoningEndEvent"
     },
     "tool_output": {
       "$ref": "#/$defs/ToolOutputEvent"

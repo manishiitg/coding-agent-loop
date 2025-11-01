@@ -313,6 +313,9 @@ func (bo *BaseOrchestrator) CreateStandardAgentConfigWithCustomServers(agentName
 func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
 	config := agents.NewOrchestratorAgentConfig(agentName)
 
+	// Store the unique agent name for use in agent initialization
+	config.AgentName = agentName
+
 	// Use detailed LLM configuration from frontend if available
 	llmProvider := bo.GetProvider()
 	llmModel := bo.GetModel()

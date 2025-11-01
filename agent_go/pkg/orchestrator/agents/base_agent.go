@@ -23,7 +23,6 @@ type AgentMode string
 
 const (
 	SimpleAgent AgentMode = "simple"
-	ReActAgent  AgentMode = "react"
 )
 
 // AgentType represents the type of agent
@@ -147,14 +146,8 @@ func NewBaseAgent(
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	var mcpMode mcpagent.AgentMode
-	switch mode {
-	case SimpleAgent:
-		mcpMode = mcpagent.SimpleAgent
-	case ReActAgent:
-		mcpMode = mcpagent.ReActAgent
-	default:
-		mcpMode = mcpagent.SimpleAgent
-	}
+	// All agents use Simple mode
+	mcpMode = mcpagent.SimpleAgent
 
 	// Create the underlying MCP agent
 	serverNameStr := strings.Join(serverNames, ",")

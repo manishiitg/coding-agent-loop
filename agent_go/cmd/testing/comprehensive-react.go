@@ -164,7 +164,7 @@ func runComprehensiveReactTest(cmd *cobra.Command, args []string) {
 		ToolChoice:  "auto",
 		MaxTurns:    reactFlags.maxTurns,
 		Timeout:     reactFlags.timeout,
-		AgentMode:   mcpagent.ReActAgent, // Use ReAct mode
+		AgentMode:   mcpagent.SimpleAgent, // Use Simple mode
 	}
 
 	logger.Info("✅ Agent config created", map[string]interface{}{

@@ -11,8 +11,6 @@ export { LargeToolOutputDetectedEventDisplay } from './LargeToolOutputDetectedEv
 export { LargeToolOutputFileWrittenEventDisplay } from './LargeToolOutputFileWrittenEvent'
 export { MaxTurnsReachedEventDisplay } from './MaxTurnsReachedEvent'
 export { ModelChangeEventDisplay } from './ModelChangeEvent'
-export { ReActReasoningStartEventDisplay } from './ReActReasoningStartEvent'
-export { ReActReasoningEventDisplay } from './ReActReasoningEvent'
 export { ContextCancelledEventDisplay } from './ContextCancelledEvent'
 
 // Smart Routing event components

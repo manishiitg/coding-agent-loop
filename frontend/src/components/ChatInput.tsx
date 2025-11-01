@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState } from 'react'
-import { Send, Loader2, Zap, Brain, Square, Plus } from 'lucide-react'
+import { Send, Loader2, Zap, Square, Plus } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -436,9 +436,7 @@ export const ChatInput = React.memo<ChatInputProps>(({
 
   // Memoized placeholder to prevent re-computation
   const placeholder = useMemo(() => {
-    return agentMode === 'ReAct' 
-      ? "Ask me anything... I'll think step-by-step and use tools to help you!" 
-      : agentMode === 'orchestrator'
+    return agentMode === 'orchestrator'
       ? "Enter your objective for plan creation... I'll create a detailed plan using simple agent!"
       : agentMode === 'workflow'
       ? "Enter your objective for workflow execution... I'll create a todo-list and execute tasks sequentially!"
@@ -694,30 +692,11 @@ export const ChatInput = React.memo<ChatInputProps>(({
                         <p>Simple mode - Ctrl+1</p>
                       </TooltipContent>
                     </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={() => setAgentMode('ReAct')}
-                          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                            agentMode === 'ReAct'
-                              ? 'agent-mode-selected'
-                              : 'agent-mode-unselected'
-                          }`}
-                        >
-                          <Brain className="w-3 h-3 inline mr-1" />
-                          ReAct
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>ReAct mode - Ctrl+2</p>
-                      </TooltipContent>
-                    </Tooltip>
                   </div>
                 )}
                 
-                {/* Server and LLM Selection for Simple/ReAct modes - only show when no preset is active */}
-                {(agentMode === 'simple' || agentMode === 'ReAct') && !chatActivePreset && (
+                {/* Server and LLM Selection for Simple mode - only show when no preset is active */}
+                {agentMode === 'simple' && !chatActivePreset && (
                   <div className="flex items-center gap-2">
                     <ServerSelectionDropdown
                       availableServers={availableServers}

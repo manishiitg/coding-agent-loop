@@ -38,8 +38,6 @@ type AgentMode string
 const (
 	// SimpleAgent is the standard tool-using agent without explicit reasoning
 	SimpleAgent AgentMode = "simple"
-	// ReActAgent is the reasoning and acting agent with explicit thought processes
-	ReActAgent AgentMode = "ReAct"
 )
 
 // AgentOption defines a functional option for configuring an Agent
@@ -243,9 +241,6 @@ type Agent struct {
 
 	// Custom tools that are handled as virtual tools
 	customTools map[string]CustomTool
-
-	// ReAct reasoning tracker for real-time reasoning detection
-	reasoningTracker *ReActReasoningTracker
 
 	// Custom logger (optional) - uses our ExtendedLogger interface for consistency
 	Logger utils.ExtendedLogger
@@ -868,12 +863,8 @@ func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configP
 	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(SimpleAgent))...)
 }
 
-func NewReActAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
-	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(ReActAgent))...)
-}
-
 // Legacy constructors have been removed to enforce proper logger usage
-// Use NewAgent, NewSimpleAgent, or NewReActAgent with functional options instead
+// Use NewAgent or NewSimpleAgent with functional options instead
 
 // AddEventListener and EmitEvent methods have been removed - events now go directly to tracers
 

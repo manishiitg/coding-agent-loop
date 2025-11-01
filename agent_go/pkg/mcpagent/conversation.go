@@ -231,12 +231,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Store trace ID for correlation
 	agentStartEventID := traceID
 
-	// For ReAct agents, emit reasoning start event
-	if a.AgentMode == ReActAgent {
-		reactStartEvent := events.NewReActReasoningStartEvent(0, lastUserMessage)
-		a.EmitTypedEvent(ctx, reactStartEvent)
-	}
-
 	// Metadata for conversation tracking (used in events)
 	conversationMetadata := map[string]interface{}{
 		"system_prompt":   a.SystemPrompt,
@@ -439,15 +433,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// Use GenerateContentWithRetry for robust fallback handling
 		resp, genErr, usage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
-			// For ReAct agents, track reasoning in real-time
-			if a.AgentMode == ReActAgent {
-				// Create reasoning tracker if not already created
-				if a.reasoningTracker == nil {
-					a.reasoningTracker = NewReActReasoningTracker(a, ctx, turn)
-				}
-				// Process the chunk for reasoning detection
-				a.reasoningTracker.ProcessChunk(msg)
-			}
+			// Streaming callback - no ReAct reasoning tracking needed
 		})
 
 		// NEW: End LLM generation for hierarchy tracking
@@ -536,15 +522,27 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		if len(choice.ToolCalls) > 0 {
 
-			// 1. Append the AI message (with tool_call) to the history
-			assistantParts := []llmtypes.ContentPart{}
+			// 🔧 FIX: Separate text content and tool calls into different messages
+			// Gemini API has issues when a model message contains both TextContent and ToolCall parts.
+			// We create separate messages to avoid this issue.
+
+			// 1. If there's text content, append it as a separate AI message
 			if choice.Content != "" {
-				assistantParts = append(assistantParts, llmtypes.TextContent{Text: choice.Content})
+				messages = append(messages, llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
+				})
 			}
+
+			// 2. Append tool calls as a separate AI message (without text)
+			toolCallParts := make([]llmtypes.ContentPart, 0, len(choice.ToolCalls))
 			for _, tc := range choice.ToolCalls {
-				assistantParts = append(assistantParts, tc)
+				toolCallParts = append(toolCallParts, tc)
 			}
-			messages = append(messages, llmtypes.MessageContent{Role: llmtypes.ChatMessageTypeAI, Parts: assistantParts})
+			messages = append(messages, llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeAI,
+				Parts: toolCallParts,
+			})
 
 			// 2. For each tool call, execute and append the tool result as a new message
 			for _, tc := range choice.ToolCalls {
@@ -947,75 +945,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				messages = append(messages, assistantMessage)
 			}
 
-			// Check if this is a ReAct agent and if it has a completion pattern
-			if a.AgentMode == ReActAgent {
-				if IsReActCompletion(choice.Content) {
-					logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, ReAct completion detected, returning full reasoning process", turn+1)
+			// Simple agent - return immediately when no tool calls
+			logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, no tool calls detected, returning final answer", turn+1)
 
-					// 🆕 SIMPLIFIED: No need to parse reasoning steps since we're emitting real-time events
-					// The reasoning tracker already emitted all the reasoning step events
+			// Emit unified completion event for simple agent
+			unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
+				"simple",                          // agentType
+				string(a.AgentMode),               // agentMode
+				lastUserMessage,                   // question
+				choice.Content,                    // finalResult
+				"completed",                       // status
+				time.Since(conversationStartTime), // duration
+				turn+1,                            // turns
+			)
+			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
-					// Emit ReAct reasoning end event
-					reactEndEvent := events.NewReActReasoningEndEvent(turn+1, choice.Content, 0, "Real-time reasoning events were emitted during generation")
-					a.EmitTypedEvent(ctx, reactEndEvent)
+			// NEW: End agent session for hierarchy tracking
+			a.EndAgentSession(ctx)
 
-					// Emit unified completion event
-					unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
-						"react",                           // agentType
-						string(a.AgentMode),               // agentMode
-						lastUserMessage,                   // question
-						choice.Content,                    // finalResult
-						"completed",                       // status
-						time.Since(conversationStartTime), // duration
-						turn+1,                            // turns
-					)
-					a.EmitTypedEvent(ctx, unifiedCompletionEvent)
-
-					// Agent end event removed - no longer needed
-
-					// Agent processing end event removed - no longer needed
-
-					// NEW: End agent session for hierarchy tracking
-					a.EndAgentSession(ctx)
-
-					// Append the final response to messages array for consistency
-					if choice.Content != "" {
-						assistantMessage := llmtypes.MessageContent{
-							Role:  llmtypes.ChatMessageTypeAI,
-							Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
-						}
-						messages = append(messages, assistantMessage)
-					}
-
-					// Return the FULL reasoning process, not just the final answer
-					return choice.Content, messages, nil
-				} else {
-					// ReAct agent without completion pattern - continue to next turn
-					// Note: Assistant response already added to history in the main else block above
-					logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, ReAct agent without completion pattern, continuing to next turn", turn+1)
-					continue
-				}
-			} else {
-				// Simple agent - return immediately when no tool calls
-				logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, no tool calls detected, returning final answer", turn+1)
-
-				// Emit unified completion event for simple agent
-				unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
-					"simple",                          // agentType
-					string(a.AgentMode),               // agentMode
-					lastUserMessage,                   // question
-					choice.Content,                    // finalResult
-					"completed",                       // status
-					time.Since(conversationStartTime), // duration
-					turn+1,                            // turns
-				)
-				a.EmitTypedEvent(ctx, unifiedCompletionEvent)
-
-				// NEW: End agent session for hierarchy tracking
-				a.EndAgentSession(ctx)
-
-				return choice.Content, messages, nil
-			}
+			return choice.Content, messages, nil
 		}
 	}
 
@@ -1138,51 +1086,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	// Note: LLM generation end event is already emitted in the main conversation flow
 	// No need to emit it again here to avoid duplication
 
-	// Check if this is a ReAct agent and extract final answer
-	if a.AgentMode == ReActAgent {
-		finalAnswer := ExtractFinalAnswer(finalChoice.Content)
-		if finalAnswer != "" {
-			logger.Infof("[AGENT TRACE] AskWithHistory: final answer provided after max turns: %s", finalAnswer)
+	// Simple agent - use final choice content directly
+	logger.Infof("[AGENT TRACE] AskWithHistory: final answer provided after max turns")
 
-			// Emit unified completion event
-			unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
-				"react",                           // agentType
-				string(a.AgentMode),               // agentMode
-				lastUserMessage,                   // question
-				finalChoice.Content,               // finalResult
-				"completed",                       // status
-				time.Since(conversationStartTime), // duration
-				a.MaxTurns+1,                      // turns (+1 for the final turn)
-			)
-			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
-
-			// Agent end event removed - no longer needed
-
-			// Unified completion event already emitted above
-
-			// NEW: End agent session for hierarchy tracking
-			a.EndAgentSession(ctx)
-
-			// Append the final response to messages array for consistency
-			if finalChoice.Content != "" {
-				assistantMessage := llmtypes.MessageContent{
-					Role:  llmtypes.ChatMessageTypeAI,
-					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: finalChoice.Content}},
-				}
-				messages = append(messages, assistantMessage)
-			}
-
-			// Return the FULL reasoning process, not just the final answer
-			return finalChoice.Content, messages, nil
-		}
-	}
-
-	// For simple agents or if no final answer pattern found, return the content as-is
-	logger.Infof("[AGENT TRACE] AskWithHistory: final answer provided after max turns: %s", finalChoice.Content)
-
-	// Emit unified completion event for simple agents or fallback cases
+	// Emit unified completion event
 	unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
-		"simple",                          // agentType (fallback for simple agents)
+		"simple",                          // agentType
 		string(a.AgentMode),               // agentMode
 		lastUserMessage,                   // question
 		finalChoice.Content,               // finalResult

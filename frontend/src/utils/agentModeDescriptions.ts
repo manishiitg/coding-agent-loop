@@ -3,12 +3,10 @@
  * This eliminates code duplication across components
  */
 
-export type AgentMode = 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+export type AgentMode = 'simple' | 'orchestrator' | 'workflow'
 
 export const getAgentModeDescription = (agentMode: AgentMode): string => {
   switch (agentMode) {
-    case 'ReAct':
-      return 'Step-by-step reasoning do more indepth reasoning and has access to memory.'
     case 'orchestrator':
       return 'Deep Search: Create multi-step plans with long term memory and might take hours'
     case 'workflow':

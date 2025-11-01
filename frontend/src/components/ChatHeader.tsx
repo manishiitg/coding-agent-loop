@@ -97,7 +97,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     query: string, 
     selectedServers?: string[], 
     selectedTools?: string[],
-    agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', 
+    agentMode?: 'simple' | 'orchestrator' | 'workflow', 
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig
   ) => {

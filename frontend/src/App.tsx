@@ -210,11 +210,6 @@ function App() {
         event.preventDefault()
         setAgentMode('simple')
       }
-      // Ctrl/Cmd + 2 for ReAct agent mode
-      if ((event.ctrlKey || event.metaKey) && event.key === '2') {
-        event.preventDefault()
-        setAgentMode('ReAct')
-      }
       // Ctrl/Cmd + 3 for Deep Search agent mode
       if ((event.ctrlKey || event.metaKey) && event.key === '3') {
         event.preventDefault()

@@ -274,7 +274,7 @@ func init() {
 	ServerCmd.Flags().Float64("temperature", 0.2, "Temperature for LLM")
 	ServerCmd.Flags().Int("max-turns", 30, "Maximum conversation turns")
 	ServerCmd.Flags().String("mcp-config", "configs/mcp_servers_clean.json", "MCP servers configuration path")
-	ServerCmd.Flags().String("agent-mode", "simple", "Agent mode (simple, react)")
+	ServerCmd.Flags().String("agent-mode", "simple", "Agent mode (simple)")
 
 	// Structured Output LLM flags
 	ServerCmd.Flags().String("structured-output-provider", "", "Structured output LLM provider (uses main provider if empty)")
@@ -677,7 +677,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 		"providers":   []string{"bedrock", "openai", "anthropic"},
 		"streaming":   true,
 		"sse":         true,
-		"agent_modes": []string{"simple", "react", "orchestrator", "workflow"},
+		"agent_modes": []string{"simple", "orchestrator", "workflow"},
 		"tracing": map[string]interface{}{
 			"enabled":  tracingProvider != "noop",
 			"provider": tracingProvider,
@@ -1655,7 +1655,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// For workflow mode, we'll handle it differently
 			agentConfig.AgentMode = mcpagent.SimpleAgent // Use Simple as base for workflow
 		default:
-			agentConfig.AgentMode = mcpagent.ReActAgent // Default to ReAct mode
+			agentConfig.AgentMode = mcpagent.SimpleAgent // Default to Simple mode
 		}
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
 		log.Printf("[SMART ROUTING DEBUG] Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
@@ -1673,11 +1673,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			// Add base instructions for all agents
 			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
-
-			// Add React-specific instructions and virtual tools only for React agents
-			if agentConfig.AgentMode == mcpagent.ReActAgent {
-				underlyingAgent.AppendSystemPrompt(GetReactAgentInstructions())
-			}
 		}
 
 		// Add event observer immediately after agent creation to capture all events

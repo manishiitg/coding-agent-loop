@@ -18,7 +18,6 @@ const (
 // Agent mode constants
 const (
 	AgentModeSimple       = "simple"
-	AgentModeReAct        = "ReAct"
 	AgentModeOrchestrator = "orchestrator"
 	AgentModeWorkflow     = "workflow"
 )
@@ -188,7 +187,7 @@ func (r *CreatePresetQueryRequest) Validate() error {
 
 	// Validate agent mode
 	if r.AgentMode != "" {
-		validModes := []string{AgentModeSimple, AgentModeReAct, AgentModeOrchestrator, AgentModeWorkflow}
+		validModes := []string{AgentModeSimple, AgentModeOrchestrator, AgentModeWorkflow}
 		valid := false
 		for _, mode := range validModes {
 			if r.AgentMode == mode {
@@ -244,7 +243,7 @@ type UpdatePresetQueryRequest struct {
 func (r *UpdatePresetQueryRequest) Validate() error {
 	// Validate agent mode if provided
 	if r.AgentMode != "" {
-		validModes := []string{AgentModeSimple, AgentModeReAct, AgentModeOrchestrator, AgentModeWorkflow}
+		validModes := []string{AgentModeSimple, AgentModeOrchestrator, AgentModeWorkflow}
 		valid := false
 		for _, mode := range validModes {
 			if r.AgentMode == mode {

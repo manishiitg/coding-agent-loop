@@ -71,10 +71,19 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                         </div>
                       )}
                       
-                      {step.why_this_step && (
+                      {step.requires_validation !== undefined && (
                         <div className="text-xs">
-                          <span className="font-medium text-blue-700 dark:text-blue-400">Why This Step:</span>
-                          <span className="text-gray-600 dark:text-gray-400 ml-1">{step.why_this_step}</span>
+                          <span className="font-medium text-indigo-700 dark:text-indigo-400">Requires Validation:</span>
+                          <span className={`ml-1 ${step.requires_validation ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-500 dark:text-gray-500'}`}>
+                            {step.requires_validation ? 'Yes' : 'No'}
+                          </span>
+                        </div>
+                      )}
+                      
+                      {step.requires_validation && step.reason_for_validation && (
+                        <div className="text-xs">
+                          <span className="font-medium text-indigo-700 dark:text-indigo-400">Reason for Validation:</span>
+                          <span className="text-gray-600 dark:text-gray-400 ml-1">{step.reason_for_validation}</span>
                         </div>
                       )}
                       

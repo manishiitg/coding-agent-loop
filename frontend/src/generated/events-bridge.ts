@@ -38,10 +38,6 @@ export interface EventData {
   error_detail?: ErrorDetailEvent;
   max_turns_reached?: MaxTurnsReachedEvent;
   context_cancelled?: ContextCancelledEvent;
-  react_reasoning_start?: ReActReasoningStartEvent;
-  react_reasoning_step?: ReActReasoningStepEvent;
-  react_reasoning_final?: ReActReasoningFinalEvent;
-  react_reasoning_end?: ReActReasoningEndEvent;
   tool_output?: ToolOutputEvent;
   tool_response?: ToolResponseEvent;
   model_change?: ModelChangeEvent;
@@ -641,84 +637,6 @@ export interface ContextCancelledEvent {
   turn?: number;
   reason?: string;
   duration?: number;
-}
-export interface ReActReasoningStartEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  turn?: number;
-  question?: string;
-}
-export interface ReActReasoningStepEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  turn?: number;
-  step_number?: number;
-  thought?: string;
-  action?: string;
-  observation?: string;
-  conclusion?: string;
-  step_type?: string;
-  content?: string;
-}
-export interface ReActReasoningFinalEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  turn?: number;
-  final_answer?: string;
-  content?: string;
-  reasoning?: string;
-}
-export interface ReActReasoningEndEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  turn?: number;
-  final_answer?: string;
-  total_steps?: number;
-  reasoning_chain?: string;
 }
 export interface ToolOutputEvent {
   timestamp?: string;

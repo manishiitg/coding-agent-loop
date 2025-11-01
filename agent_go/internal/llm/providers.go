@@ -705,6 +705,19 @@ func GetCrossProviderFallbackModels(provider Provider) []string {
 		}
 		// No cross-provider fallbacks if environment variable is not set
 		return []string{}
+	case ProviderVertex:
+		// Get Anthropic cross-provider fallback models for Vertex
+		anthropicFallbackEnv := os.Getenv("VERTEX_ANTHROPIC_FALLBACK_MODELS")
+		if anthropicFallbackEnv != "" {
+			// Split by comma and trim whitespace
+			models := strings.Split(anthropicFallbackEnv, ",")
+			for i, model := range models {
+				models[i] = strings.TrimSpace(model)
+			}
+			return models
+		}
+		// No cross-provider fallbacks if environment variable is not set
+		return []string{}
 	default:
 		return []string{}
 	}

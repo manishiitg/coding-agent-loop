@@ -50,7 +50,7 @@ export interface Toast {
 }
 
 // Agent Mode Types
-export type AgentMode = 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+export type AgentMode = 'simple' | 'orchestrator' | 'workflow'
 
 // Workflow Types
 export type WorkflowPhase = 'pre-verification' | 'post-verification' | 'post-verification-todo-refinement'

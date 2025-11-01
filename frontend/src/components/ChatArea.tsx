@@ -13,7 +13,6 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { WORKFLOW_PHASES } from '../constants/workflow'
 import { OrchestratorExplanation } from './OrchestratorExplanation'
 import { WorkflowExplanation } from './WorkflowExplanation'
-import { ReActExplanation } from './ReActExplanation'
 import GuidanceFloatingIcon from './GuidanceFloatingIcon'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
@@ -912,32 +911,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             if (!foundFinalResponse && finalResponse) {
               // No new final response found, keeping existing one
             }
-            
-            // Fallback: Check for ReAct reasoning events with final answers
-            if (!foundFinalResponse) {
-              for (const event of completionEvents) {
-                if (event.type === 'react_reasoning_final' || event.type === 'react_reasoning_end') {
-                  if (event.data && typeof event.data === 'object') {
-                    let result: string | undefined
-                    
-                    // Check for final_answer field in ReAct events
-                    if ('final_answer' in event.data) {
-                      result = (event.data as { final_answer?: string }).final_answer
-                    }
-                    
-                    // Check for content field as fallback
-                    if (!result && 'content' in event.data) {
-                      result = (event.data as { content?: string }).content
-                    }
-                    
-                    if (result && typeof result === 'string' && result.trim()) {
-                      foundFinalResponse = true
-                      break
-                    }
-                  }
-                }
-              }
-            }
           }
         }
       }
@@ -1513,8 +1486,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           {/* Show Deep Search explanation when in Deep Search mode */}
           <OrchestratorExplanation agentMode={agentMode} />
 
-          {/* Show ReAct explanation when in ReAct mode */}
-          <ReActExplanation agentMode={agentMode} />
 
         {agentMode === 'workflow' ? (
           <WorkflowModeHandler

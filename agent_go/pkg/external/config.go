@@ -83,7 +83,7 @@ type Config struct {
 // DefaultConfig returns a default configuration
 func DefaultConfig() Config {
 	return Config{
-		AgentMode:     ReActAgent,
+		AgentMode:     SimpleAgent,
 		ServerName:    "all", // Default to all servers
 		ConfigPath:    "configs/mcp_servers.json",
 		Provider:      llm.ProviderBedrock,

@@ -77,12 +77,12 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     query: string, 
     selectedServers?: string[], 
     selectedTools?: string[],
-    _agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', 
+    _agentMode?: 'simple' | 'orchestrator' | 'workflow', 
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig
   ) => {
     // Set the agent mode based on the mode category
-    const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+    const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'orchestrator' | 'workflow'
     
     // Debug: Log the server selection (development only)
     if (process.env.NODE_ENV === 'development') {
@@ -267,7 +267,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         editingPreset={null}
         availableServers={enabledServers}
         hideAgentModeSelection={true}
-        fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'}
+        fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'orchestrator' | 'workflow'}
       />
     </div>
   )

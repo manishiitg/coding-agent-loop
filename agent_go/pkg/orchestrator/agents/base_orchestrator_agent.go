@@ -64,11 +64,20 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.Model,
 		time.Now().UnixNano()))
 
+	// Determine agent name: use unique AgentName from config if available, otherwise fall back to agent type
+	agentName := string(boa.agentType)
+	if boa.config.AgentName != "" {
+		agentName = boa.config.AgentName
+		boa.logger.Infof("🔧 Using unique agent name: %s", agentName)
+	} else {
+		boa.logger.Infof("🔧 Using default agent name from type: %s", agentName)
+	}
+
 	// Create base agent
 	baseAgent, err := NewBaseAgent(
 		ctx,
 		boa.agentType,
-		string(boa.agentType), // Use agent type as name
+		agentName, // Use unique agent name if available, otherwise agent type
 		llmInstance,
 		boa.systemPrompt,
 		boa.config.ServerNames,

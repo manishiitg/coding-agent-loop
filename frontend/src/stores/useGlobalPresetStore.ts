@@ -38,8 +38,8 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<void>
+  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<void>
   deletePreset: (id: string) => Promise<void>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
@@ -169,7 +169,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               createdAt: new Date(preset.created_at).getTime(),
               selectedServers,
               selectedTools, // NEW
-              agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
+              agentMode: preset.agent_mode as 'simple' | 'orchestrator' | 'workflow' | undefined,
               selectedFolder,
               llmConfig
             }
@@ -212,7 +212,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 query: preset.query,
                 selectedServers: [],
                 selectedTools: [], // NEW: Predefined presets don't have custom tool selection
-                agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
+                agentMode: preset.agent_mode as 'simple' | 'orchestrator' | 'workflow' | undefined,
                 selectedFolder,
                 llmConfig
               }
@@ -562,7 +562,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         
         return allPresets.filter(preset => {
           if (modeCategory === 'chat') {
-            return preset.agentMode === 'simple' || preset.agentMode === 'ReAct'
+            return preset.agentMode === 'simple'
           } else if (modeCategory === 'deep-research') {
             return preset.agentMode === 'orchestrator'
           } else if (modeCategory === 'workflow') {

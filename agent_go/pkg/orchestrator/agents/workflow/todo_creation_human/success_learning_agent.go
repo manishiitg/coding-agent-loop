@@ -15,7 +15,6 @@ type HumanControlledTodoPlannerSuccessLearningTemplate struct {
 	StepTitle               string
 	StepDescription         string
 	StepSuccessCriteria     string
-	StepWhyThisStep         string
 	StepContextDependencies string
 	StepContextOutput       string
 	WorkspacePath           string
@@ -50,7 +49,6 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 	stepTitle := templateVars["StepTitle"]
 	stepDescription := templateVars["StepDescription"]
 	stepSuccessCriteria := templateVars["StepSuccessCriteria"]
-	stepWhyThisStep := templateVars["StepWhyThisStep"]
 	stepContextDependencies := templateVars["StepContextDependencies"]
 	stepContextOutput := templateVars["StepContextOutput"]
 	workspacePath := templateVars["WorkspacePath"]
@@ -69,7 +67,6 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 		"StepTitle":               stepTitle,
 		"StepDescription":         stepDescription,
 		"StepSuccessCriteria":     stepSuccessCriteria,
-		"StepWhyThisStep":         stepWhyThisStep,
 		"StepContextDependencies": stepContextDependencies,
 		"StepContextOutput":       stepContextOutput,
 		"WorkspacePath":           workspacePath,
@@ -85,7 +82,6 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context
 		StepTitle:               stepTitle,
 		StepDescription:         stepDescription,
 		StepSuccessCriteria:     stepSuccessCriteria,
-		StepWhyThisStep:         stepWhyThisStep,
 		StepContextDependencies: stepContextDependencies,
 		StepContextOutput:       stepContextOutput,
 		WorkspacePath:           workspacePath,
@@ -115,7 +111,6 @@ Extract high-level approaches, strategies, and workflow patterns.`
 - **Title**: ` + templateVars["StepTitle"] + `
 - **Description**: ` + templateVars["StepDescription"] + `
 - **Success Criteria**: ` + templateVars["StepSuccessCriteria"] + `
-- **Why This Step**: ` + templateVars["StepWhyThisStep"] + `
 - **Context Dependencies**: ` + templateVars["StepContextDependencies"] + `
 - **Expected Output**: ` + templateVars["StepContextOutput"] + `
 - **Workspace**: ` + templateVars["WorkspacePath"] + `

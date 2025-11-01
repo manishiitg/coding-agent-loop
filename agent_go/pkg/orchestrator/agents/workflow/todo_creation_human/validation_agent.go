@@ -20,7 +20,6 @@ type HumanControlledTodoPlannerValidationTemplate struct {
 	StepTitle               string
 	StepDescription         string
 	StepSuccessCriteria     string
-	StepWhyThisStep         string
 	StepContextDependencies string
 	StepContextOutput       string
 	WorkspacePath           string
@@ -70,7 +69,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 	stepTitle := templateVars["StepTitle"]
 	stepDescription := templateVars["StepDescription"]
 	stepSuccessCriteria := templateVars["StepSuccessCriteria"]
-	stepWhyThisStep := templateVars["StepWhyThisStep"]
 	stepContextDependencies := templateVars["StepContextDependencies"]
 	stepContextOutput := templateVars["StepContextOutput"]
 	workspacePath := templateVars["WorkspacePath"]
@@ -83,7 +81,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 		"StepTitle":               stepTitle,
 		"StepDescription":         stepDescription,
 		"StepSuccessCriteria":     stepSuccessCriteria,
-		"StepWhyThisStep":         stepWhyThisStep,
 		"StepContextDependencies": stepContextDependencies,
 		"StepContextOutput":       stepContextOutput,
 		"WorkspacePath":           workspacePath,
@@ -97,7 +94,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 		StepTitle:               stepTitle,
 		StepDescription:         stepDescription,
 		StepSuccessCriteria:     stepSuccessCriteria,
-		StepWhyThisStep:         stepWhyThisStep,
 		StepContextDependencies: stepContextDependencies,
 		StepContextOutput:       stepContextOutput,
 		WorkspacePath:           workspacePath,
@@ -171,7 +167,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 		StepTitle:               templateVars["StepTitle"],
 		StepDescription:         templateVars["StepDescription"],
 		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
-		StepWhyThisStep:         templateVars["StepWhyThisStep"],
 		StepContextDependencies: templateVars["StepContextDependencies"],
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
@@ -187,13 +182,11 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 ### 📋 Complete Step Information
 **Success Criteria**: {{.StepSuccessCriteria}}
-**Why This Step**: {{.StepWhyThisStep}}
 **Context Dependencies**: {{.StepContextDependencies}}
 **Context Output**: {{.StepContextOutput}}
 
 ### 🔍 Step Context Analysis
 **Success Criteria**: Use the success criteria above to verify completion
-**Why This Step**: The why this step field explains how this contributes to the objective
 **Context Dependencies**: Check if context dependencies files were properly read
 **Context Output**: Verify if the context output file was created as specified
 

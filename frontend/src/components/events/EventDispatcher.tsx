@@ -72,10 +72,6 @@ import type {
   OrchestratorAgentEndEvent,
   OrchestratorAgentErrorEvent,
 
-  ReActReasoningStartEvent,
-  ReActReasoningStepEvent,
-  ReActReasoningFinalEvent,
-  ReActReasoningEndEvent,
   CacheEvent,
   ComprehensiveCacheEvent,
   SmartRoutingStartEvent,
@@ -152,8 +148,6 @@ import {
   LargeToolOutputDetectedEventDisplay,
   LargeToolOutputFileWrittenEventDisplay,
   ModelChangeEventDisplay,
-  ReActReasoningStartEventDisplay,
-  ReActReasoningEventDisplay,
   MaxTurnsReachedEventDisplay,
   ContextCancelledEventDisplay,
   // Smart Routing event components
@@ -331,10 +325,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
     case 'workflow_end':
       return <WorkflowEndEvent event={extractEventData<{workflow_id?: string, result?: string, status?: string, message?: string, timestamp?: number}>(event.data)} />
 
-    // ReAct Reasoning Events
-    case 'react_reasoning_start':
-      return <ReActReasoningStartEventDisplay event={extractEventData<ReActReasoningStartEvent>(event.data)} />
-
     // Debug Events
     case 'token_usage':
       return <TokenUsageEventDisplay event={extractEventData<TokenUsageEvent>(event.data)} />
@@ -350,12 +340,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
       return <LargeToolOutputDetectedEventDisplay event={extractEventData<LargeToolOutputDetectedEvent>(event.data)} />
     case 'large_tool_output_file_written':
       return <LargeToolOutputFileWrittenEventDisplay event={extractEventData<LargeToolOutputFileWrittenEvent>(event.data)} />
-    case 'react_reasoning_step':
-      return <ReActReasoningEventDisplay event={extractEventData<ReActReasoningStepEvent>(event.data)} />
-    case 'react_reasoning_final':
-      return <ReActReasoningEventDisplay event={extractEventData<ReActReasoningFinalEvent>(event.data)} />
-    case 'react_reasoning_end':
-      return <ReActReasoningEventDisplay event={extractEventData<ReActReasoningEndEvent>(event.data)} />
     case 'model_change':
       return <ModelChangeEventDisplay event={extractEventData<ModelChangeEvent>(event.data)} />
     case 'max_turns_reached':

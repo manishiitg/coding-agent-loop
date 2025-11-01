@@ -31,13 +31,6 @@ const (
 	// It's faster and more efficient for straightforward queries that don't require
 	// complex reasoning chains.
 	SimpleAgent AgentMode = "simple"
-
-	// ReActAgent is the reasoning and acting agent with explicit thought processes.
-	//
-	// This mode uses the ReAct (Reasoning + Acting) pattern to break down complex
-	// problems into logical steps. It provides detailed reasoning for each action
-	// and is better suited for complex, multi-step queries.
-	ReActAgent AgentMode = "react"
 )
 
 // PerformanceMetrics represents comprehensive agent performance data and statistics.
@@ -503,11 +496,8 @@ func NewAgent(ctx context.Context, config Config) (Agent, error) {
 
 	// Determine agent mode
 	var agentMode mcpagent.AgentMode
-	if config.AgentMode == ReActAgent {
-		agentMode = mcpagent.ReActAgent
-	} else {
-		agentMode = mcpagent.SimpleAgent
-	}
+	// All agents use Simple mode
+	agentMode = mcpagent.SimpleAgent
 
 	// Create agent with functional options
 	// Use custom logger if provided, otherwise create a default logger with file and console output

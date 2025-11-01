@@ -61,11 +61,12 @@ type PlanStep struct {
 	Title               string                `json:"title"`
 	Description         string                `json:"description"`
 	SuccessCriteria     string                `json:"success_criteria"`
-	WhyThisStep         string                `json:"why_this_step"`
+	RequiresValidation  bool                  `json:"requires_validation"`             // true if step requires validation agent
+	ReasonForValidation string                `json:"reason_for_validation,omitempty"` // explanation when requires_validation=true
 	ContextDependencies []string              `json:"context_dependencies"`
 	ContextOutput       FlexibleContextOutput `json:"context_output"`             // Use flexible type to handle string or array
-	SuccessPatterns     []string              `json:"success_patterns,omitempty"` // NEW - what worked (includes tools)
-	FailurePatterns     []string              `json:"failure_patterns,omitempty"` // NEW - what failed (includes tools to avoid)
+	SuccessPatterns     []string              `json:"success_patterns,omitempty"` // what worked (includes tools)
+	FailurePatterns     []string              `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
 }
 
 // PlanningResponse represents the structured response from planning
@@ -119,10 +120,12 @@ func planningSystemPromptProcessor(templateVars map[string]string) string {
 ## 📋 PLANNING GUIDELINES
 - **Comprehensive Scope**: Create complete plan to achieve objective
 - **Actionable Steps**: Each step should be concrete and executable
-- **Clear Success Criteria**: Define how to verify each step worked
+- **DETAILED DESCRIPTIONS**: Write COMPREHENSIVE, DETAILED descriptions for each step. Descriptions should be thorough, complete, and provide sufficient context. Include specific details about what needs to be accomplished, what tools or approaches might be needed, what outcomes are expected, and any important considerations. DO NOT create short or brief descriptions - aim for detailed explanations that fully capture the step's requirements and scope.
+- **Clear Success Criteria**: Define how to verify each step worked - be specific and detailed
 - **Logical Order**: Steps should follow logical sequence
 - **Focus on Strategy**: Plan what needs to be done, not how to do it (execution details will be handled by execution agents)
 - **Agent Execution Limits**: Each step should be completable by one agent using MCP tools before reaching context output limits
+- **Requires Validation Decision**: In most cases, LLMs are capable of running tools themselves and processing the correct output. Set requires_validation to true ONLY when the step requires: (1) Multiple tool calls in sequence (5+ tool invocations), (2) Long/complex tool calls with substantial output processing, (3) Many multiple tools with interdependencies, or (4) Complex logic execution with conditional branching or multi-step workflows. For simple steps with 1-4 straightforward tool calls, set requires_validation to false.
 - **Success/Failure Patterns**: ONLY include these if you have specific MCP tools, exact commands, or clear patterns from previous executions. Do NOT add empty or generic patterns.
 
 ## 🤖 MULTI-AGENT COORDINATION
@@ -133,24 +136,6 @@ func planningSystemPromptProcessor(templateVars map[string]string) string {
 - **Workspace Files**: Store data in workspace files when steps need to share information
 - **Use relative paths only** - NEVER use absolute paths
 - **Document findings** in workspace files for other agents
-
-## 📝 EXAMPLE OF A WELL-FORMED STEP
-
-` + "```markdown" + `
-### Step 1: Analyze Codebase Structure
-- **Description**: Use grep and read_file tools to identify all TypeScript files in the src/ directory and understand the project structure. Create a comprehensive map of main modules, their relationships, and key entry points.
-- **Success Criteria**: Complete file tree with main modules identified and documented in codebase_structure.md
-- **Why This Step**: Understanding the codebase structure is foundational for making informed changes without breaking existing functionality
-- **Context Dependencies**: none (first step)
-- **Context Output**: codebase_structure.md
-- **Success Patterns**: 
-  - Used grep with --type typescript flag to find all .ts files efficiently
-  - read_file with line limits (max 1000 lines) prevented context overflow on large files
-  - list_dir tool helped map directory structure before reading individual files
-- **Failure Patterns**:
-  - Avoid read_file without line limits on large files (causes context limit errors)
-  - Don't use codebase_search for simple file listing (grep is faster and more reliable)
-` + "```" + `
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -177,9 +162,10 @@ Create a markdown plan with this structure:
 ## Steps
 
 ### Step 1: [Step Name]
-- **Description**: [Detailed description of what this step accomplishes - should be completable by one agent using MCP tools]
-- **Success Criteria**: [How to verify this step was completed successfully]
-- **Why This Step**: [How this step contributes to achieving the objective]
+- **Description**: [COMPREHENSIVE, DETAILED description of what this step accomplishes. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context. Write a complete, detailed explanation that fully captures the step's requirements and scope. Should be completable by one agent using MCP tools]
+- **Success Criteria**: [Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive]
+- **Requires Validation**: [true/false] - Set to true ONLY when step requires: (1) Multiple tool calls in sequence (5+ tool invocations), (2) Long/complex tool calls with substantial output processing, (3) Many multiple tools with interdependencies, or (4) Complex logic execution with conditional branching or multi-step workflows. Set to false for simple steps with 1-4 straightforward tool calls that LLMs can execute and verify themselves.
+- **Reason for Validation**: [Only include when Requires Validation is true. Explain specifically why validation is needed: mention the number of tool calls, complexity of logic, interdependencies, or specific challenges that require verification. Examples: "This step requires 8+ sequential tool calls with interdependent results that need verification", "Complex conditional logic with multiple branching paths requires validation", "Long-running tool calls with substantial output that needs comprehensive processing verification"]
 - **Context Dependencies**: [List of context files from previous steps - use "none" if first step]
 - **Context Output**: [What context file this step will create for subsequent steps - e.g., "step_1_results.md"]
 - **Success Patterns**: [Optional - ONLY include if you have specific tools/approaches that worked in previous executions]
@@ -209,8 +195,9 @@ The plan focuses on systematic analysis before implementation, with clear contex
 **IMPORTANT NOTES**: 
 1. Focus on creating a clear, actionable markdown plan
 2. Each step should be concrete and contribute directly to achieving the goal
-3. Include context dependencies and outputs for multi-agent coordination
-4. Remember: Success/Failure Patterns are OPTIONAL and should only be included when you have specific, concrete examples from previous executions
+3. **CRITICAL - DESCRIPTION LENGTH**: Write COMPREHENSIVE, DETAILED descriptions for each step. Descriptions should be thorough and complete - aim for multiple sentences that fully explain what needs to be accomplished, include relevant context, expected outcomes, and important considerations. DO NOT create brief or short descriptions - provide detailed explanations.
+4. Include context dependencies and outputs for multi-agent coordination
+5. Remember: Success/Failure Patterns are OPTIONAL and should only be included when you have specific, concrete examples from previous executions
 `
 
 	// Parse and execute the template

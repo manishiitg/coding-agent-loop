@@ -46,7 +46,7 @@ export interface AgentQueryRequest {
   enabled_tools?: string[]
   enabled_servers?: string[]
   selected_tools?: string[] // Array of "server:tool" strings
-  agent_mode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+  agent_mode?: 'simple' | 'orchestrator' | 'workflow'
   llm_config?: LLMConfiguration
   preset_query_id?: string
   // Orchestrator execution mode selection

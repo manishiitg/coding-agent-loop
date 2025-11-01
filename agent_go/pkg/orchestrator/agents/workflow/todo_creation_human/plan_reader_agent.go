@@ -52,15 +52,19 @@ func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Conte
 						},
 						"description": {
 							"type": "string",
-							"description": "Detailed description of what this step accomplishes"
+							"description": "Detailed description of what this step accomplishes. CRITICAL: Preserve the COMPLETE, FULL description text from the markdown plan exactly as written. DO NOT truncate, summarize, or shorten. Include ALL text even if it is long or spans multiple sentences."
 						},
 						"success_criteria": {
 							"type": "string",
-							"description": "How to verify this step was completed successfully"
+							"description": "How to verify this step was completed successfully. CRITICAL: Preserve the COMPLETE success criteria text exactly as written in the plan. DO NOT truncate or summarize."
 						},
-						"why_this_step": {
+						"requires_validation": {
+							"type": "boolean",
+							"description": "Whether this step requires validation agent. In most cases, LLMs can execute and verify simple steps (1-4 tool calls) themselves. Set to true ONLY when step requires: (1) Multiple tool calls in sequence (5+ tool invocations), (2) Long/complex tool calls with substantial output processing, (3) Many multiple tools with interdependencies, or (4) Complex logic execution with conditional branching or multi-step workflows. Set to false for simple steps with 1-4 straightforward tool calls."
+						},
+						"reason_for_validation": {
 							"type": "string",
-							"description": "How this step contributes to achieving the objective"
+							"description": "Explanation of why validation is needed (only included when requires_validation is true). Should explain specifically why validation is needed: mention the number of tool calls, complexity of logic, interdependencies, or specific challenges. CRITICAL: Preserve the COMPLETE reason text exactly as written. DO NOT truncate or summarize."
 						},
 						"context_dependencies": {
 							"type": "array",
@@ -88,7 +92,7 @@ func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Conte
 							"description": "List of approaches that failed, including tools to avoid (extract from 'Failure Patterns:' section)"
 						}
 					},
-					"required": ["title", "description", "success_criteria", "why_this_step"]
+					"required": ["title", "description", "success_criteria", "requires_validation"]
 				}
 			}
 		},
@@ -180,9 +184,10 @@ The output JSON must maintain variable placeholders, not resolved values.
 **JSON Structure Requirements**:
 - steps: Extract from "## Steps" section, each step with:
   - title: From "### Step X: [Title]"
-  - description: From "- **Description**: [content]"
-  - success_criteria: From "- **Success Criteria**: [content]"
-  - why_this_step: From "- **Why This Step**: [content]"
+  - description: From "- **Description**: [content]" - **CRITICAL**: Preserve the COMPLETE, FULL description text exactly as written in the plan. DO NOT truncate, summarize, or shorten the description. Include the entire description text even if it is long or contains multiple sentences.
+  - success_criteria: From "- **Success Criteria**: [content]" - **CRITICAL**: Preserve the COMPLETE success criteria text exactly as written. DO NOT truncate or summarize.
+  - requires_validation: From "- **Requires Validation**: [true/false]" - Set to true ONLY when step requires: (1) Multiple tool calls in sequence (5+ tool invocations), (2) Long/complex tool calls with substantial output processing, (3) Many multiple tools with interdependencies, or (4) Complex logic execution with conditional branching or multi-step workflows. Set to false for simple steps with 1-4 straightforward tool calls that LLMs can execute and verify themselves.
+  - reason_for_validation: From "- **Reason for Validation**: [content]" - explanation when requires_validation is true (optional, only if requires_validation=true). Should explain specifically why validation is needed: mention the number of tool calls, complexity of logic, interdependencies, or specific challenges. **CRITICAL**: Preserve the COMPLETE reason text exactly as written.
   - context_dependencies: From "- **Context Dependencies**: [content]" - See conversion rules below
   - context_output: From "- **Context Output**: [content]"
   - success_patterns: From "- **Success Patterns**: [bullet list]" - See parsing rules below
@@ -217,6 +222,12 @@ When learnings files exist, enhance the extracted patterns:
 - Read step-specific learnings/step_X_learning.md to get detailed insights for each step
 - Merge learnings patterns with patterns extracted from the plan
 - If same pattern appears in both source and learnings, include it only once
+
+**CRITICAL TEXT PRESERVATION RULES**:
+- **Description Field**: MUST preserve the COMPLETE, FULL description text from the markdown plan. DO NOT truncate, summarize, condense, or shorten descriptions. Include ALL text exactly as written, even if it spans multiple lines or paragraphs.
+- **Success Criteria Field**: MUST preserve the COMPLETE success criteria text exactly as written. DO NOT truncate or summarize.
+- **Reason for Validation Field**: MUST preserve the COMPLETE reason text exactly as written. DO NOT truncate or summarize.
+- Preserve all original text content without modification, truncation, or summarization
 
 Special Cases:
 - If section has "none" or is empty → omit field entirely (don't include empty array)

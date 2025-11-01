@@ -30,11 +30,12 @@ type TodoStep struct {
 	Title               string   `json:"title"`
 	Description         string   `json:"description"`
 	SuccessCriteria     string   `json:"success_criteria"`
-	WhyThisStep         string   `json:"why_this_step"`
+	RequiresValidation  bool     `json:"requires_validation"`             // true if step requires validation agent
+	ReasonForValidation string   `json:"reason_for_validation,omitempty"` // explanation when requires_validation=true
 	ContextDependencies []string `json:"context_dependencies"`
 	ContextOutput       string   `json:"context_output"`
-	SuccessPatterns     []string `json:"success_patterns,omitempty"` // NEW - what worked (includes tools)
-	FailurePatterns     []string `json:"failure_patterns,omitempty"` // NEW - what failed (includes tools to avoid)
+	SuccessPatterns     []string `json:"success_patterns,omitempty"` // what worked (includes tools)
+	FailurePatterns     []string `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
 }
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
@@ -481,6 +482,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						// For existing plans, revision means creating a new plan
 						if humanFeedback != "" {
 							hcpo.GetLogger().Infof("🔄 User requested revision of existing plan, will create new plan")
+							// Store feedback in initialPlanningFeedback so it persists to new plan creation section
+							initialPlanningFeedback = humanFeedback
 							planExists = false
 							break // Break out and fall through to create new plan
 						}
@@ -856,7 +859,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			Title:               step.Title,
 			Description:         step.Description,
 			SuccessCriteria:     step.SuccessCriteria,
-			WhyThisStep:         step.WhyThisStep,
+			RequiresValidation:  step.RequiresValidation,
+			ReasonForValidation: step.ReasonForValidation,
 			ContextDependencies: step.ContextDependencies,
 			ContextOutput:       step.ContextOutput.String(), // Convert FlexibleContextOutput to string
 			SuccessPatterns:     step.SuccessPatterns,
@@ -927,9 +931,40 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		var executionConversationHistory []llmtypes.MessageContent
 		var humanFeedback string
 		stepCompleted := false
+		previousStepsFeedbackText := "" // Store the text to check if already added
+		if len(humanFeedbackHistory) > 0 {
+			previousStepsFeedbackText = fmt.Sprintf("## Previous Steps' Feedback for Context:\n%s", strings.Join(humanFeedbackHistory, "\n---\n"))
+		}
 
 		// Outer loop: Handle re-execution with human feedback
 		for !stepCompleted {
+			// Add human feedback from previous steps to conversation history if not already present
+			// This should be added BEFORE current step feedback so it's always available
+			// Check if previous steps' feedback is already in conversation history by searching for the marker
+			if previousStepsFeedbackText != "" {
+				alreadyAdded := false
+				for _, msg := range executionConversationHistory {
+					if len(msg.Parts) > 0 {
+						if textContent, ok := msg.Parts[0].(llmtypes.TextContent); ok {
+							if strings.Contains(textContent.Text, "## Previous Steps' Feedback for Context:") {
+								alreadyAdded = true
+								break
+							}
+						}
+					}
+				}
+				if !alreadyAdded {
+					previousFeedbackMessage := llmtypes.MessageContent{
+						Role: llmtypes.ChatMessageTypeHuman,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{
+							Text: previousStepsFeedbackText,
+						}},
+					}
+					executionConversationHistory = append(executionConversationHistory, previousFeedbackMessage)
+					hcpo.GetLogger().Infof("📝 Added human feedback from previous steps to conversation history for step %d", i+1)
+				}
+			}
+
 			// Add human feedback to conversation history if provided
 			if humanFeedback != "" {
 				humanFeedbackMessage := llmtypes.MessageContent{
@@ -951,7 +986,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				"StepTitle":           hcpo.resolveVariables(step.Title),
 				"StepDescription":     hcpo.resolveVariables(step.Description),
 				"StepSuccessCriteria": hcpo.resolveVariables(step.SuccessCriteria),
-				"StepWhyThisStep":     hcpo.resolveVariables(step.WhyThisStep),
 				"StepContextOutput":   hcpo.resolveVariables(step.ContextOutput),
 				"WorkspacePath":       hcpo.GetWorkspacePath(),
 				"LearningAgentOutput": "", // Will be populated with learning agent's output
@@ -999,18 +1033,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				templateVars["VariableValues"] = variableValues
 			}
 
-			// Add human feedback from previous steps to conversation history (first iteration only)
-			if len(humanFeedbackHistory) > 0 && len(executionConversationHistory) == 0 {
-				previousFeedbackMessage := llmtypes.MessageContent{
-					Role: llmtypes.ChatMessageTypeHuman,
-					Parts: []llmtypes.ContentPart{llmtypes.TextContent{
-						Text: fmt.Sprintf("## Previous Steps' Feedback for Context:\n%s", strings.Join(humanFeedbackHistory, "\n---\n")),
-					}},
-				}
-				executionConversationHistory = append(executionConversationHistory, previousFeedbackMessage)
-				hcpo.GetLogger().Infof("📝 Added human feedback from previous steps to conversation history for step %d", i+1)
-			}
-
 			// Inner loop: Automatic retry logic
 			var validationFeedback []ValidationFeedback
 			var validationResponse *ValidationResponse
@@ -1049,8 +1071,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 				hcpo.GetLogger().Infof("✅ Step %d execution completed successfully (attempt %d)", i+1, retryAttempt)
 
-				// Validate this step's execution using structured output
-				hcpo.GetLogger().Infof("🔍 Validating step %d execution (attempt %d)", i+1, retryAttempt)
+				// Check if step requires validation
+				if !step.RequiresValidation {
+					// Simple step - skip validation and learning, mark as completed
+					hcpo.GetLogger().Infof("⏭️ Step %d does not require validation (requires_validation=false), skipping validation and learning", i+1)
+					if step.ReasonForValidation != "" {
+						hcpo.GetLogger().Infof("📝 Step %d reason (not needed but provided): %s", i+1, step.ReasonForValidation)
+					}
+					// Create a synthetic success validation response for consistency
+					validationResponse = &ValidationResponse{
+						IsSuccessCriteriaMet: true,
+						ExecutionStatus:      "COMPLETED",
+						Reasoning:            "Step executed successfully. Validation skipped per requires_validation=false setting.",
+					}
+					break // Exit retry loop and continue to next step
+				}
+
+				// Complex step - requires validation
+				hcpo.GetLogger().Infof("🔍 Validating step %d execution (attempt %d) - requires_validation=true", i+1, retryAttempt)
+				if step.ReasonForValidation != "" {
+					hcpo.GetLogger().Infof("📝 Step %d validation reason: %s", i+1, step.ReasonForValidation)
+				}
 
 				// Reuse resolved title from execution agent (already resolved above)
 				validationAgentName := fmt.Sprintf("validation-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
@@ -1070,7 +1111,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					"StepTitle":           step.Title,
 					"StepDescription":     step.Description,
 					"StepSuccessCriteria": step.SuccessCriteria,
-					"StepWhyThisStep":     step.WhyThisStep,
 					"StepContextOutput":   step.ContextOutput,
 					"WorkspacePath":       hcpo.GetWorkspacePath(),
 					"ExecutionHistory":    shared.FormatConversationHistory(executionConversationHistory),
@@ -1184,7 +1224,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			} else {
 				// Normal mode: Request human feedback
 				var validationSummary string
-				if validationResponse != nil {
+				if !step.RequiresValidation {
+					// Simple step - no validation was performed
+					validationSummary = fmt.Sprintf("Step %d execution completed (requires_validation=false, validation skipped)", i+1)
+				} else if validationResponse != nil {
 					validationSummary = fmt.Sprintf("Step %d validation completed. Success Criteria Met: %v, Status: %s", i+1, validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
 				} else {
 					validationSummary = fmt.Sprintf("Step %d execution failed - no validation response available", i+1)
@@ -1476,7 +1519,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		"StepTitle":           step.Title,
 		"StepDescription":     step.Description,
 		"StepSuccessCriteria": step.SuccessCriteria,
-		"StepWhyThisStep":     step.WhyThisStep,
 		"StepContextOutput":   step.ContextOutput,
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
 		"ExecutionHistory":    shared.FormatConversationHistory(executionHistory),
@@ -1543,7 +1585,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		"StepTitle":           step.Title,
 		"StepDescription":     step.Description,
 		"StepSuccessCriteria": step.SuccessCriteria,
-		"StepWhyThisStep":     step.WhyThisStep,
 		"StepContextOutput":   step.ContextOutput,
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
 		"ExecutionHistory":    shared.FormatConversationHistory(executionHistory),

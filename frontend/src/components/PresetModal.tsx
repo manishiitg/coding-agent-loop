@@ -15,11 +15,11 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
-  fixedAgentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow';
+  fixedAgentMode?: 'simple' | 'orchestrator' | 'workflow';
 }
 
 const PresetModal: React.FC<PresetModalProps> = React.memo(({
@@ -35,7 +35,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [agentMode, setAgentMode] = useState<'simple' | 'ReAct' | 'orchestrator' | 'workflow'>('ReAct');
+  const [agentMode, setAgentMode] = useState<'simple' | 'orchestrator' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
@@ -78,7 +78,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setQuery(editingPreset.query);
       setSelectedServers(editingPreset.selectedServers || []);
       setSelectedTools(editingPreset.selectedTools || []); // NEW
-      setAgentMode(editingPreset.agentMode || 'ReAct');
+      setAgentMode(editingPreset.agentMode || 'simple');
       setSelectedFolder(editingPreset.selectedFolder || null);
       setLlmConfig(editingPreset.llmConfig || {
         provider: primaryConfig.provider,
@@ -89,7 +89,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setQuery('');
       setSelectedServers([]);
       setSelectedTools([]); // NEW
-      setAgentMode(fixedAgentMode || 'ReAct');
+      setAgentMode(fixedAgentMode || 'simple');
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
       setLlmConfig({
@@ -331,7 +331,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <div className="grid grid-cols-2 gap-2">
                     {[
                       { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
-                      { value: 'ReAct', label: 'ReAct', description: 'Step-by-step reasoning' },
                       { value: 'orchestrator', label: 'Deep Search', description: 'Multi-step plans' },
                       { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
                     ].map((mode) => (
@@ -342,7 +341,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           name="agentMode"
                           value={mode.value}
                           checked={agentMode === mode.value}
-                          onChange={(e) => setAgentMode(e.target.value as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')}
+                          onChange={(e) => setAgentMode(e.target.value as 'simple' | 'orchestrator' | 'workflow')}
                           className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
                         />
                         <label
@@ -367,12 +366,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     <div className="flex items-center gap-2">
                       <div className="font-medium text-gray-900 dark:text-white">
                         {fixedAgentMode === 'simple' ? 'Simple' :
-                         fixedAgentMode === 'ReAct' ? 'ReAct' :
                          fixedAgentMode === 'orchestrator' ? 'Deep Search' : 'Workflow'}
                       </div>
                       <div className="text-xs text-gray-500 dark:text-gray-400">
                         {fixedAgentMode === 'simple' ? 'Ask simple questions' :
-                         fixedAgentMode === 'ReAct' ? 'Step-by-step reasoning' :
                          fixedAgentMode === 'orchestrator' ? 'Multi-step plans' : 'Todo-list execution'}
                       </div>
                     </div>

@@ -71,7 +71,6 @@ export const useModeStore = create<ModeState>()(
         getModeCategoryFromAgentMode: (agentMode) => {
           switch (agentMode) {
             case 'simple':
-            case 'ReAct':
               return 'chat'
             case 'orchestrator':
               return 'deep-research'
@@ -85,13 +84,13 @@ export const useModeStore = create<ModeState>()(
         getAgentModeFromCategory: (category) => {
           switch (category) {
             case 'chat':
-              return 'ReAct' // Default to ReAct for chat mode
+              return 'simple' // Default to simple for chat mode
             case 'deep-research':
               return 'orchestrator'
             case 'workflow':
               return 'workflow'
             default:
-              return 'ReAct'
+              return 'simple'
           }
         }
       }),

@@ -11,7 +11,7 @@ import (
 )
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
-// This is useful when tools are passed via llms.WithTools() to avoid prompt length issues
+// This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, logger utils.ExtendedLogger) string {
 	// Build prompts section with previews (only if discoverPrompt is true)
 	var promptsSection string
@@ -46,8 +46,8 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 		prompt = SystemPromptTemplate
 	}
 
-	// Replace placeholders (tools are passed via llms.WithTools())
-	// prompt = strings.ReplaceAll(prompt, "{{TOOLS_SECTION}}", "Tools are available via llms.WithTools() - see available tools in the tools array")
+	// Replace placeholders (tools are passed via llmtypes.WithTools())
+	// prompt = strings.ReplaceAll(prompt, "{{TOOLS_SECTION}}", "Tools are available via llmtypes.WithTools() - see available tools in the tools array")
 	prompt = strings.ReplaceAll(prompt, PromptsSectionPlaceholder, promptsSection)
 	prompt = strings.ReplaceAll(prompt, ResourcesSectionPlaceholder, resourcesSection)
 	prompt = strings.ReplaceAll(prompt, VirtualToolsSectionPlaceholder, virtualToolsSection)

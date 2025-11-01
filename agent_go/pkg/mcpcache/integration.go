@@ -10,8 +10,9 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // CachedConnectionResult represents the result of a cached or fresh MCP connection
@@ -19,7 +20,7 @@ type CachedConnectionResult struct {
 	// Original connection data
 	Clients      map[string]mcpclient.ClientInterface
 	ToolToServer map[string]string
-	Tools        []llms.Tool
+	Tools        []llmtypes.Tool
 	Prompts      map[string][]mcp.Prompt
 	Resources    map[string][]mcp.Resource
 	SystemPrompt string
@@ -169,7 +170,7 @@ func (e *ComprehensiveCacheEvent) GetParentID() string {
 // falling back to fresh connection if cache is unavailable or expired
 func GetCachedOrFreshConnection(
 	ctx context.Context,
-	llm llms.Model,
+	llm llmtypes.Model,
 	serverName, configPath string,
 	tracers []observability.Tracer,
 	logger utils.ExtendedLogger,
@@ -523,6 +524,9 @@ func processCachedData(
 		CacheUsed:    true,
 	}
 
+	// Track seen tools to prevent duplicates (Gemini/Vertex rejects duplicate function declarations)
+	seenTools := make(map[string]bool)
+
 	// Aggregate data from all cached entries WITHOUT creating connections
 	for _, srvName := range servers {
 		entry, exists := cachedData[srvName]
@@ -536,11 +540,6 @@ func processCachedData(
 			"protocol":    entry.Protocol,
 		})
 
-		// Use cached tool mapping
-		for _, tool := range entry.Tools {
-			result.ToolToServer[tool.Function.Name] = srvName
-		}
-
 		// Normalize cached tools to ensure all array parameters have 'items' field (required by Gemini)
 		// This fixes tools that were cached before normalization was added
 		// Normalize BEFORE appending to result so the fix propagates
@@ -548,8 +547,29 @@ func processCachedData(
 
 		logger.Infof("[CACHE_NORMALIZE] Normalized tools for server %s: %d tools", srvName, len(entry.Tools))
 
-		// Aggregate all tools, prompts, and resources from cache
-		result.Tools = append(result.Tools, entry.Tools...)
+		// Deduplicate tools: only add tools we haven't seen before
+		for _, t := range entry.Tools {
+			if t.Function == nil {
+				continue
+			}
+
+			toolName := t.Function.Name
+			if seenTools[toolName] {
+				// Duplicate tool found - log warning and skip
+				existingServer := result.ToolToServer[toolName]
+				logger.Warn("⚠️ Duplicate tool detected in cache, skipping", map[string]interface{}{
+					"tool_name":        toolName,
+					"existing_server":  existingServer,
+					"duplicate_server": srvName,
+				})
+				continue
+			}
+
+			// First occurrence of this tool - add it
+			seenTools[toolName] = true
+			result.ToolToServer[toolName] = srvName
+			result.Tools = append(result.Tools, t)
+		}
 		if entry.Prompts != nil {
 			result.Prompts[srvName] = entry.Prompts
 		}
@@ -585,7 +605,7 @@ func processCachedData(
 // performFreshConnection performs the original fresh connection logic
 func performFreshConnection(
 	ctx context.Context,
-	llm llms.Model,
+	llm llmtypes.Model,
 	serverName, configPath string,
 	tracers []observability.Tracer,
 	logger utils.ExtendedLogger,
@@ -615,11 +635,11 @@ func performFreshConnection(
 // Note: Simplified to avoid circular dependencies - no event emission
 func performOriginalConnectionLogic(
 	ctx context.Context,
-	llm llms.Model,
+	llm llmtypes.Model,
 	serverName, configPath, traceID string,
 	tracers []observability.Tracer,
 	logger utils.ExtendedLogger,
-) (map[string]mcpclient.ClientInterface, map[string]string, []llms.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Load merged MCP server configuration (base + user)
 	logger.Info("🔍 Loading merged MCP config", map[string]interface{}{"config_path": configPath})
@@ -644,7 +664,7 @@ func performOriginalConnectionLogic(
 
 	clients := make(map[string]mcpclient.ClientInterface)
 	toolToServer := make(map[string]string)
-	var allLLMTools []llms.Tool
+	var allLLMTools []llmtypes.Tool
 
 	// Create a filtered config that only contains the specified servers
 	filteredConfig := &mcpclient.MCPConfig{
@@ -676,6 +696,9 @@ func performOriginalConnectionLogic(
 		"discovery_ms":   discoveryDuration.Milliseconds(),
 	})
 
+	// Track seen tools to prevent duplicates (Gemini/Vertex rejects duplicate function declarations)
+	seenTools := make(map[string]bool)
+
 	for _, r := range parallelResults {
 		srvName := r.ServerName
 
@@ -704,16 +727,35 @@ func performOriginalConnectionLogic(
 		srvTools := r.Tools
 		llmTools, err := mcpclient.ToolsAsLLM(srvTools)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("convert tools (%s): %w", err)
+			return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("convert tools: %w", err)
 		}
 
 		// Tools are already normalized by ToolsAsLLM() during conversion
 		// No extra normalization needed since langchaingo bug is fixed
 
+		// Deduplicate tools: only add tools we haven't seen before
 		for _, t := range llmTools {
-			toolToServer[t.Function.Name] = srvName
+			if t.Function == nil {
+				continue
+			}
+
+			toolName := t.Function.Name
+			if seenTools[toolName] {
+				// Duplicate tool found - log warning and skip
+				existingServer := toolToServer[toolName]
+				logger.Warn("⚠️ Duplicate tool detected, skipping", map[string]interface{}{
+					"tool_name":        toolName,
+					"existing_server":  existingServer,
+					"duplicate_server": srvName,
+				})
+				continue
+			}
+
+			// First occurrence of this tool - add it
+			seenTools[toolName] = true
+			toolToServer[toolName] = srvName
+			allLLMTools = append(allLLMTools, t)
 		}
-		allLLMTools = append(allLLMTools, llmTools...)
 
 		clients[srvName] = c
 	}
@@ -858,8 +900,8 @@ func cacheFreshConnectionData(
 }
 
 // extractServerTools extracts tools specific to a server from the aggregated tool list
-func extractServerTools(allTools []llms.Tool, toolToServer map[string]string, serverName string) []llms.Tool {
-	var serverTools []llms.Tool
+func extractServerTools(allTools []llmtypes.Tool, toolToServer map[string]string, serverName string) []llmtypes.Tool {
+	var serverTools []llmtypes.Tool
 	for _, tool := range allTools {
 		if srv, exists := toolToServer[tool.Function.Name]; exists && srv == serverName {
 			serverTools = append(serverTools, tool)

@@ -5,6 +5,7 @@ import { Card } from './ui/Card'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore } from '../stores'
 import type { LLMConfiguration, ExtendedLLMConfiguration } from '../services/api-types'
+import { AnthropicSection } from './AnthropicSection'
 
 interface LLMConfigurationModalProps {
   isOpen: boolean
@@ -16,6 +17,7 @@ interface APIKeyStatus {
   openai: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
   bedrock: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
   vertex: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
+  anthropic: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
 }
 
 interface APIKeyError {
@@ -23,6 +25,7 @@ interface APIKeyError {
   openai: string | null
   bedrock: string | null
   vertex: string | null
+  anthropic: string | null
 }
 
 export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
@@ -32,22 +35,25 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     bedrockConfig,
     openaiConfig,
     vertexConfig,
+    anthropicConfig,
     availableBedrockModels,
     availableOpenRouterModels,
     availableOpenAIModels,
     availableVertexModels,
+    availableAnthropicModels,
     setPrimaryConfig,
     setOpenrouterConfig,
     setBedrockConfig,
     setOpenaiConfig,
     setVertexConfig,
+    setAnthropicConfig,
     testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend
   } = useLLMStore()
 
   // Helper function to get available models for any provider
-  const getAvailableModelsForProvider = (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex'): string[] => {
+  const getAvailableModelsForProvider = (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'): string[] => {
     switch (provider) {
       case 'openai':
         return availableOpenAIModels
@@ -57,6 +63,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
         return availableOpenRouterModels
       case 'vertex':
         return availableVertexModels
+      case 'anthropic':
+        return availableAnthropicModels
       default:
         return []
     }
@@ -66,17 +74,19 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     openrouter: 'idle',
     openai: 'idle',
     bedrock: 'idle',
-    vertex: 'idle'
+    vertex: 'idle',
+    anthropic: 'idle'
   })
   
   const [apiKeyErrors, setApiKeyErrors] = useState<APIKeyError>({
     openrouter: null,
     openai: null,
     bedrock: null,
-    vertex: null
+    vertex: null,
+    anthropic: null
   })
 
-  const [activeTab, setActiveTab] = useState<'openrouter' | 'bedrock' | 'openai' | 'vertex'>('openrouter')
+  const [activeTab, setActiveTab] = useState<'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'>('openrouter')
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
@@ -88,7 +98,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, defaultsLoaded, loadDefaultsFromBackend])
 
   // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex', apiKey: string, modelId?: string) => {
+  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string) => {
     if (!apiKey.trim()) return
 
     setApiKeyStatus(prev => ({ ...prev, [provider]: 'testing' }))
@@ -126,7 +136,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       
       return () => clearTimeout(timeoutId)
     }
-  }, [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, primaryConfig, saveStatus])
+  }, [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, primaryConfig, saveStatus])
 
   // Handle Escape key to close modal
   useEffect(() => {
@@ -146,7 +156,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, onClose])
 
   // Handle primary provider selection
-  const handleSetPrimaryProvider = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex') => {
+  const handleSetPrimaryProvider = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic') => {
     let configToUse: ExtendedLLMConfiguration
     
     switch (provider) {
@@ -161,6 +171,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
         break
       case 'vertex':
         configToUse = vertexConfig
+        break
+      case 'anthropic':
+        configToUse = anthropicConfig
         break
     }
     
@@ -305,6 +318,24 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     <CheckCircle className="w-4 h-4" />
                   )}
                 </button>
+
+                {/* Anthropic Tab */}
+                <button
+                  onClick={() => setActiveTab('anthropic')}
+                  className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
+                    activeTab === 'anthropic'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'hover:bg-secondary'
+                  }`}
+                >
+                  <div className="flex-1">
+                    <div className="font-medium">Anthropic</div>
+                    <div className="text-xs opacity-75">Claude models</div>
+                  </div>
+                  {primaryConfig.provider === 'anthropic' && (
+                    <CheckCircle className="w-4 h-4" />
+                  )}
+                </button>
               </div>
 
               {/* Primary Provider Selection */}
@@ -374,6 +405,20 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onSetPrimary={() => handleSetPrimaryProvider('vertex')}
                   getAvailableModelsForProvider={getAvailableModelsForProvider}
                   currentProvider="vertex"
+                />
+              )}
+
+              {activeTab === 'anthropic' && (
+                <AnthropicSection
+                  config={anthropicConfig}
+                  onUpdate={setAnthropicConfig}
+                  onTestAPIKey={(apiKey: string) => handleTestAPIKey('anthropic', apiKey)}
+                  apiKeyStatus={apiKeyStatus.anthropic}
+                  apiKeyError={apiKeyErrors.anthropic}
+                  isPrimary={primaryConfig.provider === 'anthropic'}
+                  onSetPrimary={() => handleSetPrimaryProvider('anthropic')}
+                  getAvailableModelsForProvider={getAvailableModelsForProvider}
+                  currentProvider="anthropic"
                 />
               )}
             </div>
@@ -448,8 +493,8 @@ interface ProviderSectionProps {
   apiKeyError: string | null
   isPrimary: boolean
   onSetPrimary: () => void
-  getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex') => string[]
-  currentProvider: 'openai' | 'bedrock' | 'openrouter' | 'vertex'
+  getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic') => string[]
+  currentProvider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
 }
 
 interface BedrockSectionProps {
@@ -460,8 +505,8 @@ interface BedrockSectionProps {
   apiKeyErrors: APIKeyError
   isPrimary: boolean
   onSetPrimary: () => void
-  getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex') => string[]
-  currentProvider: 'openai' | 'bedrock' | 'openrouter' | 'vertex'
+  getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic') => string[]
+  currentProvider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
 }
 
 function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
@@ -975,7 +1020,7 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
               type="text"
               value={newCustomModel}
               onChange={(e) => setNewCustomModel(e.target.value)}
-              placeholder="Enter custom model ID (e.g., us.anthropic.claude-3-opus-20240229-v1:0)"
+              placeholder="Enter custom model ID (e.g., claude-sonnet-4-5-20250929)"
               className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()}
             />
@@ -1430,7 +1475,7 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
           <div>
             <label className="block text-sm font-medium text-muted-foreground mb-2">Fallback Provider</label>
             <select value={config.cross_provider_fallback?.provider || ''} onChange={(e) => {
-              const fallbackProvider = e.target.value as 'openai' | 'bedrock' | 'openrouter' | 'vertex'
+              const fallbackProvider = e.target.value as 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
               if (fallbackProvider) {
                 const fallbackModels = getAvailableModelsForProvider(fallbackProvider)
                 onUpdate({ ...config, cross_provider_fallback: { provider: fallbackProvider, models: fallbackModels.length > 0 ? [fallbackModels[0]] : [] } })

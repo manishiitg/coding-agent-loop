@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerExecutionTemplate holds template variables for human-controlled execution prompts
@@ -53,7 +52,7 @@ func NewHumanControlledTodoPlannerExecutionAgent(config *agents.OrchestratorAgen
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract workspace path from template variables
 	// Human-controlled execution agent - executes plan directly without iteration complexity
 	workspacePath := templateVars["WorkspacePath"]

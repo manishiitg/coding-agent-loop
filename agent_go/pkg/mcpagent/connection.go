@@ -19,13 +19,14 @@ import (
 	"mcp-agent/agent_go/pkg/mcpcache"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // NewAgentConnection handles MCP config loading, server connection, tool discovery, and returns all connection artifacts for agent construction.
 // Now uses caching to avoid redundant connections and discoveries.
-func NewAgentConnection(ctx context.Context, llm llms.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger utils.ExtendedLogger, cacheOnly bool) (map[string]mcpclient.ClientInterface, map[string]string, []llms.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger utils.ExtendedLogger, cacheOnly bool) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Start timing the entire connection process
 	connectionStartTime := time.Now()

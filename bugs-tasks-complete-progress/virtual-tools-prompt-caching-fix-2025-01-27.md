@@ -64,7 +64,7 @@ if err != nil {
             var contentBuilder strings.Builder
             for _, msg := range promptResult.Messages {
                 for _, part := range msg.Parts {
-                    if textPart, ok := part.(llms.TextContent); ok {
+                    if textPart, ok := part.(llmtypes.TextContent); ok {
                         contentBuilder.WriteString(textPart.Text)
                     }
                 }
@@ -106,7 +106,7 @@ if a.Clients != nil {
                 var contentBuilder strings.Builder
                 for _, msg := range promptResult.Messages {
                     for _, part := range msg.Parts {
-                        if textPart, ok := part.(llms.TextContent); ok {
+                        if textPart, ok := part.(llmtypes.TextContent); ok {
                             contentBuilder.WriteString(textPart.Text)
                         }
                     }
@@ -144,7 +144,7 @@ if a.Clients != nil {
                 var contentBuilder strings.Builder
                 for _, msg := range promptResult.Messages {
                     for _, part := range msg.Parts {
-                        if textPart, ok := part.(llms.TextContent); ok {
+                        if textPart, ok := part.(llmtypes.TextContent); ok {
                             contentBuilder.WriteString(textPart.Text)
                         }
                     }
@@ -231,7 +231,7 @@ go run main.go test obsidian-tools --provider bedrock --log-file logs/obsidian-d
 var contentBuilder strings.Builder
 for _, msg := range promptResult.Messages {
     for _, part := range msg.Parts {
-        if textPart, ok := part.(llms.TextContent); ok {
+        if textPart, ok := part.(llmtypes.TextContent); ok {
             contentBuilder.WriteString(textPart.Text)
         }
     }

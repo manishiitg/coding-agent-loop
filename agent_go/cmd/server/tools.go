@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/pkg/mcpcache"
 	"mcp-agent/agent_go/pkg/mcpclient"
 )
@@ -178,7 +178,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	functionNames := make([]string, 0, len(serverTools))
 
 	for _, tool := range serverTools {
-		// llms.Tool has a Function field that contains the actual tool information
+		// llmtypes.Tool has a Function field that contains the actual tool information
 		if tool.Function != nil {
 			functionNames = append(functionNames, tool.Function.Name)
 
@@ -485,7 +485,7 @@ func (api *StreamingAPI) convertCacheEntryToToolStatus(entry *mcpcache.CacheEntr
 	toolDetails := make([]mcpclient.ToolDetail, 0, len(entry.Tools))
 
 	for _, tool := range entry.Tools {
-		// llms.Tool has a Function field that contains the actual tool information
+		// llmtypes.Tool has a Function field that contains the actual tool information
 		if tool.Function != nil {
 			functionNames = append(functionNames, tool.Function.Name)
 
@@ -540,14 +540,14 @@ func (api *StreamingAPI) convertCacheEntryToToolStatus(entry *mcpcache.CacheEntr
 
 // convertToolStatusToCacheEntry converts a ToolStatus to mcpcache.CacheEntry
 func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, serverName string) *mcpcache.CacheEntry {
-	// Convert ToolDetail to llms.Tool format using the centralized conversion function
+	// Convert ToolDetail to llmtypes.Tool format using the centralized conversion function
 	llmTools, err := mcpclient.ToolDetailsAsLLM(toolStatus.Tools)
 	if err != nil {
 		api.logger.Errorf("Failed to convert tool details to LLM tools: %v", err)
 		// Return empty cache entry on error
 		return &mcpcache.CacheEntry{
 			ServerName:   serverName,
-			Tools:        []llms.Tool{},
+			Tools:        []llmtypes.Tool{},
 			Prompts:      []mcp.Prompt{},
 			Resources:    []mcp.Resource{},
 			SystemPrompt: "",
@@ -584,8 +584,8 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 }
 
 // extractServerTools extracts tools specific to a server from the aggregated tool list
-func (api *StreamingAPI) extractServerTools(allTools []llms.Tool, toolToServer map[string]string, serverName string) []llms.Tool {
-	var serverTools []llms.Tool
+func (api *StreamingAPI) extractServerTools(allTools []llmtypes.Tool, toolToServer map[string]string, serverName string) []llmtypes.Tool {
+	var serverTools []llmtypes.Tool
 	for _, tool := range allTools {
 		if tool.Function != nil {
 			if srv, exists := toolToServer[tool.Function.Name]; exists && srv == serverName {

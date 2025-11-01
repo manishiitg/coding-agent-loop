@@ -7,9 +7,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
-
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -100,7 +99,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 }
 
 // ExecuteStructuredWithInputProcessor executes the agent with structured output and proper event emission
-func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent, schema string) (T, error) {
+func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llmtypes.MessageContent, schema string) (T, error) {
 	startTime := time.Now()
 
 	// Auto-emit agent start event
@@ -154,13 +153,13 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 
 // ExecuteWithInputProcessor executes the agent with a custom input processor
 // This is a convenience method that delegates to ExecuteWithTemplateValidation with nil templateData
-func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Delegate to ExecuteWithTemplateValidation with nil templateData to skip validation
 	return boa.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, nil)
 }
 
 // ExecuteWithTemplateValidation executes the agent with template validation
-func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llms.MessageContent, templateData interface{}) (string, []llms.MessageContent, error) {
+func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llmtypes.MessageContent, templateData interface{}) (string, []llmtypes.MessageContent, error) {
 	startTime := time.Now()
 
 	// Auto-emit agent start event
@@ -365,7 +364,7 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templat
 }
 
 // createLLM creates an LLM instance based on the agent configuration
-func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llms.Model, error) {
+func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llmtypes.Model, error) {
 	// Generate trace ID for this agent session
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%d", boa.agentType, time.Now().UnixNano()))
 

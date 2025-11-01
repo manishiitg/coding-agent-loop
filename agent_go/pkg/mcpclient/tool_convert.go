@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 
 	"mcp-agent/agent_go/internal/utils"
 )
@@ -45,11 +46,11 @@ func normalizeArrayParameters(schema map[string]interface{}) {
 	}
 }
 
-// NormalizeLLMTools normalizes array parameters in llms.Tool objects to ensure
+// NormalizeLLMTools normalizes array parameters in llmtypes.Tool objects to ensure
 // all arrays have an 'items' field (required by Gemini and some other LLM providers).
 // This function normalizes tools in-place, modifying their Parameters schema.
-// Uses JSON round-trip to ensure structure preservation for langchaingo's Gemini conversion.
-func NormalizeLLMTools(tools []llms.Tool) {
+// Uses JSON round-trip to ensure structure preservation for llmtypes conversion.
+func NormalizeLLMTools(tools []llmtypes.Tool) {
 	fixedCount := 0
 	totalMissing := 0
 	totalFixed := 0
@@ -66,8 +67,8 @@ func NormalizeLLMTools(tools []llms.Tool) {
 			// Handle different parameter types
 			switch params := tools[i].Function.Parameters.(type) {
 			case map[string]interface{}:
-				// CRITICAL: Use JSON round-trip to ensure structure is preserved for langchaingo
-				// langchaingo's Gemini conversion may lose nested map structure during processing
+				// CRITICAL: Use JSON round-trip to ensure structure is preserved for llmtypes
+				// llmtypes conversion may lose nested map structure during processing
 				paramsBytes, err := json.Marshal(params)
 				if err == nil {
 					var normalizedParams map[string]interface{}
@@ -98,7 +99,7 @@ func NormalizeLLMTools(tools []llms.Tool) {
 							fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s: %d -> %d missing items\n", toolName, beforeFix, afterFix)
 						}
 						// CRITICAL: Replace Parameters with normalized version from JSON round-trip
-						// This ensures the structure is preserved when langchaingo processes it
+						// This ensures the structure is preserved when llmtypes processes it
 						tools[i].Function.Parameters = normalizedParams
 					}
 				}
@@ -159,9 +160,9 @@ func countMissingItems(schema map[string]interface{}) int {
 	return count
 }
 
-// ToolsAsLLM converts MCP tools to langchaingo llms.Tool format for Bedrock
-func ToolsAsLLM(mcpTools []mcp.Tool) ([]llms.Tool, error) {
-	llmTools := make([]llms.Tool, len(mcpTools))
+// ToolsAsLLM converts MCP tools to llmtypes.Tool format
+func ToolsAsLLM(mcpTools []mcp.Tool) ([]llmtypes.Tool, error) {
+	llmTools := make([]llmtypes.Tool, len(mcpTools))
 
 	for i, tool := range mcpTools {
 		// Convert ToolArgumentsSchema to proper JSON Schema
@@ -189,9 +190,9 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llms.Tool, error) {
 		// Normalize array parameters to ensure all arrays have items field (required by Gemini)
 		normalizeArrayParameters(schema)
 
-		llmTools[i] = llms.Tool{
+		llmTools[i] = llmtypes.Tool{
 			Type: "function",
-			Function: &llms.FunctionDefinition{
+			Function: &llmtypes.FunctionDefinition{
 				Name:        tool.Name,
 				Description: tool.Description,
 				Parameters:  schema, // Now properly formatted JSON Schema
@@ -202,10 +203,10 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llms.Tool, error) {
 	return llmTools, nil
 }
 
-// ToolDetailsAsLLM converts ToolDetail structs to langchaingo llms.Tool format
+// ToolDetailsAsLLM converts ToolDetail structs to llmtypes.Tool format
 // This is used when we have ToolDetail objects (e.g., from cache) that need to be converted to LLM tools
-func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llms.Tool, error) {
-	llmTools := make([]llms.Tool, len(toolDetails))
+func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llmtypes.Tool, error) {
+	llmTools := make([]llmtypes.Tool, len(toolDetails))
 
 	for i, toolDetail := range toolDetails {
 		// Convert ToolDetail to proper JSON Schema format
@@ -233,9 +234,9 @@ func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llms.Tool, error) {
 		// Normalize array parameters to ensure all arrays have items field (required by Gemini)
 		normalizeArrayParameters(schema)
 
-		llmTools[i] = llms.Tool{
+		llmTools[i] = llmtypes.Tool{
 			Type: "function",
-			Function: &llms.FunctionDefinition{
+			Function: &llmtypes.FunctionDefinition{
 				Name:        toolDetail.Name,
 				Description: toolDetail.Description,
 				Parameters:  schema, // Now properly formatted JSON Schema

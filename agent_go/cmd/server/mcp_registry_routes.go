@@ -966,7 +966,7 @@ func (api *StreamingAPI) convertCacheEntryToResponse(entry *mcpcache.CacheEntry)
 	functionNames := make([]string, 0, len(entry.Tools))
 
 	for _, tool := range entry.Tools {
-		// Convert llms.Tool to ToolDetail format
+		// Convert llmtypes.Tool to ToolDetail format
 		parameters := make(map[string]interface{})
 		if tool.Function.Parameters != nil {
 			if params, ok := tool.Function.Parameters.(map[string]interface{}); ok {

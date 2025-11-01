@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
@@ -15,8 +16,6 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_execution"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // WorkflowPhaseOption represents an option for a workflow phase
@@ -191,7 +190,7 @@ func NewWorkflowOrchestrator(
 	tracer observability.Tracer,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,

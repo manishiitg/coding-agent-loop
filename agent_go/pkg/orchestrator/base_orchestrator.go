@@ -14,7 +14,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // Orchestrator defines the common interface for all orchestrators
@@ -51,7 +51,7 @@ type BaseOrchestrator struct {
 	logger utils.ExtendedLogger
 
 	// Workspace tools for file operations
-	WorkspaceTools         []llms.Tool
+	WorkspaceTools         []llmtypes.Tool
 	WorkspaceToolExecutors map[string]interface{}
 
 	// Orchestrator type and configuration
@@ -88,7 +88,7 @@ func NewBaseOrchestrator(
 	selectedTools []string, // NEW parameter
 	llmConfig *LLMConfig,
 	maxTurns int,
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (*BaseOrchestrator, error) {
 
@@ -359,7 +359,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	maxTurns int,
 	outputFormat agents.OutputFormat,
 	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
 	// Create standardized agent configuration using agentName as agentType
@@ -445,7 +445,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 	outputFormat agents.OutputFormat,
 	customServers []string,
 	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
 	// Create standardized agent configuration with custom servers
@@ -534,7 +534,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 	systemPromptProcessor func(map[string]string) string,
 	userMessageProcessor func(map[string]string) string,
 	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
 	// Create standardized agent configuration using agentName as agentType
@@ -641,7 +641,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServersAndSyste
 	systemPromptProcessor func(map[string]string) string,
 	userMessageProcessor func(map[string]string) string,
 	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
 	// Create standardized agent configuration with custom servers

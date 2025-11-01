@@ -16,7 +16,7 @@ type Agent interface {
 ### **Internal MCP Agent Storage**
 ```go
 type CustomTool struct {
-    Definition llms.Tool
+    Definition llmtypes.Tool
     Execution  func(ctx context.Context, args map[string]interface{}) (string, error)
 }
 

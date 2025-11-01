@@ -84,7 +84,7 @@ cd external_example/structured_output_test
 func AskStructured[T any](a Agent, ctx context.Context, question string, schema T, schemaString string) (T, error)
 
 // Conversation history with structured output
-func AskWithHistoryStructured[T any](a Agent, ctx context.Context, messages []llms.MessageContent, schema T, schemaString string) (T, []llms.MessageContent, error)
+func AskWithHistoryStructured[T any](a Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error)
 ```
 
 ### **Schema Definition Pattern**

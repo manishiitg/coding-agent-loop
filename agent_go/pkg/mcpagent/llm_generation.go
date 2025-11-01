@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
-func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.MessageContent, opts []llms.CallOption, turn int, sendMessage func(string)) (*llms.ContentResponse, error, observability.UsageMetrics) {
+func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
 	// 🆕 DETAILED GENERATECONTENTWITHRETRY DEBUG LOGGING
 	logger := getLogger(a)
 	logger.Infof("🔄 [DEBUG] GenerateContentWithRetry START - Time: %v", time.Now())
@@ -391,13 +391,11 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// For ReAct agents, use streaming in fallback as well
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				if a.AgentMode == ReActAgent {
-					streamingOpts := append(opts, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
-						chunkStr := string(chunk)
-						sendMessage(chunkStr)
-						return nil
+					streamingOpts := append(opts, llmtypes.WithStreamingFunc(func(chunk string) {
+						sendMessage(chunk)
 					}))
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, streamingOpts...)
 				} else {
@@ -556,7 +554,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// For ReAct agents, use streaming in fallback as well
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					// Use non-streaming approach for all agents, including ReAct agents during fallback
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
@@ -760,7 +758,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// Use non-streaming approach for all agents during fallback
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				// Use non-streaming approach for all agents, including ReAct agents during fallback
 				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
@@ -887,7 +885,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// Use non-streaming approach for all agents during fallback
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					// Use non-streaming approach for all agents, including ReAct agents during fallback
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
@@ -1244,7 +1242,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// Use non-streaming approach for all agents during fallback
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1372,7 +1370,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// Use non-streaming approach for all agents during fallback
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1562,7 +1560,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 				a.LLM = fallbackLLM
 
 				// Use non-streaming approach for all agents during fallback
-				var fresp *llms.ContentResponse
+				var fresp *llmtypes.ContentResponse
 				var ferr2 error
 				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1655,7 +1653,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 					a.LLM = fallbackLLM
 
 					// Use non-streaming approach for all agents during fallback
-					var fresp *llms.ContentResponse
+					var fresp *llmtypes.ContentResponse
 					var ferr2 error
 					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
 
@@ -1754,7 +1752,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llms.Mes
 }
 
 // handleErrorWithFallback is a generic function that handles any error type with fallback models
-func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llms.MessageContent, opts []llms.CallOption) (*llms.ContentResponse, error, observability.UsageMetrics) {
+func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
 	// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
 	if a.AgentMode == ReActAgent && a.reasoningTracker != nil {
 		a.reasoningTracker.Reset()
@@ -1953,7 +1951,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 }
 
 // createFallbackLLM creates a fallback LLM instance for the given modelID
-func (a *Agent) createFallbackLLM(modelID string) (llms.Model, error) {
+func (a *Agent) createFallbackLLM(modelID string) (llmtypes.Model, error) {
 	// ✅ FIXED: Detect provider from model ID instead of using agent's provider
 	provider := detectProviderFromModelID(modelID)
 

@@ -19,8 +19,9 @@ import (
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // BrokenPipeHandler handles broken pipe errors by recreating connections and retrying operations
@@ -53,7 +54,7 @@ func IsBrokenPipeError(err error) bool {
 // HandleBrokenPipeError handles broken pipe errors by recreating the connection and retrying
 func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	ctx context.Context,
-	toolCall *llms.ToolCall,
+	toolCall *llmtypes.ToolCall,
 	serverName string,
 	originalErr error,
 	startTime time.Time,
@@ -82,7 +83,7 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 // retryToolCall retries a tool call with a fresh connection
 func (h *BrokenPipeHandler) retryToolCall(
 	ctx context.Context,
-	toolCall *llms.ToolCall,
+	toolCall *llmtypes.ToolCall,
 	client mcpclient.ClientInterface,
 	serverName string,
 	startTime time.Time,
@@ -117,7 +118,7 @@ func (h *BrokenPipeHandler) retryToolCall(
 }
 
 // emitBrokenPipeEvent emits a broken pipe detection event
-func (h *BrokenPipeHandler) emitBrokenPipeEvent(ctx context.Context, toolCall *llms.ToolCall, serverName string, originalErr error) {
+func (h *BrokenPipeHandler) emitBrokenPipeEvent(ctx context.Context, toolCall *llmtypes.ToolCall, serverName string, originalErr error) {
 	brokenPipeEvent := &events.GenericEventData{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
@@ -135,7 +136,7 @@ func (h *BrokenPipeHandler) emitBrokenPipeEvent(ctx context.Context, toolCall *l
 }
 
 // emitRetrySuccessEvent emits a successful retry event
-func (h *BrokenPipeHandler) emitRetrySuccessEvent(ctx context.Context, toolCall *llms.ToolCall, serverName string, duration time.Duration) {
+func (h *BrokenPipeHandler) emitRetrySuccessEvent(ctx context.Context, toolCall *llmtypes.ToolCall, serverName string, duration time.Duration) {
 	retrySuccessEvent := &events.GenericEventData{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
@@ -153,7 +154,7 @@ func (h *BrokenPipeHandler) emitRetrySuccessEvent(ctx context.Context, toolCall 
 }
 
 // emitRetryFailureEvent emits a failed retry event
-func (h *BrokenPipeHandler) emitRetryFailureEvent(ctx context.Context, toolCall *llms.ToolCall, serverName string, retryErr error, duration time.Duration) {
+func (h *BrokenPipeHandler) emitRetryFailureEvent(ctx context.Context, toolCall *llmtypes.ToolCall, serverName string, retryErr error, duration time.Duration) {
 	retryFailureEvent := &events.GenericEventData{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
@@ -188,7 +189,7 @@ func NewErrorRecoveryHandler(agent *Agent) *ErrorRecoveryHandler {
 // HandleError attempts to recover from various types of errors
 func (h *ErrorRecoveryHandler) HandleError(
 	ctx context.Context,
-	toolCall *llms.ToolCall,
+	toolCall *llmtypes.ToolCall,
 	serverName string,
 	originalErr error,
 	startTime time.Time,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -15,8 +16,6 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/shared"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // StepProgress tracks which steps have been completed
@@ -94,7 +93,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (*HumanControlledTodoPlannerOrchestrator, error) {
 
@@ -251,7 +250,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	if !variablesExist {
 		maxVariableRevisions := 10
 		var variableFeedback string
-		var variableConversationHistory []llms.MessageContent
+		var variableConversationHistory []llmtypes.MessageContent
 
 		for revisionAttempt := 1; revisionAttempt <= maxVariableRevisions; revisionAttempt++ {
 			hcpo.GetLogger().Infof("🔄 Variable extraction attempt %d/%d", revisionAttempt, maxVariableRevisions)
@@ -266,9 +265,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			}
 
 			// Accumulate conversation history for next iteration
-			variableConversationHistory = append(variableConversationHistory, llms.MessageContent{
-				Role:  llms.ChatMessageTypeAI,
-				Parts: []llms.ContentPart{llms.TextContent{Text: fmt.Sprintf("Extracted %d variables from objective", len(variablesManifest.Variables))}},
+			variableConversationHistory = append(variableConversationHistory, llmtypes.MessageContent{
+				Role:  llmtypes.ChatMessageTypeAI,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: fmt.Sprintf("Extracted %d variables from objective", len(variablesManifest.Variables))}},
 			})
 
 			hcpo.GetLogger().Infof("✅ Extracted %d variables, templated objective: %s",
@@ -428,7 +427,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				hcpo.GetLogger().Warnf("⚠️ Failed to cast plan reader agent to correct type")
 				planExists = false
 			} else {
-				existingPlan, err := planReaderAgentTyped.ExecuteStructured(ctx, readerTemplateVars, []llms.MessageContent{})
+				existingPlan, err := planReaderAgentTyped.ExecuteStructured(ctx, readerTemplateVars, []llmtypes.MessageContent{})
 				if err != nil {
 					hcpo.GetLogger().Warnf("⚠️ Failed to convert markdown plan to JSON: %v", err)
 					// Fall through to create new plan
@@ -506,7 +505,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		maxPlanRevisions := 20 // Allow up to 20 plan revisions
 		// Initialize with initial planning feedback (e.g., from "Update Existing Plan" option)
 		humanFeedback := initialPlanningFeedback
-		var planReaderConversationHistory []llms.MessageContent
+		var planReaderConversationHistory []llmtypes.MessageContent
 		var approvedPlan *PlanningResponse
 		var err error
 
@@ -759,7 +758,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 // runPlanningPhase creates markdown plan
 // conversationHistory is updated in-place to accumulate across iterations
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	planningTemplateVars := map[string]string{
 		"Objective":     hcpo.GetObjective(),
 		"WorkspacePath": hcpo.GetWorkspacePath(),
@@ -768,9 +767,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	// Add human feedback as a user message to conversation history BEFORE executing
 	// This ensures it's part of the conversation and won't be duplicated by BaseAgent.Execute
 	if humanFeedback != "" {
-		feedbackMessage := llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: humanFeedback}},
+		feedbackMessage := llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: humanFeedback}},
 		}
 		conversationHistory = append(conversationHistory, feedbackMessage)
 		hcpo.GetLogger().Infof("📝 Added human feedback as user message to conversation history for iteration %d", iteration)
@@ -839,7 +838,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanReaderPhase(ctx conte
 		return nil, fmt.Errorf("failed to cast plan reader agent to correct type")
 	}
 
-	result, err := planReaderAgentTyped.ExecuteStructured(ctx, readerTemplateVars, []llms.MessageContent{})
+	result, err := planReaderAgentTyped.ExecuteStructured(ctx, readerTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
 		return nil, fmt.Errorf("plan reading failed: %w", err)
 	}
@@ -874,7 +873,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	iteration int,
 	progress *StepProgress,
 	startFromStep int,
-) ([]llms.MessageContent, error) {
+) ([]llmtypes.MessageContent, error) {
 	hcpo.GetLogger().Infof("🔄 Starting step-by-step execution of %d steps (starting from step %d)",
 		len(breakdownSteps), startFromStep+1)
 
@@ -925,7 +924,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 		// Initialize variables for step execution
 		maxRetryAttempts := 3
-		var executionConversationHistory []llms.MessageContent
+		var executionConversationHistory []llmtypes.MessageContent
 		var humanFeedback string
 		stepCompleted := false
 
@@ -933,9 +932,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		for !stepCompleted {
 			// Add human feedback to conversation history if provided
 			if humanFeedback != "" {
-				humanFeedbackMessage := llms.MessageContent{
-					Role: llms.ChatMessageTypeHuman,
-					Parts: []llms.ContentPart{llms.TextContent{
+				humanFeedbackMessage := llmtypes.MessageContent{
+					Role: llmtypes.ChatMessageTypeHuman,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{
 						Text: fmt.Sprintf("## Human Feedback for Step %d:\n%s", i+1, humanFeedback),
 					}},
 				}
@@ -1002,9 +1001,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 			// Add human feedback from previous steps to conversation history (first iteration only)
 			if len(humanFeedbackHistory) > 0 && len(executionConversationHistory) == 0 {
-				previousFeedbackMessage := llms.MessageContent{
-					Role: llms.ChatMessageTypeHuman,
-					Parts: []llms.ContentPart{llms.TextContent{
+				previousFeedbackMessage := llmtypes.MessageContent{
+					Role: llmtypes.ChatMessageTypeHuman,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{
 						Text: fmt.Sprintf("## Previous Steps' Feedback for Context:\n%s", strings.Join(humanFeedbackHistory, "\n---\n")),
 					}},
 				}
@@ -1085,7 +1084,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				}
 
 				// Validate this step's execution using structured output
-				validationResponse, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llms.MessageContent{})
+				validationResponse, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
 				if err != nil {
 					hcpo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, retryAttempt, err)
 					if retryAttempt >= maxRetryAttempts {
@@ -1257,7 +1256,7 @@ func max(slice []int) int {
 }
 
 // runVariableExtractionPhase extracts variables from objective (with optional human feedback)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llms.MessageContent) (*VariablesManifest, string, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent) (*VariablesManifest, string, error) {
 	hcpo.GetLogger().Infof("🔍 Starting variable extraction from objective (attempt %d)", iteration)
 
 	// Create variable extraction agent
@@ -1274,9 +1273,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(c
 
 	// Add human feedback to conversation if provided
 	if humanFeedback != "" {
-		feedbackMessage := llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: humanFeedback}},
+		feedbackMessage := llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: humanFeedback}},
 		}
 		conversationHistory = append(conversationHistory, feedbackMessage)
 		hcpo.GetLogger().Infof("📝 Added human feedback to variable extraction conversation (attempt %d)", iteration)
@@ -1442,7 +1441,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatVariableValues() strin
 }
 
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llms.MessageContent, validationResponse *ValidationResponse) (string, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse) (string, error) {
 	hcpo.GetLogger().Infof("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
 
 	// Use stored learning detail level preference (set once before execution starts)
@@ -1499,7 +1498,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	}
 
 	// Execute success learning agent and capture output
-	successLearningOutput, _, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llms.MessageContent{})
+	successLearningOutput, _, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
 		return "", fmt.Errorf("success learning analysis failed: %w", err)
 	}
@@ -1509,7 +1508,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 }
 
 // runFailureLearningPhase analyzes failed executions to provide refined task descriptions for retry
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llms.MessageContent, validationResponse *ValidationResponse) (string, string, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse) (string, string, error) {
 	hcpo.GetLogger().Infof("🧠 Starting failure learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
 
 	// Use stored learning detail level preference (set once before execution starts)
@@ -1566,7 +1565,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	}
 
 	// Execute failure learning agent and capture output
-	failureLearningOutput, _, err := failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llms.MessageContent{})
+	failureLearningOutput, _, err := failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
 		return "", "", fmt.Errorf("failure learning analysis failed: %w", err)
 	}
@@ -1616,7 +1615,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) extractRefinedTaskDescriptio
 // runWriterPhaseWithHumanReview creates todo list with human review and feedback loop
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runWriterPhaseWithHumanReview(ctx context.Context, iteration int) error {
 	maxRevisions := 3 // Allow up to 3 revisions based on critique feedback
-	var writerConversationHistory []llms.MessageContent
+	var writerConversationHistory []llmtypes.MessageContent
 
 	for revisionAttempt := 1; revisionAttempt <= maxRevisions; revisionAttempt++ {
 		hcpo.GetLogger().Infof("📝 Writer revision attempt %d/%d", revisionAttempt, maxRevisions)
@@ -2195,10 +2194,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 }
 
 // addUserFeedbackToHistory adds human feedback to conversation history
-func (hcpo *HumanControlledTodoPlannerOrchestrator) addUserFeedbackToHistory(feedback string, conversationHistory *[]llms.MessageContent) {
-	feedbackMessage := llms.MessageContent{
-		Role:  llms.ChatMessageTypeHuman,
-		Parts: []llms.ContentPart{llms.TextContent{Text: feedback}},
+func (hcpo *HumanControlledTodoPlannerOrchestrator) addUserFeedbackToHistory(feedback string, conversationHistory *[]llmtypes.MessageContent) {
+	feedbackMessage := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: feedback}},
 	}
 	*conversationHistory = append(*conversationHistory, feedbackMessage)
 }

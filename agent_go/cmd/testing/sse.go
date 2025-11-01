@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tmc/langchaingo/llms"
 
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 )
@@ -231,7 +231,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 }
 
 // runComprehensiveSSETest performs a comprehensive test of all SSE functionality
-func runComprehensiveSSETest(ctx context.Context, llm llms.Model, tracer observability.Tracer) error {
+func runComprehensiveSSETest(ctx context.Context, llm llmtypes.Model, tracer observability.Tracer) error {
 	logger := GetTestLogger()
 	logger.Info("🚀 Starting Comprehensive SSE Test")
 
@@ -311,7 +311,7 @@ func testBasicSSEConnection() error {
 }
 
 // testSSEStreamingWithQueries tests SSE streaming with real LLM queries
-func testSSEStreamingWithQueries(ctx context.Context, llm llms.Model) error {
+func testSSEStreamingWithQueries(ctx context.Context, llm llmtypes.Model) error {
 	// Simulate SSE streaming with different query types
 	queries := []string{
 		"What is the weather like?",
@@ -408,7 +408,7 @@ func testSSEErrorHandling() error {
 }
 
 // testSSEWithDifferentQueries tests SSE with various query types
-func testSSEWithDifferentQueries(ctx context.Context, llm llms.Model) error {
+func testSSEWithDifferentQueries(ctx context.Context, llm llmtypes.Model) error {
 	// Test different types of queries
 	queryTypes := []struct {
 		name  string

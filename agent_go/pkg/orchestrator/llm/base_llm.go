@@ -4,19 +4,18 @@ import (
 	"context"
 	"fmt"
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"time"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // BaseLLM provides common functionality for all LLM-based operations
 type BaseLLM struct {
-	llm          llms.Model
+	llm          llmtypes.Model
 	logger       utils.ExtendedLogger
 	tracer       observability.Tracer
 	eventEmitter func(context.Context, events.EventData)
@@ -24,7 +23,7 @@ type BaseLLM struct {
 
 // NewBaseLLM creates a new BaseLLM instance with mandatory event bridge
 func NewBaseLLM(
-	llm llms.Model,
+	llm llmtypes.Model,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
@@ -45,7 +44,7 @@ func NewBaseLLM(
 }
 
 // GetLLM returns the underlying LLM instance
-func (b *BaseLLM) GetLLM() llms.Model {
+func (b *BaseLLM) GetLLM() llmtypes.Model {
 	return b.llm
 }
 
@@ -74,7 +73,7 @@ func CreateLLMInstance(
 	config *agents.OrchestratorAgentConfig,
 	logger utils.ExtendedLogger,
 	llmType string,
-) (llms.Model, error) {
+) (llmtypes.Model, error) {
 	logger.Infof("🔧 Creating %s LLM with standard configuration", llmType)
 
 	// Generate trace ID for this LLM session

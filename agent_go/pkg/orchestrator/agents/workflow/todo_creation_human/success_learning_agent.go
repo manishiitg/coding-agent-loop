@@ -3,12 +3,11 @@ package todo_creation_human
 import (
 	"context"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerSuccessLearningTemplate holds template variables for success learning prompts
@@ -46,7 +45,7 @@ func NewHumanControlledTodoPlannerSuccessLearningAgent(config *agents.Orchestrat
 }
 
 // Execute implements the OrchestratorAgent interface
-func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (agent *HumanControlledTodoPlannerSuccessLearningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables
 	stepTitle := templateVars["StepTitle"]
 	stepDescription := templateVars["StepDescription"]

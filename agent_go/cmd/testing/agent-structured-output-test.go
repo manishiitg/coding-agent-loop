@@ -3,15 +3,15 @@ package testing
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
+	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/pkg/mcpagent"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tmc/langchaingo/llms/anthropic"
-	"github.com/tmc/langchaingo/llms/bedrock"
-	"github.com/tmc/langchaingo/llms/openai"
 )
 
 // Struct definitions for different structured output tests
@@ -131,6 +131,12 @@ type TechnicalDoc struct {
 	References      []string           `json:"references"`
 }
 
+// Recipe types for Vertex AI structured output testing
+type Recipe struct {
+	RecipeName  string   `json:"recipeName"`
+	Ingredients []string `json:"ingredients"`
+}
+
 var agentStructuredOutputTestCmd = &cobra.Command{
 	Use:   "agent-structured-output",
 	Short: "Test agent structured output generation across multiple LLM providers and agent modes",
@@ -143,11 +149,13 @@ Test 1: TodoList generation using OpenAI GPT-4o-mini (Simple + ReAct)
 Test 2: Project management using AWS Bedrock (Claude) (Simple + ReAct)
 Test 3: Financial analysis using Anthropic Direct API (Simple + ReAct)
 Test 4: Technical documentation using OpenAI GPT-4.1 (Simple + ReAct)
+Test 5: Recipe list using Vertex AI (Gemini) (Simple + ReAct)
 
 Environment variables required:
 - For OpenAI: OPENAI_API_KEY
 - For Bedrock: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 - For Anthropic: ANTHROPIC_API_KEY
+- For Vertex AI: VERTEX_API_KEY or GOOGLE_API_KEY
 
 Examples:
   # Run all tests with multiple providers and agent modes
@@ -160,16 +168,21 @@ The test will create multiple agents (both Simple and ReAct) and test structured
 - TodoList with nested tasks (OpenAI - Simple & ReAct)
 - Project management with team and milestones (Bedrock - Simple & ReAct)
 - Financial analysis with metrics and trends (Anthropic - Simple & ReAct)
-- Technical documentation with API endpoints and code examples (OpenAI GPT-4.1 - Simple & ReAct)`,
+- Technical documentation with API endpoints and code examples (OpenAI GPT-4.1 - Simple & ReAct)
+- Recipe list with ingredients (Vertex AI - Simple & ReAct)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return testAgentStructuredOutput(cmd)
 	},
 }
 
-var modelID string
+var (
+	modelID    string
+	vertexOnly bool
+)
 
 func init() {
 	agentStructuredOutputTestCmd.Flags().StringVarP(&modelID, "model", "m", "", "Model ID (optional, uses provider defaults)")
+	agentStructuredOutputTestCmd.Flags().BoolVar(&vertexOnly, "vertex-only", false, "Run only Vertex AI structured output test, skip other providers")
 }
 
 func testAgentStructuredOutput(cmd *cobra.Command) error {
@@ -180,14 +193,25 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	// Initialize test logger
 	InitTestLogger(logFile, logLevel)
 	logger := GetTestLogger()
+
+	// If vertex-only flag is set, skip to Vertex AI test
+	if vertexOnly {
+		logger.Info("🚀 Running Vertex AI structured output test only (--vertex-only flag set)")
+		return runVertexAIStructuredOutputTest(logger)
+	}
+
 	logger.Info("Starting agent structured output test with multiple LLM providers and agent modes")
 
 	// Test 1: TodoList with OpenAI (Simple + ReAct)
 	logger.Info("🧪 Test 1: AskStructured with TodoList using OpenAI (Simple + ReAct)")
 
-	openaiLLM, err := openai.New(
-		openai.WithModel("gpt-4o-mini"),
-	)
+	// Use our new OpenAI adapter via llm.InitializeLLM
+	openaiLLM, err := llm.InitializeLLM(llm.Config{
+		Provider:    llm.ProviderOpenAI,
+		ModelID:     "gpt-4o-mini",
+		Temperature: 0.7,
+		Logger:      logger,
+	})
 	if err != nil {
 		logger.Errorf("❌ Failed to create OpenAI LLM: %v", err)
 		return err
@@ -289,16 +313,20 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	// Test 2: Project Management with AWS Bedrock (Simple + ReAct)
 	logger.Info("🧪 Test 2: AskStructured with Project Management using AWS Bedrock (Simple + ReAct)")
 
-	bedrockLLM, err := bedrock.New(
-		bedrock.WithModel("us.anthropic.claude-sonnet-4-20250514-v1:0"),
-	)
+	// Use our new Bedrock adapter via llm.InitializeLLM
+	bedrockLLM, err := llm.InitializeLLM(llm.Config{
+		Provider:    llm.ProviderBedrock,
+		ModelID:     "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		Temperature: 0.7,
+		Logger:      logger,
+	})
 	if err != nil {
 		logger.Errorf("❌ Failed to create Bedrock LLM: %v", err)
 		return err
 	}
 
 	// Create Bedrock Simple Agent
-	bedrockSimpleAgent, err := mcpagent.NewSimpleAgent(ctx, bedrockLLM, "bedrock-simple-test", "configs/mcp_servers_simple.json", "us.anthropic.claude-sonnet-4-20250514-v1:0", nil, "bedrock-simple-trace", logger)
+	bedrockSimpleAgent, err := mcpagent.NewSimpleAgent(ctx, bedrockLLM, "bedrock-simple-test", "configs/mcp_servers_simple.json", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", nil, "bedrock-simple-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create Bedrock Simple agent: %w", err)
 		return err
@@ -306,7 +334,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("✅ Bedrock Simple Agent created successfully")
 
 	// Create Bedrock ReAct Agent
-	bedrockReActAgent, err := mcpagent.NewReActAgent(ctx, bedrockLLM, "bedrock-react-test", "configs/mcp_servers_simple.json", "us.anthropic.claude-sonnet-4-20250514-v1:0", nil, "bedrock-react-trace", logger)
+	bedrockReActAgent, err := mcpagent.NewReActAgent(ctx, bedrockLLM, "bedrock-react-test", "configs/mcp_servers_simple.json", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", nil, "bedrock-react-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create Bedrock ReAct agent: %w", err)
 		return err
@@ -389,16 +417,22 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	// Test 3: Financial Analysis with Anthropic (Simple + ReAct)
 	logger.Info("🧪 Test 3: AskStructured with Financial Analysis using Anthropic Direct API (Simple + ReAct)")
 
-	anthropicLLM, err := anthropic.New(
-		anthropic.WithModel("claude-4-sonnet-20241022"),
-	)
+	// Use the internal LLM provider which now uses the direct Anthropic SDK adapter
+	anthropicLLM, err := llm.InitializeLLM(llm.Config{
+		Provider:    llm.ProviderAnthropic,
+		ModelID:     "claude-3-5-sonnet-20241022",
+		Temperature: 0.7,
+		Logger:      logger,
+	})
 	if err != nil {
 		logger.Errorf("❌ Failed to create Anthropic LLM: %v", err)
+		logger.Infof("   Note: Make sure ANTHROPIC_API_KEY is set in .env file")
 		return err
 	}
+	logger.Info("✅ Created Anthropic LLM using providers.go (Anthropic SDK)")
 
 	// Create Anthropic Simple Agent
-	anthropicSimpleAgent, err := mcpagent.NewSimpleAgent(ctx, anthropicLLM, "anthropic-simple-test", "configs/mcp_servers_simple.json", "claude-4-sonnet-20241022", nil, "anthropic-simple-trace", logger)
+	anthropicSimpleAgent, err := mcpagent.NewSimpleAgent(ctx, anthropicLLM, "anthropic-simple-test", "configs/mcp_servers_simple.json", "claude-3-5-sonnet-20241022", nil, "anthropic-simple-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create Anthropic Simple agent: %w", err)
 		return err
@@ -406,7 +440,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("✅ Anthropic Simple Agent created successfully")
 
 	// Create Anthropic ReAct Agent
-	anthropicReActAgent, err := mcpagent.NewReActAgent(ctx, anthropicLLM, "anthropic-react-test", "configs/mcp_servers_simple.json", "claude-4-sonnet-20241022", nil, "anthropic-react-trace", logger)
+	anthropicReActAgent, err := mcpagent.NewReActAgent(ctx, anthropicLLM, "anthropic-react-test", "configs/mcp_servers_simple.json", "claude-3-5-sonnet-20241022", nil, "anthropic-react-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create Anthropic ReAct agent: %w", err)
 		return err
@@ -533,9 +567,13 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	// Test 4: Technical Documentation with OpenAI (different model) (Simple + ReAct)
 	logger.Info("🧪 Test 4: AskStructured with Technical Documentation using OpenAI GPT-4.1 (Simple + ReAct)")
 
-	openaiGPT4LLM, err := openai.New(
-		openai.WithModel("gpt-4.1"),
-	)
+	// Use our new OpenAI adapter via llm.InitializeLLM
+	openaiGPT4LLM, err := llm.InitializeLLM(llm.Config{
+		Provider:    llm.ProviderOpenAI,
+		ModelID:     "gpt-4.1",
+		Temperature: 0.7,
+		Logger:      logger,
+	})
 	if err != nil {
 		logger.Errorf("❌ Failed to create OpenAI GPT-4 LLM: %v", err)
 		return err
@@ -701,14 +739,133 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 		logger.Infof("OpenAI GPT-4.1 ReAct Agent Technical Doc JSON:\n%s", string(jsonBytes))
 	}
 
-	logger.Info("🎉 All agent structured output tests completed across multiple LLM providers and agent modes!")
-	logger.Info("📊 Provider and Agent Mode Summary:")
-	logger.Info("  • OpenAI GPT-4o-mini: TodoList generation (Simple + ReAct)")
-	logger.Info("  • AWS Bedrock (Claude): Project management (Simple + ReAct)")
-	logger.Info("  • Anthropic Direct API: Financial analysis (Simple + ReAct)")
-	logger.Info("  • OpenAI GPT-4.1: Technical documentation (Simple + ReAct)")
-	logger.Info("🔍 Agent Mode Comparison:")
-	logger.Info("  • Simple Agent: Direct tool usage without explicit reasoning")
-	logger.Info("  • ReAct Agent: Explicit reasoning with step-by-step thinking")
+	// Test 5: Recipe List with Vertex AI (Gemini) (Simple + ReAct)
+	logger.Info("🧪 Test 5: AskStructured with Recipe List using Vertex AI (Gemini) (Simple + ReAct)")
+	runVertexAIStructuredOutputTest(logger)
+
+	if !vertexOnly {
+		logger.Info("🎉 All agent structured output tests completed across multiple LLM providers and agent modes!")
+		logger.Info("📊 Provider and Agent Mode Summary:")
+		logger.Info("  • OpenAI GPT-4o-mini: TodoList generation (Simple + ReAct)")
+		logger.Info("  • AWS Bedrock (Claude): Project management (Simple + ReAct)")
+		logger.Info("  • Anthropic Direct API: Financial analysis (Simple + ReAct)")
+		logger.Info("  • OpenAI GPT-4.1: Technical documentation (Simple + ReAct)")
+		logger.Info("  • Vertex AI (Gemini): Recipe list (Simple + ReAct)")
+		logger.Info("🔍 Agent Mode Comparison:")
+		logger.Info("  • Simple Agent: Direct tool usage without explicit reasoning")
+		logger.Info("  • ReAct Agent: Explicit reasoning with step-by-step thinking")
+	}
+	return nil
+}
+
+// runVertexAIStructuredOutputTest runs the Vertex AI structured output test
+func runVertexAIStructuredOutputTest(logger interface{}) error {
+	// Get logger - handle both ExtendedLogger interface and concrete logger type
+	log := GetTestLogger()
+
+	log.Info("🧪 Testing structured output with Recipe List using Vertex AI (Gemini) (Simple + ReAct)")
+
+	ctx := context.Background()
+
+	// Check for Vertex AI API key
+	vertexAPIKey := os.Getenv("VERTEX_API_KEY")
+	if vertexAPIKey == "" {
+		vertexAPIKey = os.Getenv("GOOGLE_API_KEY")
+	}
+	if vertexAPIKey == "" {
+		log.Errorf("❌ VERTEX_API_KEY or GOOGLE_API_KEY not set, cannot run Vertex AI test")
+		return fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required")
+	}
+
+	// Set API key as environment variable for internal LLM provider to pick up
+	os.Setenv("VERTEX_API_KEY", vertexAPIKey)
+
+	// Initialize Vertex AI LLM using internal provider
+	vertexLLM, err := llm.InitializeLLM(llm.Config{
+		Provider:    llm.ProviderVertex,
+		ModelID:     "gemini-2.5-flash",
+		Temperature: 0.7,
+		Logger:      log,
+		Context:     ctx,
+	})
+	if err != nil {
+		log.Errorf("❌ Failed to create Vertex AI LLM: %v", err)
+		return err
+	}
+
+	// Create Vertex AI Simple Agent
+	vertexSimpleAgent, err := mcpagent.NewSimpleAgent(ctx, vertexLLM, "vertex-simple-test", "configs/mcp_servers_simple.json", "gemini-2.5-flash", nil, "vertex-simple-trace", log)
+	if err != nil {
+		log.Errorf("❌ Failed to create Vertex AI Simple agent: %v", err)
+		return err
+	}
+	log.Info("✅ Vertex AI Simple Agent created successfully")
+
+	// Create Vertex AI ReAct Agent
+	vertexReActAgent, err := mcpagent.NewReActAgent(ctx, vertexLLM, "vertex-react-test", "configs/mcp_servers_simple.json", "gemini-2.5-flash", nil, "vertex-react-trace", log)
+	if err != nil {
+		log.Errorf("❌ Failed to create Vertex AI ReAct agent: %v", err)
+		return err
+	}
+	log.Info("✅ Vertex AI ReAct Agent created successfully")
+
+	// Define recipe schema (array of recipe objects)
+	recipeSchema := `{
+		"type": "array",
+		"items": {
+			"type": "object",
+			"properties": {
+				"recipeName": {"type": "string"},
+				"ingredients": {
+					"type": "array",
+					"items": {"type": "string"}
+				}
+			},
+			"required": ["recipeName", "ingredients"]
+		}
+	}`
+
+	var recipeResponseSimple []Recipe
+	var recipeResponseReAct []Recipe
+
+	// Test Simple Agent
+	log.Info("🔍 Testing Vertex AI Simple Agent...")
+	recipeResponseSimple, err = mcpagent.AskStructured(vertexSimpleAgent, ctx, "List a few popular cookie recipes, and include the amounts of ingredients.", recipeResponseSimple, recipeSchema)
+	if err != nil {
+		log.Errorf("❌ AskStructured Recipe List with Vertex AI Simple Agent failed: %v", err)
+	} else {
+		log.Info("✅ AskStructured Recipe List with Vertex AI Simple Agent successful")
+		log.Infof("Number of recipes: %d", len(recipeResponseSimple))
+		for i, recipe := range recipeResponseSimple {
+			log.Infof("Recipe %d: %s (Ingredients: %d)", i+1, recipe.RecipeName, len(recipe.Ingredients))
+		}
+	}
+
+	// Test ReAct Agent
+	log.Info("🔍 Testing Vertex AI ReAct Agent...")
+	recipeResponseReAct, err = mcpagent.AskStructured(vertexReActAgent, ctx, "List a few popular cookie recipes, and include the amounts of ingredients.", recipeResponseReAct, recipeSchema)
+	if err != nil {
+		log.Errorf("❌ AskStructured Recipe List with Vertex AI ReAct Agent failed: %v", err)
+	} else {
+		log.Info("✅ AskStructured Recipe List with Vertex AI ReAct Agent successful")
+		log.Infof("Number of recipes: %d", len(recipeResponseReAct))
+		for i, recipe := range recipeResponseReAct {
+			log.Infof("Recipe %d: %s (Ingredients: %d)", i+1, recipe.RecipeName, len(recipe.Ingredients))
+		}
+	}
+
+	// Validate Recipe List (Vertex AI - Simple)
+	if len(recipeResponseSimple) > 0 {
+		jsonBytes, _ := json.MarshalIndent(recipeResponseSimple, "", "  ")
+		log.Infof("Vertex AI Simple Agent Recipe List JSON:\n%s", string(jsonBytes))
+	}
+
+	// Validate Recipe List (Vertex AI - ReAct)
+	if len(recipeResponseReAct) > 0 {
+		jsonBytes, _ := json.MarshalIndent(recipeResponseReAct, "", "  ")
+		log.Infof("Vertex AI ReAct Agent Recipe List JSON:\n%s", string(jsonBytes))
+	}
+
+	log.Info("🎉 Vertex AI structured output test completed!")
 	return nil
 }

@@ -7,12 +7,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerPlanningTemplate holds template variables for human-controlled planning prompts
@@ -90,7 +89,7 @@ func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgent
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
 	// Note: userMessageProcessor is set in controller, so this fallback won't be used, but required by signature

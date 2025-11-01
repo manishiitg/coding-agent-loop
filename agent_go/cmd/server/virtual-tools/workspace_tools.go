@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // WorkspaceAPIResponse represents the response structure from the workspace API
@@ -40,13 +39,13 @@ func getWorkspaceAPIURL() string {
 }
 
 // CreateWorkspaceTools creates workspace-related virtual tools
-func CreateWorkspaceTools() []llms.Tool {
-	var workspaceTools []llms.Tool
+func CreateWorkspaceTools() []llmtypes.Tool {
+	var workspaceTools []llmtypes.Tool
 
 	// Add list_workspace_files tool
-	listFilesTool := llms.Tool{
+	listFilesTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "list_workspace_files",
 			Description: "List all files and folders in the workspace.",
 			Parameters: map[string]interface{}{
@@ -68,9 +67,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, listFilesTool)
 
 	// Add read_workspace_file tool
-	readFileTool := llms.Tool{
+	readFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_workspace_file",
 			Description: "Read the content of a specific file from the workspace by filepath",
 			Parameters: map[string]interface{}{
@@ -88,9 +87,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, readFileTool)
 
 	// Add update_workspace_file tool
-	updateFileTool := llms.Tool{
+	updateFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "update_workspace_file",
 			Description: "Create a new file or update/replace the entire content of an existing file in the workspace (upsert behavior). If you are using existing file prefer to use diff_patch_workspace_file instead",
 			Parameters: map[string]interface{}{
@@ -116,9 +115,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, updateFileTool)
 
 	// Add diff_patch_workspace_file tool (unified diff patching)
-	diffPatchFileTool := llms.Tool{
+	diffPatchFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "diff_patch_workspace_file",
 			Description: "🚨 CRITICAL WORKFLOW: 1) MANDATORY - Use read_workspace_file first to see exact current content 2) Generate diff using 'diff -U0' format with perfect context matching 3) Apply patch. This tool requires precise unified diff format - context lines must match file exactly. Use for targeted, surgical changes to specific file sections. ⚠️ FAILURE TO FOLLOW WORKFLOW WILL RESULT IN PATCH FAILURES.",
 			Parameters: map[string]interface{}{
@@ -146,9 +145,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	// get_workspace_file_nested tool removed - no longer needed
 
 	// Add regex_search_workspace_files tool
-	regexSearchTool := llms.Tool{
+	regexSearchTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "regex_search_workspace_files",
 			Description: "Search files in the workspace using regex patterns across full content. Searches text-based files within the specified folder only. Requires 'folder' parameter.",
 			Parameters: map[string]interface{}{
@@ -174,9 +173,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, regexSearchTool)
 
 	// Add semantic_search_workspace_files tool
-	semanticSearchTool := llms.Tool{
+	semanticSearchTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "semantic_search_workspace_files",
 			Description: "Search files using AI-powered semantic similarity. Finds content by meaning, not just exact text matches. Uses embeddings to understand context and relationships between concepts. For exact text matches, use search_workspace_files tool instead.",
 			Parameters: map[string]interface{}{
@@ -202,9 +201,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, semanticSearchTool)
 
 	// Add sync_workspace_to_github tool
-	syncGitHubTool := llms.Tool{
+	syncGitHubTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "sync_workspace_to_github",
 			Description: "Sync all workspace files to GitHub repository using standard git workflow: commit → pull → push. Always pulls first to ensure synchronization. Fails if merge conflicts are detected (requires manual resolution).",
 			Parameters: map[string]interface{}{
@@ -225,9 +224,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, syncGitHubTool)
 
 	// Add get_workspace_github_status tool
-	gitHubStatusTool := llms.Tool{
+	gitHubStatusTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_workspace_github_status",
 			Description: "Get the current GitHub sync status including pending changes, conflicts, and repository information. Uses git commands to check local repository status and connection to GitHub remote.",
 			Parameters: map[string]interface{}{
@@ -248,9 +247,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, gitHubStatusTool)
 
 	// Add delete_workspace_file tool
-	deleteFileTool := llms.Tool{
+	deleteFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "delete_workspace_file",
 			Description: "Delete a specific file from the workspace permanently. This action cannot be undone. Use with caution.",
 			Parameters: map[string]interface{}{
@@ -272,9 +271,9 @@ func CreateWorkspaceTools() []llms.Tool {
 	workspaceTools = append(workspaceTools, deleteFileTool)
 
 	// Add move_workspace_file tool
-	moveFileTool := llms.Tool{
+	moveFileTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "move_workspace_file",
 			Description: "Move a file from one location to another in the workspace. Can be used to move files between folders or rename files.",
 			Parameters: map[string]interface{}{

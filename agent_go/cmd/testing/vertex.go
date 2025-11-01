@@ -8,11 +8,13 @@ import (
 	"os"
 
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llm/vertex"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tmc/langchaingo/llms"
+	"google.golang.org/genai"
 )
 
 func minInt(a, b int) int {
@@ -33,6 +35,7 @@ type vertexTestFlags struct {
 	apiKey     string
 	withTools  bool
 	withGitHub bool
+	structured bool
 	configPath string
 }
 
@@ -43,6 +46,7 @@ func init() {
 	vertexCmd.Flags().StringVar(&vertexFlags.apiKey, "api-key", "", "Google API key (or set VERTEX_API_KEY env var)")
 	vertexCmd.Flags().BoolVar(&vertexFlags.withTools, "with-tools", false, "enable tool calling")
 	vertexCmd.Flags().BoolVar(&vertexFlags.withGitHub, "with-github", false, "use GitHub MCP tools for testing")
+	vertexCmd.Flags().BoolVar(&vertexFlags.structured, "structured", false, "test structured JSON output with ResponseSchema")
 	vertexCmd.Flags().StringVar(&vertexFlags.configPath, "config", "configs/mcp_servers_clean_user.json", "MCP config file path")
 }
 
@@ -73,6 +77,8 @@ func runVertex(cmd *cobra.Command, args []string) {
 	testType := "plain generation"
 	if vertexFlags.withTools {
 		testType = "tool calling"
+	} else if vertexFlags.structured {
+		testType = "structured output"
 	}
 	logger.Info(fmt.Sprintf("🚀 Testing Vertex AI (%s)", testType))
 
@@ -95,10 +101,44 @@ func runVertex(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to initialize Vertex LLM: %v", err)
 	}
 
-	var tools []llms.Tool
-	var messages []llms.MessageContent
+	var tools []llmtypes.Tool
+	var messages []llmtypes.MessageContent
+	var responseSchema *genai.Schema
 
-	if vertexFlags.withGitHub {
+	if vertexFlags.structured {
+		// Test structured output with ResponseSchema (recipe example from user)
+		logger.Info("📋 Setting up structured output test with ResponseSchema...")
+
+		// Create the ResponseSchema matching the user's example
+		responseSchema = &genai.Schema{
+			Type: genai.TypeArray,
+			Items: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"recipeName": {
+						Type: genai.TypeString,
+					},
+					"ingredients": {
+						Type: genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+					},
+				},
+				PropertyOrdering: []string{"recipeName", "ingredients"},
+			},
+		}
+
+		// Set context with ResponseSchema
+		ctx = vertex.WithResponseSchema(ctx, responseSchema)
+
+		messages = []llmtypes.MessageContent{
+			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "List a few popular cookie recipes, and include the amounts of ingredients."),
+		}
+
+		logger.Info("✅ Structured output test configured")
+		logger.Info("   Schema: Array of objects with recipeName (string) and ingredients (array of strings)")
+	} else if vertexFlags.withGitHub {
 		// Load GitHub MCP tools
 		logger.Info("🔗 Connecting to GitHub MCP server...")
 		config, err := mcpclient.LoadMergedConfig(vertexFlags.configPath, logger)
@@ -138,14 +178,14 @@ func runVertex(cmd *cobra.Command, args []string) {
 		tools = llmTools
 
 		logger.Info(fmt.Sprintf("✅ Normalized %d tools for Gemini", len(tools)))
-		messages = []llms.MessageContent{
-			llms.TextParts(llms.ChatMessageTypeHuman, "List my GitHub repositories"),
+		messages = []llmtypes.MessageContent{
+			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "List my GitHub repositories"),
 		}
 	} else if vertexFlags.withTools {
 		// Define a simple weather tool
-		weatherTool := llms.Tool{
+		weatherTool := llmtypes.Tool{
 			Type: "function",
-			Function: &llms.FunctionDefinition{
+			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather for a location",
 				Parameters: map[string]any{
@@ -160,18 +200,18 @@ func runVertex(cmd *cobra.Command, args []string) {
 				},
 			},
 		}
-		tools = []llms.Tool{weatherTool}
-		messages = []llms.MessageContent{
-			llms.TextParts(llms.ChatMessageTypeHuman, "What's the weather in Tokyo?"),
+		tools = []llmtypes.Tool{weatherTool}
+		messages = []llmtypes.MessageContent{
+			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "What's the weather in Tokyo?"),
 		}
 	} else {
-		messages = []llms.MessageContent{
-			llms.TextParts(llms.ChatMessageTypeHuman, "Hello! Can you introduce yourself?"),
+		messages = []llmtypes.MessageContent{
+			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Hello! Can you introduce yourself?"),
 		}
 	}
 
 	// Call with or without tools
-	var resp *llms.ContentResponse
+	var resp *llmtypes.ContentResponse
 	if len(tools) > 0 {
 		logger.Info(fmt.Sprintf("📤 Sending %d tools to Gemini...", len(tools)))
 
@@ -207,10 +247,17 @@ func runVertex(cmd *cobra.Command, args []string) {
 		}
 
 		resp, err = llmInstance.GenerateContent(ctx, messages,
-			llms.WithModel(modelID),
-			llms.WithTools(tools))
+			llmtypes.WithModel(modelID),
+			llmtypes.WithTools(tools))
 	} else {
-		resp, err = llmInstance.GenerateContent(ctx, messages, llms.WithModel(modelID))
+		// For structured output, also enable JSON mode
+		if vertexFlags.structured {
+			resp, err = llmInstance.GenerateContent(ctx, messages,
+				llmtypes.WithModel(modelID),
+				llmtypes.WithJSONMode())
+		} else {
+			resp, err = llmInstance.GenerateContent(ctx, messages, llmtypes.WithModel(modelID))
+		}
 	}
 
 	if err != nil {
@@ -233,8 +280,54 @@ func runVertex(cmd *cobra.Command, args []string) {
 			})
 		}
 	} else if len(choice.Content) > 0 {
-		logger.Info("✅ Success! Response received", map[string]interface{}{
-			"content": choice.Content,
-		})
+		if vertexFlags.structured {
+			// Validate structured output
+			logger.Info("📋 Validating structured JSON output...")
+
+			// Try to parse as JSON array
+			var recipes []map[string]interface{}
+			if err := json.Unmarshal([]byte(choice.Content), &recipes); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Response is not valid JSON array: %v", err))
+				logger.Info("Response content:", map[string]interface{}{
+					"content": choice.Content,
+				})
+			} else {
+				logger.Info(fmt.Sprintf("✅ Valid JSON array with %d recipe(s)", len(recipes)))
+
+				// Validate structure
+				for i, recipe := range recipes {
+					hasRecipeName := false
+					hasIngredients := false
+
+					if name, ok := recipe["recipeName"]; ok && name != nil {
+						hasRecipeName = true
+						logger.Info(fmt.Sprintf("   Recipe %d: %s", i+1, name))
+					}
+
+					if ingredients, ok := recipe["ingredients"]; ok && ingredients != nil {
+						if ingArray, ok := ingredients.([]interface{}); ok {
+							hasIngredients = true
+							logger.Info(fmt.Sprintf("      Ingredients (%d): %v", len(ingArray), ingArray))
+						}
+					}
+
+					if !hasRecipeName {
+						logger.Warn(fmt.Sprintf("   ⚠️ Recipe %d missing 'recipeName' field", i+1))
+					}
+					if !hasIngredients {
+						logger.Warn(fmt.Sprintf("   ⚠️ Recipe %d missing 'ingredients' field", i+1))
+					}
+				}
+
+				// Pretty print the full JSON response
+				prettyJSON, _ := json.MarshalIndent(recipes, "", "  ")
+				logger.Info("📄 Full structured response:")
+				fmt.Println(string(prettyJSON))
+			}
+		} else {
+			logger.Info("✅ Success! Response received", map[string]interface{}{
+				"content": choice.Content,
+			})
+		}
 	}
 }

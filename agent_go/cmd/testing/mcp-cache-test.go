@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/mcpcache"
-
-	"github.com/tmc/langchaingo/llms"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -127,10 +126,10 @@ and ensures that the caching system works correctly with real MCP tools.`,
 		testCtx, testCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer testCancel()
 
-		firstResponse, err := firstAgent.InvokeWithHistory(testCtx, []llms.MessageContent{
+		firstResponse, err := firstAgent.InvokeWithHistory(testCtx, []llmtypes.MessageContent{
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextContent{Text: testQuery}},
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: testQuery}},
 			},
 		})
 		if err != nil {
@@ -185,10 +184,10 @@ and ensures that the caching system works correctly with real MCP tools.`,
 
 			testCtx, testCancel := context.WithTimeout(context.Background(), 60*time.Second)
 
-			response, err := subsequentAgent.InvokeWithHistory(testCtx, []llms.MessageContent{
+			response, err := subsequentAgent.InvokeWithHistory(testCtx, []llmtypes.MessageContent{
 				{
-					Role:  llms.ChatMessageTypeHuman,
-					Parts: []llms.ContentPart{llms.TextContent{Text: testQuery}},
+					Role:  llmtypes.ChatMessageTypeHuman,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: testQuery}},
 				},
 			})
 			testCancel()

@@ -7,11 +7,10 @@ import (
 	"time"
 
 	internalLLM "mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // contextKey is a custom type for context keys to avoid collisions
@@ -68,7 +67,7 @@ const (
 // BaseAgentInterface defines the interface for base agent operations
 type BaseAgentInterface interface {
 	// Core execution
-	Execute(ctx context.Context, userMessage string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error)
+	Execute(ctx context.Context, userMessage string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error)
 
 	// Agent information
 	GetType() AgentType
@@ -103,7 +102,7 @@ type BaseAgent struct {
 	instructions string
 	mode         AgentMode
 	serverNames  []string
-	llm          llms.Model
+	llm          llmtypes.Model
 
 	// Observability
 	tracer  observability.Tracer
@@ -130,7 +129,7 @@ func NewBaseAgent(
 	ctx context.Context,
 	agentType AgentType,
 	name string,
-	llm llms.Model,
+	llm llmtypes.Model,
 	instructions string,
 	serverNames []string,
 	selectedTools []string, // NEW parameter
@@ -227,7 +226,7 @@ func NewBaseAgent(
 }
 
 // Execute executes the agent with user message and conversation history
-func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	ba.logger.Infof("🚀 Executing %s agent: %s", ba.agentType, ba.name)
 
 	// Event emission now handled by unified events system
@@ -243,7 +242,7 @@ func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversati
 
 	// Prepare messages: add userMessage (instructions) ONLY on first turn
 	// On subsequent turns, conversationHistory already contains the full conversation context
-	var messages []llms.MessageContent
+	var messages []llmtypes.MessageContent
 
 	// Copy existing conversation history if present
 	if len(conversationHistory) > 0 {
@@ -252,16 +251,16 @@ func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversati
 		// 1. Instructions are already in history from iteration 1
 		// 2. Adding instructions again would create duplicate instructions
 		// 3. Human feedback needs to be the last message, not instructions
-		messages = make([]llms.MessageContent, len(conversationHistory))
+		messages = make([]llmtypes.MessageContent, len(conversationHistory))
 		copy(messages, conversationHistory)
 		ba.logger.Infof("📝 Continuing existing conversation with %d messages (instructions already in history)", len(conversationHistory))
 	} else {
 		// First turn - add instructions as initial user message
 		// This is the ONLY place we add instructions to the conversation
 		ba.logger.Infof("📝 Starting new conversation with template message")
-		userMessageContent := llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: userMessage}},
+		userMessageContent := llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: userMessage}},
 		}
 		messages = append(messages, userMessageContent)
 	}
@@ -411,7 +410,7 @@ func (ba *BaseAgent) GetConfigurationSummary() map[string]interface{} {
 
 // AskStructuredTyped is a standalone generic function that provides type-safe structured output
 // This gives us the clean generic API without needing to modify the BaseAgent struct
-func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llms.MessageContent) (T, error) {
+func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llmtypes.MessageContent) (T, error) {
 	// Check if ba is nil
 	if ba == nil {
 		var zero T
@@ -428,19 +427,19 @@ func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question stri
 	// Added orchestrator_id to context for hierarchy detection
 
 	// Prepare messages: add question ONLY on first turn (when history is empty)
-	var messages []llms.MessageContent
+	var messages []llmtypes.MessageContent
 
 	if len(conversationHistory) > 0 {
 		// Continuing conversation - use history as-is, don't add question again
 		// IMPORTANT: Do NOT append question here - it would create duplicate messages
 		// Instructions are already in history from iteration 1
-		messages = make([]llms.MessageContent, len(conversationHistory))
+		messages = make([]llmtypes.MessageContent, len(conversationHistory))
 		copy(messages, conversationHistory)
 	} else {
 		// First turn - add question as initial user message
-		userMessage := llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: question}},
+		userMessage := llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question}},
 		}
 		messages = append(messages, userMessage)
 	}

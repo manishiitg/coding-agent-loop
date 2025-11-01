@@ -17,10 +17,10 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tmc/langchaingo/llms"
 
 	"mcp-agent/agent_go/internal/events"
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
@@ -61,7 +61,7 @@ func extractWorkspacePathFromObjective(objective string) string {
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
-func createCustomTools() ([]llms.Tool, map[string]interface{}) {
+func createCustomTools() ([]llmtypes.Tool, map[string]interface{}) {
 	// Create workspace and human tools for orchestrator/workflow agents
 	workspaceTools := virtualtools.CreateWorkspaceTools()
 	workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
@@ -92,7 +92,7 @@ The server provides:
 - REST API endpoints for agent queries
 - Server-Sent Events (SSE) for real-time streaming
 - Polling API for event retrieval
-- Multi-provider LLM support (Bedrock, OpenAI)
+- Multi-provider LLM support (Bedrock, OpenAI, Anthropic)
 - Full observability and tracing
 
 Examples:
@@ -162,7 +162,7 @@ type StreamingAPI struct {
 	workflowObjectiveMux sync.RWMutex
 
 	// Conversation history storage: sessionID -> conversation history
-	conversationHistory map[string][]llms.MessageContent
+	conversationHistory map[string][]llmtypes.MessageContent
 	conversationMux     sync.RWMutex
 
 	// Database for chat history storage
@@ -182,7 +182,7 @@ type StreamingAPI struct {
 	// Active session tracking for page refresh recovery
 	activeSessions    map[string]*ActiveSessionInfo
 	activeSessionsMux sync.RWMutex
-	internalLLM       llms.Model
+	internalLLM       llmtypes.Model
 
 	// Orchestrator objects in memory for guidance injection
 	workflowOrchestrators map[string]orchestrator.Orchestrator
@@ -269,7 +269,7 @@ func init() {
 	ServerCmd.Flags().IntP("port", "p", 8000, "Server port")
 	ServerCmd.Flags().StringP("host", "H", "0.0.0.0", "Server host")
 	ServerCmd.Flags().StringSlice("cors-origins", []string{"*"}, "CORS allowed origins")
-	ServerCmd.Flags().String("provider", "bedrock", "LLM provider (bedrock, openai)")
+	ServerCmd.Flags().String("provider", "bedrock", "LLM provider (bedrock, openai, anthropic)")
 	ServerCmd.Flags().String("model", "", "Model ID (uses provider default if empty)")
 	ServerCmd.Flags().Float64("temperature", 0.2, "Temperature for LLM")
 	ServerCmd.Flags().Int("max-turns", 30, "Maximum conversation turns")
@@ -466,7 +466,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		orchestratorContexts:         make(map[string]context.CancelFunc),
 		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
 		workflowObjectives:           make(map[string]string),
-		conversationHistory:          make(map[string][]llms.MessageContent),
+		conversationHistory:          make(map[string][]llmtypes.MessageContent),
 		chatDB:                       chatDB,
 		eventStore:                   eventStore,
 		observerManager:              observerManager,
@@ -674,7 +674,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"providers":   []string{"bedrock", "openai"},
+		"providers":   []string{"bedrock", "openai", "anthropic"},
 		"streaming":   true,
 		"sse":         true,
 		"agent_modes": []string{"simple", "react", "orchestrator", "workflow"},
@@ -696,7 +696,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(defaults)
 }
 
-// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, and Bedrock
+// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, and Anthropic
 func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req llm.APIKeyValidationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1533,15 +1533,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				assistantText := strings.TrimSpace(orchestratorResponse)
 				if assistantText != "" {
 					// Create assistant message for conversation history
-					assistantMessage := llms.MessageContent{
-						Role:  llms.ChatMessageTypeAI,
-						Parts: []llms.ContentPart{llms.TextContent{Text: assistantText}},
+					assistantMessage := llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeAI,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: assistantText}},
 					}
 
 					// Add user message
-					userMessage := llms.MessageContent{
-						Role:  llms.ChatMessageTypeHuman,
-						Parts: []llms.ContentPart{llms.TextContent{Text: req.Query}},
+					userMessage := llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeHuman,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: req.Query}},
 					}
 
 					// Update conversation history
@@ -1551,7 +1551,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						api.conversationHistory[sessionID] = append(existingHistory, userMessage, assistantMessage)
 					} else {
 						// Create new history
-						api.conversationHistory[sessionID] = []llms.MessageContent{userMessage, assistantMessage}
+						api.conversationHistory[sessionID] = []llmtypes.MessageContent{userMessage, assistantMessage}
 					}
 					api.conversationMux.Unlock()
 

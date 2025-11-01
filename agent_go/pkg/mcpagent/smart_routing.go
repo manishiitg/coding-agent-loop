@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // Smart routing detection
@@ -42,7 +42,7 @@ func (a *Agent) shouldUseSmartRouting() bool {
 }
 
 // Build conversation context for smart routing
-func (a *Agent) buildConversationContext(messages []llms.MessageContent) string {
+func (a *Agent) buildConversationContext(messages []llmtypes.MessageContent) string {
 	var contextBuilder strings.Builder
 
 	// Always send FULL conversation context - no limits, no truncation
@@ -51,10 +51,10 @@ func (a *Agent) buildConversationContext(messages []llms.MessageContent) string 
 
 	for i := 0; i < len(messages); i++ {
 		msg := messages[i]
-		if msg.Role == llms.ChatMessageTypeHuman {
+		if msg.Role == llmtypes.ChatMessageTypeHuman {
 			content := a.extractTextContent(msg)
 			contextBuilder.WriteString(fmt.Sprintf("User: %s\n", content))
-		} else if msg.Role == llms.ChatMessageTypeAI {
+		} else if msg.Role == llmtypes.ChatMessageTypeAI {
 			content := a.extractTextContent(msg)
 			contextBuilder.WriteString(fmt.Sprintf("Assistant: %s\n", content))
 		}
@@ -77,7 +77,7 @@ func (a *Agent) getServerCount() int {
 }
 
 // Tool filtering by relevance
-func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext string) ([]llms.Tool, error) {
+func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext string) ([]llmtypes.Tool, error) {
 	// Emit smart routing start event
 	startEvent := events.NewSmartRoutingStartEvent(
 		len(a.Tools),
@@ -360,26 +360,26 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 	// Build the enhanced prompt with the schema
 	enhancedPrompt := a.buildStructuredPromptWithSchema(prompt, schema)
 
-	messages := []llms.MessageContent{
+	messages := []llmtypes.MessageContent{
 		{
-			Role: llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: "You are a tool routing assistant that generates structured JSON output according to the specified schema. Always respond with valid JSON only, no additional text or explanations."},
+			Role: llmtypes.ChatMessageTypeSystem,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "You are a tool routing assistant that generates structured JSON output according to the specified schema. Always respond with valid JSON only, no additional text or explanations."},
 			},
 		},
 		{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: enhancedPrompt},
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: enhancedPrompt},
 			},
 		},
 	}
 
 	// Generate response with JSON mode for structured output
-	opts := []llms.CallOption{
-		llms.WithTemperature(temperature),
-		llms.WithMaxTokens(maxTokens),
-		llms.WithJSONMode(), // Use JSON mode for reliable structured output
+	opts := []llmtypes.CallOption{
+		llmtypes.WithTemperature(temperature),
+		llmtypes.WithMaxTokens(maxTokens),
+		llmtypes.WithJSONMode(), // Use JSON mode for reliable structured output
 	}
 
 	// 🆕 DETAILED LLM CALL DEBUGGING
@@ -480,7 +480,7 @@ func (a *Agent) buildStructuredPromptWithSchema(basePrompt string, schema string
 }
 
 // Parse structured server selection response with reasoning
-func (a *Agent) parseStructuredServerResponseWithReasoning(response *llms.ContentResponse) ([]string, string, error) {
+func (a *Agent) parseStructuredServerResponseWithReasoning(response *llmtypes.ContentResponse) ([]string, string, error) {
 	// Extract the structured content
 	if len(response.Choices) == 0 {
 		return nil, "", fmt.Errorf("no response choices")
@@ -570,8 +570,8 @@ func (a *Agent) parseTextServerResponse(response string) ([]string, error) {
 }
 
 // Filter tools by server
-func (a *Agent) filterToolsByServers(relevantServers []string) []llms.Tool {
-	var filteredTools []llms.Tool
+func (a *Agent) filterToolsByServers(relevantServers []string) []llmtypes.Tool {
+		var filteredTools []llmtypes.Tool
 
 	for _, tool := range a.Tools {
 		// Check if this is a custom tool (no server mapping)
@@ -596,10 +596,10 @@ func (a *Agent) filterToolsByServers(relevantServers []string) []llms.Tool {
 }
 
 // Helper function to extract text content
-func (a *Agent) extractTextContent(msg llms.MessageContent) string {
+func (a *Agent) extractTextContent(msg llmtypes.MessageContent) string {
 	var textParts []string
 	for _, part := range msg.Parts {
-		if textPart, ok := part.(llms.TextContent); ok {
+		if textPart, ok := part.(llmtypes.TextContent); ok {
 			textParts = append(textParts, textPart.Text)
 		}
 	}

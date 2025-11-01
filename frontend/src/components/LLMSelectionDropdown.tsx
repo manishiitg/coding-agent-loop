@@ -71,7 +71,7 @@ export default function LLMSelectionDropdown({
               onClick={() => {
                 setIsOpen(!isOpen);
               }}
-              disabled={disabled || availableLLMs.length === 0}
+              disabled={disabled || availablellmtypes.length === 0}
               className="h-8 px-2 text-xs font-medium bg-background border-border hover:bg-secondary text-foreground"
               aria-expanded={isOpen}
               aria-haspopup="menu"
@@ -83,7 +83,7 @@ export default function LLMSelectionDropdown({
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{availableLLMs.length === 0 ? 'No LLMs available' : 'Select primary LLM'}</p>
+            <p>{availablellmtypes.length === 0 ? 'No LLMs available' : 'Select primary LLM'}</p>
           </TooltipContent>
         </Tooltip>
 
@@ -154,10 +154,10 @@ export default function LLMSelectionDropdown({
 
                   {/* LLM List - Grouped by Provider */}
                   <div className="max-h-48 overflow-y-auto space-y-2 border-border border rounded-md p-2 bg-background">
-                    {availableLLMs.length > 0 ? (
+                    {availablellmtypes.length > 0 ? (
                       (() => {
                         // Group LLMs by provider
-                        const groupedLLMs = availableLLMs.reduce((groups, llm) => {
+                        const groupedLLMs = availablellmtypes.reduce((groups, llm) => {
                           if (!groups[llm.provider]) {
                             groups[llm.provider] = [];
                           }
@@ -173,7 +173,7 @@ export default function LLMSelectionDropdown({
                             </div>
                             
                             {/* Provider's LLMs */}
-                            {llms.map((llm) => (
+                            {llmtypes.map((llm) => (
                               <div 
                                 key={`${llm.provider}-${llm.model}`}
                                 className="flex items-center space-x-2 p-2 rounded-md hover:bg-secondary cursor-pointer ml-2"

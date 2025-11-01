@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tmc/langchaingo/llms"
 )
 
 // VirtualTool represents a virtual tool that can be called by the LLM
@@ -18,13 +19,13 @@ type VirtualTool struct {
 }
 
 // CreateVirtualTools creates virtual tools for prompt and resource access
-func (a *Agent) CreateVirtualTools() []llms.Tool {
-	var virtualTools []llms.Tool
+func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
+	var virtualTools []llmtypes.Tool
 
 	// Add get_prompt tool
-	getPromptTool := llms.Tool{
+	getPromptTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_prompt",
 			Description: "Fetch the full content of a specific prompt by name and server",
 			Parameters: map[string]interface{}{
@@ -46,9 +47,9 @@ func (a *Agent) CreateVirtualTools() []llms.Tool {
 	virtualTools = append(virtualTools, getPromptTool)
 
 	// Add get_resource tool
-	getResourceTool := llms.Tool{
+	getResourceTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_resource",
 			Description: "Fetch the content of a specific resource by URI and server. Only use URIs that are listed in the system prompt's 'AVAILABLE RESOURCES' section.",
 			Parameters: map[string]interface{}{

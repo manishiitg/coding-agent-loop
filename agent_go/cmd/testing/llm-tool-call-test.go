@@ -3,14 +3,15 @@ package testing
 import (
 	"context"
 	"log"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"os"
 	"time"
+
+	"mcp-agent/agent_go/internal/llm"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/bedrock"
 )
 
 var llmToolCallTestCmd = &cobra.Command{
@@ -48,20 +49,21 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 
 	log.Printf("🚀 Testing LLM Tool Calling with %s", modelID)
 
-	// Create Bedrock LLM
-	llm, err := bedrock.New(
-		bedrock.WithModel(modelID),
-		bedrock.WithModelProvider("anthropic"),
-	)
+	// Create Bedrock LLM using internal adapter
+	llm, err := llm.InitializeLLM(llm.Config{
+		Provider:    llm.ProviderBedrock,
+		ModelID:     modelID,
+		Temperature: 0.7,
+	})
 	if err != nil {
 		log.Printf("❌ Failed to create Bedrock LLM: %v", err)
 		return
 	}
 
 	// Define test tool
-	tool := llms.Tool{
+	tool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_file",
 			Description: "Read contents of a file",
 			Parameters: map[string]interface{}{
@@ -79,14 +81,14 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 
 	// Test tool calling
 	ctx := context.Background()
-	messages := []llms.MessageContent{
-		llms.TextParts(llms.ChatMessageTypeHuman, "Read the contents of config.json"),
+	messages := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Read the contents of config.json"),
 	}
 
 	startTime := time.Now()
 	resp, err := llm.GenerateContent(ctx, messages,
-		llms.WithTools([]llms.Tool{tool}),
-		llms.WithToolChoice("required"),
+		llmtypes.WithTools([]llmtypes.Tool{tool}),
+		llmtypes.WithToolChoiceString("required"),
 	)
 	duration := time.Since(startTime)
 
@@ -107,13 +109,13 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 	log.Printf("   Args: %s", toolCall.FunctionCall.Arguments)
 
 	// Test second tool call
-	secondMessages := []llms.MessageContent{
-		llms.TextParts(llms.ChatMessageTypeHuman, "Read the contents of go.mod"),
+	secondMessages := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Read the contents of go.mod"),
 	}
 
 	secondResp, err := llm.GenerateContent(ctx, secondMessages,
-		llms.WithTools([]llms.Tool{tool}),
-		llms.WithToolChoice("required"),
+		llmtypes.WithTools([]llmtypes.Tool{tool}),
+		llmtypes.WithToolChoiceString("required"),
 	)
 
 	if err != nil {

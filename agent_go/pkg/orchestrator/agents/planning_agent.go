@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // OrchestratorPlanningAgent extends BaseOrchestratorAgent with planning-specific functionality
@@ -39,7 +38,7 @@ func NewOrchestratorPlanningAgent(config *OrchestratorAgentConfig, logger utils.
 }
 
 // Execute executes the planning agent with planning-specific input processing
-func (pa *OrchestratorPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (pa *OrchestratorPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return pa.ExecuteWithInputProcessor(ctx, templateVars, pa.planningInputProcessor, conversationHistory)
 }
 

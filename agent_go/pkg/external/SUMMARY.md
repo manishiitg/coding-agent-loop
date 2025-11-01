@@ -41,7 +41,7 @@ type Agent interface {
     Ask(ctx context.Context, question string) (string, error)
     
     // AskWithHistory sends a conversation with history and returns the answer
-    AskWithHistory(ctx context.Context, messages []llms.MessageContent) (string, []llms.MessageContent, error)
+    AskWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error)
     
     // GetServerNames returns the list of connected server names
     GetServerNames() []string

@@ -12,8 +12,6 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
-	"github.com/tmc/langchaingo/llms"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -232,10 +230,10 @@ func testAgentPlaywrightScenario(config *mcpclient.MCPConfig, logger utils.Exten
 	defer testCancel()
 
 	logger.Info("🔧 Executing test query (this might trigger the bufio.Scanner error)...")
-	response, err := testAgent.InvokeWithHistory(testCtx, []llms.MessageContent{
+	response, err := testAgent.InvokeWithHistory(testCtx, []llmtypes.MessageContent{
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: testQuery}},
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: testQuery}},
 		},
 	})
 	if err != nil {

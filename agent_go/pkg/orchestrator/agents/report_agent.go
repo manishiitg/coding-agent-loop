@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // OrchestratorReportAgent extends BaseOrchestratorAgent with report generation functionality
@@ -39,7 +38,7 @@ func NewOrchestratorReportAgent(config *OrchestratorAgentConfig, logger utils.Ex
 }
 
 // Execute executes the report agent with report-specific input processing
-func (ra *OrchestratorReportAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (ra *OrchestratorReportAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return ra.ExecuteWithInputProcessor(ctx, templateVars, ra.reportInputProcessor, conversationHistory)
 }
 

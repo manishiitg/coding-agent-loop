@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/llm"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 
 	"github.com/spf13/cobra"
-	"github.com/tmc/langchaingo/llms"
 
 	"github.com/joho/godotenv"
 )
@@ -55,10 +55,10 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 	fmt.Printf("   Prompt: %s\n\n", tokenTestPrompt)
 
 	// Create simple message
-	messages := []llms.MessageContent{
+	messages := []llmtypes.MessageContent{
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: tokenTestPrompt}},
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: tokenTestPrompt}},
 		},
 	}
 
@@ -75,9 +75,9 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 	// Start main trace for the entire token usage test
 	mainTraceID := tracer.StartTrace("Token Usage Test: Multi-Provider Validation", map[string]interface{}{
 		"test_type":   "token_usage_validation",
-		"description": "Testing token usage extraction across OpenAI, Bedrock, Anthropic, and OpenRouter providers",
+		"description": "Testing token usage extraction across OpenAI, Bedrock, Anthropic, OpenRouter, and Vertex AI (Google GenAI) providers",
 		"timestamp":   time.Now().UTC(),
-		"providers":   []string{"openai", "bedrock", "anthropic", "openrouter"},
+		"providers":   []string{"openai", "bedrock", "anthropic", "openrouter", "vertex"},
 	})
 
 	fmt.Printf("🔍 Started Langfuse trace: %s\n", mainTraceID)
@@ -126,10 +126,10 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 
 		complexPrompt := `Please analyze the following complex scenario step by step: A company has 3 warehouses in different cities. Warehouse A can ship 100 units per day, Warehouse B can ship 150 units per day, and Warehouse C can ship 200 units per day. They need to fulfill orders for 5 customers: Customer 1 needs 80 units, Customer 2 needs 120 units, Customer 3 needs 90 units, Customer 4 needs 110 units, and Customer 5 needs 140 units. The shipping costs from each warehouse to each customer vary. Please create an optimal shipping plan that minimizes total cost while meeting all customer demands. Show your mathematical reasoning, create a cost matrix, and solve this step by step.`
 
-		complexMessages := []llms.MessageContent{
+		complexMessages := []llmtypes.MessageContent{
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextContent{Text: complexPrompt}},
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: complexPrompt}},
 			},
 		}
 
@@ -142,7 +142,7 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 
 	bedrockConfig := llm.Config{
 		Provider:    llm.ProviderBedrock,
-		ModelID:     "us.anthropic.claude-sonnet-4-20250514-v1:0",
+		ModelID:     "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		Temperature: 0.7,
 		Tracers:     nil,
 		TraceID:     mainTraceID,
@@ -175,9 +175,47 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Printf("❌ Error creating Anthropic Claude LLM: %v\n", err)
 		fmt.Printf("⏭️  Skipping Anthropic test\n")
+		fmt.Printf("   Note: Make sure ANTHROPIC_API_KEY is set\n")
 	} else {
-		fmt.Printf("🔧 Created Anthropic Claude LLM using providers.go\n")
+		fmt.Printf("🔧 Created Anthropic Claude LLM using providers.go (Anthropic SDK)\n")
 		testLLMTokenUsage(anthropicLLM, messages)
+	}
+
+	// Test 4b: Anthropic direct API for tool calling with token usage
+	fmt.Printf("\n🧪 TEST 4b: Anthropic Direct API (Tool Calling with Token Usage)\n")
+	fmt.Printf("=================================================================\n")
+
+	if anthropicLLM != nil {
+		// Create a simple tool for testing
+		weatherTool := llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "get_weather",
+				Description: "Get current weather for a location",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"location": map[string]any{
+							"type":        "string",
+							"description": "City name",
+						},
+					},
+					"required": []string{"location"},
+				},
+			},
+		}
+
+		toolMessages := []llmtypes.MessageContent{
+			{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "What's the weather in Tokyo?"}},
+			},
+		}
+
+		fmt.Printf("🔧 Testing Anthropic with tool calling to verify token usage extraction...\n")
+		testLLMTokenUsageWithTools(anthropicLLM, toolMessages, []llmtypes.Tool{weatherTool})
+	} else {
+		fmt.Printf("⏭️  Skipping Anthropic tool calling test (LLM not initialized)\n")
 	}
 
 	// Test 5: OpenRouter for simple query
@@ -202,12 +240,73 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 		testLLMTokenUsage(openrouterLLM, messages)
 	}
 
+	// Test 6: Vertex AI (Google GenAI) for simple query
+	fmt.Printf("\n🧪 TEST 6: Vertex AI / Google GenAI (Simple Query)\n")
+	fmt.Printf("==================================================\n")
+
+	vertexConfig := llm.Config{
+		Provider:    llm.ProviderVertex,
+		ModelID:     "gemini-2.5-flash",
+		Temperature: 0.7,
+		Tracers:     nil,
+		TraceID:     mainTraceID,
+		Logger:      logger,
+		Context:     context.Background(),
+	}
+
+	vertexLLM, err := llm.InitializeLLM(vertexConfig)
+	if err != nil {
+		fmt.Printf("❌ Error creating Vertex AI LLM: %v\n", err)
+		fmt.Printf("⏭️  Skipping Vertex AI test\n")
+		fmt.Printf("   Note: Make sure VERTEX_API_KEY or GOOGLE_API_KEY is set\n")
+	} else {
+		fmt.Printf("🔧 Created Vertex AI LLM using providers.go (Google GenAI SDK)\n")
+		testLLMTokenUsage(vertexLLM, messages)
+	}
+
+	// Test 7: Vertex AI (Google GenAI) for tool calling with token usage
+	fmt.Printf("\n🧪 TEST 7: Vertex AI / Google GenAI (Tool Calling with Token Usage)\n")
+	fmt.Printf("=====================================================================\n")
+
+	if vertexLLM != nil {
+		// Create a simple tool for testing
+		weatherTool := llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "get_weather",
+				Description: "Get current weather for a location",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"location": map[string]any{
+							"type":        "string",
+							"description": "City name",
+						},
+					},
+					"required": []string{"location"},
+				},
+			},
+		}
+
+		toolMessages := []llmtypes.MessageContent{
+			{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "What's the weather in Tokyo?"}},
+			},
+		}
+
+		fmt.Printf("🔧 Testing Vertex AI with tool calling to verify token usage extraction...\n")
+		testLLMTokenUsageWithTools(vertexLLM, toolMessages, []llmtypes.Tool{weatherTool})
+	} else {
+		fmt.Printf("⏭️  Skipping Vertex AI tool calling test (LLM not initialized)\n")
+	}
+
 	// End main trace with summary
 	tracer.EndTrace(mainTraceID, map[string]interface{}{
 		"final_status":     "completed",
 		"success":          true,
 		"test_type":        "token_usage_validation",
-		"providers_tested": []string{"openai", "bedrock", "anthropic", "openrouter"},
+		"providers_tested": []string{"openai", "bedrock", "anthropic", "openrouter", "vertex"},
 		"timestamp":        time.Now().UTC(),
 	})
 
@@ -215,7 +314,7 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 	fmt.Printf("🔍 Check Langfuse for trace: %s\n", mainTraceID)
 }
 
-func testLLMTokenUsage(llm llms.Model, messages []llms.MessageContent) {
+func testLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent) {
 	ctx := context.Background()
 	startTime := time.Now()
 
@@ -323,6 +422,185 @@ func testLLMTokenUsage(llm llms.Model, messages []llms.MessageContent) {
 		if choice.GenerationInfo != nil {
 			fmt.Printf("   GenerationInfo keys: %v\n", getMapKeys(choice.GenerationInfo))
 		}
+	}
+}
+
+// testLLMTokenUsageWithTools tests token usage extraction when using tools
+func testLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageContent, tools []llmtypes.Tool) {
+	ctx := context.Background()
+	startTime := time.Now()
+
+	fmt.Printf("⏱️  Starting LLM call with tools...\n")
+	fmt.Printf("📝 Sending message: %s\n", extractMessageText(messages))
+	fmt.Printf("🔧 Tools count: %d\n", len(tools))
+
+	// Make the LLM call with tools
+	resp, err := llm.GenerateContent(ctx, messages, llmtypes.WithTools(tools))
+
+	duration := time.Since(startTime)
+
+	fmt.Printf("\n📊 Token Usage Test Results (with tools):\n")
+	fmt.Printf("==========================================\n")
+
+	if err != nil {
+		fmt.Printf("❌ Error: %v\n", err)
+		return
+	}
+
+	if resp == nil || resp.Choices == nil || len(resp.Choices) == 0 {
+		fmt.Printf("❌ No response received\n")
+		return
+	}
+
+	choice := resp.Choices[0]
+	content := choice.Content
+	hasToolCalls := len(choice.ToolCalls) > 0
+
+	fmt.Printf("✅ Response received successfully!\n")
+	fmt.Printf("   Duration: %v\n", duration)
+	if hasToolCalls {
+		fmt.Printf("   Tool calls: %d\n", len(choice.ToolCalls))
+		for i, tc := range choice.ToolCalls {
+			fmt.Printf("      Tool %d: %s\n", i+1, tc.FunctionCall.Name)
+		}
+	} else {
+		fmt.Printf("   Response length: %d chars\n", len(content))
+		if len(content) > 0 {
+			preview := content
+			if len(preview) > 100 {
+				preview = preview[:100] + "..."
+			}
+			fmt.Printf("   Content: %s\n", preview)
+		}
+	}
+	fmt.Printf("\n")
+
+	// Check for token usage information
+	fmt.Printf("🔍 Token Usage Analysis (with tools):\n")
+	fmt.Printf("======================================\n")
+
+	if choice.GenerationInfo == nil {
+		fmt.Printf("❌ No GenerationInfo found in response\n")
+		fmt.Printf("   Token usage extraction failed\n")
+		return
+	}
+
+	fmt.Printf("✅ GenerationInfo found! Checking for token data...\n\n")
+
+	// Check for specific token fields (Google GenAI uses these field names)
+	tokenFields := map[string]string{
+		"input_tokens":  "Input tokens",
+		"output_tokens": "Output tokens",
+		"total_tokens":  "Total tokens",
+	}
+
+	foundTokens := false
+	var inputTokens, outputTokens, totalTokens interface{}
+
+	for field, label := range tokenFields {
+		if value, ok := choice.GenerationInfo[field]; ok {
+			fmt.Printf("✅ %s: %v\n", label, value)
+			foundTokens = true
+
+			// Store values for validation
+			switch field {
+			case "input_tokens":
+				inputTokens = value
+			case "output_tokens":
+				outputTokens = value
+			case "total_tokens":
+				totalTokens = value
+			}
+		}
+	}
+
+	if !foundTokens {
+		fmt.Printf("❌ No standard token fields found in GenerationInfo\n")
+		fmt.Printf("   Available fields in GenerationInfo:\n")
+		for key, value := range choice.GenerationInfo {
+			fmt.Printf("     - %s: %v\n", key, value)
+		}
+		fmt.Printf("\n   This suggests the adapter is not extracting token usage correctly\n")
+	} else {
+		fmt.Printf("\n✅ Token usage data extracted successfully!\n")
+
+		// Validate token counts make sense
+		if inputTokens != nil && outputTokens != nil && totalTokens != nil {
+			inputVal := extractIntValue(inputTokens)
+			outputVal := extractIntValue(outputTokens)
+			totalVal := extractIntValue(totalTokens)
+
+			fmt.Printf("\n🔍 Token Usage Validation:\n")
+			fmt.Printf("   Input tokens: %d\n", inputVal)
+			fmt.Printf("   Output tokens: %d\n", outputVal)
+			fmt.Printf("   Total tokens: %d\n", totalVal)
+
+			// Check if total matches sum (allowing for slight discrepancies)
+			calculatedTotal := inputVal + outputVal
+			if totalVal > 0 {
+				diff := totalVal - calculatedTotal
+				if diff < 0 {
+					diff = -diff
+				}
+				if totalVal == calculatedTotal {
+					fmt.Printf("   ✅ Total tokens matches input + output\n")
+				} else if diff <= 2 {
+					fmt.Printf("   ⚠️  Total tokens differs from input+output by %d (acceptable)\n", diff)
+				} else {
+					fmt.Printf("   ⚠️  Total tokens (%d) differs significantly from input+output (%d)\n", totalVal, calculatedTotal)
+				}
+			}
+
+			// Check for reasonable token counts
+			if inputVal > 0 && outputVal >= 0 {
+				fmt.Printf("   ✅ Token counts are reasonable\n")
+			} else {
+				fmt.Printf("   ⚠️  Unusual token counts detected\n")
+			}
+		}
+	}
+
+	// Show all available GenerationInfo for debugging
+	fmt.Printf("\n🔍 Complete GenerationInfo:\n")
+	fmt.Printf("==========================\n")
+	for key, value := range choice.GenerationInfo {
+		fmt.Printf("   %s: %v (type: %T)\n", key, value, value)
+	}
+}
+
+// extractMessageText extracts text from messages for logging
+func extractMessageText(messages []llmtypes.MessageContent) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	firstMsg := messages[0]
+	for _, part := range firstMsg.Parts {
+		if textPart, ok := part.(llmtypes.TextContent); ok {
+			text := textPart.Text
+			if len(text) > 100 {
+				return text[:100] + "..."
+			}
+			return text
+		}
+	}
+	return ""
+}
+
+// extractIntValue safely extracts an integer value from interface{}
+func extractIntValue(v interface{}) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int32:
+		return int(val)
+	case int64:
+		return int(val)
+	case float32:
+		return int(val)
+	case float64:
+		return int(val)
+	default:
+		return 0
 	}
 }
 

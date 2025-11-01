@@ -102,7 +102,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
     // Extract server-specific tools
     serverTools := api.extractServerTools(result.Tools, result.ToolToServer, serverName)
     
-    // Convert llms.Tool to ToolDetail format
+    // Convert llmtypes.Tool to ToolDetail format
     // Return detailed tool information
 }
 ```

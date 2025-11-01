@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -15,8 +16,6 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 
 	"sync"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // AgentMode defines the type of agent behavior and reasoning approach.
@@ -90,7 +89,7 @@ type AgentCore interface {
 	//   - The agent's response to the current conversation
 	//   - Updated message history that can be used for subsequent calls
 	//   - Any error that occurred during processing
-	InvokeWithHistory(ctx context.Context, messages []llms.MessageContent) (string, []llms.MessageContent, error)
+	InvokeWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error)
 }
 
 // AgentConfig provides configuration management and customization capabilities.
@@ -757,7 +756,7 @@ func (a *agentImpl) Invoke(ctx context.Context, prompt string) (string, error) {
 	return a.agent.Ask(ctx, prompt)
 }
 
-func (a *agentImpl) InvokeWithHistory(ctx context.Context, messages []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (a *agentImpl) InvokeWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Check for context cancellation before invoking with history
 	if ctx.Err() != nil {
 		return "", nil, fmt.Errorf("context cancelled before invoking with history: %w", ctx.Err())
@@ -786,7 +785,7 @@ func AskStructured[T any](a Agent, ctx context.Context, question string, schema 
 }
 
 // AskWithHistoryStructured runs an interaction using message history and converts the result to structured output
-func AskWithHistoryStructured[T any](a Agent, ctx context.Context, messages []llms.MessageContent, schema T, schemaString string) (T, []llms.MessageContent, error) {
+func AskWithHistoryStructured[T any](a Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error) {
 	// Check for context cancellation before invoking with history
 	if ctx.Err() != nil {
 		var zero T

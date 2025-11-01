@@ -204,7 +204,7 @@ type Agent interface {
     Ask(ctx context.Context, question string) (string, error)
     
     // AskWithHistory sends a conversation with history and returns the answer
-    AskWithHistory(ctx context.Context, messages []llms.MessageContent) (string, []llms.MessageContent, error)
+    AskWithHistory(ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error)
     
     // GetServerNames returns the list of connected server names
     GetServerNames() []string
@@ -255,11 +255,11 @@ type AgentEvent struct {
 
 ```go
 // Create conversation history
-messages := []llms.MessageContent{
+messages := []llmtypes.MessageContent{
     {
-        Role: llms.ChatMessageTypeHuman,
-        Parts: []llms.ContentPart{
-            llms.TextContent{Text: "Hello, how are you?"},
+        Role: llmtypes.ChatMessageTypeHuman,
+        Parts: []llmtypes.ContentPart{
+            llmtypes.TextContent{Text: "Hello, how are you?"},
         },
     },
 }
@@ -271,10 +271,10 @@ if err != nil {
 }
 
 // Add a follow-up question
-updatedMessages = append(updatedMessages, llms.MessageContent{
-    Role: llms.ChatMessageTypeHuman,
-    Parts: []llms.ContentPart{
-        llms.TextContent{Text: "Can you help me with a task?"},
+updatedMessages = append(updatedMessages, llmtypes.MessageContent{
+    Role: llmtypes.ChatMessageTypeHuman,
+    Parts: []llmtypes.ContentPart{
+        llmtypes.TextContent{Text: "Can you help me with a task?"},
     },
 })
 

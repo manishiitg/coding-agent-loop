@@ -111,7 +111,7 @@ type OrchestratorState struct {
     ValidationResults   []string // All validation phase results
     OrganizationResults []string // All organization phase results
     Objective           string   // Original objective
-    ConversationHistory []llms.MessageContent // Full conversation context
+    ConversationHistory []llmtypes.MessageContent // Full conversation context
     // ... timestamps and metadata
 }
 ```

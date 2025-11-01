@@ -10,7 +10,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"time"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // ConditionalResponse represents a true/false response with reasoning
@@ -31,7 +31,7 @@ type ConditionalLLM struct {
 
 // NewConditionalLLMWithEventBridge creates a new conditional LLM instance with mandatory event bridge
 func NewConditionalLLMWithEventBridge(
-	llm llms.Model,
+	llm llmtypes.Model,
 	logger utils.ExtendedLogger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,

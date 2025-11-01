@@ -14,12 +14,25 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/logger"
 
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/anthropic"
-	"github.com/tmc/langchaingo/llms/bedrock"
-	"github.com/tmc/langchaingo/llms/googleai"
-	"github.com/tmc/langchaingo/llms/googleai/vertex"
-	"github.com/tmc/langchaingo/llms/openai"
+	"mcp-agent/agent_go/internal/llm/openaiadapter"
+	"mcp-agent/agent_go/internal/llm/vertex"
+
+	"mcp-agent/agent_go/internal/llm/anthropicadapter"
+
+	"mcp-agent/agent_go/internal/llmtypes"
+
+	"github.com/anthropics/anthropic-sdk-go"
+	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	openaisdk "github.com/openai/openai-go/v3"
+
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+
+	"mcp-agent/agent_go/internal/llm/bedrockadapter"
+
+	"github.com/openai/openai-go/v3/option"
+
+	"google.golang.org/genai"
 )
 
 // Provider represents the available LLM providers
@@ -50,8 +63,8 @@ type Config struct {
 }
 
 // InitializeLLM creates and initializes an LLM based on the provider configuration
-func InitializeLLM(config Config) (llms.Model, error) {
-	var llm llms.Model
+func InitializeLLM(config Config) (llmtypes.Model, error) {
+	var llm llmtypes.Model
 	var err error
 
 	switch config.Provider {
@@ -78,7 +91,7 @@ func InitializeLLM(config Config) (llms.Model, error) {
 }
 
 // initializeBedrockWithFallback creates a Bedrock LLM with fallback models for rate limiting
-func initializeBedrockWithFallback(config Config) (llms.Model, error) {
+func initializeBedrockWithFallback(config Config) (llmtypes.Model, error) {
 	// Try primary model first
 	llm, err := initializeBedrock(config)
 	if err == nil {
@@ -109,7 +122,7 @@ func initializeBedrockWithFallback(config Config) (llms.Model, error) {
 }
 
 // initializeOpenAIWithFallback creates an OpenAI LLM with fallback models for rate limiting
-func initializeOpenAIWithFallback(config Config) (llms.Model, error) {
+func initializeOpenAIWithFallback(config Config) (llmtypes.Model, error) {
 	// Try primary model first
 	llm, err := initializeOpenAI(config)
 	if err == nil {
@@ -140,7 +153,7 @@ func initializeOpenAIWithFallback(config Config) (llms.Model, error) {
 }
 
 // initializeOpenRouterWithFallback creates an OpenRouter LLM with fallback models for rate limiting
-func initializeOpenRouterWithFallback(config Config) (llms.Model, error) {
+func initializeOpenRouterWithFallback(config Config) (llmtypes.Model, error) {
 	// Try primary model first
 	llm, err := initializeOpenRouter(config)
 	if err == nil {
@@ -171,7 +184,7 @@ func initializeOpenRouterWithFallback(config Config) (llms.Model, error) {
 }
 
 // initializeVertexWithFallback creates a Vertex AI LLM with fallback models for rate limiting
-func initializeVertexWithFallback(config Config) (llms.Model, error) {
+func initializeVertexWithFallback(config Config) (llmtypes.Model, error) {
 	// Try primary model first
 	llm, err := initializeVertex(config)
 	if err == nil {
@@ -202,7 +215,7 @@ func initializeVertexWithFallback(config Config) (llms.Model, error) {
 }
 
 // initializeBedrock creates and configures a Bedrock LLM instance
-func initializeBedrock(config Config) (llms.Model, error) {
+func initializeBedrock(config Config) (llmtypes.Model, error) {
 	// LLM Initialization event data - use typed structure directly
 	llmMetadata := LLMMetadata{
 		ModelVersion: config.ModelID,
@@ -226,12 +239,17 @@ func initializeBedrock(config Config) (llms.Model, error) {
 	logger.Infof("AWS_ACCESS_KEY_ID: %s", os.Getenv("AWS_ACCESS_KEY_ID"))
 	logger.Infof("AWS_SECRET_ACCESS_KEY: %s", os.Getenv("AWS_SECRET_ACCESS_KEY"))
 
-	// Create Bedrock LLM with additional configuration
-	// Note: The region is determined by AWS SDK configuration
-	// Set AWS_REGION environment variable to us-east-1 for Bedrock access
-	llm, err := bedrock.New(bedrock.WithModel(config.ModelID))
+	// Get region from environment (default to us-east-1)
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = "us-east-1"
+		logger.Infof("AWS_REGION not set, using default: %s", region)
+	}
+
+	// Load AWS SDK configuration
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(region))
 	if err != nil {
-		logger.Errorf("Failed to create Bedrock LLM: %v", err)
+		logger.Errorf("Failed to load AWS config: %v", err)
 
 		// Emit LLM initialization error event - use typed structure directly
 		errorMetadata := LLMMetadata{
@@ -246,8 +264,20 @@ func initializeBedrock(config Config) (llms.Model, error) {
 		}
 		emitLLMInitializationError(config.Tracers, string(config.Provider), config.ModelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
 
-		return nil, fmt.Errorf("create bedrock LLM: %w", err)
+		return nil, fmt.Errorf("load aws config: %w", err)
 	}
+
+	// Create Bedrock runtime client
+	client := bedrockruntime.NewFromConfig(cfg)
+
+	// Set default model if not specified
+	modelID := config.ModelID
+	if modelID == "" {
+		modelID = "us.anthropic.claude-3-sonnet-20240229-v1:0"
+	}
+
+	// Create Bedrock adapter
+	llm := bedrockadapter.NewBedrockAdapter(client, modelID, logger)
 
 	// Emit LLM initialization success event - use typed structure directly
 	successMetadata := LLMMetadata{
@@ -273,7 +303,7 @@ func IsO3O4Model(modelID string) bool {
 }
 
 // initializeOpenAI creates and configures an OpenAI LLM instance
-func initializeOpenAI(config Config) (llms.Model, error) {
+func initializeOpenAI(config Config) (llmtypes.Model, error) {
 	// Check for API key
 	if os.Getenv("OPENAI_API_KEY") == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is required for OpenAI provider")
@@ -300,29 +330,14 @@ func initializeOpenAI(config Config) (llms.Model, error) {
 		modelID = "gpt-4.1"
 	}
 
-	// Create OpenAI LLM
-	var llm llms.Model
-	var err error
+	// Create OpenAI client using official SDK
+	client := openaisdk.NewClient(
+		option.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
+	)
 
-	// Temperature is only set at call time (llms.WithTemperature), not at model creation for OpenAI models
-	llm, err = openai.New(openai.WithModel(modelID))
-
-	if err != nil {
-		// Emit LLM initialization error event - use typed structure directly
-		errorMetadata := LLMMetadata{
-			ModelVersion: modelID,
-			User:         "openai_user",
-			CustomFields: map[string]string{
-				"provider":  "openai",
-				"operation": OperationLLMInitialization,
-				"error":     err.Error(),
-				"status":    StatusLLMFailed,
-			},
-		}
-		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
-
-		return nil, fmt.Errorf("create openai LLM: %w", err)
-	}
+	// Create OpenAI adapter
+	logger := config.Logger
+	llm := openaiadapter.NewOpenAIAdapter(&client, modelID, logger)
 
 	// Emit LLM initialization success event - use typed structure directly
 	successMetadata := LLMMetadata{
@@ -336,13 +351,12 @@ func initializeOpenAI(config Config) (llms.Model, error) {
 	}
 	emitLLMInitializationSuccess(config.Tracers, string(config.Provider), modelID, CapabilityTextGeneration+","+CapabilityToolCalling, config.TraceID, successMetadata)
 
-	logger := config.Logger
 	logger.Infof("Initialized OpenAI LLM - model_id: %s", modelID)
 	return llm, nil
 }
 
 // initializeAnthropic creates and configures an Anthropic LLM instance
-func initializeAnthropic(config Config) (llms.Model, error) {
+func initializeAnthropic(config Config) (llmtypes.Model, error) {
 	// LLM Initialization event data - use typed structure directly
 	llmMetadata := LLMMetadata{
 		ModelVersion: config.ModelID,
@@ -370,26 +384,17 @@ func initializeAnthropic(config Config) (llms.Model, error) {
 		modelID = "claude-3-5-sonnet-20241022"
 	}
 
-	// Create Anthropic LLM
-	llm, err := anthropic.New(
-		anthropic.WithModel(modelID),
-	)
-	if err != nil {
-		// Emit LLM initialization error event - use typed structure directly
-		errorMetadata := LLMMetadata{
-			ModelVersion: modelID,
-			User:         "anthropic_user",
-			CustomFields: map[string]string{
-				"provider":  "anthropic",
-				"operation": OperationLLMInitialization,
-				"error":     err.Error(),
-				"status":    StatusLLMFailed,
-			},
-		}
-		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
+	logger := config.Logger
+	logger.Infof("Initializing Anthropic LLM with model: %s", modelID)
 
-		return nil, fmt.Errorf("create anthropic LLM: %w", err)
-	}
+	// Create Anthropic SDK client
+	// NewClient reads from environment by default, but we can explicitly set API key
+	client := anthropic.NewClient(
+		anthropicoption.WithAPIKey(apiKey),
+	)
+
+	// Create Anthropic adapter
+	llm := anthropicadapter.NewAnthropicAdapter(client, modelID, logger)
 
 	// Emit LLM initialization success event - use typed structure directly
 	successMetadata := LLMMetadata{
@@ -403,13 +408,12 @@ func initializeAnthropic(config Config) (llms.Model, error) {
 	}
 	emitLLMInitializationSuccess(config.Tracers, string(config.Provider), modelID, CapabilityTextGeneration+","+CapabilityToolCalling, config.TraceID, successMetadata)
 
-	logger := config.Logger
 	logger.Infof("Initialized Anthropic LLM - model_id: %s", modelID)
 	return llm, nil
 }
 
 // initializeOpenRouter creates and configures an OpenRouter LLM instance
-func initializeOpenRouter(config Config) (llms.Model, error) {
+func initializeOpenRouter(config Config) (llmtypes.Model, error) {
 	// LLM Initialization event data - use typed structure directly
 	llmMetadata := LLMMetadata{
 		ModelVersion: config.ModelID,
@@ -445,43 +449,29 @@ func initializeOpenRouter(config Config) (llms.Model, error) {
 	logger.Infof("🔧 [DEBUG] Base URL: https://openrouter.ai/api/v1")
 	logger.Infof("🔧 [DEBUG] API Key present: %v", os.Getenv("OPEN_ROUTER_API_KEY") != "")
 
-	// Create OpenRouter LLM using OpenAI client with OpenRouter base URL
-	llm, err := openai.New(
-		openai.WithModel(modelID),
-		openai.WithBaseURL("https://openrouter.ai/api/v1"),
-		openai.WithToken(os.Getenv("OPEN_ROUTER_API_KEY")),
-	)
+	// Create OpenAI SDK client with OpenRouter base URL
+	clientOptions := []option.RequestOption{
+		option.WithAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
+		option.WithBaseURL("https://openrouter.ai/api/v1"),
+	}
+
+	// Add optional OpenRouter headers if provided
+	if httpReferer := os.Getenv("OPENROUTER_HTTP_REFERER"); httpReferer != "" {
+		clientOptions = append(clientOptions, option.WithHeader("HTTP-Referer", httpReferer))
+		logger.Infof("🔧 [DEBUG] Added HTTP-Referer header: %s", httpReferer)
+	}
+	if xTitle := os.Getenv("OPENROUTER_X_TITLE"); xTitle != "" {
+		clientOptions = append(clientOptions, option.WithHeader("X-Title", xTitle))
+		logger.Infof("🔧 [DEBUG] Added X-Title header: %s", xTitle)
+	}
+
+	client := openaisdk.NewClient(clientOptions...)
+
+	// Create OpenAI adapter with OpenRouter configuration
+	llm := openaiadapter.NewOpenAIAdapter(&client, modelID, logger)
 
 	// 🆕 POST-INITIALIZATION LOGGING
-	logger.Infof("🔧 [DEBUG] OpenRouter LLM creation completed - Error: %v, LLM: %v", err != nil, llm != nil)
-
-	if err != nil {
-		logger.Errorf("❌ Failed to create OpenRouter LLM - model: %s, error: %v", modelID, err)
-		logger.Errorf("🔍 OpenRouter API Error Details:")
-		logger.Errorf("   Error type: %T", err)
-		logger.Errorf("   Error message: %s", err.Error())
-
-		// Log additional error context for debugging
-		logger.Errorf("🔍 OpenRouter API Error Context:")
-		logger.Errorf("   Base URL: https://openrouter.ai/api/v1")
-		logger.Errorf("   Model ID: %s", modelID)
-		logger.Errorf("   API Key: %s", maskAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")))
-
-		// Emit LLM initialization error event - use typed structure directly
-		errorMetadata := LLMMetadata{
-			ModelVersion: modelID,
-			User:         "openrouter_user",
-			CustomFields: map[string]string{
-				"provider":  "openrouter",
-				"operation": OperationLLMInitialization,
-				"error":     err.Error(),
-				"status":    StatusLLMFailed,
-			},
-		}
-		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
-
-		return nil, fmt.Errorf("create openrouter LLM: %w", err)
-	}
+	logger.Infof("🔧 [DEBUG] OpenRouter LLM creation completed - LLM: %v", llm != nil)
 
 	// Emit LLM initialization success event - use typed structure directly
 	successMetadata := LLMMetadata{
@@ -500,7 +490,7 @@ func initializeOpenRouter(config Config) (llms.Model, error) {
 }
 
 // initializeVertex creates and configures a Vertex AI (Gemini) LLM instance
-func initializeVertex(config Config) (llms.Model, error) {
+func initializeVertex(config Config) (llmtypes.Model, error) {
 	// LLM Initialization event data - use typed structure directly
 	llmMetadata := LLMMetadata{
 		ModelVersion: config.ModelID,
@@ -541,23 +531,16 @@ func initializeVertex(config Config) (llms.Model, error) {
 		ctx = context.Background()
 	}
 
-	// Set API key as environment variable for vertex.New() to pick up
-	// vertex.New() automatically detects API key from VERTEX_API_KEY or GOOGLE_API_KEY env vars
-	// and switches to BackendGeminiAPI when API key is present
-	os.Setenv("VERTEX_API_KEY", apiKey)
-
-	// Create Vertex AI LLM - automatically uses BackendGeminiAPI with API key
-	// Supports both API key authentication and OAuth/ADC authentication
-	llm, err := vertex.New(ctx,
-		googleai.WithDefaultModel(modelID),
-		googleai.WithDefaultTemperature(config.Temperature),
-		googleai.WithDefaultMaxTokens(40000), // Large token limit for Vertex AI
-	)
-
+	// Create Google GenAI client with API key authentication
+	// Using BackendGeminiAPI for Gemini Developer API
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
 	if err != nil {
-		logger.Errorf("Failed to create Vertex LLM: %v", err)
+		logger.Errorf("Failed to create GenAI client: %v", err)
 
-		// Emit LLM initialization error event - use typed structure directly
+		// Emit LLM initialization error event
 		errorMetadata := LLMMetadata{
 			ModelVersion: modelID,
 			User:         "vertex_user",
@@ -570,8 +553,11 @@ func initializeVertex(config Config) (llms.Model, error) {
 		}
 		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
 
-		return nil, fmt.Errorf("create vertex LLM: %w", err)
+		return nil, fmt.Errorf("create genai client: %w", err)
 	}
+
+	// Create adapter wrapper that implements llmtypes.Model interface
+	llm := vertex.NewGoogleGenAIAdapter(client, modelID, logger)
 
 	// Emit LLM initialization success event - use typed structure directly
 	successMetadata := LLMMetadata{
@@ -734,10 +720,10 @@ func ValidateProvider(provider string) (Provider, error) {
 	}
 }
 
-// ProviderAwareLLM is a wrapper around langchaingo LLM that preserves provider information
+// ProviderAwareLLM is a wrapper around LLM that preserves provider information
 // and automatically captures token usage in LLM events
 type ProviderAwareLLM struct {
-	llms.Model
+	llmtypes.Model
 	provider Provider
 	modelID  string
 	tracers  []observability.Tracer
@@ -746,7 +732,7 @@ type ProviderAwareLLM struct {
 }
 
 // NewProviderAwareLLM creates a new provider-aware LLM wrapper
-func NewProviderAwareLLM(llm llms.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger) *ProviderAwareLLM {
+func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,
@@ -768,7 +754,7 @@ func (p *ProviderAwareLLM) GetModelID() string {
 }
 
 // GenerateContent wraps the underlying LLM's GenerateContent method to automatically capture token usage
-func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmtypes.MessageContent, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
 	// Note: LLM generation start event is now emitted at the agent level to avoid duplication
 
 	// 🆕 DETAILED DEBUG LOGGING - Track execution flow
@@ -801,7 +787,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llms.
 		for i, msg := range messages {
 			contentLength := 0
 			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
 					contentLength += len(textPart.Text)
 				}
 			}
@@ -929,7 +915,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llms.
 			// Calculate actual content length from message parts
 			contentLength := 0
 			for _, part := range msg.Parts {
-				if textPart, ok := part.(llms.TextContent); ok {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
 					contentLength += len(textPart.Text)
 				}
 			}
@@ -1253,7 +1239,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llms.
 }
 
 // extractMessageContentAsString converts message content to a readable string
-func extractMessageContentAsString(messages []llms.MessageContent) string {
+func extractMessageContentAsString(messages []llmtypes.MessageContent) string {
 	if len(messages) == 0 {
 		return "no messages"
 	}
@@ -1269,7 +1255,7 @@ func extractMessageContentAsString(messages []llms.MessageContent) string {
 			if j > 0 {
 				result.WriteString(",")
 			}
-			if textPart, ok := part.(llms.TextContent); ok {
+			if textPart, ok := part.(llmtypes.TextContent); ok {
 				content := textPart.Text
 				if len(content) > 100 {
 					content = content[:100] + "..."
@@ -1284,14 +1270,14 @@ func extractMessageContentAsString(messages []llms.MessageContent) string {
 }
 
 // getTemperatureFromOptions extracts temperature from call options
-func getTemperatureFromOptions(options []llms.CallOption) float64 {
+func getTemperatureFromOptions(options []llmtypes.CallOption) float64 {
 	// For now, return default temperature since CallOption is a function type
 	// and we can't easily extract the temperature value
 	return 0.7 // default temperature
 }
 
 // extractMessageContent converts message content to a structured format
-func extractMessageContent(messages []llms.MessageContent) []map[string]interface{} {
+func extractMessageContent(messages []llmtypes.MessageContent) []map[string]interface{} {
 	var messageList []map[string]interface{}
 
 	for i, msg := range messages {
@@ -1303,7 +1289,7 @@ func extractMessageContent(messages []llms.MessageContent) []map[string]interfac
 		// Extract text content from message parts
 		var contentParts []string
 		for _, part := range msg.Parts {
-			if textPart, ok := part.(llms.TextContent); ok {
+			if textPart, ok := part.(llmtypes.TextContent); ok {
 				contentParts = append(contentParts, textPart.Text)
 			}
 		}
@@ -1344,8 +1330,8 @@ func maskAPIKey(key string) string {
 }
 
 // WithOpenRouterUsage enables usage parameter for OpenRouter requests to get cache token information
-func WithOpenRouterUsage() llms.CallOption {
-	return func(opts *llms.CallOptions) {
+func WithOpenRouterUsage() CallOption {
+	return func(opts *CallOptions) {
 		// 🆕 DETAILED OPENROUTER USAGE LOGGING
 		fmt.Printf("🔧 [DEBUG] WithOpenRouterUsage called - opts: %+v\n", opts)
 
@@ -1771,32 +1757,28 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 	// Test Bedrock access by creating a Bedrock LLM instance
 	logger.Infof("[BEDROCK VALIDATION] Testing Bedrock access by creating LLM instance")
 
-	// Create Bedrock LLM instance
-	llm, err := bedrock.New(bedrock.WithModel(modelID))
+	// Load AWS SDK configuration
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(region))
 	if err != nil {
-		logger.Errorf("[BEDROCK VALIDATION ERROR] Failed to create Bedrock LLM: %v", err)
-		// Check for specific error types
-		if strings.Contains(err.Error(), "UnauthorizedOperation") || strings.Contains(err.Error(), "AccessDenied") {
-			return false, "AWS credentials do not have permission to access Bedrock", nil
-		}
-		if strings.Contains(err.Error(), "InvalidUserID.NotFound") {
-			return false, "AWS credentials are invalid", nil
-		}
-		if strings.Contains(err.Error(), "timeout") {
-			return false, "Bedrock service timeout - check network connectivity", nil
-		}
-		return false, fmt.Sprintf("Bedrock access failed: %v", err), nil
+		logger.Errorf("[BEDROCK VALIDATION ERROR] Failed to load AWS config: %v", err)
+		return false, "Failed to load AWS configuration", err
 	}
+
+	// Create Bedrock runtime client
+	client := bedrockruntime.NewFromConfig(cfg)
+
+	// Create Bedrock adapter instance
+	llm := bedrockadapter.NewBedrockAdapter(client, modelID, logger)
 
 	// Test the LLM with a simple generation call
 	logger.Infof("[BEDROCK VALIDATION] Making test generation call to Bedrock")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	_, err = llm.GenerateContent(ctx, []llms.MessageContent{
+	_, err = llm.GenerateContent(ctx, []llmtypes.MessageContent{
 		{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextPart("test")},
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "test"}},
 		},
 	})
 	if err != nil {

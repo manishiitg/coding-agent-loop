@@ -12,7 +12,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // FlexibleContextOutput handles both string and array formats for context_output
@@ -90,7 +90,7 @@ func NewPlanReaderAgent(config *agents.OrchestratorAgentConfig, logger utils.Ext
 }
 
 // ExecuteStructured executes the plan reader agent and returns structured output
-func (pra *PlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*PlanningResponse, error) {
+func (pra *PlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*PlanningResponse, error) {
 	// Define the JSON schema for plan conversion
 	schema := `{
 		"type": "object",
@@ -159,7 +159,7 @@ func (pra *PlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars 
 }
 
 // Execute implements the OrchestratorAgent interface
-func (pra *PlanReaderAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (pra *PlanReaderAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	return pra.ExecuteWithInputProcessor(ctx, templateVars, pra.planReaderInputProcessor, conversationHistory)
 }

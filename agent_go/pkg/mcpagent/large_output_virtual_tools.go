@@ -9,22 +9,22 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // CreateLargeOutputVirtualTools creates virtual tools for large tool output handling
-func (a *Agent) CreateLargeOutputVirtualTools() []llms.Tool {
+func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 	// Check if large output virtual tools are enabled
 	if !a.EnableLargeOutputVirtualTools {
-		return []llms.Tool{}
+		return []llmtypes.Tool{}
 	}
 
-	var virtualTools []llms.Tool
+	var virtualTools []llmtypes.Tool
 
 	// Add read_large_output tool
-	readLargeOutputTool := llms.Tool{
+	readLargeOutputTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_large_output",
 			Description: "Read specific characters from a large tool output file",
 			Parameters: map[string]interface{}{
@@ -50,9 +50,9 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llms.Tool {
 	virtualTools = append(virtualTools, readLargeOutputTool)
 
 	// Add search_large_output tool
-	searchLargeOutputTool := llms.Tool{
+	searchLargeOutputTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "search_large_output",
 			Description: "Search for regex patterns in large tool output files",
 			Parameters: map[string]interface{}{
@@ -84,9 +84,9 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llms.Tool {
 	virtualTools = append(virtualTools, searchLargeOutputTool)
 
 	// Add query_large_output tool
-	queryLargeOutputTool := llms.Tool{
+	queryLargeOutputTool := llmtypes.Tool{
 		Type: "function",
-		Function: &llms.FunctionDefinition{
+		Function: &llmtypes.FunctionDefinition{
 			Name:        "query_large_output",
 			Description: "Execute jq queries on large JSON tool output files",
 			Parameters: map[string]interface{}{

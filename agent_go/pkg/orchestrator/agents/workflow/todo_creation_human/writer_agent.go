@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // HumanControlledTodoPlannerWriterTemplate holds template variables for human-controlled todo writing prompts
@@ -43,7 +42,7 @@ func NewHumanControlledTodoPlannerWriterAgent(config *agents.OrchestratorAgentCo
 }
 
 // Execute implements the OrchestratorAgent interface
-func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables
 	// Human-controlled writer - synthesizes from single execution for todo list creation
 	objective := templateVars["Objective"]

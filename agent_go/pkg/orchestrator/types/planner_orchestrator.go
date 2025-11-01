@@ -15,7 +15,7 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/llm"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // ExecutionMode represents the execution mode for orchestrator operations
@@ -132,7 +132,7 @@ type PlannerOrchestrator struct {
 	selectedOptions *PlannerSelectedOptions // Selected execution options
 
 	// Conversation history for context
-	conversationHistory []llms.MessageContent
+	conversationHistory []llmtypes.MessageContent
 }
 
 // NewPlannerOrchestrator creates a new planner orchestrator with full configuration
@@ -149,7 +149,7 @@ func NewPlannerOrchestrator(
 	selectedServers []string,
 	selectedOptions *PlannerSelectedOptions,
 	selectedTools []string, // NEW parameter
-	customTools []llms.Tool,
+	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -1268,11 +1268,11 @@ func (po *PlannerOrchestrator) Execute(ctx context.Context, objective string, wo
 	po.GetLogger().Infof("🎯 Execution mode: %s", executionMode.String())
 
 	// Call executeFlow with empty conversation history and nil event bridge
-	return po.executeFlow(ctx, objective, []llms.MessageContent{}, nil)
+	return po.executeFlow(ctx, objective, []llmtypes.MessageContent{}, nil)
 }
 
 // executeFlow executes the orchestrator flow with conversation history and event bridge
-func (po *PlannerOrchestrator) executeFlow(ctx context.Context, objective string, conversationHistory []llms.MessageContent, eventBridge mcpagent.AgentEventListener) (string, error) {
+func (po *PlannerOrchestrator) executeFlow(ctx context.Context, objective string, conversationHistory []llmtypes.MessageContent, eventBridge mcpagent.AgentEventListener) (string, error) {
 	// Set conversation history
 	po.conversationHistory = conversationHistory
 

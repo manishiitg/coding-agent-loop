@@ -6,12 +6,11 @@ import (
 	"strings"
 	"text/template"
 
+	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/prompts"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // PlanBreakdownAgent analyzes dependencies and creates independent steps for parallel execution
@@ -39,7 +38,7 @@ func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.Extende
 }
 
 // ExecuteStructured executes the plan breakdown agent and returns structured output
-func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (*BreakdownResponse, error) {
+func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*BreakdownResponse, error) {
 	// Define the JSON schema for breakdown analysis
 	schema := `{
 		"type": "object",
@@ -90,7 +89,7 @@ func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVa
 }
 
 // Execute executes the plan breakdown agent using the standard agent pattern
-func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error) {
+func (pba *PlanBreakdownAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
 	// This will automatically emit agent start/end events
 	return pba.ExecuteWithInputProcessor(ctx, templateVars, pba.breakdownInputProcessor, conversationHistory)

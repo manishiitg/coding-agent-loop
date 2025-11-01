@@ -3,17 +3,16 @@ package agents
 import (
 	"context"
 	"fmt"
+	"mcp-agent/agent_go/internal/llmtypes"
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/tmc/langchaingo/llms"
 )
 
 // OrchestratorAgent defines the interface for all orchestrator agents
 type OrchestratorAgent interface {
 	// Execute executes the agent with the given template variables and returns the result and updated conversation history
-	Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llms.MessageContent) (string, []llms.MessageContent, error)
+	Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error)
 
 	// GetType returns the agent type (planning, execution, validation, plan_organizer)
 	GetType() string

@@ -39,7 +39,7 @@ When an agent completes its conversation, it can now:
 ```go
 // Generic functions for type-safe structured output
 func AskStructured[T any](a *Agent, ctx context.Context, question string, schema T, schemaString string) (T, error)
-func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llms.MessageContent, schema T, schemaString string) (T, []llms.MessageContent, error)
+func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []llmtypes.MessageContent, schema T, schemaString string) (T, []llmtypes.MessageContent, error)
 ```
 
 **Note**: Functions instead of methods due to Go's constraint that methods cannot have type parameters.
@@ -77,7 +77,7 @@ func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []l
    - Moved and simplified `LangchaingoStructuredOutputGenerator`
    - Added `GenerateStructuredOutput` with schema string parameter
    - Enhanced prompt building with user-provided schemas
-   - Always uses `llms.WithJSONMode()` for consistent output
+   - Always uses `llmtypes.WithJSONMode()` for consistent output
 
 2. **`agent_go/pkg/mcpagent/agent.go`** ✅
    - Added `AskStructured[T]` and `AskWithHistoryStructured[T]` functions
@@ -160,7 +160,7 @@ func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []l
 1. **User-Controlled Schemas**: Users define exactly what they want, no hidden complexity
 2. **Simplified Architecture**: Removed problematic reflection-based schema generation
 3. **Direct Integration**: Schema strings embedded directly in LLM prompts
-4. **JSON Mode**: Always uses `llms.WithJSONMode()` for consistent output
+4. **JSON Mode**: Always uses `llmtypes.WithJSONMode()` for consistent output
 
 ### **What Was Avoided**
 1. **Complex Reflection**: No more infinite recursion or stack overflow issues

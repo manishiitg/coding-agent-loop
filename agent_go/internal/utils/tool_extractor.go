@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	llms "github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // SummarizeTools returns a human-readable summary string of the available tools.
 // The summary lists each tool's name, description, and function signature (parameters).
-func SummarizeTools(tools []llms.Tool) string {
+func SummarizeTools(tools []llmtypes.Tool) string {
 	if len(tools) == 0 {
 		return "No tools available"
 	}

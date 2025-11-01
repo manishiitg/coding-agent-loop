@@ -129,7 +129,7 @@ wrapper, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer
 ```go
 // Conversation history stored independently of agent configuration
 type StreamingAPI struct {
-    conversationHistory   map[string][]llms.MessageContent
+    conversationHistory   map[string][]llmtypes.MessageContent
     conversationMux       sync.RWMutex
     // ... other fields
 }

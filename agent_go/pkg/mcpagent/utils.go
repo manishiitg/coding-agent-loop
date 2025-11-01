@@ -15,7 +15,7 @@ import (
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/pkg/mcpagent/prompt"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // IsReActCompletion checks if the response contains ReAct completion patterns.
@@ -62,7 +62,7 @@ func TruncateString(s string, maxLen int) string {
 }
 
 // extractUsageMetrics extracts token usage metrics from an LLM response.
-func extractUsageMetrics(resp *llms.ContentResponse) observability.UsageMetrics {
+func extractUsageMetrics(resp *llmtypes.ContentResponse) observability.UsageMetrics {
 	if resp == nil || len(resp.Choices) == 0 {
 		return observability.UsageMetrics{}
 	}
@@ -109,7 +109,7 @@ func extractUsageMetrics(resp *llms.ContentResponse) observability.UsageMetrics 
 }
 
 // extractUsageMetricsWithMessages extracts token usage with improved input token estimation
-func extractUsageMetricsWithMessages(resp *llms.ContentResponse, messages []llms.MessageContent) observability.UsageMetrics {
+func extractUsageMetricsWithMessages(resp *llmtypes.ContentResponse, messages []llmtypes.MessageContent) observability.UsageMetrics {
 	// Get base usage metrics
 	usage := extractUsageMetrics(resp)
 
@@ -126,7 +126,7 @@ func extractUsageMetricsWithMessages(resp *llms.ContentResponse, messages []llms
 }
 
 // estimateInputTokens estimates input tokens from conversation messages
-func estimateInputTokens(messages []llms.MessageContent) int {
+func estimateInputTokens(messages []llmtypes.MessageContent) int {
 	if len(messages) == 0 {
 		return 0
 	}
@@ -134,7 +134,7 @@ func estimateInputTokens(messages []llms.MessageContent) int {
 	totalChars := 0
 	for _, msg := range messages {
 		for _, part := range msg.Parts {
-			if textPart, ok := part.(llms.TextContent); ok {
+			if textPart, ok := part.(llmtypes.TextContent); ok {
 				totalChars += len(textPart.Text)
 			}
 		}

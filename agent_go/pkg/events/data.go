@@ -8,7 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/utils"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // AgentEventType represents the type of event in the agent flow
@@ -130,8 +130,8 @@ type ToolInfo struct {
 	Server      string `json:"server"`
 }
 
-// ConvertToolsToToolInfo converts llms.Tool to ToolInfo slice
-func ConvertToolsToToolInfo(tools []llms.Tool, toolToServer map[string]string) []ToolInfo {
+// ConvertToolsToToolInfo converts llmtypes.Tool to ToolInfo slice
+func ConvertToolsToToolInfo(tools []llmtypes.Tool, toolToServer map[string]string) []ToolInfo {
 	var toolInfos []ToolInfo
 	for _, tool := range tools {
 		serverName := "unknown"
@@ -169,8 +169,8 @@ func (e *ConversationTurnEvent) GetEventType() EventType {
 	return ConversationTurn
 }
 
-// serializeMessage converts llms.MessageContent to SerializedMessage
-func serializeMessage(msg llms.MessageContent) SerializedMessage {
+// serializeMessage converts llmtypes.MessageContent to SerializedMessage
+func serializeMessage(msg llmtypes.MessageContent) SerializedMessage {
 	serialized := SerializedMessage{
 		Role:  string(msg.Role),
 		Parts: []MessagePart{},
@@ -181,21 +181,20 @@ func serializeMessage(msg llms.MessageContent) SerializedMessage {
 			messagePart := MessagePart{}
 
 			switch p := part.(type) {
-			case llms.TextContent:
+			case llmtypes.TextContent:
 				messagePart.Type = "text"
 				messagePart.Content = p.Text
-			case llms.ToolCall:
+			case llmtypes.ToolCall:
 				messagePart.Type = "tool_call"
 				messagePart.Content = map[string]interface{}{
 					"id":            p.ID,
 					"function_name": p.FunctionCall.Name,
 					"function_args": p.FunctionCall.Arguments,
 				}
-			case llms.ToolCallResponse:
+			case llmtypes.ToolCallResponse:
 				messagePart.Type = "tool_response"
 				messagePart.Content = map[string]interface{}{
 					"tool_call_id": p.ToolCallID,
-					"name":         p.Name,
 					"content":      p.Content,
 				}
 			default:
@@ -716,12 +715,12 @@ func NewConversationErrorEvent(question, error string, turn int, context string,
 }
 
 // NewConversationTurnEvent creates a new ConversationTurnEvent
-func NewConversationTurnEvent(turn int, question string, messagesCount int, hasToolCalls bool, toolCallsCount int, tools []ToolInfo, messages []llms.MessageContent) *ConversationTurnEvent {
-	// Convert llms.MessageContent to SerializedMessage, filtering out system messages
+func NewConversationTurnEvent(turn int, question string, messagesCount int, hasToolCalls bool, toolCallsCount int, tools []ToolInfo, messages []llmtypes.MessageContent) *ConversationTurnEvent {
+	// Convert llmtypes.MessageContent to SerializedMessage, filtering out system messages
 	var serializedMessages []SerializedMessage
 	for _, msg := range messages {
 		// Skip system messages
-		if msg.Role == llms.ChatMessageTypeSystem {
+		if msg.Role == llmtypes.ChatMessageTypeSystem {
 			continue
 		}
 		serializedMessages = append(serializedMessages, serializeMessage(msg))

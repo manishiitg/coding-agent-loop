@@ -14,7 +14,7 @@ import (
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/mcpagent"
 
-	"github.com/tmc/langchaingo/llms"
+	"mcp-agent/agent_go/internal/llmtypes"
 )
 
 // agentCmd represents the agent test command
@@ -37,7 +37,7 @@ Streaming Options:
   --streaming         Enable streaming test (default false)
   --true-streaming    Use true LLM streaming vs simulated chunking
 
-True streaming uses llms.WithStreamingFunc to get real-time chunks as
+True streaming uses llmtypes.WithStreamingFunc to get real-time chunks as
 the LLM generates them, providing immediate feedback and lower latency.
 
 Examples:
@@ -459,14 +459,14 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 		}()
 
 		systemPrompt := "You are an AI agent. Answer as helpfully as possible."
-		messageHistory := []llms.MessageContent{
+		messageHistory := []llmtypes.MessageContent{
 			{
-				Role:  llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{llms.TextContent{Text: systemPrompt}},
+				Role:  llmtypes.ChatMessageTypeSystem,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}},
 			},
 			{
-				Role:  llms.ChatMessageTypeHuman,
-				Parts: []llms.ContentPart{llms.TextContent{Text: "List the files in the current directory."}},
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "List the files in the current directory."}},
 			},
 		}
 
@@ -478,16 +478,16 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 		logger.Info("🤖 Agent", map[string]interface{}{"message": resp1})
 
 		// Add assistant reply to history
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{llms.TextContent{Text: resp1}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: resp1}},
 		})
 
 		// User follow-up
 		followup := "Now summarize the largest file."
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: followup}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: followup}},
 		})
 		logger.Info("👤 User", map[string]interface{}{"message": followup})
 		resp2, err := filesystemWrapper.InvokeWithHistory(context.Background(), messageHistory)
@@ -497,16 +497,16 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 		logger.Info("🤖 Agent", map[string]interface{}{"message": resp2})
 
 		// Add assistant reply to history
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeAI,
-			Parts: []llms.ContentPart{llms.TextContent{Text: resp2}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: resp2}},
 		})
 
 		// User clarification
 		clarification := "By 'largest', I mean the file with the most lines."
-		messageHistory = append(messageHistory, llms.MessageContent{
-			Role:  llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{llms.TextContent{Text: clarification}},
+		messageHistory = append(messageHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: clarification}},
 		})
 		logger.Info("👤 User", map[string]interface{}{"message": clarification})
 		resp3, err := filesystemWrapper.InvokeWithHistory(context.Background(), messageHistory)

@@ -249,6 +249,7 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 	}
 
 	// Get sessions with summary data
+	//nolint:gosec // G202: whereClause is validated and uses parameterized queries (?)
 	query := `
 		SELECT 
 			cs.id,

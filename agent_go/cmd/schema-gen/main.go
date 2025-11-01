@@ -165,6 +165,7 @@ func writeSchema(filename string, v any) error {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
+	//nolint:gosec // G304: filename comes from command-line/config, not user input
 	f, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", filename, err)

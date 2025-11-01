@@ -442,6 +442,51 @@ The 3-agent orchestrator integrates with **12+ MCP servers** across multiple pro
 
 ## Development
 
+### Code Linting
+
+This project uses [golangci-lint](https://golangci-lint.run/) for code quality and style enforcement.
+
+#### Installation
+
+```bash
+# Install golangci-lint (if not already installed)
+make install-linter
+
+# Or install manually
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin latest
+```
+
+#### Running the Linter
+
+```bash
+# Run linter to check code quality
+make lint
+
+# Run linter with auto-fix for issues that can be automatically fixed
+make lint-fix
+
+# Or run directly
+golangci-lint run ./...
+```
+
+#### Configuration
+
+The linter configuration is in `.golangci.yml`. Key features:
+- **Enabled Linters**: 50+ linters including gofmt, govet, staticcheck, gosec, and more
+- **Exclusions**: Test files have relaxed rules, cache/bin directories are excluded
+- **Auto-fix**: Many formatting issues can be automatically fixed
+- **Performance**: Configured with 5-minute timeout and caching
+
+#### Pre-commit Integration
+
+Consider adding linting to your git workflow:
+
+```bash
+# Add to .git/hooks/pre-commit
+#!/bin/sh
+make lint
+```
+
 ### Running Tests
 
 ```bash
@@ -450,6 +495,9 @@ go test ./cmd -v
 
 # Include integration tests (requires MCP servers)
 go test ./cmd -v -timeout 60s
+
+# Or use make
+make test
 ```
 
 ### Project Structure

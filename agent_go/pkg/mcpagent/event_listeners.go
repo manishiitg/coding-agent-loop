@@ -2,7 +2,6 @@ package mcpagent
 
 import (
 	"context"
-	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/pkg/events"
 	"sync"
 
@@ -13,7 +12,6 @@ import (
 type AgentEventDispatcher struct {
 	listeners []AgentEventListener
 	mu        sync.RWMutex
-	tracer    observability.Tracer
 	logger    util.Logger
 }
 

@@ -95,7 +95,7 @@ This test demonstrates:
 
 		agent, err := external.NewAgent(ctx, agentConfig)
 		if err != nil {
-			return fmt.Errorf("failed to create agent: %v", err)
+			return fmt.Errorf("failed to create agent: %w", err)
 		}
 
 		// Now register the weather tool directly with the external agent
@@ -144,8 +144,8 @@ This test demonstrates:
 
 		response, err := agent.Invoke(ctx, weatherQuestion)
 		if err != nil {
-			logger.Errorf("❌ Weather tool test failed: %v", err)
-			return fmt.Errorf("weather tool test failed: %v", err)
+			logger.Errorf("❌ Weather tool test failed: %w", err)
+			return fmt.Errorf("weather tool test failed: %w", err)
 		}
 
 		logger.Infof("✅ Weather tool test successful")
@@ -165,7 +165,7 @@ This test demonstrates:
 
 		// Close the agent
 		if err := agent.Close(); err != nil {
-			logger.Errorf("Failed to close agent: %v", err)
+			logger.Errorf("Failed to close agent: %w", err)
 		}
 
 		logger.Infof("✅ Custom tools test completed successfully")

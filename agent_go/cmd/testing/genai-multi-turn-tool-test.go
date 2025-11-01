@@ -73,7 +73,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 		Logger:      logger,
 	})
 	if err != nil {
-		log.Printf("❌ Failed to create Google GenAI LLM: %v", err)
+		log.Printf("❌ Failed to create Google GenAI LLM: %w", err)
 		return
 	}
 
@@ -84,7 +84,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "calculate_math",
 				Description: "Perform basic arithmetic calculations",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"expression": map[string]interface{}{
@@ -93,7 +93,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"expression"},
-				},
+				}),
 			},
 		},
 		{
@@ -101,7 +101,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather information for a location",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"location": map[string]interface{}{
@@ -110,7 +110,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"location"},
-				},
+				}),
 			},
 		},
 		{
@@ -118,7 +118,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "search_knowledge",
 				Description: "Search for information on a given topic",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"query": map[string]interface{}{
@@ -127,7 +127,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"query"},
-				},
+				}),
 			},
 		},
 	}
@@ -154,7 +154,7 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 func executeMockToolGenAI(toolName string, argumentsJSON string) string {
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
-		return fmt.Sprintf("Error parsing arguments: %v", err)
+		return fmt.Sprintf("Error parsing arguments: %w", err)
 	}
 
 	switch toolName {
@@ -236,10 +236,15 @@ func testSequentialToolCallsGenAI(llm llmtypes.Model, tools []llmtypes.Tool, max
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-				}
+			var input, output int
+			if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
 			}
 		}
 
@@ -328,10 +333,15 @@ func testParallelToolCallsGenAI(llm llmtypes.Model, tools []llmtypes.Tool, maxTu
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-				}
+			var input, output int
+			if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
 			}
 		}
 
@@ -420,10 +430,15 @@ func testMultiStepReasoningGenAI(llm llmtypes.Model, tools []llmtypes.Tool, maxT
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-				}
+			var input, output int
+			if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
 			}
 		}
 

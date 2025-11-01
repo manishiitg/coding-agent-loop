@@ -13,6 +13,7 @@ import (
 	"mcp-agent/agent_go/internal/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/sirupsen/logrus"
 )
 
 // CachedConnectionResult represents the result of a cached or fresh MCP connection
@@ -132,6 +133,22 @@ type ServerCacheStatus struct {
 	Age            string `json:"age,omitempty"`    // For cache hits
 	Reason         string `json:"reason,omitempty"` // For cache misses
 	Error          string `json:"error,omitempty"`  // For cache errors
+}
+
+// DuplicateToolFields represents typed fields for duplicate tool warning logs
+type DuplicateToolFields struct {
+	ToolName        string
+	ExistingServer  string
+	DuplicateServer string
+}
+
+// ToLogrusFields converts DuplicateToolFields to logrus.Fields for structured logging
+func (f DuplicateToolFields) ToLogrusFields() logrus.Fields {
+	return logrus.Fields{
+		"tool_name":        f.ToolName,
+		"existing_server":  f.ExistingServer,
+		"duplicate_server": f.DuplicateServer,
+	}
 }
 
 // Individual cache event interface implementations removed
@@ -557,11 +574,12 @@ func processCachedData(
 			if seenTools[toolName] {
 				// Duplicate tool found - log warning and skip
 				existingServer := result.ToolToServer[toolName]
-				logger.Warn("⚠️ Duplicate tool detected in cache, skipping", map[string]interface{}{
-					"tool_name":        toolName,
-					"existing_server":  existingServer,
-					"duplicate_server": srvName,
-				})
+				fields := DuplicateToolFields{
+					ToolName:        toolName,
+					ExistingServer:  existingServer,
+					DuplicateServer: srvName,
+				}
+				logger.WithFields(fields.ToLogrusFields()).Warn("⚠️ Duplicate tool detected in cache, skipping")
 				continue
 			}
 
@@ -743,11 +761,12 @@ func performOriginalConnectionLogic(
 			if seenTools[toolName] {
 				// Duplicate tool found - log warning and skip
 				existingServer := toolToServer[toolName]
-				logger.Warn("⚠️ Duplicate tool detected, skipping", map[string]interface{}{
-					"tool_name":        toolName,
-					"existing_server":  existingServer,
-					"duplicate_server": srvName,
-				})
+				fields := DuplicateToolFields{
+					ToolName:        toolName,
+					ExistingServer:  existingServer,
+					DuplicateServer: srvName,
+				}
+				logger.WithFields(fields.ToLogrusFields()).Warn("⚠️ Duplicate tool detected, skipping")
 				continue
 			}
 
@@ -947,7 +966,7 @@ func ValidateCacheHealth(tracers []observability.Tracer, logger utils.ExtendedLo
 
 	// Cleanup expired entries
 	if err := cacheManager.Cleanup(); err != nil {
-		logger.Warnf("Cache cleanup failed: %v", err)
+		logger.Warnf("Cache cleanup failed: %w", err)
 	} else {
 		cleanupStats := cacheManager.GetStats()
 		logger.Infof("Cache cleanup completed: %d expired entries removed", cleanupStats["expired_entries"])
@@ -961,7 +980,7 @@ func ValidateServerCache(serverName, configPath string, tracers []observability.
 	// Get merged server config to generate cache key
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		logger.Warnf("Failed to load merged config for cache validation: %v", err)
+		logger.Warnf("Failed to load merged config for cache validation: %w", err)
 		return false
 	}
 
@@ -1003,7 +1022,7 @@ func GetCacheStatus(configPath string, tracers []observability.Tracer, logger ut
 	// Load merged config to get server list
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		logger.Warnf("Failed to load merged config for cache status: %v", err)
+		logger.Warnf("Failed to load merged config for cache status: %w", err)
 		return stats
 	}
 

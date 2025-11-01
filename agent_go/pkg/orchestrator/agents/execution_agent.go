@@ -50,13 +50,13 @@ func (ea *OrchestratorExecutionAgent) executionInputProcessor(templateVars map[s
 	// Parse and execute the template
 	tmpl, err := template.New("execution").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing execution template: %v", err)
+		return fmt.Sprintf("Error parsing execution template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing execution template: %v", err)
+		return fmt.Sprintf("Error executing execution template: %w", err)
 	}
 
 	return result.String()

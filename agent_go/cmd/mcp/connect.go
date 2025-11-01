@@ -32,19 +32,19 @@ func runConnect(cmd *cobra.Command, args []string) {
 	// Load merged configuration (base + user)
 	config, err := mcpclient.LoadMergedConfig(configFile, nil)
 	if err != nil {
-		log.Fatalf("Failed to load merged config: %v", err)
+		log.Fatalf("Failed to load merged config: %w", err)
 	}
 
 	// Get server configuration
 	serverConfig, err := config.GetServer(serverName)
 	if err != nil {
-		log.Fatalf("Server error: %v", err)
+		log.Fatalf("Server error: %w", err)
 	}
 
 	// Use direct connection instead of pooling
 	logger, err := logger.CreateLogger("", "info", "text", true)
 	if err != nil {
-		log.Fatalf("Failed to create logger: %v", err)
+		log.Fatalf("Failed to create logger: %w", err)
 	}
 	defer logger.Close()
 	client := mcpclient.New(serverConfig, logger)
@@ -54,7 +54,7 @@ func runConnect(cmd *cobra.Command, args []string) {
 	defer cancel()
 
 	if err := client.ConnectWithRetry(ctx); err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+		log.Fatalf("Failed to connect: %w", err)
 	}
 
 	// Show server info

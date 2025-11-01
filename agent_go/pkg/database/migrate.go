@@ -106,6 +106,7 @@ func (mr *MigrationRunner) loadMigrations(migrationsDir string) ([]Migration, er
 		name = filename[4 : len(filename)-4] // Remove "NNN_" prefix and ".sql" suffix
 
 		// Read SQL content from file
+		//nolint:gosec // G304: file path comes from reading migration directory, not user input
 		content, err := os.ReadFile(file)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read migration file %s: %w", file, err)

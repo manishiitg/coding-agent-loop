@@ -131,7 +131,7 @@ func (bo *BaseOrchestrator) emitEvent(ctx context.Context, eventType events.Even
 
 	// Emit through event bridge
 	if err := bo.contextAwareBridge.HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit event %s: %v", eventType, err)
+		bo.GetLogger().Warnf("⚠️ Failed to emit event %s: %w", eventType, err)
 	}
 }
 
@@ -192,7 +192,7 @@ func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agen
 
 	// Emit through event bridge directly
 	if err := bo.contextAwareBridge.HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit unified completion event: %v", err)
+		bo.GetLogger().Warnf("⚠️ Failed to emit unified completion event: %w", err)
 	}
 }
 
@@ -407,9 +407,15 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 		for _, tool := range customTools {
 			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
-				// Type assert parameters to map[string]interface{}
-				params, ok := tool.Function.Parameters.(map[string]interface{})
-				if !ok {
+				// Convert Parameters to map[string]interface{}
+				var params map[string]interface{}
+				if tool.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
+				}
+				if params == nil {
 					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
 					continue
 				}
@@ -495,9 +501,15 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 
 		for _, tool := range customTools {
 			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
-				// Type assert parameters to map[string]interface{}
-				params, ok := tool.Function.Parameters.(map[string]interface{})
-				if !ok {
+				// Convert Parameters to map[string]interface{}
+				var params map[string]interface{}
+				if tool.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
+				}
+				if params == nil {
 					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
 					continue
 				}
@@ -601,9 +613,15 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 
 		for _, tool := range customTools {
 			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
-				// Type assert parameters to map[string]interface{}
-				params, ok := tool.Function.Parameters.(map[string]interface{})
-				if !ok {
+				// Convert Parameters to map[string]interface{}
+				var params map[string]interface{}
+				if tool.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
+				}
+				if params == nil {
 					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
 					continue
 				}
@@ -710,9 +728,15 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServersAndSyste
 
 		for _, tool := range customTools {
 			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
-				// Type assert parameters to map[string]interface{}
-				params, ok := tool.Function.Parameters.(map[string]interface{})
-				if !ok {
+				// Convert Parameters to map[string]interface{}
+				var params map[string]interface{}
+				if tool.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
+				}
+				if params == nil {
 					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
 					continue
 				}
@@ -818,7 +842,7 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 			},
 			Turn:       0,
 			ToolName:   "read_workspace_file",
-			Error:      fmt.Sprintf("Failed to read file: %v", err),
+			Error:      fmt.Sprintf("Failed to read file: %w", err),
 			ServerName: "workspace",
 			Duration:   duration,
 		}
@@ -840,7 +864,7 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 			},
 			Turn:       0,
 			ToolName:   "read_workspace_file",
-			Error:      fmt.Sprintf("Failed to parse workspace response: %v", err),
+			Error:      fmt.Sprintf("Failed to parse workspace response: %w", err),
 			ServerName: "workspace",
 			Duration:   duration,
 		}
@@ -875,7 +899,7 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	}
 	resultJSON, err := json.Marshal(resultData)
 	if err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to marshal file result to JSON: %v", err)
+		bo.GetLogger().Warnf("⚠️ Failed to marshal file result to JSON: %w", err)
 		// Fallback to plain text if JSON marshaling fails
 		resultJSON = []byte(fileContent)
 	}
@@ -950,7 +974,7 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 
 	// Use the context-aware bridge to emit the event
 	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit human feedback event: %v", err)
+		bo.GetLogger().Warnf("⚠️ Failed to emit human feedback event: %w", err)
 	}
 
 	// Use HumanFeedbackStore to wait for response
@@ -1029,7 +1053,7 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	}
 
 	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit yes/no feedback event: %v", err)
+		bo.GetLogger().Warnf("⚠️ Failed to emit yes/no feedback event: %w", err)
 	}
 
 	// Wait for response
@@ -1108,7 +1132,7 @@ func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
 	}
 
 	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit three-choice feedback event: %v", err)
+		bo.GetLogger().Warnf("⚠️ Failed to emit three-choice feedback event: %w", err)
 	}
 
 	// Wait for response
@@ -1215,7 +1239,7 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 			},
 			Turn:       0,
 			ToolName:   "update_workspace_file",
-			Error:      fmt.Sprintf("Failed to write file: %v", err),
+			Error:      fmt.Sprintf("Failed to write file: %w", err),
 			ServerName: "workspace",
 			Duration:   duration,
 		}
@@ -1316,7 +1340,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 			},
 			Turn:       0,
 			ToolName:   "delete_workspace_file",
-			Error:      fmt.Sprintf("Failed to delete file: %v", err),
+			Error:      fmt.Sprintf("Failed to delete file: %w", err),
 			ServerName: "workspace",
 			Duration:   duration,
 		}

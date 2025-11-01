@@ -30,8 +30,6 @@ type BaseEventBridge struct {
 
 // HandleEvent processes events and converts them to server events
 func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.AgentEvent) error {
-	b.Logger.Infof("[%s EVENT BRIDGE] Processing %s event: %s", b.BridgeName, event.Type, event.Type)
-
 	// Create server event with typed AgentEvent data directly - no conversion needed!
 	serverEvent := events.Event{
 		ID:        fmt.Sprintf("%s_%s_%d", b.BridgeName, event.Type, time.Now().UnixNano()),
@@ -77,14 +75,10 @@ func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.Agen
 		}
 
 		// Store in database using the session ID (same as chat session)
-		b.Logger.Infof("[%s EVENT BRIDGE] DEBUG: Using sessionID=%s for database storage (observerID=%s)", b.BridgeName, b.SessionID, b.ObserverID)
 		if err := b.ChatDB.StoreEvent(ctx, b.SessionID, agentEvent); err != nil {
-			b.Logger.Errorf("[%s EVENT BRIDGE] Failed to store event in database: %v", b.BridgeName, err)
-		} else {
-			b.Logger.Infof("[%s EVENT BRIDGE] Stored event %s in database for chat history (hierarchy: %d, component: %s)", b.BridgeName, event.Type, hierarchyLevel, component)
+			// Error storing event in database - continue execution
 		}
 	}
 
-	b.Logger.Infof("[%s EVENT BRIDGE] Successfully bridged %s event: %s (typed data preserved)", b.BridgeName, b.BridgeName, event.Type)
 	return nil
 }

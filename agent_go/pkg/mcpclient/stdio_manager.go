@@ -1,13 +1,9 @@
 package mcpclient
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"sync"
-	"time"
 
 	"mcp-agent/agent_go/internal/utils"
 
@@ -22,7 +18,6 @@ type StdioManager struct {
 	logger    utils.ExtendedLogger
 	pool      *StdioConnectionPool
 	serverKey string
-	mutex     sync.RWMutex
 }
 
 // Global connection pool for stdio connections
@@ -67,7 +62,7 @@ func (s *StdioManager) CreateClient() (*client.Client, error) {
 	// Use NewStdioMCPClient which auto-starts the connection
 	mcpClient, err := client.NewStdioMCPClient(s.command, s.env, s.args...)
 	if err != nil {
-		s.logger.Errorf("❌ [STDIO DEBUG] Failed to create stdio client: %v", err)
+		s.logger.Errorf("❌ [STDIO DEBUG] Failed to create stdio client: %w", err)
 		return nil, fmt.Errorf("failed to create stdio client: %w", err)
 	}
 	s.logger.Infof("✅ [STDIO DEBUG] Stdio client created successfully")
@@ -107,90 +102,6 @@ func StopGlobalPool() {
 	}
 }
 
-// testNPXCommand tests the NPX command separately to capture its output
-func (s *StdioManager) testNPXCommand() error {
-	s.logger.Infof("🔧 [NPX TEST] Testing NPX command: %s %v", s.command, s.args)
-
-	// Create a test context with longer timeout
-	testCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-
-	// Create the command
-	cmd := exec.CommandContext(testCtx, s.command, s.args...)
-	cmd.Env = append(os.Environ(), s.env...)
-
-	// Capture stdout and stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
-	// Start the process
-	startTime := time.Now()
-	s.logger.Infof("🔧 [NPX TEST] Starting NPX process at %v", startTime)
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start NPX process: %w", err)
-	}
-
-	// Read output in real-time with larger buffer for large outputs
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		// Increase buffer size to handle large outputs (1MB buffer)
-		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			s.logger.Infof("🔧 [NPX TEST STDOUT] %s", line)
-		}
-		if err := scanner.Err(); err != nil {
-			s.logger.Errorf("❌ [NPX TEST STDOUT] Scanner error: %v", err)
-		}
-	}()
-
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		// Increase buffer size to handle large outputs (1MB buffer)
-		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			s.logger.Infof("🔧 [NPX TEST STDERR] %s", line)
-		}
-		if err := scanner.Err(); err != nil {
-			s.logger.Errorf("❌ [NPX TEST STDERR] Scanner error: %v", err)
-		}
-	}()
-
-	// Wait for the process to complete or timeout
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		duration := time.Since(startTime)
-		if err != nil {
-			s.logger.Errorf("❌ [NPX TEST] Process failed after %v: %v", duration, err)
-			return fmt.Errorf("NPX process failed: %w", err)
-		}
-		s.logger.Infof("✅ [NPX TEST] Process completed successfully in %v", duration)
-		return nil
-
-	case <-testCtx.Done():
-		duration := time.Since(startTime)
-		s.logger.Errorf("❌ [NPX TEST] Process timed out after %v: %v", duration, testCtx.Err())
-		cmd.Process.Kill()
-		return fmt.Errorf("NPX process timed out: %w", testCtx.Err())
-	}
-}
-
 // Connect creates and starts a stdio client with connection pooling
 func (s *StdioManager) Connect(ctx context.Context) (*client.Client, error) {
 	s.logger.Infof("🔧 [STDIO DEBUG] Starting stdio connection process with pooling...")
@@ -198,7 +109,7 @@ func (s *StdioManager) Connect(ctx context.Context) (*client.Client, error) {
 	// Use connection pool to get or create a connection
 	mcpClient, err := s.pool.GetConnection(ctx, s.serverKey, s.command, s.args, s.env)
 	if err != nil {
-		s.logger.Errorf("❌ [STDIO DEBUG] Failed to get stdio connection from pool: %v", err)
+		s.logger.Errorf("❌ [STDIO DEBUG] Failed to get stdio connection from pool: %w", err)
 		return nil, fmt.Errorf("failed to get stdio connection from pool: %w", err)
 	}
 

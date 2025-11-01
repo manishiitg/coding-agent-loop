@@ -50,7 +50,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "add_memory",
 			Description: "Store important information in knowledge graph for future reference.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"name": map[string]interface{}{
@@ -72,7 +72,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"name", "content", "source_description"},
-			},
+			}),
 		},
 	}
 	memoryTools = append(memoryTools, addMemoryTool)
@@ -83,7 +83,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "search_memory",
 			Description: "Search knowledge graph for relevant past information and context.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"query": map[string]interface{}{
@@ -98,7 +98,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"query"},
-			},
+			}),
 		},
 	}
 	memoryTools = append(memoryTools, searchEpisodesTool)
@@ -109,7 +109,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "delete_memory",
 			Description: "Delete outdated or incorrect memories from the knowledge graph.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"episode_uuid": map[string]interface{}{
@@ -122,7 +122,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"episode_uuid"},
-			},
+			}),
 		},
 	}
 	memoryTools = append(memoryTools, deleteMemoryTool)

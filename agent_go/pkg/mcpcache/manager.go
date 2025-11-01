@@ -381,7 +381,7 @@ func (cm *CacheManager) loadExistingCache() {
 	files, err := os.ReadDir(cm.cacheDir)
 	if err != nil {
 		if cm.logger != nil {
-			cm.logger.Debugf("Cache directory does not exist or cannot be read: %v", err)
+			cm.logger.Debugf("Cache directory does not exist or cannot be read: %w", err)
 		}
 		return
 	}
@@ -435,6 +435,7 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 
 // loadFromFile loads a cache entry from the filesystem
 func (cm *CacheManager) loadFromFile(cacheFile string) *CacheEntry {
+	//nolint:gosec // G304: cacheFile path is generated internally from validated inputs
 	data, err := os.ReadFile(cacheFile)
 	if err != nil {
 		if cm.logger != nil {

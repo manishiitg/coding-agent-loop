@@ -50,13 +50,13 @@ func (va *OrchestratorValidationAgent) validationInputProcessor(templateVars map
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing validation template: %v", err)
+		return fmt.Sprintf("Error parsing validation template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing validation template: %v", err)
+		return fmt.Sprintf("Error executing validation template: %w", err)
 	}
 
 	return result.String()

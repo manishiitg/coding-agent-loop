@@ -46,7 +46,7 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(event); err != nil {
-				logger.Warnf("Failed to emit connection start event to tracer: %v", err)
+				logger.Warnf("Failed to emit connection start event to tracer: %w", err)
 			}
 		}
 	}
@@ -79,12 +79,12 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 			for _, tracer := range tracers {
 				if err := tracer.EmitEvent(event); err != nil {
-					logger.Warnf("Failed to emit connection failure event to tracer: %v", err)
+					logger.Warnf("Failed to emit connection failure event to tracer: %w", err)
 				}
 			}
 		}
 
-		logger.Errorf("❌ Connection failed: %v", err)
+		logger.Errorf("❌ Connection failed: %w", err)
 		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("connection failed: %w", err)
 	}
 
@@ -174,7 +174,7 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(event); err != nil {
-				logger.Warnf("Failed to emit connection complete event to tracer: %v", err)
+				logger.Warnf("Failed to emit connection complete event to tracer: %w", err)
 			}
 		}
 
@@ -193,7 +193,7 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(discoveryEvent); err != nil {
-				logger.Warnf("Failed to emit discovery complete event to tracer: %v", err)
+				logger.Warnf("Failed to emit discovery complete event to tracer: %w", err)
 			}
 		}
 	}

@@ -12,6 +12,56 @@ import (
 	"mcp-agent/agent_go/internal/utils"
 )
 
+// mapToParameters converts a map[string]interface{} to a *llmtypes.Parameters struct.
+// This helper function is used to convert normalized maps back to typed Parameters.
+func mapToParameters(paramsMap map[string]interface{}) *llmtypes.Parameters {
+	if paramsMap == nil {
+		return nil
+	}
+
+	params := &llmtypes.Parameters{}
+	if typ, ok := paramsMap["type"].(string); ok {
+		params.Type = typ
+	}
+	if properties, ok := paramsMap["properties"].(map[string]interface{}); ok {
+		params.Properties = properties
+	}
+	if required, ok := paramsMap["required"].([]interface{}); ok {
+		requiredStr := make([]string, 0, len(required))
+		for _, r := range required {
+			if s, ok := r.(string); ok {
+				requiredStr = append(requiredStr, s)
+			}
+		}
+		params.Required = requiredStr
+	}
+	if additionalProps, ok := paramsMap["additionalProperties"]; ok {
+		params.AdditionalProperties = additionalProps
+	}
+	if patternProps, ok := paramsMap["patternProperties"].(map[string]interface{}); ok {
+		params.PatternProperties = patternProps
+	}
+	if minProps, ok := paramsMap["minProperties"].(float64); ok {
+		min := int(minProps)
+		params.MinProperties = &min
+	}
+	if maxProps, ok := paramsMap["maxProperties"].(float64); ok {
+		max := int(maxProps)
+		params.MaxProperties = &max
+	}
+	// Store any additional fields
+	params.Additional = make(map[string]interface{})
+	for k, v := range paramsMap {
+		switch k {
+		case "type", "properties", "required", "additionalProperties", "patternProperties", "minProperties", "maxProperties":
+			// Already handled
+		default:
+			params.Additional[k] = v
+		}
+	}
+	return params
+}
+
 // normalizeArrayParameters recursively normalizes JSON Schema properties to ensure
 // all array types have an 'items' field (required by Gemini and some other LLM providers).
 // This function fixes array parameters that are missing the items field by defaulting to string type.
@@ -64,71 +114,57 @@ func NormalizeLLMTools(tools []llmtypes.Tool) {
 				paramsBytes = paramsBytes[:200]
 			}
 
-			// Handle different parameter types
-			switch params := tools[i].Function.Parameters.(type) {
-			case map[string]interface{}:
-				// CRITICAL: Use JSON round-trip to ensure structure is preserved for llmtypes
-				// llmtypes conversion may lose nested map structure during processing
-				paramsBytes, err := json.Marshal(params)
-				if err == nil {
-					var normalizedParams map[string]interface{}
-					if err := json.Unmarshal(paramsBytes, &normalizedParams); err == nil {
-						// Debug: Check for specific problematic properties
-						if props, ok := normalizedParams["properties"].(map[string]interface{}); ok {
-							for propName := range props {
-								if propName == "assignees" || propName == "labels" || propName == "files" || propName == "reviewers" {
-									prop := props[propName]
-									if propMap, ok := prop.(map[string]interface{}); ok {
-										propType := propMap["type"]
-										hasItems := propMap["items"] != nil
-										fmt.Printf("[TOOL_NORMALIZE] Tool %s.%s: type=%v, hasItems=%v\n", toolName, propName, propType, hasItems)
-									}
-								}
-							}
-						}
-						beforeFix := countMissingItems(normalizedParams)
-						totalMissing += beforeFix
-						if beforeFix > 0 {
-							fmt.Printf("[TOOL_NORMALIZE] Tool %s has %d missing items fields\n", toolName, beforeFix)
-						}
-						normalizeArrayParameters(normalizedParams)
-						afterFix := countMissingItems(normalizedParams)
-						totalFixed += (beforeFix - afterFix)
-						if afterFix < beforeFix {
-							fixedCount++
-							fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s: %d -> %d missing items\n", toolName, beforeFix, afterFix)
-						}
-						// CRITICAL: Replace Parameters with normalized version from JSON round-trip
-						// This ensures the structure is preserved when llmtypes processes it
-						tools[i].Function.Parameters = normalizedParams
-					}
+			// Handle different parameter types - convert to map for normalization
+			var paramsMap map[string]interface{}
+			var err error
+
+			// Parameters is now *llmtypes.Parameters, so convert it to map for normalization
+			if tools[i].Function.Parameters != nil {
+				// Convert Parameters struct to map via JSON
+				paramsBytes, marshalErr := json.Marshal(tools[i].Function.Parameters)
+				if marshalErr != nil {
+					fmt.Printf("[TOOL_NORMALIZE] Failed to marshal Parameters for tool %s: %v\n", toolName, marshalErr)
+					continue
 				}
-			default:
-				// If Parameters is not a map, try to convert it
-				// This can happen when Parameters is stored in different formats
-				fmt.Printf("[TOOL_NORMALIZE] Tool %s has Parameters type: %T (not map[string]interface{})\n", toolName, params)
-				paramsBytes, err := json.Marshal(params)
-				if err == nil {
-					var paramsMap map[string]interface{}
-					if err := json.Unmarshal(paramsBytes, &paramsMap); err == nil {
-						beforeFix := countMissingItems(paramsMap)
-						totalMissing += beforeFix
-						normalizeArrayParameters(paramsMap)
-						afterFix := countMissingItems(paramsMap)
-						totalFixed += (beforeFix - afterFix)
-						if afterFix < beforeFix {
-							fixedCount++
-							fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s (converted): %d -> %d missing items\n", toolName, beforeFix, afterFix)
+				if err = json.Unmarshal(paramsBytes, &paramsMap); err != nil {
+					fmt.Printf("[TOOL_NORMALIZE] Failed to unmarshal Parameters for tool %s: %v\n", toolName, err)
+					continue
+				}
+			} else {
+				fmt.Printf("[TOOL_NORMALIZE] Tool %s has nil Parameters, skipping\n", toolName)
+				continue
+			}
+
+			// Debug: Check for specific problematic properties
+			if props, ok := paramsMap["properties"].(map[string]interface{}); ok {
+				for propName := range props {
+					if propName == "assignees" || propName == "labels" || propName == "files" || propName == "reviewers" {
+						prop := props[propName]
+						if propMap, ok := prop.(map[string]interface{}); ok {
+							propType := propMap["type"]
+							hasItems := propMap["items"] != nil
+							fmt.Printf("[TOOL_NORMALIZE] Tool %s.%s: type=%v, hasItems=%v\n", toolName, propName, propType, hasItems)
 						}
-						// Update the Parameters with normalized version
-						tools[i].Function.Parameters = paramsMap
-					} else {
-						fmt.Printf("[TOOL_NORMALIZE] Failed to unmarshal Parameters for tool %s: %v\n", toolName, err)
 					}
-				} else {
-					fmt.Printf("[TOOL_NORMALIZE] Failed to marshal Parameters for tool %s: %v\n", toolName, err)
 				}
 			}
+
+			beforeFix := countMissingItems(paramsMap)
+			totalMissing += beforeFix
+			if beforeFix > 0 {
+				fmt.Printf("[TOOL_NORMALIZE] Tool %s has %d missing items fields\n", toolName, beforeFix)
+			}
+			normalizeArrayParameters(paramsMap)
+			afterFix := countMissingItems(paramsMap)
+			totalFixed += (beforeFix - afterFix)
+			if afterFix < beforeFix {
+				fixedCount++
+				fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s: %d -> %d missing items\n", toolName, beforeFix, afterFix)
+			}
+
+			// CRITICAL: Convert normalized map back to Parameters struct
+			// This ensures the structure is preserved when llmtypes processes it
+			tools[i].Function.Parameters = mapToParameters(paramsMap)
 		}
 	}
 	if totalMissing > 0 {
@@ -171,14 +207,14 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llmtypes.Tool, error) {
 		}
 
 		// Only add properties if they exist and are not empty
-		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
+		if len(tool.InputSchema.Properties) > 0 {
 			schema["properties"] = tool.InputSchema.Properties
 		} else {
 			schema["properties"] = map[string]interface{}{}
 		}
 
 		// Only add required if they exist and are not empty
-		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
+		if len(tool.InputSchema.Required) > 0 {
 			schema["required"] = tool.InputSchema.Required
 		} else {
 			schema["required"] = []string{}
@@ -195,7 +231,7 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llmtypes.Tool, error) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        tool.Name,
 				Description: tool.Description,
-				Parameters:  schema, // Now properly formatted JSON Schema
+				Parameters:  mapToParameters(schema), // Now properly formatted JSON Schema
 			},
 		}
 	}
@@ -215,7 +251,7 @@ func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llmtypes.Tool, error) {
 		}
 
 		// Only add properties if they exist and are not empty
-		if toolDetail.Parameters != nil && len(toolDetail.Parameters) > 0 {
+		if len(toolDetail.Parameters) > 0 {
 			schema["properties"] = toolDetail.Parameters
 		} else {
 			schema["properties"] = map[string]interface{}{}
@@ -239,7 +275,7 @@ func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llmtypes.Tool, error) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        toolDetail.Name,
 				Description: toolDetail.Description,
-				Parameters:  schema, // Now properly formatted JSON Schema
+				Parameters:  mapToParameters(schema), // Now properly formatted JSON Schema
 			},
 		}
 	}
@@ -319,34 +355,6 @@ func ToolResultAsString(result *mcp.CallToolResult, logger utils.ExtendedLogger)
 	return joined
 }
 
-// extractErrorMessage extracts error message from content array
-func extractErrorMessage(content []mcp.Content) string {
-	var errorParts []string
-	for _, c := range content {
-		if textContent, ok := c.(*mcp.TextContent); ok {
-			errorParts = append(errorParts, textContent.Text)
-		}
-	}
-	if len(errorParts) > 0 {
-		// Join all error parts and preserve the detailed error message
-		detailedError := strings.Join(errorParts, " ")
-
-		// Check if this is a command execution error with exit status
-		if strings.Contains(detailedError, "exit status") {
-			return detailedError
-		}
-
-		// Check if this contains usage/help information
-		if strings.Contains(detailedError, "usage:") || strings.Contains(detailedError, "Invalid choice") {
-			return detailedError
-		}
-
-		// For other errors, preserve the full message
-		return detailedError
-	}
-	return "Unknown error"
-}
-
 // formatResourceContents formats resource contents for display
 func formatResourceContents(resource mcp.ResourceContents) string {
 	switch r := resource.(type) {
@@ -374,27 +382,6 @@ func ParseToolArguments(argsJSON string) (map[string]interface{}, error) {
 	}
 
 	return args, nil
-}
-
-// extractTextFromJSON extracts the actual text content from JSON structure
-func extractTextFromJSON(text string) string {
-	// Check if the text starts with JSON structure like {"type":"text","text":"content"}
-	if strings.HasPrefix(text, `{"type":"text","text":"`) {
-		// Find the closing quote and brace
-		startIndex := len(`{"type":"text","text":"`)
-		endIndex := strings.LastIndex(text, `"}`)
-		if endIndex > startIndex {
-			// Extract the content between the quotes
-			content := text[startIndex:endIndex]
-			// Unescape the content
-			content = strings.ReplaceAll(content, `\"`, `"`)
-			content = strings.ReplaceAll(content, `\n`, "\n")
-			content = strings.ReplaceAll(content, `\t`, "\t")
-			return content
-		}
-	}
-	// If not JSON structure, return the original text
-	return text
 }
 
 // min returns the minimum of two integers

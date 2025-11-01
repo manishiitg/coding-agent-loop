@@ -31,7 +31,7 @@ var largeOutputIntegrationTestCmd = &cobra.Command{
 		// Create test directory
 		testDir := "large_output_integration_test"
 		if err := os.MkdirAll(testDir, 0755); err != nil {
-			return fmt.Errorf("failed to create test directory: %v", err)
+			return fmt.Errorf("failed to create test directory: %w", err)
 		}
 		defer os.RemoveAll(testDir)
 
@@ -40,19 +40,19 @@ var largeOutputIntegrationTestCmd = &cobra.Command{
 		// Test 1: Test with a tool that produces large output
 		logger.Info("\n--- Test 1: Large Tool Output Detection ---")
 		if err := testLargeToolOutputDetection(testDir); err != nil {
-			return fmt.Errorf("large tool output detection test failed: %v", err)
+			return fmt.Errorf("large tool output detection test failed: %w", err)
 		}
 
 		// Test 2: Test virtual tools for reading large output
 		logger.Info("\n--- Test 2: Virtual Tools for Large Output ---")
 		if err := testVirtualToolsForLargeOutput(testDir); err != nil {
-			return fmt.Errorf("virtual tools for large output test failed: %v", err)
+			return fmt.Errorf("virtual tools for large output test failed: %w", err)
 		}
 
 		// Test 3: Test with real agent conversation
 		logger.Info("\n--- Test 3: Real Agent Conversation with Large Output ---")
 		if err := testRealAgentConversation(testDir); err != nil {
-			return fmt.Errorf("real agent conversation test failed: %v", err)
+			return fmt.Errorf("real agent conversation test failed: %w", err)
 		}
 
 		logger.Info("\n✅ All large tool output integration tests passed!")
@@ -88,7 +88,7 @@ func testLargeToolOutputDetection(testDir string) error {
 	// Test file writing
 	filePath, err := handler.WriteToolOutputToFile(largeOutput, "test_large_tool")
 	if err != nil {
-		return fmt.Errorf("failed to write large output to file: %v", err)
+		return fmt.Errorf("failed to write large output to file: %w", err)
 	}
 
 	logger.Infof("✅ Large output written to file: %s", filePath)
@@ -100,7 +100,7 @@ func testLargeToolOutputDetection(testDir string) error {
 
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to read file: %v", err)
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	if len(fileContent) != len(largeOutput) {
@@ -135,12 +135,12 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 	testFilePath := filepath.Join(testDir, "test-session-virtual", testFileName)
 
 	if err := os.MkdirAll(filepath.Dir(testFilePath), 0755); err != nil {
-		return fmt.Errorf("failed to create test directory: %v", err)
+		return fmt.Errorf("failed to create test directory: %w", err)
 	}
 
 	largeContent := generateLargeOutput(8000)
 	if err := os.WriteFile(testFilePath, []byte(largeContent), 0644); err != nil {
-		return fmt.Errorf("failed to write test file: %v", err)
+		return fmt.Errorf("failed to write test file: %w", err)
 	}
 
 	ctx := context.Background()
@@ -153,7 +153,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 		"end":      float64(100),
 	})
 	if err != nil {
-		return fmt.Errorf("read_large_output failed: %v", err)
+		return fmt.Errorf("read_large_output failed: %w", err)
 	}
 	if len(result) != 100 {
 		return fmt.Errorf("read_large_output returned wrong length: expected 100, got %d", len(result))
@@ -169,7 +169,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 		"max_results":    float64(10),
 	})
 	if err != nil {
-		return fmt.Errorf("search_large_output failed: %v", err)
+		return fmt.Errorf("search_large_output failed: %w", err)
 	}
 	logger.Infof("✅ search_large_output works correctly: %s", result)
 
@@ -179,7 +179,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 	jsonFileName := "tool_20250802_213000_test_json.json"
 	jsonFilePath := filepath.Join(testDir, "test-session-virtual", jsonFileName)
 	if err := os.WriteFile(jsonFilePath, []byte(jsonContent), 0644); err != nil {
-		return fmt.Errorf("failed to write JSON test file: %v", err)
+		return fmt.Errorf("failed to write JSON test file: %w", err)
 	}
 
 	result, err = agent.HandleLargeOutputVirtualTool(ctx, "query_large_output", map[string]interface{}{
@@ -189,14 +189,14 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 		"raw":      true,
 	})
 	if err != nil {
-		logger.Infof("⚠️ query_large_output failed: %v", err)
+		logger.Infof("⚠️ query_large_output failed: %w", err)
 		logger.Infof("⚠️ This is expected if jq is not available or if there are permission issues")
 		logger.Info("✅ Skipping query_large_output test (not critical for core functionality)")
 	} else {
 		// Trim whitespace and newlines from the result
 		result = strings.TrimSpace(result)
 		if result != "test1" {
-			return fmt.Errorf("query_large_output failed: %v", err)
+			return fmt.Errorf("query_large_output failed: %w", err)
 		}
 		logger.Infof("✅ query_large_output works correctly: %s", result)
 	}
@@ -226,7 +226,7 @@ func testRealAgentConversation(testDir string) error {
 	// Test the tool output handler directly
 	filePath, err := toolOutputHandler.WriteToolOutputToFile(largeOutput, "test_large_tool")
 	if err != nil {
-		return fmt.Errorf("failed to write large output to file: %v", err)
+		return fmt.Errorf("failed to write large output to file: %w", err)
 	}
 
 	logger.Infof("✅ Large tool output written to file: %s", filePath)
@@ -239,7 +239,7 @@ func testRealAgentConversation(testDir string) error {
 	// Verify file content
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to read file: %v", err)
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	if len(fileContent) != len(largeOutput) {

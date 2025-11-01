@@ -160,12 +160,6 @@ type langfuseIngestionPayload struct {
 	Batch []langfuseEvent `json:"batch"`
 }
 
-// newLangfuseTracer creates a new Langfuse tracer with shared state pattern
-// DEPRECATED: Use newLangfuseTracerWithLogger instead to provide a proper logger
-func newLangfuseTracer() (Tracer, error) {
-	return nil, errors.New("newLangfuseTracer() is deprecated. Use newLangfuseTracerWithLogger(logger) instead to provide a proper logger")
-}
-
 // newLangfuseTracerWithLogger creates a new Langfuse tracer with an injected logger
 func newLangfuseTracerWithLogger(logger utils.ExtendedLogger) (Tracer, error) {
 	sharedMutex.Lock()
@@ -203,7 +197,7 @@ func initializeSharedLangfuseClientWithLogger(logger utils.ExtendedLogger) error
 	if _, err := os.Stat(".env"); err == nil {
 		if err := godotenv.Load(); err != nil {
 			// Don't fail if .env can't be loaded, just log
-			log.Printf("Warning: Could not load .env file: %v", err)
+			log.Printf("Warning: Could not load .env file: %w", err)
 		}
 	}
 
@@ -248,7 +242,7 @@ func initializeSharedLangfuseClientWithLogger(logger utils.ExtendedLogger) error
 
 	// Test authentication (similar to Python auth_check)
 	if err := tracer.authCheck(); err != nil {
-		return fmt.Errorf("langfuse authentication failed for %s...: %v", publicKey[:10], err)
+		return fmt.Errorf("langfuse authentication failed for %s...: %w", publicKey[:10], err)
 	}
 
 	// Start background event processor
@@ -850,14 +844,6 @@ func (l *LangfuseTracer) generateToolSpanName(eventData interface{}) string {
 	return "tool_execution"
 }
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // StartObservation starts a new observation with the specified type
 func (l *LangfuseTracer) StartObservation(parentID string, obsType string, name string, input interface{}) SpanID {
 	id := generateID()
@@ -1160,7 +1146,7 @@ func (l *LangfuseTracer) sendBatch(events []*langfuseEvent) {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		if l.debug {
-			l.logger.Errorf("❌ Langfuse: Failed to marshal batch: %v", err)
+			l.logger.Errorf("❌ Langfuse: Failed to marshal batch: %w", err)
 		}
 		return
 	}
@@ -1168,7 +1154,7 @@ func (l *LangfuseTracer) sendBatch(events []*langfuseEvent) {
 	req, err := http.NewRequest("POST", l.host+"/api/public/ingestion", bytes.NewBuffer(jsonData))
 	if err != nil {
 		if l.debug {
-			l.logger.Errorf("❌ Langfuse: Failed to create request: %v", err)
+			l.logger.Errorf("❌ Langfuse: Failed to create request: %w", err)
 		}
 		return
 	}
@@ -1183,7 +1169,7 @@ func (l *LangfuseTracer) sendBatch(events []*langfuseEvent) {
 	resp, err := l.client.Do(req)
 	if err != nil {
 		if l.debug {
-			l.logger.Errorf("❌ Langfuse: Failed to send batch: %v", err)
+			l.logger.Errorf("❌ Langfuse: Failed to send batch: %w", err)
 		}
 		return
 	}

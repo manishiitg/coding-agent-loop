@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,52 @@ import (
 
 	"mcp-agent/agent_go/internal/llmtypes"
 )
+
+// validateFilePath ensures the file path is within the allowed directory and doesn't contain path traversal
+func validateFilePath(filePath, baseDir string) error {
+	// Resolve to absolute paths for comparison
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return fmt.Errorf("invalid file path: %w", err)
+	}
+
+	absBaseDir, err := filepath.Abs(baseDir)
+	if err != nil {
+		return fmt.Errorf("invalid base directory: %w", err)
+	}
+
+	// Check if file path is within base directory
+	if !strings.HasPrefix(absFilePath, absBaseDir) {
+		return fmt.Errorf("file path escapes allowed directory")
+	}
+
+	// Check for path traversal sequences
+	if strings.Contains(filePath, "..") {
+		return fmt.Errorf("path traversal detected")
+	}
+
+	return nil
+}
+
+// validatePattern ensures the search pattern is safe (basic validation)
+func validatePattern(pattern string) error {
+	// Prevent null bytes and command injection attempts
+	if strings.Contains(pattern, "\x00") {
+		return fmt.Errorf("invalid pattern: contains null byte")
+	}
+	// Ripgrep will handle pattern validation
+	return nil
+}
+
+// validateJqQuery ensures the jq query is safe (basic validation)
+func validateJqQuery(query string) error {
+	// Prevent null bytes
+	if strings.Contains(query, "\x00") {
+		return fmt.Errorf("invalid jq query: contains null byte")
+	}
+	// jq will handle query validation
+	return nil
+}
 
 // CreateLargeOutputVirtualTools creates virtual tools for large tool output handling
 func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
@@ -27,7 +74,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_large_output",
 			Description: "Read specific characters from a large tool output file",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filename": map[string]interface{}{
@@ -44,7 +91,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"filename", "start", "end"},
-			},
+			}),
 		},
 	}
 	virtualTools = append(virtualTools, readLargeOutputTool)
@@ -55,7 +102,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "search_large_output",
 			Description: "Search for regex patterns in large tool output files",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filename": map[string]interface{}{
@@ -78,7 +125,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"filename", "pattern"},
-			},
+			}),
 		},
 	}
 	virtualTools = append(virtualTools, searchLargeOutputTool)
@@ -89,7 +136,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "query_large_output",
 			Description: "Execute jq queries on large JSON tool output files",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"filename": map[string]interface{}{
@@ -112,7 +159,7 @@ func (a *Agent) CreateLargeOutputVirtualTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"filename", "query"},
-			},
+			}),
 		},
 	}
 	virtualTools = append(virtualTools, queryLargeOutputTool)
@@ -174,7 +221,16 @@ func (a *Agent) handleReadLargeOutput(ctx context.Context, args map[string]inter
 		return "", fmt.Errorf("invalid filename: %s", filename)
 	}
 
+	// Validate file path is within allowed directory
+	if a.toolOutputHandler != nil {
+		baseDir := a.toolOutputHandler.OutputFolder
+		if err := validateFilePath(filePath, baseDir); err != nil {
+			return "", fmt.Errorf("file path validation failed: %w", err)
+		}
+	}
+
 	// Read file content
+	//nolint:gosec // G304: filePath is validated above to be within allowed directory
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
@@ -222,6 +278,19 @@ func (a *Agent) handleSearchLargeOutput(ctx context.Context, args map[string]int
 		return "", fmt.Errorf("invalid filename: %s", filename)
 	}
 
+	// Validate pattern
+	if err := validatePattern(pattern); err != nil {
+		return "", fmt.Errorf("invalid pattern: %w", err)
+	}
+
+	// Validate file path is within allowed directory
+	if a.toolOutputHandler != nil {
+		baseDir := a.toolOutputHandler.OutputFolder
+		if err := validateFilePath(filePath, baseDir); err != nil {
+			return "", fmt.Errorf("file path validation failed: %w", err)
+		}
+	}
+
 	// Search using ripgrep
 	results, err := a.searchWithRipgrep(filePath, pattern, maxResults, caseSensitive, false)
 	if err != nil {
@@ -257,6 +326,19 @@ func (a *Agent) handleQueryLargeOutput(ctx context.Context, args map[string]inte
 	filePath := a.BuildLargeOutputFilePath(filename)
 	if filePath == "" {
 		return "", fmt.Errorf("invalid filename: %s", filename)
+	}
+
+	// Validate jq query
+	if err := validateJqQuery(query); err != nil {
+		return "", fmt.Errorf("invalid jq query: %w", err)
+	}
+
+	// Validate file path is within allowed directory
+	if a.toolOutputHandler != nil {
+		baseDir := a.toolOutputHandler.OutputFolder
+		if err := validateFilePath(filePath, baseDir); err != nil {
+			return "", fmt.Errorf("file path validation failed: %w", err)
+		}
 	}
 
 	// Execute jq query
@@ -331,16 +413,18 @@ func (a *Agent) searchWithRipgrep(filePath, pattern string, maxResults int, case
 	args = append(args, "-n", "-A", "2", "-B", "2", "--max-count", strconv.Itoa(maxResults), pattern, filePath)
 
 	// Execute ripgrep
+	//nolint:gosec // G204: filePath and pattern are validated, exec.Command uses separate args (no shell injection)
 	cmd := exec.Command("rg", args[1:]...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Check if the error is due to no matches found (exit status 1)
-		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
 			// No matches found - this is not an error, return empty result
 			return "No matches found for the given pattern.", nil
 		}
 		// Other errors (file not found, permission denied, etc.)
-		return "", fmt.Errorf("ripgrep search failed: %v, output: %s", err, string(output))
+		return "", fmt.Errorf("ripgrep search failed: %w, output: %s", err, string(output))
 	}
 
 	return string(output), nil
@@ -362,10 +446,11 @@ func (a *Agent) executeJqQuery(filePath, query string, compact, raw bool) (strin
 	args = append(args, query, filePath)
 
 	// Execute jq
+	//nolint:gosec // G204: filePath and query are validated, exec.Command uses separate args (no shell injection)
 	cmd := exec.Command("jq", args[1:]...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("jq query failed: %v, output: %s", err, string(output))
+		return "", fmt.Errorf("jq query failed: %w, output: %s", err, string(output))
 	}
 
 	return string(output), nil

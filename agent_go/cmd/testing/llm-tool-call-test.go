@@ -56,7 +56,7 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 		Temperature: 0.7,
 	})
 	if err != nil {
-		log.Printf("❌ Failed to create Bedrock LLM: %v", err)
+		log.Printf("❌ Failed to create Bedrock LLM: %w", err)
 		return
 	}
 
@@ -66,7 +66,7 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_file",
 			Description: "Read contents of a file",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"path": map[string]interface{}{
@@ -75,7 +75,7 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 					},
 				},
 				"required": []string{"path"},
-			},
+			}),
 		},
 	}
 
@@ -93,7 +93,7 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 	duration := time.Since(startTime)
 
 	if err != nil {
-		log.Printf("❌ Tool call failed: %v", err)
+		log.Printf("❌ Tool call failed: %w", err)
 		return
 	}
 
@@ -119,7 +119,7 @@ func runLLMToolCallTest(cmd *cobra.Command, args []string) {
 	)
 
 	if err != nil {
-		log.Printf("❌ Second tool call failed: %v", err)
+		log.Printf("❌ Second tool call failed: %w", err)
 		return
 	}
 

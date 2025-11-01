@@ -28,7 +28,7 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_prompt",
 			Description: "Fetch the full content of a specific prompt by name and server",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"server": map[string]interface{}{
@@ -41,7 +41,7 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"server", "name"},
-			},
+			}),
 		},
 	}
 	virtualTools = append(virtualTools, getPromptTool)
@@ -52,7 +52,7 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_resource",
 			Description: "Fetch the content of a specific resource by URI and server. Only use URIs that are listed in the system prompt's 'AVAILABLE RESOURCES' section.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"server": map[string]interface{}{
@@ -65,7 +65,7 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"server", "uri"},
-			},
+			}),
 		},
 	}
 	virtualTools = append(virtualTools, getResourceTool)

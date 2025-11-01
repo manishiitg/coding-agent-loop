@@ -177,7 +177,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServers(w http.ResponseWriter, r *h
 	client := &http.Client{Timeout: RequestTimeout}
 	req, err := http.NewRequest("GET", registryURL, nil)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to create request: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -186,7 +186,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServers(w http.ResponseWriter, r *h
 
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch from registry: %v", err), http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf("Failed to fetch from registry: %w", err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -200,20 +200,20 @@ func (api *StreamingAPI) handleGetMCPRegistryServers(w http.ResponseWriter, r *h
 	// Read and parse response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to read response: %w", err), http.StatusInternalServerError)
 		return
 	}
 
 	var registryResponse MCPRegistryResponse
 	if err := json.Unmarshal(body, &registryResponse); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to parse response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to parse response: %w", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Enhance response with cached server information
 	enhancedResponse, err := api.enhanceRegistryResponseWithCache(registryResponse)
 	if err != nil {
-		api.logger.Warnf("Failed to enhance registry response with cache: %v", err)
+		api.logger.Warnf("Failed to enhance registry response with cache: %w", err)
 		// Continue with original response if enhancement fails
 		enhancedResponse = &EnhancedMCPRegistryResponse{
 			Servers:  make([]EnhancedMCPRegistryServer, len(registryResponse.Servers)),
@@ -232,7 +232,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServers(w http.ResponseWriter, r *h
 
 	// Return the enhanced response
 	if err := json.NewEncoder(w).Encode(enhancedResponse); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -254,7 +254,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServerDetails(w http.ResponseWriter
 	client := &http.Client{Timeout: RequestTimeout}
 	req, err := http.NewRequest("GET", registryURL, nil)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to create request: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -263,7 +263,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServerDetails(w http.ResponseWriter
 
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch from registry: %v", err), http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf("Failed to fetch from registry: %w", err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -282,13 +282,13 @@ func (api *StreamingAPI) handleGetMCPRegistryServerDetails(w http.ResponseWriter
 	// Read and parse response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to read response: %w", err), http.StatusInternalServerError)
 		return
 	}
 
 	var server MCPRegistryServer
 	if err := json.Unmarshal(body, &server); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to parse response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to parse response: %w", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -298,7 +298,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServerDetails(w http.ResponseWriter
 
 	// Return the response
 	if err := json.NewEncoder(w).Encode(server); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -322,10 +322,10 @@ func (api *StreamingAPI) handleGetMCPRegistryServerTools(w http.ResponseWriter, 
 	if r.Body != nil {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			api.logger.Warnf("Failed to read request body: %v", err)
+			api.logger.Warnf("Failed to read request body: %w", err)
 		} else if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, &requestBody); err != nil {
-				api.logger.Warnf("Failed to parse request body: %v", err)
+				api.logger.Warnf("Failed to parse request body: %w", err)
 			}
 		}
 	}
@@ -342,14 +342,14 @@ func (api *StreamingAPI) handleGetMCPRegistryServerTools(w http.ResponseWriter, 
 	// Cache miss - discover tools live with custom headers and environment variables
 	response, err := api.discoverServerToolsLiveWithAuth(serverID, requestBody.Headers, requestBody.EnvVars)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to discover server tools: %v", err), http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf("Failed to discover server tools: %w", err), http.StatusBadGateway)
 		return
 	}
 
 	// Store in cache for future requests (only if no custom headers or env vars)
 	if len(requestBody.Headers) == 0 && len(requestBody.EnvVars) == 0 {
 		if err := api.storeServerToolsInCache(serverID, response); err != nil {
-			api.logger.Warnf("Failed to store server tools in cache: %v", err)
+			api.logger.Warnf("Failed to store server tools in cache: %w", err)
 			// Continue without caching
 		}
 	}
@@ -365,7 +365,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServerTools(w http.ResponseWriter, 
 
 	// Return the response
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -379,7 +379,7 @@ func (api *StreamingAPI) getRegistryServerDetails(serverID string) (*MCPRegistry
 	client := &http.Client{Timeout: RequestTimeout}
 	req, err := http.NewRequest("GET", registryURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", "MCP-Agent/1.0")
@@ -387,7 +387,7 @@ func (api *StreamingAPI) getRegistryServerDetails(serverID string) (*MCPRegistry
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch from registry: %v", err)
+		return nil, fmt.Errorf("failed to fetch from registry: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -403,12 +403,12 @@ func (api *StreamingAPI) getRegistryServerDetails(serverID string) (*MCPRegistry
 	// Read and parse response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %v", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var server MCPRegistryServer
 	if err := json.Unmarshal(body, &server); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %v", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	return &server, nil
@@ -418,7 +418,7 @@ func (api *StreamingAPI) getRegistryServerDetails(serverID string) (*MCPRegistry
 func (api *StreamingAPI) convertRegistryServerToConfig(server *MCPRegistryServer) (mcpclient.MCPServerConfig, error) {
 	// Check if server has packages or remotes
 	if len(server.Packages) == 0 && len(server.Remotes) == 0 {
-		return mcpclient.MCPServerConfig{}, fmt.Errorf("server has no installation instructions (packages or remotes) defined. This server may not be ready for installation yet.")
+		return mcpclient.MCPServerConfig{}, fmt.Errorf("server has no installation instructions (packages or remotes) defined. This server may not be ready for installation yet")
 	}
 
 	var protocol mcpclient.ProtocolType
@@ -535,293 +535,18 @@ func (api *StreamingAPI) convertRegistryServerToConfig(server *MCPRegistryServer
 	return config, nil
 }
 
-// discoverServerToolsLive discovers tools by connecting to the MCP server
-func (api *StreamingAPI) discoverServerToolsLive(serverID string) (*EnhancedToolStatus, error) {
-	// First, get the server details from the registry
-	server, err := api.getRegistryServerDetails(serverID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get server details: %v", err)
-	}
-
-	// Convert registry server to MCP config
-	config, err := api.convertRegistryServerToConfig(server)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert server config: %v", err)
-	}
-
-	// Create temporary MCP client and discover tools
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	client := mcpclient.New(config, api.logger)
-
-	// Connect to the server
-	if err := client.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("failed to connect to server: %v", err)
-	}
-	defer client.Close()
-
-	// List tools
-	tools, err := client.ListTools(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list tools: %v", err)
-	}
-
-	// List prompts
-	prompts, err := client.ListPrompts(ctx)
-	if err != nil {
-		// Prompts are optional, log but don't fail
-		api.logger.Warnf("Failed to list prompts for server %s: %v", serverID, err)
-		prompts = []mcp.Prompt{}
-	}
-
-	// List resources
-	resources, err := client.ListResources(ctx)
-	if err != nil {
-		// Resources are optional, log but don't fail
-		api.logger.Warnf("Failed to list resources for server %s: %v", serverID, err)
-		resources = []mcp.Resource{}
-	}
-
-	// Convert tools to the expected format
-	toolDetails := make([]mcpclient.ToolDetail, 0, len(tools))
-	functionNames := make([]string, 0, len(tools))
-
-	for _, tool := range tools {
-		// Convert mcp.Tool to ToolDetail format
-		// Convert InputSchema to map[string]interface{} with proper JSON Schema format
-		parameters := make(map[string]interface{})
-
-		// Set type
-		if tool.InputSchema.Type != "" {
-			parameters["type"] = tool.InputSchema.Type
-		} else {
-			parameters["type"] = "object"
-		}
-
-		// Only add properties if they exist and are not empty
-		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
-			parameters["properties"] = tool.InputSchema.Properties
-		} else {
-			parameters["properties"] = map[string]interface{}{}
-		}
-
-		// Only add required if they exist and are not empty
-		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
-			parameters["required"] = tool.InputSchema.Required
-		} else {
-			parameters["required"] = []string{}
-		}
-
-		// Add additional properties restriction for better validation
-		parameters["additionalProperties"] = false
-
-		toolDetail := mcpclient.ToolDetail{
-			Name:        tool.Name,
-			Description: tool.Description,
-			Parameters:  parameters,
-		}
-		toolDetails = append(toolDetails, toolDetail)
-		functionNames = append(functionNames, tool.Name)
-	}
-
-	// Convert prompts to the expected format
-	promptDetails := make([]PromptDetail, 0, len(prompts))
-	for _, prompt := range prompts {
-		promptDetail := PromptDetail{
-			Name:        prompt.Name,
-			Description: prompt.Description,
-		}
-		promptDetails = append(promptDetails, promptDetail)
-	}
-
-	// Convert resources to the expected format
-	resourceDetails := make([]ResourceDetail, 0, len(resources))
-	for _, resource := range resources {
-		resourceDetail := ResourceDetail{
-			Name:        resource.Name,
-			URI:         resource.URI,
-			Description: resource.Description,
-		}
-		resourceDetails = append(resourceDetails, resourceDetail)
-	}
-
-	// Create response in the same format as /api/tools/detail
-	response := &EnhancedToolStatus{
-		ToolStatus: ToolStatus{
-			Name:          server.Name,
-			Server:        server.Name,
-			Status:        "ok",
-			Description:   server.Description,
-			ToolsEnabled:  len(tools),
-			FunctionNames: functionNames,
-			Tools:         toolDetails,
-		},
-		Prompts:   promptDetails,
-		Resources: resourceDetails,
-	}
-
-	return response, nil
-}
-
-// discoverServerToolsLiveWithHeaders discovers tools by connecting to the MCP server with custom headers
-func (api *StreamingAPI) discoverServerToolsLiveWithHeaders(serverID string, customHeaders map[string]string) (*EnhancedToolStatus, error) {
-	// First, get the server details from the registry
-	server, err := api.getRegistryServerDetails(serverID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get server details: %v", err)
-	}
-
-	// Convert registry server to MCP config
-	config, err := api.convertRegistryServerToConfig(server)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert server config: %v", err)
-	}
-
-	// Apply custom headers to the config
-	if len(customHeaders) > 0 {
-		// For HTTP/SSE servers, we need to add headers to the connection
-		// This is a simplified approach - in a real implementation, you'd need to
-		// modify the MCP client to support custom headers
-		api.logger.Debugf("Applying custom headers to server config: %v", customHeaders)
-
-		// Add headers as environment variables for now
-		// In a full implementation, you'd modify the HTTP client to include these headers
-		if config.Env == nil {
-			config.Env = make(map[string]string)
-		}
-		for key, value := range customHeaders {
-			config.Env[key] = value
-		}
-	}
-
-	// Create temporary MCP client and discover tools
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	client := mcpclient.New(config, api.logger)
-
-	// Connect to the server
-	if err := client.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("failed to connect to server: %v", err)
-	}
-	defer client.Close()
-
-	// List tools
-	tools, err := client.ListTools(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list tools: %v", err)
-	}
-
-	// List prompts
-	prompts, err := client.ListPrompts(ctx)
-	if err != nil {
-		// Prompts are optional, log but don't fail
-		api.logger.Warnf("Failed to list prompts for server %s: %v", serverID, err)
-		prompts = []mcp.Prompt{}
-	}
-
-	// List resources
-	resources, err := client.ListResources(ctx)
-	if err != nil {
-		// Resources are optional, log but don't fail
-		api.logger.Warnf("Failed to list resources for server %s: %v", serverID, err)
-		resources = []mcp.Resource{}
-	}
-
-	// Convert tools to the expected format
-	toolDetails := make([]mcpclient.ToolDetail, 0, len(tools))
-	functionNames := make([]string, 0, len(tools))
-
-	for _, tool := range tools {
-		// Convert mcp.Tool to ToolDetail format
-		// Convert InputSchema to map[string]interface{} with proper JSON Schema format
-		parameters := make(map[string]interface{})
-
-		// Set type
-		if tool.InputSchema.Type != "" {
-			parameters["type"] = tool.InputSchema.Type
-		} else {
-			parameters["type"] = "object"
-		}
-
-		// Only add properties if they exist and are not empty
-		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
-			parameters["properties"] = tool.InputSchema.Properties
-		} else {
-			parameters["properties"] = map[string]interface{}{}
-		}
-
-		// Only add required if they exist and are not empty
-		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
-			parameters["required"] = tool.InputSchema.Required
-		} else {
-			parameters["required"] = []string{}
-		}
-
-		// Add additional properties restriction for better validation
-		parameters["additionalProperties"] = false
-
-		toolDetail := mcpclient.ToolDetail{
-			Name:        tool.Name,
-			Description: tool.Description,
-			Parameters:  parameters,
-		}
-		toolDetails = append(toolDetails, toolDetail)
-		functionNames = append(functionNames, tool.Name)
-	}
-
-	// Convert prompts to the expected format
-	promptDetails := make([]PromptDetail, 0, len(prompts))
-	for _, prompt := range prompts {
-		promptDetail := PromptDetail{
-			Name:        prompt.Name,
-			Description: prompt.Description,
-		}
-		promptDetails = append(promptDetails, promptDetail)
-	}
-
-	// Convert resources to the expected format
-	resourceDetails := make([]ResourceDetail, 0, len(resources))
-	for _, resource := range resources {
-		resourceDetail := ResourceDetail{
-			Name:        resource.Name,
-			URI:         resource.URI,
-			Description: resource.Description,
-		}
-		resourceDetails = append(resourceDetails, resourceDetail)
-	}
-
-	// Create response in the same format as /api/tools/detail
-	response := &EnhancedToolStatus{
-		ToolStatus: ToolStatus{
-			Name:          server.Name,
-			Server:        server.Name,
-			Status:        "ok",
-			Description:   server.Description,
-			ToolsEnabled:  len(tools),
-			FunctionNames: functionNames,
-			Tools:         toolDetails,
-		},
-		Prompts:   promptDetails,
-		Resources: resourceDetails,
-	}
-
-	return response, nil
-}
-
 // discoverServerToolsLiveWithAuth discovers tools by connecting to the MCP server with custom headers and environment variables
 func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, customHeaders map[string]string, customEnvVars map[string]string) (*EnhancedToolStatus, error) {
 	// First, get the server details from the registry
 	server, err := api.getRegistryServerDetails(serverID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get server details: %v", err)
+		return nil, fmt.Errorf("failed to get server details: %w", err)
 	}
 
 	// Convert registry server to MCP config
 	config, err := api.convertRegistryServerToConfig(server)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert server config: %v", err)
+		return nil, fmt.Errorf("failed to convert server config: %w", err)
 	}
 
 	// Apply custom environment variables
@@ -852,14 +577,14 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 
 	// Connect to the server
 	if err := client.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("failed to connect to server: %v", err)
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 	defer client.Close()
 
 	// List tools
 	tools, err := client.ListTools(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list tools: %v", err)
+		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
 
 	// List prompts
@@ -895,14 +620,14 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 		}
 
 		// Only add properties if they exist and are not empty
-		if tool.InputSchema.Properties != nil && len(tool.InputSchema.Properties) > 0 {
+		if len(tool.InputSchema.Properties) > 0 {
 			parameters["properties"] = tool.InputSchema.Properties
 		} else {
 			parameters["properties"] = map[string]interface{}{}
 		}
 
 		// Only add required if they exist and are not empty
-		if tool.InputSchema.Required != nil && len(tool.InputSchema.Required) > 0 {
+		if len(tool.InputSchema.Required) > 0 {
 			parameters["required"] = tool.InputSchema.Required
 		} else {
 			parameters["required"] = []string{}
@@ -949,69 +674,6 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 			Status:        "ok",
 			Description:   server.Description,
 			ToolsEnabled:  len(tools),
-			FunctionNames: functionNames,
-			Tools:         toolDetails,
-		},
-		Prompts:   promptDetails,
-		Resources: resourceDetails,
-	}
-
-	return response, nil
-}
-
-// convertCacheEntryToResponse converts a cached CacheEntry to EnhancedToolStatus
-func (api *StreamingAPI) convertCacheEntryToResponse(entry *mcpcache.CacheEntry) (*EnhancedToolStatus, error) {
-	// Convert tools to ToolDetail format
-	toolDetails := make([]mcpclient.ToolDetail, 0, len(entry.Tools))
-	functionNames := make([]string, 0, len(entry.Tools))
-
-	for _, tool := range entry.Tools {
-		// Convert llmtypes.Tool to ToolDetail format
-		parameters := make(map[string]interface{})
-		if tool.Function.Parameters != nil {
-			if params, ok := tool.Function.Parameters.(map[string]interface{}); ok {
-				parameters = params
-			}
-		}
-
-		toolDetail := mcpclient.ToolDetail{
-			Name:        tool.Function.Name,
-			Description: tool.Function.Description,
-			Parameters:  parameters,
-		}
-		toolDetails = append(toolDetails, toolDetail)
-		functionNames = append(functionNames, tool.Function.Name)
-	}
-
-	// Convert prompts to PromptDetail format
-	promptDetails := make([]PromptDetail, 0, len(entry.Prompts))
-	for _, prompt := range entry.Prompts {
-		promptDetail := PromptDetail{
-			Name:        prompt.Name,
-			Description: prompt.Description,
-		}
-		promptDetails = append(promptDetails, promptDetail)
-	}
-
-	// Convert resources to ResourceDetail format
-	resourceDetails := make([]ResourceDetail, 0, len(entry.Resources))
-	for _, resource := range entry.Resources {
-		resourceDetail := ResourceDetail{
-			Name:        resource.Name,
-			URI:         resource.URI,
-			Description: resource.Description,
-		}
-		resourceDetails = append(resourceDetails, resourceDetail)
-	}
-
-	// Create response
-	response := &EnhancedToolStatus{
-		ToolStatus: ToolStatus{
-			Name:          entry.ServerName,
-			Server:        entry.ServerName,
-			Status:        "ok",
-			Description:   entry.SystemPrompt, // Use system prompt as description
-			ToolsEnabled:  len(entry.Tools),
 			FunctionNames: functionNames,
 			Tools:         toolDetails,
 		},
@@ -1133,53 +795,4 @@ func (api *StreamingAPI) getAllCachedEntries(cacheManager *mcpcache.CacheManager
 
 	api.logger.Debugf("Loaded %d cached entries for registry matching", len(allEntries))
 	return entries
-}
-
-// extractKeywords extracts meaningful keywords from a server name
-func (api *StreamingAPI) extractKeywords(name string) []string {
-	// Remove common prefixes and suffixes
-	cleaned := strings.ToLower(name)
-	cleaned = strings.ReplaceAll(cleaned, "io.github.", "")
-	cleaned = strings.ReplaceAll(cleaned, "io.", "")
-	cleaned = strings.ReplaceAll(cleaned, "com.", "")
-	cleaned = strings.ReplaceAll(cleaned, "ai.", "")
-	cleaned = strings.ReplaceAll(cleaned, "-mcp-server", "")
-	cleaned = strings.ReplaceAll(cleaned, "-mcp", "")
-	cleaned = strings.ReplaceAll(cleaned, "mcp-server", "")
-	cleaned = strings.ReplaceAll(cleaned, "mcp", "")
-
-	// Split by common delimiters
-	keywords := []string{}
-
-	// Split by slash
-	for _, part := range strings.Split(cleaned, "/") {
-		if part != "" {
-			keywords = append(keywords, part)
-		}
-	}
-
-	// Split by dash and underscore
-	for _, part := range strings.Split(cleaned, "-") {
-		if part != "" && len(part) > 2 {
-			keywords = append(keywords, part)
-		}
-	}
-
-	for _, part := range strings.Split(cleaned, "_") {
-		if part != "" && len(part) > 2 {
-			keywords = append(keywords, part)
-		}
-	}
-
-	// Remove duplicates
-	seen := make(map[string]bool)
-	result := []string{}
-	for _, keyword := range keywords {
-		if !seen[keyword] && len(keyword) > 2 {
-			seen[keyword] = true
-			result = append(result, keyword)
-		}
-	}
-
-	return result
 }

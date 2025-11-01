@@ -202,7 +202,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	variablesPath := fmt.Sprintf("%s/todo_creation_human/variables/variables.json", workspacePath)
 	variablesExist, existingVariablesManifest, err := hcpo.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing variables: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing variables: %w", err)
 		variablesExist = false
 	}
 
@@ -223,7 +223,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			hcpo.getWorkflowID(),
 		)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing variables: %v", err)
+			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing variables: %w", err)
 			// Default to using existing variables
 			useExistingVariables = true
 		}
@@ -279,7 +279,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				hcpo.GetLogger().Warnf("⚠️ Variable approval request failed: %v, will retry", err)
 				// Don't auto-approve on error - treat as need for retry
 				approved = false
-				feedback = fmt.Sprintf("Error getting approval: %v", err)
+				feedback = fmt.Sprintf("Error getting approval: %w", err)
 			}
 
 			if approved {
@@ -301,7 +301,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	// Load runtime variable values if provided and switch to templated objective
 	if variablesManifest != nil {
 		if err := hcpo.loadVariableValues(ctx); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %v", err)
+			hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %w", err)
 		}
 
 		// Switch to templated objective for all subsequent phases
@@ -313,7 +313,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	planPath := fmt.Sprintf("%s/todo_creation_human/planning/plan.md", workspacePath)
 	planExists, planContent, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing plan: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing plan: %w", err)
 		// Continue with normal planning flow
 		planExists = false
 	}
@@ -338,7 +338,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			hcpo.getWorkflowID(),
 		)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing plan: %v", err)
+			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing plan: %w", err)
 			// Default to using existing plan
 			planChoice = "option1"
 		}
@@ -406,7 +406,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		// Convert markdown plan to structured JSON using plan reader agent
 		planReaderAgent, err := hcpo.createPlanReaderAgent(ctx, "plan_reading", 0, 1)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to create plan reader agent: %v", err)
+			hcpo.GetLogger().Warnf("⚠️ Failed to create plan reader agent: %w", err)
 			// Fall through to create new plan
 			planExists = false
 		} else {
@@ -429,7 +429,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			} else {
 				existingPlan, err := planReaderAgentTyped.ExecuteStructured(ctx, readerTemplateVars, []llmtypes.MessageContent{})
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to convert markdown plan to JSON: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Failed to convert markdown plan to JSON: %w", err)
 					// Fall through to create new plan
 					planExists = false
 				} else {
@@ -455,7 +455,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						// Request human approval for JSON plan
 						approvedInternal, feedbackInternal, err := hcpo.requestPlanApproval(ctx, revisionAttempt)
 						if err != nil {
-							hcpo.GetLogger().Warnf("⚠️ Plan approval request failed: %v", err)
+							hcpo.GetLogger().Warnf("⚠️ Plan approval request failed: %w", err)
 							// Default to approved if approval request fails
 							approved = true
 							break
@@ -578,7 +578,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				// Phase 3: Write/Update todo list with critique validation loop
 				err = hcpo.runWriterPhaseWithHumanReview(ctx, 1)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %w", err)
 				}
 
 				// Return early with completion message
@@ -651,7 +651,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				// Phase 3: Write/Update todo list with critique validation loop
 				err = hcpo.runWriterPhaseWithHumanReview(ctx, 1)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %w", err)
 				}
 
 				// Return early with completion message
@@ -674,7 +674,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					hcpo.getWorkflowID(),
 				)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for resuming: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for resuming: %w", err)
 					choice = "option1" // Default to resume
 				}
 
@@ -690,7 +690,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					hcpo.GetLogger().Infof("🔄 User chose to start from beginning, will reset progress")
 					// Delete existing progress and start fresh
 					if err := hcpo.deleteStepProgress(ctx); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %v", err)
+						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
 					}
 					existingProgress = nil
 					startFromStep = 0
@@ -747,7 +747,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	// Phase 3: Write/Update todo list with critique validation loop
 	err = hcpo.runWriterPhaseWithHumanReview(ctx, 1)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Writer phase with critique validation failed: %w", err)
 	}
 
 	duration := time.Since(hcpo.GetStartTime())
@@ -1192,7 +1192,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				var err error
 				approved, feedback, err = hcpo.requestHumanFeedback(ctx, i+1, len(breakdownSteps), validationSummary)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Human feedback request failed: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Human feedback request failed: %w", err)
 					// Default to continue if feedback fails
 					approved = true
 				}
@@ -1209,7 +1209,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				// User approved - mark step as completed and exit outer loop
 				progress.CompletedStepIndices = append(progress.CompletedStepIndices, i)
 				if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to save step progress: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Failed to save step progress: %w", err)
 				} else {
 					hcpo.GetLogger().Infof("✅ Step %d/%d marked as completed and saved", i+1, len(breakdownSteps))
 				}
@@ -1219,7 +1219,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				// Skip this in fast mode (should not happen anyway since we auto-approve)
 				shouldReexecute, err := hcpo.requestReexecuteDecision(ctx, i+1, len(breakdownSteps), feedback)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Re-execution decision request failed: %v", err)
+					hcpo.GetLogger().Warnf("⚠️ Re-execution decision request failed: %w", err)
 					shouldReexecute = false // Default to stop if decision fails
 				}
 
@@ -1468,7 +1468,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// Format validation result for template
 	validationResultJSON, err := json.MarshalIndent(validationResponse, "", "  ")
 	if err != nil {
-		validationResultJSON = []byte(fmt.Sprintf("Validation failed to marshal: %v", err))
+		validationResultJSON = []byte(fmt.Sprintf("Validation failed to marshal: %w", err))
 	}
 
 	// Prepare template variables for success learning agent
@@ -1535,7 +1535,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// Format validation result for template
 	validationResultJSON, err := json.MarshalIndent(validationResponse, "", "  ")
 	if err != nil {
-		validationResultJSON = []byte(fmt.Sprintf("Validation failed to marshal: %v", err))
+		validationResultJSON = []byte(fmt.Sprintf("Validation failed to marshal: %w", err))
 	}
 
 	// Prepare template variables for failure learning agent
@@ -2037,7 +2037,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitTodoStepsExtractedEvent(
 	// Emit through the context-aware bridge
 	bridge := hcpo.GetContextAwareBridge()
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %w", err)
 	} else {
 		hcpo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
 	}
@@ -2110,7 +2110,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingPlan(ctx contex
 	if err != nil {
 		// Check if it's a "file not found" error vs other errors
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Infof("📋 No existing plan found: %v", err)
+			hcpo.GetLogger().Infof("📋 No existing plan found: %w", err)
 			return false, "", nil
 		}
 		// Other errors should be returned
@@ -2130,7 +2130,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingVariables(ctx c
 	if err != nil {
 		// Check if it's a "file not found" error
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Infof("📋 No existing variables found: %v", err)
+			hcpo.GetLogger().Infof("📋 No existing variables found: %w", err)
 			return false, nil, nil
 		}
 		// Other errors should be returned
@@ -2140,7 +2140,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingVariables(ctx c
 	// Parse the existing variables manifest
 	var manifest VariablesManifest
 	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to parse existing variables.json: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to parse existing variables.json: %w", err)
 		return false, nil, fmt.Errorf("failed to parse variables.json: %w", err)
 	}
 
@@ -2160,7 +2160,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 	if err := hcpo.DeleteWorkspaceFile(ctx, planPath); err != nil {
 		// Ignore "file not found" errors, but log others
 		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Warnf("⚠️ Failed to delete plan.md: %v", err)
+			hcpo.GetLogger().Warnf("⚠️ Failed to delete plan.md: %w", err)
 		}
 	} else {
 		hcpo.GetLogger().Infof("🗑️ Deleted plan.md: %s", planPath)
@@ -2169,24 +2169,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 	// 2. Delete all files in validation/ directory
 	validationDir := fmt.Sprintf("%s/validation", basePath)
 	if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory: %w", err)
 	}
 
 	// 3. Delete all files in learnings/ directory
 	learningsDir := fmt.Sprintf("%s/learnings", basePath)
 	if err := hcpo.CleanupDirectory(ctx, learningsDir, "learnings"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup learnings directory: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup learnings directory: %w", err)
 	}
 
 	// 4. Delete all files in execution/ directory
 	executionDir := fmt.Sprintf("%s/execution", basePath)
 	if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
 	}
 
 	// 5. Delete steps_done.json progress file
 	if err := hcpo.deleteStepProgress(ctx); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %v", err)
+		hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %w", err)
 	}
 
 	hcpo.GetLogger().Infof("✅ Cleanup of existing plan artifacts completed")

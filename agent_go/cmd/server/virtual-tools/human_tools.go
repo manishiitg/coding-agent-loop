@@ -18,7 +18,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "human_feedback",
 			Description: "Use then when there is no option except to get human input, when you are stuck and need to ask a question that requires human input. This tool will pause execution until the user provides input via the UI. Ideal for things like OTP, 2FA, etc.",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"message_for_user": map[string]interface{}{
@@ -31,7 +31,7 @@ func CreateHumanTools() []llmtypes.Tool {
 					},
 				},
 				"required": []string{"message_for_user", "unique_id"},
-			},
+			}),
 		},
 	}
 	humanTools = append(humanTools, humanFeedbackTool)

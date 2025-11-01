@@ -128,6 +128,11 @@ type MCPConfig struct {
 
 // LoadConfig loads MCP server configuration from the specified file
 func LoadConfig(configPath string) (*MCPConfig, error) {
+	// Validate config path (basic check - path comes from trusted source)
+	if configPath == "" {
+		return nil, fmt.Errorf("config path cannot be empty")
+	}
+	//nolint:gosec // G304: configPath comes from command-line/config, not user input
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)

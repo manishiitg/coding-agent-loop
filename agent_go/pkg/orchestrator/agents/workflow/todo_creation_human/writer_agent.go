@@ -229,12 +229,12 @@ The JSON structure must be:
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_writer").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing human-controlled writer template: %v", err)
+		return fmt.Sprintf("Error parsing human-controlled writer template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing human-controlled writer template: %v", err)
+		return fmt.Sprintf("Error executing human-controlled writer template: %w", err)
 	}
 
 	return result.String()

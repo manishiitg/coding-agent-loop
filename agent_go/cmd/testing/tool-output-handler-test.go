@@ -32,7 +32,7 @@ var toolOutputHandlerTestCmd = &cobra.Command{
 		// Create test directory
 		testDir := "tool_output_test"
 		if err := os.MkdirAll(testDir, 0755); err != nil {
-			return fmt.Errorf("failed to create test directory: %v", err)
+			return fmt.Errorf("failed to create test directory: %w", err)
 		}
 		defer os.RemoveAll(testDir)
 
@@ -41,19 +41,19 @@ var toolOutputHandlerTestCmd = &cobra.Command{
 		// Test the extractActualContent function with MCP format
 		logger.Info("\n--- Test 1: Content Extraction ---")
 		if err := testContentExtraction(); err != nil {
-			return fmt.Errorf("content extraction test failed: %v", err)
+			return fmt.Errorf("content extraction test failed: %w", err)
 		}
 
 		// Test file creation with MCP format
 		logger.Info("\n--- Test 2: File Creation with MCP Format ---")
 		if err := testFileCreationWithMCPFormat(testDir); err != nil {
-			return fmt.Errorf("file creation test failed: %v", err)
+			return fmt.Errorf("file creation test failed: %w", err)
 		}
 
 		// Test large output virtual tools
 		logger.Info("\n--- Test 3: Large Output Virtual Tools ---")
 		if err := testLargeOutputVirtualTools(testDir); err != nil {
-			return fmt.Errorf("large output virtual tools test failed: %v", err)
+			return fmt.Errorf("large output virtual tools test failed: %w", err)
 		}
 
 		logger.Info("\n✅ All tool output handler tests passed!")
@@ -128,7 +128,7 @@ func testFileCreationWithMCPFormat(testDir string) error {
 	// Write to file
 	filePath, err := handler.WriteToolOutputToFile(mcpContent, toolName)
 	if err != nil {
-		return fmt.Errorf("failed to write tool output to file: %v", err)
+		return fmt.Errorf("failed to write tool output to file: %w", err)
 	}
 
 	logger.Infof("File written to: %s", filePath)
@@ -141,7 +141,7 @@ func testFileCreationWithMCPFormat(testDir string) error {
 	// Read file content
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to read file: %v", err)
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	logger.Infof("File content length: %d", len(fileContent))
@@ -236,12 +236,12 @@ func testLargeOutputVirtualTools(testDir string) error {
 	// Create a test file to read from
 	testFilePath := filepath.Join(testDir, "test-session", "tool_20250731_143800_test_tool.json")
 	if err := os.MkdirAll(filepath.Dir(testFilePath), 0755); err != nil {
-		return fmt.Errorf("failed to create test directory: %v", err)
+		return fmt.Errorf("failed to create test directory: %w", err)
 	}
 
 	testContent := `{"name":"test","value":123,"items":["a","b","c"]}`
 	if err := os.WriteFile(testFilePath, []byte(testContent), 0644); err != nil {
-		return fmt.Errorf("failed to write test file: %v", err)
+		return fmt.Errorf("failed to write test file: %w", err)
 	}
 
 	// Set the tool output handler to use our test directory

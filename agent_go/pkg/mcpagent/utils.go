@@ -40,15 +40,21 @@ func GetDefaultMaxTurns(mode AgentMode) int {
 	}
 }
 
-// ConvertToolChoice converts a tool choice string to the appropriate type for LLM options.
-func ConvertToolChoice(choice string) interface{} {
+// ConvertToolChoice converts a tool choice string to *llmtypes.ToolChoice.
+// Returns nil if choice is empty, otherwise returns a properly constructed ToolChoice.
+func ConvertToolChoice(choice string) *llmtypes.ToolChoice {
+	if choice == "" {
+		return nil
+	}
+
 	switch choice {
 	case "auto", "none", "required":
-		return choice
+		return &llmtypes.ToolChoice{Type: choice}
 	default:
-		return map[string]interface{}{
-			"type":     "function",
-			"function": map[string]interface{}{"name": choice},
+		// Specific tool name - create function-specific tool choice
+		return &llmtypes.ToolChoice{
+			Type:     "function",
+			Function: &llmtypes.FunctionName{Name: choice},
 		}
 	}
 }
@@ -72,14 +78,33 @@ func extractUsageMetrics(resp *llmtypes.ContentResponse) observability.UsageMetr
 	// Try to get token usage from GenerationInfo first
 	info := resp.Choices[0].GenerationInfo
 	if info != nil {
-		if v, ok := info["input_tokens"]; ok {
-			m.InputTokens = castToInt(v)
+		// Extract input tokens (check multiple naming conventions)
+		if info.InputTokens != nil {
+			m.InputTokens = *info.InputTokens
+		} else if info.InputTokensCap != nil {
+			m.InputTokens = *info.InputTokensCap
+		} else if info.PromptTokens != nil {
+			m.InputTokens = *info.PromptTokens
+		} else if info.PromptTokensCap != nil {
+			m.InputTokens = *info.PromptTokensCap
 		}
-		if v, ok := info["output_tokens"]; ok {
-			m.OutputTokens = castToInt(v)
+
+		// Extract output tokens (check multiple naming conventions)
+		if info.OutputTokens != nil {
+			m.OutputTokens = *info.OutputTokens
+		} else if info.OutputTokensCap != nil {
+			m.OutputTokens = *info.OutputTokensCap
+		} else if info.CompletionTokens != nil {
+			m.OutputTokens = *info.CompletionTokens
+		} else if info.CompletionTokensCap != nil {
+			m.OutputTokens = *info.CompletionTokensCap
 		}
-		if v, ok := info["total_tokens"]; ok {
-			m.TotalTokens = castToInt(v)
+
+		// Extract total tokens (check multiple naming conventions)
+		if info.TotalTokens != nil {
+			m.TotalTokens = *info.TotalTokens
+		} else if info.TotalTokensCap != nil {
+			m.TotalTokens = *info.TotalTokensCap
 		}
 	}
 
@@ -144,16 +169,4 @@ func estimateInputTokens(messages []llmtypes.MessageContent) int {
 	// Add some overhead for system prompts and formatting
 	estimatedTokens := (totalChars / 4) + 50 // Add 50 tokens for system overhead
 	return estimatedTokens
-}
-
-// castToInt safely casts an interface{} to int.
-func castToInt(v interface{}) int {
-	switch t := v.(type) {
-	case int:
-		return t
-	case float64:
-		return int(t)
-	default:
-		return 0
-	}
 }

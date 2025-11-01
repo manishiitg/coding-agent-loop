@@ -216,12 +216,12 @@ The plan focuses on systematic analysis before implementation, with clear contex
 	// Parse and execute the template
 	tmpl, err := template.New("human_controlled_planning").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing human-controlled planning template: %v", err)
+		return fmt.Sprintf("Error parsing human-controlled planning template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing human-controlled planning template: %v", err)
+		return fmt.Sprintf("Error executing human-controlled planning template: %w", err)
 	}
 
 	return result.String()

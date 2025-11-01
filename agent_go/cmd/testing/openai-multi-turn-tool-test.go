@@ -73,7 +73,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 		Logger:      logger,
 	})
 	if err != nil {
-		log.Printf("❌ Failed to create OpenAI LLM: %v", err)
+		log.Printf("❌ Failed to create OpenAI LLM: %w", err)
 		return
 	}
 
@@ -84,7 +84,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_file_info",
 				Description: "Get information about a file (size, modification time, etc.)",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"filepath": map[string]interface{}{
@@ -93,7 +93,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"filepath"},
-				},
+				}),
 			},
 		},
 		{
@@ -101,7 +101,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "calculate_math",
 				Description: "Perform mathematical calculations",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"expression": map[string]interface{}{
@@ -110,7 +110,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"expression"},
-				},
+				}),
 			},
 		},
 		{
@@ -118,7 +118,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather for a location",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"location": map[string]interface{}{
@@ -127,7 +127,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"location"},
-				},
+				}),
 			},
 		},
 		{
@@ -135,7 +135,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "search_knowledge",
 				Description: "Search knowledge base for information",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"query": map[string]interface{}{
@@ -144,7 +144,7 @@ func runOpenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"query"},
-				},
+				}),
 			},
 		},
 	}
@@ -204,12 +204,17 @@ func testSequentialToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, maxTurns
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-					if verbose {
-						log.Printf("   Tokens: input=%d, output=%d", input, output)
-					}
+			var input, output int
+			if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
+				if verbose {
+					log.Printf("   Tokens: input=%d, output=%d", input, output)
 				}
 			}
 		}
@@ -302,10 +307,15 @@ func testParallelToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, maxTurns i
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-				}
+			var input, output int
+			if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
 			}
 		}
 
@@ -393,10 +403,15 @@ func testMultiStepReasoning(llm llmtypes.Model, tools []llmtypes.Tool, maxTurns 
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-				}
+			var input, output int
+			if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
 			}
 		}
 
@@ -459,7 +474,7 @@ func executeMockTool(toolName, arguments string) string {
 	// Parse arguments
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return fmt.Sprintf("Error parsing arguments: %v", err)
+		return fmt.Sprintf("Error parsing arguments: %w", err)
 	}
 
 	switch toolName {

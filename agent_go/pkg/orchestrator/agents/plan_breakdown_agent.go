@@ -103,13 +103,13 @@ func (pba *PlanBreakdownAgent) breakdownInputProcessor(templateVars map[string]s
 	// Parse and execute the template
 	tmpl, err := template.New("breakdown").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing breakdown template: %v", err)
+		return fmt.Sprintf("Error parsing breakdown template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing breakdown template: %v", err)
+		return fmt.Sprintf("Error executing breakdown template: %w", err)
 	}
 
 	return result.String()

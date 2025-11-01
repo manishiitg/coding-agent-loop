@@ -152,7 +152,7 @@ func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext 
 	// 🔄 NEW: Rebuild system prompt with filtered servers
 	if err := a.RebuildSystemPromptWithFilteredServers(ctx, relevantServers); err != nil {
 		// Log error but don't fail the entire operation
-		a.Logger.Warnf("Failed to rebuild system prompt with filtered servers: %v", err)
+		a.Logger.Warnf("Failed to rebuild system prompt with filtered servers: %w", err)
 	}
 
 	filteredTools := a.filterToolsByServers(relevantServers)

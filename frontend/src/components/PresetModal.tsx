@@ -62,7 +62,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const currentLLMOption = useMemo(() => {
     if (llmConfig) {
       // Find the matching LLM option from available LLMs
-      const matchingLLM = availablellmtypes.find(llm => 
+      const matchingLLM = availableLLMs.find(llm => 
         llm.provider === llmConfig.provider && llm.model === llmConfig.model_id
       );
       return matchingLLM || null;

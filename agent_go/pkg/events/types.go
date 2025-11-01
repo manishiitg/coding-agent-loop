@@ -78,6 +78,7 @@ const (
 	// Fallback events
 	FallbackModelUsed  EventType = "fallback_model_used"
 	ThrottlingDetected EventType = "throttling_detected"
+	//nolint:gosec // G101: This is an event type constant, not a credential
 	TokenLimitExceeded EventType = "token_limit_exceeded"
 	MaxTurnsReached    EventType = "max_turns_reached"
 	ContextCancelled   EventType = "context_cancelled"
@@ -86,6 +87,7 @@ const (
 	ModelChangeEventType        EventType = "model_change"
 	FallbackModelUsedEventType  EventType = "fallback_model_used"
 	ThrottlingDetectedEventType EventType = "throttling_detected"
+	//nolint:gosec // G101: This is an event type constant, not a credential
 	TokenLimitExceededEventType EventType = "token_limit_exceeded"
 	MaxTurnsReachedEventType    EventType = "max_turns_reached"
 	ContextCancelledEventType   EventType = "context_cancelled"

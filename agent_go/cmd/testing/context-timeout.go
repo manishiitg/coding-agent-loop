@@ -47,7 +47,7 @@ var contextTimeoutTestCmd = &cobra.Command{
 		client := mcpclient.New(timeoutConfig, logger)
 
 		if err := client.Connect(ctx); err != nil {
-			return fmt.Errorf("failed to connect to timeout server: %v", err)
+			return fmt.Errorf("failed to connect to timeout server: %w", err)
 		}
 		defer client.Close()
 
@@ -56,13 +56,13 @@ var contextTimeoutTestCmd = &cobra.Command{
 		// Test 1: List available tools
 		logger.Info("\n--- Test 1: List Tools ---")
 		if err := testListTimeoutTools(ctx, client, logger); err != nil {
-			return fmt.Errorf("list tools test failed: %v", err)
+			return fmt.Errorf("list tools test failed: %w", err)
 		}
 
 		// Test 2: Use simple agent to call mock_timeout tool
 		logger.Info("\n--- Test 2: Simple Agent with Timeout Tool ---")
 		if err := testSimpleAgentWithTimeout(ctx, timeoutConfig, logger); err != nil {
-			return fmt.Errorf("mock timeout tool test failed: %v", err)
+			return fmt.Errorf("mock timeout tool test failed: %w", err)
 		}
 
 		logger.Info("\n✅ All timeout server tests passed!")
@@ -74,7 +74,7 @@ func testListTimeoutTools(ctx context.Context, client *mcpclient.Client, logger 
 	// List tools with details
 	tools, err := client.ListTools(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list tools: %v", err)
+		return fmt.Errorf("failed to list tools: %w", err)
 	}
 
 	logger.Infof("Found %d tools:", len(tools))
@@ -122,11 +122,11 @@ func testSimpleAgentWithTimeout(ctx context.Context, timeoutConfig mcpclient.MCP
 	// Write config to file
 	configJSON, err := json.MarshalIndent(timeoutConfigData, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %v", err)
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
 	if err := os.WriteFile(tempConfigPath, configJSON, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %v", err)
+		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	defer os.Remove(tempConfigPath)
 
@@ -152,7 +152,7 @@ func testSimpleAgentWithTimeout(ctx context.Context, timeoutConfig mcpclient.MCP
 	// Create the agent wrapper
 	timeoutAgent, err := agent.NewLLMAgentWrapper(ctx, agentConfig, tracer, logger)
 	if err != nil {
-		return fmt.Errorf("failed to create agent: %v", err)
+		return fmt.Errorf("failed to create agent: %w", err)
 	}
 	defer func() {
 		if err := timeoutAgent.Stop(context.Background()); err != nil {
@@ -172,7 +172,7 @@ func testSimpleAgentWithTimeout(ctx context.Context, timeoutConfig mcpclient.MCP
 	// Run the agent
 	result, err := timeoutAgent.Invoke(ctx, userMessage)
 	if err != nil {
-		return fmt.Errorf("agent failed: %v", err)
+		return fmt.Errorf("agent failed: %w", err)
 	}
 
 	// Record end time

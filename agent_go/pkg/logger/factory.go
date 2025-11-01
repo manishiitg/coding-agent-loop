@@ -28,7 +28,7 @@ func CreateLogger(logFile string, level string, format string, enableStdout bool
 	// Set log level
 	logLevel, err := logrus.ParseLevel(level)
 	if err != nil {
-		return Logger{}, fmt.Errorf("invalid log level: %v", err)
+		return Logger{}, fmt.Errorf("invalid log level: %w", err)
 	}
 	logrusLogger.SetLevel(logLevel)
 
@@ -64,13 +64,14 @@ func CreateLogger(logFile string, level string, format string, enableStdout bool
 		// Create log directory if it doesn't exist
 		logDir := filepath.Dir(logFile)
 		if err := os.MkdirAll(logDir, 0755); err != nil {
-			return Logger{}, fmt.Errorf("failed to create log directory: %v", err)
+			return Logger{}, fmt.Errorf("failed to create log directory: %w", err)
 		}
 
 		// Open log file
+		//nolint:gosec // G304: logFile comes from configuration/environment, not user input
 		file, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			return Logger{}, fmt.Errorf("failed to open log file: %v", err)
+			return Logger{}, fmt.Errorf("failed to open log file: %w", err)
 		}
 
 		// Set output to file when log file is specified
@@ -82,13 +83,14 @@ func CreateLogger(logFile string, level string, format string, enableStdout bool
 
 		// Create logs directory if it doesn't exist
 		if err := os.MkdirAll("logs", 0755); err != nil {
-			return Logger{}, fmt.Errorf("failed to create default logs directory: %v", err)
+			return Logger{}, fmt.Errorf("failed to create default logs directory: %w", err)
 		}
 
 		// Open default log file
+		//nolint:gosec // G304: defaultLogFile is generated internally with controlled format
 		file, err = os.OpenFile(defaultLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			return Logger{}, fmt.Errorf("failed to open default log file: %v", err)
+			return Logger{}, fmt.Errorf("failed to open default log file: %w", err)
 		}
 
 		// Set output to default log file

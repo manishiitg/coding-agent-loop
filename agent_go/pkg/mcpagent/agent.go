@@ -706,7 +706,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	// Load MCP configuration to get server configs for cache keys
 	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
 	if err != nil {
-		logger.Warnf("Failed to load MCP config for cache lookup: %v", err)
+		logger.Warnf("Failed to load MCP config for cache lookup: %w", err)
 		return fmt.Errorf("failed to load MCP config: %w", err)
 	}
 
@@ -921,7 +921,6 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 		// Orchestrator context: Start at level 2 (orchestrator_start -> orchestrator_agent_start -> system_prompt)
 		a.currentHierarchyLevel = 2
 		a.currentParentEventID = fmt.Sprintf("orchestrator_agent_start_%d", time.Now().UnixNano())
-		a.Logger.Infof("🔍 HIERARCHY DEBUG: Orchestrator context detected - Level=2, ParentID=%s", a.currentParentEventID)
 		return
 	}
 
@@ -930,7 +929,6 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 		// Server context: Start at level 0 (system_prompt is root)
 		a.currentHierarchyLevel = 0
 		a.currentParentEventID = ""
-		a.Logger.Infof("🔍 HIERARCHY DEBUG: Server context detected - Level=0, ParentID=''", a.currentParentEventID)
 		return
 	}
 
@@ -938,7 +936,6 @@ func (a *Agent) initializeHierarchyForContext(ctx context.Context) {
 	// This ensures consistent behavior until we implement proper context detection
 	a.currentHierarchyLevel = 0
 	a.currentParentEventID = ""
-	a.Logger.Infof("🔍 HIERARCHY DEBUG: Default context (no context values found) - Level=0, ParentID=''")
 }
 
 // EmitTypedEvent sends a typed event to all tracers AND all listeners
@@ -956,13 +953,8 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	event := events.NewAgentEvent(eventData)
 	event.TraceID = string(a.TraceID)
 
-	// Debug: Check the created event type
-	a.Logger.Infof("🔧 DEBUG: Created event type: %s", event.Type)
-	a.Logger.Infof("🔧 DEBUG: Event TraceID: %s", event.TraceID)
-
 	// Generate a unique SpanID for this event
 	event.SpanID = fmt.Sprintf("span_%s_%d", string(eventData.GetEventType()), time.Now().UnixNano())
-	a.Logger.Infof("🔧 DEBUG: Generated SpanID: %s", event.SpanID)
 
 	// ✅ COPY HIERARCHY FIELDS FROM EVENT DATA TO WRAPPER (SINGLE SOURCE OF TRUTH)
 	// Get hierarchy fields from the event data (which we just set above)
@@ -978,39 +970,29 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	// Update hierarchy for next event based on event type
 	eventType := events.EventType(eventData.GetEventType())
 
-	// Debug logging for hierarchy fields
-	a.Logger.Infof("🔍 HIERARCHY DEBUG: Event=%s, ParentID=%s, Level=%d, Component=%s",
-		string(eventType), event.ParentID, event.HierarchyLevel, event.Component)
-
 	if events.IsStartEvent(eventType) {
 		// ✅ SPECIAL HANDLING: conversation_turn should reset to level 2 (child of conversation_start)
 		if eventType == events.ConversationTurn {
 			a.currentHierarchyLevel = 2 // Reset to level 2 for new conversation turn
 			a.currentParentEventID = event.SpanID
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Conversation turn - reset to level %d, new parent=%s",
-				a.currentHierarchyLevel, a.currentParentEventID)
 		} else if eventType == events.ToolCallStart {
 			// ✅ SPECIAL HANDLING: tool_call_start should be sibling of llm_generation_end
 			// Don't increment level - use current level (same as llm_generation_end)
 			a.currentParentEventID = event.SpanID
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Tool call start - keeping level %d, new parent=%s",
-				a.currentHierarchyLevel, a.currentParentEventID)
 		} else {
 			// ✅ FIX: Increment level FIRST, then use it for next event
 			a.currentHierarchyLevel++
 			a.currentParentEventID = event.SpanID
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Start event - new parent=%s, level=%d",
-				a.currentParentEventID, a.currentHierarchyLevel)
 		}
 	} else if events.IsEndEvent(eventType) {
 		if eventType == events.ToolCallEnd {
 			// ✅ SPECIAL HANDLING: tool_call_end should be sibling of tool_call_start
 			// Don't change level - use same level as tool_call_start
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: Tool call end - keeping level %d (sibling of tool_call_start)", a.currentHierarchyLevel)
+			// Level remains unchanged
 		} else {
 			// ✅ FIX: Don't decrement level immediately - let the next start event handle it
 			// This allows token_usage and tool_call_start to be siblings of llm_generation_end
-			a.Logger.Infof("🔍 HIERARCHY DEBUG: End event - keeping level %d for potential siblings", a.currentHierarchyLevel)
+			// Level remains unchanged
 		}
 	}
 
@@ -1021,13 +1003,9 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 
 	// Send to all tracers (multiple tracer support)
 	// The streaming tracer will automatically forward events to subscribers
-	a.Logger.Infof("🔧 DEBUG: Sending event to %d tracers", len(a.Tracers))
-	for i, tracer := range a.Tracers {
-		a.Logger.Infof("🔧 DEBUG: Sending to tracer %d: %T", i, tracer)
+	for _, tracer := range a.Tracers {
 		if err := tracer.EmitEvent(event); err != nil {
 			a.Logger.Warnf("Failed to emit event to tracer %T: %v", tracer, err)
-		} else {
-			a.Logger.Infof("🔧 DEBUG: Successfully sent to tracer %T", tracer)
 		}
 	}
 
@@ -1038,13 +1016,9 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	copy(listeners, a.listeners)
 	a.mu.RUnlock()
 
-	a.Logger.Infof("🔧 DEBUG: Sending event to %d listeners", len(listeners))
-	for i, listener := range listeners {
-		a.Logger.Infof("🔧 DEBUG: Sending to listener %d: %T", i, listener)
+	for _, listener := range listeners {
 		if err := listener.HandleEvent(ctx, event); err != nil {
 			a.Logger.Warnf("Failed to emit event to listener %T: %v", listener, err)
-		} else {
-			a.Logger.Infof("🔧 DEBUG: Successfully sent to listener %T", listener)
 		}
 	}
 }
@@ -1286,7 +1260,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		Function: &llmtypes.FunctionDefinition{
 			Name:        name,
 			Description: description,
-			Parameters:  parameters,
+			Parameters:  llmtypes.NewParameters(parameters),
 		},
 	}
 

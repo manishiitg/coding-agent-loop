@@ -11,7 +11,6 @@ import (
 
 	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 )
 
@@ -230,79 +229,6 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	logger.Infof("🎉 SSE Test Suite Completed - test_type: %s, provider: %s, model: %s", "sse_test_suite", provider, modelID)
 }
 
-// runComprehensiveSSETest performs a comprehensive test of all SSE functionality
-func runComprehensiveSSETest(ctx context.Context, llm llmtypes.Model, tracer observability.Tracer) error {
-	logger := GetTestLogger()
-	logger.Info("🚀 Starting Comprehensive SSE Test")
-
-	// Test 1: Basic SSE Connection and Health Check
-	logger.Info("📡 Test 1: Basic SSE Connection and Health Check")
-	if err := testBasicSSEConnection(); err != nil {
-		logger.Error("❌ Basic SSE Connection Test Failed", "error", err)
-		return err
-	}
-	logger.Info("✅ Basic SSE Connection Test Passed")
-
-	// Test 2: SSE Streaming with Real Queries
-	logger.Info("📡 Test 2: SSE Streaming with Real Queries")
-	if err := testSSEStreamingWithQueries(ctx, llm); err != nil {
-		logger.Errorf("❌ SSE Streaming Test Failed - error: %v", err)
-		return err
-	}
-	logger.Info("✅ SSE Streaming Test Passed")
-
-	// Test 3: Multi-Client SSE Support
-	logger.Info("📡 Test 3: Multi-Client SSE Support")
-	if err := testMultiClientSSE(); err != nil {
-		logger.Errorf("❌ Multi-Client SSE Test Failed - error: %v", err)
-		return err
-	}
-	logger.Info("✅ Multi-Client SSE Test Passed")
-
-	// Test 4: SSE Event Type Validation
-	logger.Info("📡 Test 4: SSE Event Type Validation")
-	if err := testSSEEventTypes(); err != nil {
-		logger.Errorf("❌ SSE Event Type Test Failed - error: %v", err)
-		return err
-	}
-	logger.Info("✅ SSE Event Type Test Passed")
-
-	// Test 5: SSE Connection Management
-	logger.Info("📡 Test 5: SSE Connection Management")
-	if err := testSSEConnectionManagement(); err != nil {
-		logger.Errorf("❌ SSE Connection Management Test Failed - error: %v", err)
-		return err
-	}
-	logger.Info("✅ SSE Connection Management Test Passed")
-
-	// Test 6: SSE Performance and Load Testing
-	logger.Info("📡 Test 6: SSE Performance and Load Testing")
-	if err := testSSEPerformance(); err != nil {
-		logger.Errorf("❌ SSE Performance Test Failed - error: %v", err)
-		return err
-	}
-	logger.Info("✅ SSE Performance Test Passed")
-
-	// Test 7: SSE Error Handling and Recovery
-	logger.Info("📡 Test 7: SSE Error Handling and Recovery")
-	if err := testSSEErrorHandling(); err != nil {
-		logger.Errorf("❌ SSE Error Handling Test Failed - error: %v", err)
-		return err
-	}
-	logger.Info("✅ SSE Error Handling Test Passed")
-
-	// Test 8: SSE with Different Query Types
-	logger.Info("📡 Test 8: SSE with Different Query Types")
-	if err := testSSEWithDifferentQueries(ctx, llm); err != nil {
-		logger.Errorf("❌ SSE Query Types Test Failed - error: %v", err)
-		return err
-	}
-	logger.Info("✅ SSE Query Types Test Passed")
-
-	logger.Info("🎉 All Comprehensive SSE Tests Passed!")
-	return nil
-}
-
 // testBasicSSEConnection tests basic SSE connection functionality
 func testBasicSSEConnection() error {
 	// Simulate basic SSE connection test
@@ -402,29 +328,6 @@ func testSSEErrorHandling() error {
 		// Simulate error handling
 		_ = scenario // Use scenario to avoid unused variable
 		time.Sleep(50 * time.Millisecond)
-	}
-
-	return nil
-}
-
-// testSSEWithDifferentQueries tests SSE with various query types
-func testSSEWithDifferentQueries(ctx context.Context, llm llmtypes.Model) error {
-	// Test different types of queries
-	queryTypes := []struct {
-		name  string
-		query string
-	}{
-		{"Simple Question", "What is 2+2?"},
-		{"File Operation", "List files in current directory"},
-		{"Search Query", "Search for information about Go programming"},
-		{"Complex Task", "Analyze the current system performance"},
-		{"Tool Usage", "Use the filesystem tool to read a file"},
-	}
-
-	for _, qt := range queryTypes {
-		// Simulate query processing
-		_ = qt // Use qt to avoid unused variable
-		time.Sleep(150 * time.Millisecond)
 	}
 
 	return nil

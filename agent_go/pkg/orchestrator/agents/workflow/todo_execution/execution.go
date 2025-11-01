@@ -112,7 +112,7 @@ Focus on executing this step effectively using proven approaches and avoiding fa
 	// Parse and execute the template
 	tmpl, err := template.New("todoExecution").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing template: %v", err)
+		return fmt.Sprintf("Error parsing template: %w", err)
 	}
 
 	var result strings.Builder
@@ -132,7 +132,7 @@ Focus on executing this step effectively using proven approaches and avoiding fa
 		"RunOption":               templateVars["RunOption"],
 	})
 	if err != nil {
-		return fmt.Sprintf("Error executing template: %v", err)
+		return fmt.Sprintf("Error executing template: %w", err)
 	}
 
 	return result.String()

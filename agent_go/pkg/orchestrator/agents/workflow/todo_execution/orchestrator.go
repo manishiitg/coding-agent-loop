@@ -585,7 +585,7 @@ func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Co
 	// Emit through the context-aware bridge
 	bridge := teo.GetContextAwareBridge()
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		teo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %v", err)
+		teo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %w", err)
 	} else {
 		teo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
 	}

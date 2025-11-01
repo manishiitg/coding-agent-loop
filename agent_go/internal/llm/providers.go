@@ -249,7 +249,7 @@ func initializeBedrock(config Config) (llmtypes.Model, error) {
 	// Load AWS SDK configuration
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(region))
 	if err != nil {
-		logger.Errorf("Failed to load AWS config: %v", err)
+		logger.Errorf("Failed to load AWS config: %w", err)
 
 		// Emit LLM initialization error event - use typed structure directly
 		errorMetadata := LLMMetadata{
@@ -538,7 +538,7 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		logger.Errorf("Failed to create GenAI client: %v", err)
+		logger.Errorf("Failed to create GenAI client: %w", err)
 
 		// Emit LLM initialization error event
 		errorMetadata := LLMMetadata{
@@ -813,7 +813,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 
 	// 🆕 IMMEDIATE POST-CALL LOGGING
 	p.logger.Infof("🔍 [DEBUG] Underlying LLM.GenerateContent returned - Time: %v", time.Now())
-	p.logger.Infof("🔍 [DEBUG] Return values - Error: %v, Response: %v", err != nil, resp != nil)
+	p.logger.Infof("🔍 [DEBUG] Return values - Error: %v, Response: %w", err != nil, resp != nil)
 
 	// 🆕 TIMING DEBUGGING - Track LLM call completion
 	llmCallDuration := time.Since(llmCallStart)
@@ -829,7 +829,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 	}
 
 	// 🆕 ENHANCED BEDROCK RESPONSE DEBUGGING
-	p.logger.Infof("🔍 Raw Bedrock response received - err: %v, resp: %v", err, resp != nil)
+	p.logger.Infof("🔍 Raw Bedrock response received - err: %v, resp: %w", err, resp != nil)
 
 	// 🆕 DETAILED BEDROCK RESPONSE ANALYSIS
 	if resp != nil {
@@ -847,12 +847,21 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 
 				// 🆕 OPENROUTER CACHE DEBUGGING
 				if p.provider == ProviderOpenRouter && choice.GenerationInfo != nil {
-					p.logger.Infof("🔍 OpenRouter GenerationInfo keys: %v", getMapKeys(choice.GenerationInfo))
-					for key, value := range choice.GenerationInfo {
-						if strings.Contains(strings.ToLower(key), "cache") {
-							p.logger.Infof("🔍 OpenRouter Cache Field - %s: %v (type: %T)", key, value, value)
+					info := choice.GenerationInfo
+					p.logger.Infof("🔍 OpenRouter GenerationInfo: CacheDiscount=%v, CachedContentTokens=%v",
+						info.CacheDiscount, info.CachedContentTokens)
+					// Check additional fields for cache-related info
+					if info.Additional != nil {
+						for key, value := range info.Additional {
+							if strings.Contains(strings.ToLower(key), "cache") {
+								p.logger.Infof("🔍 OpenRouter Cache Field - %s: %v (type: %T)", key, value, value)
+							}
 						}
 					}
+				} else if choice.GenerationInfo != nil {
+					info := choice.GenerationInfo
+					p.logger.Infof("🔍 GenerationInfo: InputTokens=%v, OutputTokens=%v, TotalTokens=%v",
+						info.InputTokens, info.OutputTokens, info.TotalTokens)
 				}
 			}
 		}
@@ -881,12 +890,14 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 
 	if resp != nil {
 		p.logger.Infof("🔍 Response structure - Choices: %v, Choices count: %d", resp.Choices != nil, len(resp.Choices))
-		if resp.Choices != nil && len(resp.Choices) > 0 {
+		if len(resp.Choices) > 0 {
 			choice := resp.Choices[0]
 			p.logger.Infof("🔍 First choice - Content: %v, Content length: %d, GenerationInfo: %v",
 				choice.Content != "", len(choice.Content), choice.GenerationInfo != nil)
 			if choice.GenerationInfo != nil {
-				p.logger.Infof("🔍 GenerationInfo keys: %v", getMapKeys(choice.GenerationInfo))
+				info := choice.GenerationInfo
+				p.logger.Infof("🔍 GenerationInfo: InputTokens=%v, OutputTokens=%v, TotalTokens=%v",
+					info.InputTokens, info.OutputTokens, info.TotalTokens)
 			}
 		}
 	}
@@ -1062,7 +1073,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 	firstChoice := resp.Choices[0]
 	if firstChoice.Content == "" {
 		// Check if this is a valid tool call response
-		if firstChoice.ToolCalls != nil && len(firstChoice.ToolCalls) > 0 {
+		if len(firstChoice.ToolCalls) > 0 {
 			p.logger.Infof("✅ Valid tool call response detected - Content is empty but ToolCalls present")
 			p.logger.Infof("   Tool Calls: %d", len(firstChoice.ToolCalls))
 			for i, toolCall := range firstChoice.ToolCalls {
@@ -1096,7 +1107,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 				toolCallsCount = len(firstChoice.ToolCalls)
 			}
 			p.logger.Errorf("   Choice.ToolCalls: %v (nil: %v, count: %d)", firstChoice.ToolCalls != nil, firstChoice.ToolCalls == nil, toolCallsCount)
-			if firstChoice.ToolCalls != nil && len(firstChoice.ToolCalls) > 0 {
+			if len(firstChoice.ToolCalls) > 0 {
 				for i, tc := range firstChoice.ToolCalls {
 					p.logger.Errorf("     ToolCall %d: ID=%s, Type=%s, FunctionName=%s, Arguments=%s",
 						i+1, tc.ID, tc.Type, tc.FunctionCall.Name, truncateString(tc.FunctionCall.Arguments, 200))
@@ -1109,13 +1120,18 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 			}
 			p.logger.Errorf("   Choice.GenerationInfo: %v (nil: %v)", firstChoice.GenerationInfo != nil, firstChoice.GenerationInfo == nil)
 			if firstChoice.GenerationInfo != nil {
-				p.logger.Errorf("     GenerationInfo Keys: %v", getMapKeys(firstChoice.GenerationInfo))
-				for key, value := range firstChoice.GenerationInfo {
-					valueStr := fmt.Sprintf("%v", value)
-					if len(valueStr) > 200 {
-						valueStr = truncateString(valueStr, 200)
+				info := firstChoice.GenerationInfo
+				p.logger.Errorf("     GenerationInfo: InputTokens=%v, OutputTokens=%v, TotalTokens=%v",
+					info.InputTokens, info.OutputTokens, info.TotalTokens)
+				// Log additional fields if present
+				if info.Additional != nil {
+					for key, value := range info.Additional {
+						valueStr := fmt.Sprintf("%v", value)
+						if len(valueStr) > 200 {
+							valueStr = truncateString(valueStr, 200)
+						}
+						p.logger.Errorf("       %s: %s (type: %T)", key, valueStr, value)
 					}
-					p.logger.Errorf("       %s: %s (type: %T)", key, valueStr, value)
 				}
 			}
 
@@ -1135,7 +1151,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 				p.logger.Errorf("🔍 RAW RESPONSE AS JSON (processed by langchaingo):")
 				p.logger.Errorf("%s", jsonStr)
 			} else {
-				p.logger.Errorf("   ⚠️ Failed to serialize response to JSON: %v", err)
+				p.logger.Errorf("   ⚠️ Failed to serialize response to JSON: %w", err)
 			}
 
 			// Log the options that were passed to the LLM
@@ -1175,17 +1191,18 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 	// 🆕 ENHANCED SUCCESS LOGGING
 	p.logger.Infof("✅ LLM generation validation passed - provider: %s, model: %s", string(p.provider), p.modelID)
 	p.logger.Infof("✅ Response structure - Choices: %v, Choices count: %d", resp.Choices != nil, len(resp.Choices))
-	if resp.Choices != nil && len(resp.Choices) > 0 {
+	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 		p.logger.Infof("✅ First choice - Content: %v, Content length: %d, GenerationInfo: %v",
 			choice.Content != "", len(choice.Content), choice.GenerationInfo != nil)
 		if choice.GenerationInfo != nil {
-			p.logger.Infof("✅ GenerationInfo keys: %v", getMapKeys(choice.GenerationInfo))
+			p.logger.Infof("✅ GenerationInfo available: InputTokens=%v, OutputTokens=%v, TotalTokens=%v",
+				choice.GenerationInfo.InputTokens, choice.GenerationInfo.OutputTokens, choice.GenerationInfo.TotalTokens)
 		}
 	}
 
 	// Extract token usage from GenerationInfo if available
-	if resp.Choices != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+	if len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
 		// Extract token usage and create success event with comprehensive data
 		usage := extractTokenUsageFromGenerationInfo(resp.Choices[0].GenerationInfo)
 
@@ -1276,57 +1293,12 @@ func getTemperatureFromOptions(options []llmtypes.CallOption) float64 {
 	return 0.7 // default temperature
 }
 
-// extractMessageContent converts message content to a structured format
-func extractMessageContent(messages []llmtypes.MessageContent) []map[string]interface{} {
-	var messageList []map[string]interface{}
-
-	for i, msg := range messages {
-		messageData := map[string]interface{}{
-			"index": i,
-			"role":  msg.Role,
-		}
-
-		// Extract text content from message parts
-		var contentParts []string
-		for _, part := range msg.Parts {
-			if textPart, ok := part.(llmtypes.TextContent); ok {
-				contentParts = append(contentParts, textPart.Text)
-			}
-		}
-
-		if len(contentParts) > 0 {
-			messageData["content"] = contentParts
-		}
-
-		messageList = append(messageList, messageData)
-	}
-
-	return messageList
-}
-
-// getMapKeys extracts keys from a map for debugging purposes
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // truncateString truncates a string to a specified length
 func truncateString(s string, length int) string {
 	if len(s) <= length {
 		return s
 	}
 	return s[:length] + "..."
-}
-
-// maskAPIKey masks the API key in logs for security
-func maskAPIKey(key string) string {
-	if len(key) < 4 {
-		return "***" // Too short to mask
-	}
-	return key[:4] + "..." + key[len(key)-4:]
 }
 
 // WithOpenRouterUsage enables usage parameter for OpenRouter requests to get cache token information
@@ -1338,16 +1310,20 @@ func WithOpenRouterUsage() CallOption {
 		// Set the usage parameter in the request metadata (not CallOptions metadata)
 		// This will be passed to the actual HTTP request body
 		if opts.Metadata == nil {
-			fmt.Printf("🔧 [DEBUG] Creating new metadata map\n")
-			opts.Metadata = make(map[string]interface{})
+			fmt.Printf("🔧 [DEBUG] Creating new metadata\n")
+			opts.Metadata = &llmtypes.Metadata{
+				Usage: &llmtypes.UsageMetadata{Include: true},
+			}
 		} else {
-			fmt.Printf("🔧 [DEBUG] Using existing metadata map: %+v\n", opts.Metadata)
+			fmt.Printf("🔧 [DEBUG] Using existing metadata: %+v\n", opts.Metadata)
+			if opts.Metadata.Usage == nil {
+				opts.Metadata.Usage = &llmtypes.UsageMetadata{Include: true}
+			} else {
+				opts.Metadata.Usage.Include = true
+			}
 		}
 
 		fmt.Printf("🔧 [DEBUG] Setting usage parameter...\n")
-		opts.Metadata["usage"] = map[string]interface{}{
-			"include": true,
-		}
 
 		// Debug logging to verify metadata is being set
 		fmt.Printf("🔧 DEBUG: Set OpenRouter usage metadata: %+v\n", opts.Metadata)
@@ -1606,7 +1582,7 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 		logger.Errorf("[API KEY VALIDATION ERROR] %s validation failed: %v", req.Provider, err)
 		return APIKeyValidationResponse{
 			Valid: false,
-			Error: fmt.Sprintf("Validation failed: %v", err),
+			Error: fmt.Sprintf("Validation failed: %w", err),
 		}
 	}
 
@@ -1640,8 +1616,8 @@ func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://openrouter.ai/api/v1/models", nil)
 	if err != nil {
-		logger.Errorf("[OPENROUTER VALIDATION ERROR] Failed to create request: %v", err)
-		return false, "", fmt.Errorf("failed to create request: %v", err)
+		logger.Errorf("[OPENROUTER VALIDATION ERROR] Failed to create request: %w", err)
+		return false, "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -1650,8 +1626,8 @@ func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
 	logger.Infof("[OPENROUTER VALIDATION] Sending request to OpenRouter API")
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Errorf("[OPENROUTER VALIDATION ERROR] Request failed: %v", err)
-		return false, "", fmt.Errorf("request failed: %v", err)
+		logger.Errorf("[OPENROUTER VALIDATION ERROR] Request failed: %w", err)
+		return false, "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -1690,8 +1666,8 @@ func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
 	if err != nil {
-		logger.Errorf("[OPENAI VALIDATION ERROR] Failed to create request: %v", err)
-		return false, "", fmt.Errorf("failed to create request: %v", err)
+		logger.Errorf("[OPENAI VALIDATION ERROR] Failed to create request: %w", err)
+		return false, "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -1700,8 +1676,8 @@ func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
 	logger.Infof("[OPENAI VALIDATION] Sending request to OpenAI API")
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Errorf("[OPENAI VALIDATION ERROR] Request failed: %v", err)
-		return false, "", fmt.Errorf("request failed: %v", err)
+		logger.Errorf("[OPENAI VALIDATION ERROR] Request failed: %w", err)
+		return false, "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -1760,7 +1736,7 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 	// Load AWS SDK configuration
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(region))
 	if err != nil {
-		logger.Errorf("[BEDROCK VALIDATION ERROR] Failed to load AWS config: %v", err)
+		logger.Errorf("[BEDROCK VALIDATION ERROR] Failed to load AWS config: %w", err)
 		return false, "Failed to load AWS configuration", err
 	}
 
@@ -1782,7 +1758,7 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 		},
 	})
 	if err != nil {
-		logger.Errorf("[BEDROCK VALIDATION ERROR] Bedrock test generation failed: %v", err)
+		logger.Errorf("[BEDROCK VALIDATION ERROR] Bedrock test generation failed: %w", err)
 		// Check for specific error types
 		if strings.Contains(err.Error(), "UnauthorizedOperation") || strings.Contains(err.Error(), "AccessDenied") {
 			return false, "AWS credentials do not have permission to access Bedrock", nil
@@ -1793,7 +1769,7 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 		if strings.Contains(err.Error(), "timeout") {
 			return false, "Bedrock service timeout - check network connectivity", nil
 		}
-		return false, fmt.Sprintf("Bedrock test generation failed: %v", err), nil
+		return false, fmt.Sprintf("Bedrock test generation failed: %w", err), nil
 	}
 
 	logger.Infof("[BEDROCK VALIDATION SUCCESS] AWS Bedrock credentials are valid")

@@ -57,6 +57,7 @@ const (
 	// Fallback & Error Events
 	EventTypeFallbackModelUsed  = "fallback_model_used"
 	EventTypeThrottlingDetected = "throttling_detected"
+	//nolint:gosec // G101: This is an event type constant, not a credential
 	EventTypeTokenLimitExceeded = "token_limit_exceeded"
 	EventTypeMaxTurnsReached    = "max_turns_reached"
 	EventTypeContextCancelled   = "context_cancelled"

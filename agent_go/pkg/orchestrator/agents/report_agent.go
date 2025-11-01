@@ -50,13 +50,13 @@ func (ra *OrchestratorReportAgent) reportInputProcessor(templateVars map[string]
 	// Parse and execute the template
 	tmpl, err := template.New("report").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing report template: %v", err)
+		return fmt.Sprintf("Error parsing report template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing report template: %v", err)
+		return fmt.Sprintf("Error executing report template: %w", err)
 	}
 
 	return result.String()

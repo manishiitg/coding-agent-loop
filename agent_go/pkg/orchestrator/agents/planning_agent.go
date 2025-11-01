@@ -50,13 +50,13 @@ func (pa *OrchestratorPlanningAgent) planningInputProcessor(templateVars map[str
 	// Parse and execute the template
 	tmpl, err := template.New("planning").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing planning template: %v", err)
+		return fmt.Sprintf("Error parsing planning template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing planning template: %v", err)
+		return fmt.Sprintf("Error executing planning template: %w", err)
 	}
 
 	return result.String()

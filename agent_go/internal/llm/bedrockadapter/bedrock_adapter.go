@@ -285,15 +285,27 @@ func convertTools(llmTools []llmtypes.Tool) []map[string]interface{} {
 
 		// Extract function parameters as JSON schema
 		var inputSchema map[string]interface{}
-		if params, ok := tool.Function.Parameters.(map[string]interface{}); ok {
-			inputSchema = params
-		} else if tool.Function.Parameters != nil {
-			// Try to marshal and unmarshal if not a map
-			paramsBytes, err := json.Marshal(tool.Function.Parameters)
-			if err == nil {
-				var paramsMap map[string]interface{}
-				if err := json.Unmarshal(paramsBytes, &paramsMap); err == nil {
-					inputSchema = paramsMap
+		if tool.Function.Parameters != nil {
+			// Convert from typed Parameters to map
+			inputSchema = make(map[string]interface{})
+			if tool.Function.Parameters.Type != "" {
+				inputSchema["type"] = tool.Function.Parameters.Type
+			}
+			if tool.Function.Parameters.Properties != nil {
+				inputSchema["properties"] = tool.Function.Parameters.Properties
+			}
+			if tool.Function.Parameters.Required != nil {
+				inputSchema["required"] = tool.Function.Parameters.Required
+			}
+			if tool.Function.Parameters.AdditionalProperties != nil {
+				inputSchema["additionalProperties"] = tool.Function.Parameters.AdditionalProperties
+			}
+			if tool.Function.Parameters.PatternProperties != nil {
+				inputSchema["patternProperties"] = tool.Function.Parameters.PatternProperties
+			}
+			if tool.Function.Parameters.Additional != nil {
+				for k, v := range tool.Function.Parameters.Additional {
+					inputSchema[k] = v
 				}
 			}
 		}
@@ -435,28 +447,30 @@ func convertResponse(responseBody map[string]interface{}) *llmtypes.ContentRespo
 		Content:        contentText.String(),
 		StopReason:     stopReason,
 		ToolCalls:      toolCalls,
-		GenerationInfo: make(map[string]interface{}),
+		GenerationInfo: nil, // Will be set below if token usage is available
 	}
 
 	// Extract token usage
 	if usage, ok := responseBody["usage"].(map[string]interface{}); ok {
+		genInfo := &llmtypes.GenerationInfo{}
+		var promptTokens, completionTokens, totalTokens int
+
 		if inputTokens, ok := usage["input_tokens"].(float64); ok {
-			choice.GenerationInfo["prompt_tokens"] = int(inputTokens)
+			promptTokens = int(inputTokens)
+			genInfo.PromptTokens = &promptTokens
 		}
 		if outputTokens, ok := usage["output_tokens"].(float64); ok {
-			choice.GenerationInfo["completion_tokens"] = int(outputTokens)
+			completionTokens = int(outputTokens)
+			genInfo.CompletionTokens = &completionTokens
 		}
 		// Calculate total
-		var totalTokens int
-		if promptTokens, ok := choice.GenerationInfo["prompt_tokens"].(int); ok {
-			totalTokens += promptTokens
-		}
-		if completionTokens, ok := choice.GenerationInfo["completion_tokens"].(int); ok {
-			totalTokens += completionTokens
-		}
+		totalTokens = promptTokens + completionTokens
 		if totalTokens > 0 {
-			choice.GenerationInfo["total_tokens"] = totalTokens
+			genInfo.TotalTokens = &totalTokens
+			genInfo.InputTokens = &promptTokens
+			genInfo.OutputTokens = &completionTokens
 		}
+		choice.GenerationInfo = genInfo
 	}
 
 	resp.Choices = append(resp.Choices, choice)

@@ -62,7 +62,7 @@ func runBedrock(cmd *cobra.Command, args []string) {
 		Logger:      logger,
 	})
 	if err != nil {
-		log.Fatalf("Failed to create Bedrock LLM: %v", err)
+		log.Fatalf("Failed to create Bedrock LLM: %w", err)
 	}
 
 	// Define a simple tool
@@ -71,7 +71,7 @@ func runBedrock(cmd *cobra.Command, args []string) {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_weather",
 			Description: "Get current weather for a location",
-			Parameters: map[string]any{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]any{
 					"location": map[string]any{
@@ -80,7 +80,7 @@ func runBedrock(cmd *cobra.Command, args []string) {
 					},
 				},
 				"required": []string{"location"},
-			},
+			}),
 		},
 	}
 

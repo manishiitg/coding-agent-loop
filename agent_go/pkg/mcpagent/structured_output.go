@@ -78,7 +78,7 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 	sog.logger.Infof("Structured output max_tokens: %d", maxTokens)
 	response, err := sog.llm.GenerateContent(ctx, messages, opts...)
 	if err != nil {
-		sog.logger.Errorf("LLM call failed: %v", err)
+		sog.logger.Errorf("LLM call failed: %w", err)
 		return "", fmt.Errorf("failed to generate structured output: %w", err)
 	}
 
@@ -285,7 +285,7 @@ func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput 
 	// Validate JSON before parsing (using interface{} to support both objects and arrays)
 	var jsonValidator interface{}
 	if err := json.Unmarshal([]byte(jsonOutput), &jsonValidator); err != nil {
-		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON validation failed: %v", err)
+		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON validation failed: %w", err)
 		var zero T
 		return zero, fmt.Errorf("invalid JSON structure: %w", err)
 	}
@@ -294,7 +294,7 @@ func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput 
 	// Parse JSON back to the target type
 	var result T
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
-		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON unmarshaling failed: %v", err)
+		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON unmarshaling failed: %w", err)
 		var zero T
 		return zero, fmt.Errorf("failed to parse structured output: %w", err)
 	}

@@ -213,7 +213,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 		Logger:      logger,
 	})
 	if err != nil {
-		logger.Errorf("❌ Failed to create OpenAI LLM: %v", err)
+		logger.Errorf("❌ Failed to create OpenAI LLM: %w", err)
 		return err
 	}
 
@@ -280,7 +280,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing OpenAI Simple Agent...")
 	todoResponseSimple, err := mcpagent.AskStructured(openaiSimpleAgent, ctx, "Create a simple todo list with 2 tasks for learning Go programming.", TodoList{}, todoSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured TodoList with OpenAI Simple Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured TodoList with OpenAI Simple Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured TodoList with OpenAI Simple Agent successful")
 		logger.Infof("Title: %s", todoResponseSimple.Title)
@@ -297,7 +297,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing OpenAI ReAct Agent...")
 	todoResponseReAct, err := mcpagent.AskStructured(openaiReActAgent, ctx, "Create a simple todo list with 2 tasks for learning Go programming.", TodoList{}, todoSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured TodoList with OpenAI ReAct Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured TodoList with OpenAI ReAct Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured TodoList with OpenAI ReAct Agent successful")
 		logger.Infof("Title: %s", todoResponseReAct.Title)
@@ -321,7 +321,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 		Logger:      logger,
 	})
 	if err != nil {
-		logger.Errorf("❌ Failed to create Bedrock LLM: %v", err)
+		logger.Errorf("❌ Failed to create Bedrock LLM: %w", err)
 		return err
 	}
 
@@ -390,7 +390,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing Bedrock Simple Agent...")
 	projectResponseSimple, err := mcpagent.AskStructured(bedrockSimpleAgent, ctx, "Create a project plan for developing a new AI-powered chatbot with 3 team members and 4 milestones.", Project{}, projectSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured Project with Bedrock Simple Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured Project with Bedrock Simple Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured Project with Bedrock Simple Agent successful")
 		logger.Infof("Project: %s", projectResponseSimple.Name)
@@ -404,7 +404,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing Bedrock ReAct Agent...")
 	projectResponseReAct, err := mcpagent.AskStructured(bedrockReActAgent, ctx, "Create a project plan for developing a new AI-powered chatbot with 3 team members and 4 milestones.", Project{}, projectSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured Project with Bedrock ReAct Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured Project with Bedrock ReAct Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured Project with Bedrock ReAct Agent successful")
 		logger.Infof("Project: %s", projectResponseReAct.Name)
@@ -425,7 +425,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 		Logger:      logger,
 	})
 	if err != nil {
-		logger.Errorf("❌ Failed to create Anthropic LLM: %v", err)
+		logger.Errorf("❌ Failed to create Anthropic LLM: %w", err)
 		logger.Infof("   Note: Make sure ANTHROPIC_API_KEY is set in .env file")
 		return err
 	}
@@ -540,7 +540,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing Anthropic Simple Agent...")
 	financialResponseSimple, err := mcpagent.AskStructured(anthropicSimpleAgent, ctx, "Create a quarterly financial report for a tech startup showing revenue growth, profitability metrics, and key financial ratios.", FinancialReport{}, financialSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured Financial with Anthropic Simple Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured Financial with Anthropic Simple Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured Financial with Anthropic Simple Agent successful")
 		logger.Infof("Company: %s", financialResponseSimple.CompanyName)
@@ -554,7 +554,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing Anthropic ReAct Agent...")
 	financialResponseReAct, err := mcpagent.AskStructured(anthropicReActAgent, ctx, "Create a quarterly financial report for a tech startup showing revenue growth, profitability metrics, and key financial ratios.", FinancialReport{}, financialSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured Financial with Anthropic ReAct Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured Financial with Anthropic ReAct Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured Financial with Anthropic ReAct Agent successful")
 		logger.Infof("Company: %s", financialResponseReAct.CompanyName)
@@ -575,7 +575,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 		Logger:      logger,
 	})
 	if err != nil {
-		logger.Errorf("❌ Failed to create OpenAI GPT-4 LLM: %v", err)
+		logger.Errorf("❌ Failed to create OpenAI GPT-4 LLM: %w", err)
 		return err
 	}
 
@@ -664,7 +664,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing OpenAI GPT-4.1 Simple Agent...")
 	techDocResponseSimple, err := mcpagent.AskStructured(openaiGPT4SimpleAgent, ctx, "Create technical documentation for a REST API that manages user authentication with endpoints for login, logout, and user profile management. Include code examples in Python and JavaScript.", TechnicalDoc{}, techDocSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured Technical Doc with OpenAI GPT-4.1 Simple Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured Technical Doc with OpenAI GPT-4.1 Simple Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured Technical Doc with OpenAI GPT-4.1 Simple Agent successful")
 		logger.Infof("Title: %s", techDocResponseSimple.Title)
@@ -678,7 +678,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("🔍 Testing OpenAI GPT-4.1 ReAct Agent...")
 	techDocResponseReAct, err := mcpagent.AskStructured(openaiGPT4ReActAgent, ctx, "Create technical documentation for a REST API that manages user authentication with endpoints for login, logout, and user profile management. Include code examples in Python and JavaScript.", TechnicalDoc{}, techDocSchema)
 	if err != nil {
-		logger.Errorf("❌ AskStructured Technical Doc with OpenAI GPT-4.1 ReAct Agent failed: %v", err)
+		logger.Errorf("❌ AskStructured Technical Doc with OpenAI GPT-4.1 ReAct Agent failed: %w", err)
 	} else {
 		logger.Info("✅ AskStructured Technical Doc with OpenAI GPT-4.1 ReAct Agent successful")
 		logger.Infof("Title: %s", techDocResponseReAct.Title)
@@ -741,7 +741,10 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 
 	// Test 5: Recipe List with Vertex AI (Gemini) (Simple + ReAct)
 	logger.Info("🧪 Test 5: AskStructured with Recipe List using Vertex AI (Gemini) (Simple + ReAct)")
-	runVertexAIStructuredOutputTest(logger)
+	err = runVertexAIStructuredOutputTest(logger)
+	if err != nil {
+		return err
+	}
 
 	if !vertexOnly {
 		logger.Info("🎉 All agent structured output tests completed across multiple LLM providers and agent modes!")
@@ -789,14 +792,14 @@ func runVertexAIStructuredOutputTest(logger interface{}) error {
 		Context:     ctx,
 	})
 	if err != nil {
-		log.Errorf("❌ Failed to create Vertex AI LLM: %v", err)
+		log.Errorf("❌ Failed to create Vertex AI LLM: %w", err)
 		return err
 	}
 
 	// Create Vertex AI Simple Agent
 	vertexSimpleAgent, err := mcpagent.NewSimpleAgent(ctx, vertexLLM, "vertex-simple-test", "configs/mcp_servers_simple.json", "gemini-2.5-flash", nil, "vertex-simple-trace", log)
 	if err != nil {
-		log.Errorf("❌ Failed to create Vertex AI Simple agent: %v", err)
+		log.Errorf("❌ Failed to create Vertex AI Simple agent: %w", err)
 		return err
 	}
 	log.Info("✅ Vertex AI Simple Agent created successfully")
@@ -804,7 +807,7 @@ func runVertexAIStructuredOutputTest(logger interface{}) error {
 	// Create Vertex AI ReAct Agent
 	vertexReActAgent, err := mcpagent.NewReActAgent(ctx, vertexLLM, "vertex-react-test", "configs/mcp_servers_simple.json", "gemini-2.5-flash", nil, "vertex-react-trace", log)
 	if err != nil {
-		log.Errorf("❌ Failed to create Vertex AI ReAct agent: %v", err)
+		log.Errorf("❌ Failed to create Vertex AI ReAct agent: %w", err)
 		return err
 	}
 	log.Info("✅ Vertex AI ReAct Agent created successfully")
@@ -832,7 +835,7 @@ func runVertexAIStructuredOutputTest(logger interface{}) error {
 	log.Info("🔍 Testing Vertex AI Simple Agent...")
 	recipeResponseSimple, err = mcpagent.AskStructured(vertexSimpleAgent, ctx, "List a few popular cookie recipes, and include the amounts of ingredients.", recipeResponseSimple, recipeSchema)
 	if err != nil {
-		log.Errorf("❌ AskStructured Recipe List with Vertex AI Simple Agent failed: %v", err)
+		log.Errorf("❌ AskStructured Recipe List with Vertex AI Simple Agent failed: %w", err)
 	} else {
 		log.Info("✅ AskStructured Recipe List with Vertex AI Simple Agent successful")
 		log.Infof("Number of recipes: %d", len(recipeResponseSimple))
@@ -845,7 +848,7 @@ func runVertexAIStructuredOutputTest(logger interface{}) error {
 	log.Info("🔍 Testing Vertex AI ReAct Agent...")
 	recipeResponseReAct, err = mcpagent.AskStructured(vertexReActAgent, ctx, "List a few popular cookie recipes, and include the amounts of ingredients.", recipeResponseReAct, recipeSchema)
 	if err != nil {
-		log.Errorf("❌ AskStructured Recipe List with Vertex AI ReAct Agent failed: %v", err)
+		log.Errorf("❌ AskStructured Recipe List with Vertex AI ReAct Agent failed: %w", err)
 	} else {
 		log.Info("✅ AskStructured Recipe List with Vertex AI ReAct Agent successful")
 		log.Infof("Number of recipes: %d", len(recipeResponseReAct))

@@ -119,15 +119,6 @@ func (es *EventStore) GetNextEventCounter(observerID string) int {
 	return es.eventCounters[observerID]
 }
 
-// getObserverKeys returns a list of observer keys for debugging
-func (es *EventStore) getObserverKeys() []string {
-	keys := make([]string, 0, len(es.events))
-	for k := range es.events {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // GetEvents retrieves events for an observer since a specific index
 func (es *EventStore) GetEvents(observerID string, sinceIndex int) ([]Event, int, bool) {
 	es.mu.RLock()

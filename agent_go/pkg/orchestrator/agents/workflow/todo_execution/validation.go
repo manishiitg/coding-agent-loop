@@ -201,12 +201,12 @@ Create a focused validation report for this single step:
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing validation template: %v", err)
+		return fmt.Sprintf("Error parsing validation template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing validation template: %v", err)
+		return fmt.Sprintf("Error executing validation template: %w", err)
 	}
 
 	return result.String()

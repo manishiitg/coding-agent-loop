@@ -68,7 +68,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 	jsonOutput, err := generator.GenerateStructuredOutput(ctx, prompt, schema)
 	if err != nil {
 		duration := time.Since(startTime)
-		cl.GetLogger().Errorf("❌ Conditional decision failed: %v", err)
+		cl.GetLogger().Errorf("❌ Conditional decision failed: %w", err)
 
 		// Emit orchestrator agent error event
 		if cl.GetEventEmitter() != nil {
@@ -94,7 +94,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 	var result ConditionalResponse
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
 		duration := time.Since(startTime)
-		cl.GetLogger().Errorf("❌ Failed to parse conditional response: %v", err)
+		cl.GetLogger().Errorf("❌ Failed to parse conditional response: %w", err)
 
 		// Emit orchestrator agent error event
 		if cl.GetEventEmitter() != nil {

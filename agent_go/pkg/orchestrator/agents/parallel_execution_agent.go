@@ -52,13 +52,13 @@ func (pea *OrchestratorParallelExecutionAgent) parallelExecutionInputProcessor(t
 	// Parse and execute the template
 	tmpl, err := template.New("parallel_execution").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing parallel execution template: %v", err)
+		return fmt.Sprintf("Error parsing parallel execution template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing parallel execution template: %v", err)
+		return fmt.Sprintf("Error executing parallel execution template: %w", err)
 	}
 
 	return result.String()

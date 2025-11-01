@@ -3,6 +3,7 @@ package openaiadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -231,17 +232,30 @@ func convertTools(llmTools []llmtypes.Tool) []openai.ChatCompletionToolUnionPara
 
 		// Extract function parameters as JSON schema
 		var parameters shared.FunctionParameters
-		if params, ok := tool.Function.Parameters.(map[string]interface{}); ok {
-			parameters = shared.FunctionParameters(params)
-		} else if tool.Function.Parameters != nil {
-			// Try to marshal and unmarshal if not a map
-			paramsBytes, err := json.Marshal(tool.Function.Parameters)
-			if err == nil {
-				var paramsMap map[string]interface{}
-				if err := json.Unmarshal(paramsBytes, &paramsMap); err == nil {
-					parameters = paramsMap
+		if tool.Function.Parameters != nil {
+			// Convert from typed Parameters to map for langchaingo compatibility
+			paramsMap := make(map[string]interface{})
+			if tool.Function.Parameters.Type != "" {
+				paramsMap["type"] = tool.Function.Parameters.Type
+			}
+			if tool.Function.Parameters.Properties != nil {
+				paramsMap["properties"] = tool.Function.Parameters.Properties
+			}
+			if tool.Function.Parameters.Required != nil {
+				paramsMap["required"] = tool.Function.Parameters.Required
+			}
+			if tool.Function.Parameters.AdditionalProperties != nil {
+				paramsMap["additionalProperties"] = tool.Function.Parameters.AdditionalProperties
+			}
+			if tool.Function.Parameters.PatternProperties != nil {
+				paramsMap["patternProperties"] = tool.Function.Parameters.PatternProperties
+			}
+			if tool.Function.Parameters.Additional != nil {
+				for k, v := range tool.Function.Parameters.Additional {
+					paramsMap[k] = v
 				}
 			}
+			parameters = shared.FunctionParameters(paramsMap)
 		}
 
 		// Create OpenAI function definition
@@ -370,22 +384,26 @@ func convertResponse(result *openai.ChatCompletion) *llmtypes.ContentResponse {
 
 		// Extract token usage if available
 		// Usage is not a pointer in OpenAI SDK v3
-		langChoice.GenerationInfo = make(map[string]interface{})
+		inputTokens := int(result.Usage.PromptTokens)
+		outputTokens := int(result.Usage.CompletionTokens)
+		totalTokens := int(result.Usage.TotalTokens)
 
-		// Standardized field names
-		langChoice.GenerationInfo["input_tokens"] = int(result.Usage.PromptTokens)
-		langChoice.GenerationInfo["output_tokens"] = int(result.Usage.CompletionTokens)
-		langChoice.GenerationInfo["total_tokens"] = int(result.Usage.TotalTokens)
-
-		// OpenAI-specific field names for compatibility
-		langChoice.GenerationInfo["PromptTokens"] = int(result.Usage.PromptTokens)
-		langChoice.GenerationInfo["CompletionTokens"] = int(result.Usage.CompletionTokens)
-		langChoice.GenerationInfo["TotalTokens"] = int(result.Usage.TotalTokens)
+		langChoice.GenerationInfo = &llmtypes.GenerationInfo{
+			InputTokens:         &inputTokens,
+			OutputTokens:        &outputTokens,
+			TotalTokens:         &totalTokens,
+			PromptTokens:        &inputTokens,
+			CompletionTokens:    &outputTokens,
+			PromptTokensCap:     &inputTokens,
+			CompletionTokensCap: &outputTokens,
+			TotalTokensCap:      &totalTokens,
+		}
 
 		// Handle reasoning tokens for o3 models (if available)
 		// CompletionTokensDetails is not a pointer
 		if result.Usage.CompletionTokensDetails.ReasoningTokens > 0 {
-			langChoice.GenerationInfo["ReasoningTokens"] = int(result.Usage.CompletionTokensDetails.ReasoningTokens)
+			reasoningTokens := int(result.Usage.CompletionTokensDetails.ReasoningTokens)
+			langChoice.GenerationInfo.ReasoningTokens = &reasoningTokens
 		}
 
 		choices = append(choices, langChoice)
@@ -443,29 +461,6 @@ func convertArgumentsToString(args interface{}) string {
 	bytes, err := json.Marshal(args)
 	if err != nil {
 		return "{}"
-	}
-
-	return string(bytes)
-}
-
-// parseJSONObject parses a JSON string into a map
-func parseJSONObject(jsonStr string) map[string]interface{} {
-	var result map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-		return make(map[string]interface{})
-	}
-	return result
-}
-
-// convertToolResponseContent converts tool response content to appropriate format
-func convertToolResponseContent(content map[string]interface{}) string {
-	if content == nil {
-		return ""
-	}
-
-	bytes, err := json.Marshal(content)
-	if err != nil {
-		return ""
 	}
 
 	return string(bytes)
@@ -537,8 +532,7 @@ func (o *OpenAIAdapter) logErrorDetails(modelID string, messages []llmtypes.Mess
 
 	// Extract detailed error information if it's an API error
 	var apiErr *openai.Error
-	if errAs, ok := err.(*openai.Error); ok {
-		apiErr = errAs
+	if errors.As(err, &apiErr) {
 		errorInfo["api_error_code"] = apiErr.Code
 		errorInfo["api_error_type"] = apiErr.Type
 		errorInfo["api_error_param"] = apiErr.Param

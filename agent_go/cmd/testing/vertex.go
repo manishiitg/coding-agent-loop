@@ -17,13 +17,6 @@ import (
 	"google.golang.org/genai"
 )
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 var vertexCmd = &cobra.Command{
 	Use:   "vertex",
 	Short: "Test Vertex AI (Gemini) with API key and tool calling",
@@ -98,7 +91,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 		Context:     ctx,
 	})
 	if err != nil {
-		log.Fatalf("Failed to initialize Vertex LLM: %v", err)
+		log.Fatalf("Failed to initialize Vertex LLM: %w", err)
 	}
 
 	var tools []llmtypes.Tool
@@ -143,25 +136,25 @@ func runVertex(cmd *cobra.Command, args []string) {
 		logger.Info("🔗 Connecting to GitHub MCP server...")
 		config, err := mcpclient.LoadMergedConfig(vertexFlags.configPath, logger)
 		if err != nil {
-			log.Fatalf("Failed to load MCP config: %v", err)
+			log.Fatalf("Failed to load MCP config: %w", err)
 		}
 
 		githubConfig, err := config.GetServer("github")
 		if err != nil {
-			log.Fatalf("GitHub server not found in config: %v", err)
+			log.Fatalf("GitHub server not found in config: %w", err)
 		}
 
 		// Create client and connect
 		client := mcpclient.New(githubConfig, logger)
 		if err := client.Connect(ctx); err != nil {
-			log.Fatalf("Failed to connect to GitHub MCP: %v", err)
+			log.Fatalf("Failed to connect to GitHub MCP: %w", err)
 		}
 		defer client.Close()
 
 		// List tools
 		mcpTools, err := client.ListTools(ctx)
 		if err != nil {
-			log.Fatalf("Failed to list GitHub tools: %v", err)
+			log.Fatalf("Failed to list GitHub tools: %w", err)
 		}
 
 		logger.Info(fmt.Sprintf("✅ Loaded %d tools from GitHub MCP", len(mcpTools)))
@@ -169,7 +162,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 		// Convert to LLM tools
 		llmTools, err := mcpclient.ToolsAsLLM(mcpTools)
 		if err != nil {
-			log.Fatalf("Failed to convert tools: %v", err)
+			log.Fatalf("Failed to convert tools: %w", err)
 		}
 
 		// Normalize tools
@@ -188,7 +181,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather for a location",
-				Parameters: map[string]any{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]any{
 						"location": map[string]any{
@@ -197,7 +190,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"location"},
-				},
+				}),
 			},
 		}
 		tools = []llmtypes.Tool{weatherTool}
@@ -227,16 +220,24 @@ func runVertex(cmd *cobra.Command, args []string) {
 		for i, tool := range tools {
 			if tool.Function != nil {
 				// Check for array parameters without items
-				if params, ok := tool.Function.Parameters.(map[string]interface{}); ok {
-					if props, ok := params["properties"].(map[string]interface{}); ok {
-						for propName, propValue := range props {
-							if propMap, ok := propValue.(map[string]interface{}); ok {
-								if propType, ok := propMap["type"].(string); ok && propType == "array" {
-									hasItems := propMap["items"] != nil
-									if !hasItems {
-										logger.Info(fmt.Sprintf("⚠️ Tool %d (%s) has array param %s WITHOUT items!", i, tool.Function.Name, propName))
-									} else {
-										logger.Info(fmt.Sprintf("✅ Tool %d (%s) has array param %s WITH items", i, tool.Function.Name, propName))
+				if tool.Function.Parameters != nil {
+					// Convert Parameters to map for compatibility
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					var params map[string]interface{}
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
+					if params != nil {
+						if props, ok := params["properties"].(map[string]interface{}); ok {
+							for propName, propValue := range props {
+								if propMap, ok := propValue.(map[string]interface{}); ok {
+									if propType, ok := propMap["type"].(string); ok && propType == "array" {
+										hasItems := propMap["items"] != nil
+										if !hasItems {
+											logger.Info(fmt.Sprintf("⚠️ Tool %d (%s) has array param %s WITHOUT items!", i, tool.Function.Name, propName))
+										} else {
+											logger.Info(fmt.Sprintf("✅ Tool %d (%s) has array param %s WITH items", i, tool.Function.Name, propName))
+										}
 									}
 								}
 							}
@@ -261,7 +262,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 	}
 
 	if err != nil {
-		log.Fatalf("❌ Error: %v", err)
+		log.Fatalf("❌ Error: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
@@ -287,7 +288,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 			// Try to parse as JSON array
 			var recipes []map[string]interface{}
 			if err := json.Unmarshal([]byte(choice.Content), &recipes); err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Response is not valid JSON array: %v", err))
+				logger.Warn(fmt.Sprintf("⚠️ Response is not valid JSON array: %w", err))
 				logger.Info("Response content:", map[string]interface{}{
 					"content": choice.Content,
 				})

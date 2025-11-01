@@ -713,17 +713,6 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 	return llm.InitializeLLM(llmConfig)
 }
 
-// initializeLLM initializes an LLM based on the provider, model ID and temperature (legacy function)
-func initializeLLM(provider, modelID string, temperature float64, logger utils.ExtendedLogger, tracer observability.Tracer, traceID observability.TraceID) (llmtypes.Model, error) {
-	// Create a basic config and use the new function
-	config := LLMAgentConfig{
-		Provider:    llm.Provider(provider),
-		ModelID:     modelID,
-		Temperature: temperature,
-	}
-	return initializeLLMWithConfig(config, logger, tracer, traceID)
-}
-
 // GetEventDispatcher returns the agent's event dispatcher for direct event access
 func (w *LLMAgentWrapper) GetEventDispatcher() interface{} {
 	// Event dispatcher was removed in simplified architecture

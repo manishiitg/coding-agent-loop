@@ -307,7 +307,7 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 
 	// Emit through event bridge
 	if err := boa.eventBridge.HandleEvent(ctx, agentEvent); err != nil {
-		boa.logger.Warnf("⚠️ Failed to emit event %s: %v", eventType, err)
+		boa.logger.Warnf("⚠️ Failed to emit event %s: %w", eventType, err)
 	} else {
 		boa.logger.Infof("✅ Successfully emitted event %s for agent type %s", eventType, boa.agentType)
 	}

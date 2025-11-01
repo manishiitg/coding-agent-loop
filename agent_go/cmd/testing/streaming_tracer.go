@@ -57,8 +57,8 @@ func runStreamingTracerTest(cmd *cobra.Command, args []string) {
 
 	// Run the streaming tracer test
 	if err := testStreamingTracer(); err != nil {
-		logger.Errorf("❌ Streaming tracer test failed: %v", err)
-		log.Fatalf("❌ Streaming tracer test failed: %v", err)
+		logger.Errorf("❌ Streaming tracer test failed: %w", err)
+		log.Fatalf("❌ Streaming tracer test failed: %w", err)
 	}
 
 	logger.Info("🎉 Streaming Tracer Test Completed Successfully!")

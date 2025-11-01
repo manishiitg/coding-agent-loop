@@ -187,22 +187,32 @@ func convertTools(llmTools []llmtypes.Tool) []*genai.Tool {
 		// Convert parameters (JSON Schema)
 		// The Parameters field in FunctionDeclaration expects a *genai.Schema
 		// We'll convert the JSON Schema map to a genai.Schema structure
-		if params, ok := tool.Function.Parameters.(map[string]interface{}); ok {
-			schema := convertJSONSchemaToSchema(params)
+		if tool.Function.Parameters != nil {
+			// Convert from typed Parameters to map
+			paramsMap := make(map[string]interface{})
+			if tool.Function.Parameters.Type != "" {
+				paramsMap["type"] = tool.Function.Parameters.Type
+			}
+			if tool.Function.Parameters.Properties != nil {
+				paramsMap["properties"] = tool.Function.Parameters.Properties
+			}
+			if tool.Function.Parameters.Required != nil {
+				paramsMap["required"] = tool.Function.Parameters.Required
+			}
+			if tool.Function.Parameters.AdditionalProperties != nil {
+				paramsMap["additionalProperties"] = tool.Function.Parameters.AdditionalProperties
+			}
+			if tool.Function.Parameters.PatternProperties != nil {
+				paramsMap["patternProperties"] = tool.Function.Parameters.PatternProperties
+			}
+			if tool.Function.Parameters.Additional != nil {
+				for k, v := range tool.Function.Parameters.Additional {
+					paramsMap[k] = v
+				}
+			}
+			schema := convertJSONSchemaToSchema(paramsMap)
 			if schema != nil {
 				functionDef.Parameters = schema
-			}
-		} else if tool.Function.Parameters != nil {
-			// Try to marshal and unmarshal if not a map
-			paramsBytes, err := json.Marshal(tool.Function.Parameters)
-			if err == nil {
-				var paramsMap map[string]interface{}
-				if err := json.Unmarshal(paramsBytes, &paramsMap); err == nil {
-					schema := convertJSONSchemaToSchema(paramsMap)
-					if schema != nil {
-						functionDef.Parameters = schema
-					}
-				}
 			}
 		}
 
@@ -421,39 +431,45 @@ func convertResponse(result *genai.GenerateContentResponse, logger utils.Extende
 
 		// Extract token usage if available
 		if result.UsageMetadata != nil {
-			choice.GenerationInfo = make(map[string]interface{})
-
-			// Basic token counts
-			choice.GenerationInfo["input_tokens"] = int(result.UsageMetadata.PromptTokenCount)
-			choice.GenerationInfo["output_tokens"] = int(result.UsageMetadata.CandidatesTokenCount)
-
-			// Use TotalTokenCount if available, otherwise calculate
+			inputTokens := int(result.UsageMetadata.PromptTokenCount)
+			outputTokens := int(result.UsageMetadata.CandidatesTokenCount)
+			var totalTokens int
 			if result.UsageMetadata.TotalTokenCount > 0 {
-				choice.GenerationInfo["total_tokens"] = int(result.UsageMetadata.TotalTokenCount)
+				totalTokens = int(result.UsageMetadata.TotalTokenCount)
 			} else {
-				totalTokens := result.UsageMetadata.PromptTokenCount + result.UsageMetadata.CandidatesTokenCount
-				choice.GenerationInfo["total_tokens"] = int(totalTokens)
+				totalTokens = int(result.UsageMetadata.PromptTokenCount + result.UsageMetadata.CandidatesTokenCount)
+			}
+
+			genInfo := &llmtypes.GenerationInfo{
+				InputTokens:  &inputTokens,
+				OutputTokens: &outputTokens,
+				TotalTokens:  &totalTokens,
 			}
 
 			// Cache token information
 			if result.UsageMetadata.CachedContentTokenCount > 0 {
-				choice.GenerationInfo["cached_content_tokens"] = int(result.UsageMetadata.CachedContentTokenCount)
+				cachedTokens := int(result.UsageMetadata.CachedContentTokenCount)
+				genInfo.CachedContentTokens = &cachedTokens
 
 				// Calculate cache discount percentage (0.0 to 1.0)
 				if result.UsageMetadata.PromptTokenCount > 0 {
 					cacheDiscount := float64(result.UsageMetadata.CachedContentTokenCount) / float64(result.UsageMetadata.PromptTokenCount)
-					choice.GenerationInfo["cache_discount"] = cacheDiscount
+					genInfo.CacheDiscount = &cacheDiscount
 				}
 			}
 
 			// Additional token counts if available
 			if result.UsageMetadata.ToolUsePromptTokenCount > 0 {
-				choice.GenerationInfo["tool_use_prompt_tokens"] = int(result.UsageMetadata.ToolUsePromptTokenCount)
+				toolUseTokens := int(result.UsageMetadata.ToolUsePromptTokenCount)
+				genInfo.ToolUsePromptTokens = &toolUseTokens
 			}
 
 			if result.UsageMetadata.ThoughtsTokenCount > 0 {
-				choice.GenerationInfo["thoughts_tokens"] = int(result.UsageMetadata.ThoughtsTokenCount)
+				thoughtsTokens := int(result.UsageMetadata.ThoughtsTokenCount)
+				genInfo.ThoughtsTokens = &thoughtsTokens
 			}
+
+			choice.GenerationInfo = genInfo
 		}
 
 		// Set stop reason
@@ -664,7 +680,14 @@ func (g *GoogleGenAIAdapter) logRawResponse(modelID string, result *genai.Genera
 					g.logger.Infof("     Part %d - Text: %q (length: %d)", j, textPreview, len(part.Text))
 				}
 				if part.FunctionCall != nil {
-					g.logger.Infof("     Part %d - FunctionCall: Name=%q, Args=%v", j, part.FunctionCall.Name, part.FunctionCall.Args != nil)
+					// Log full FunctionCall arguments as JSON
+					argsJSON := convertArgumentsToString(part.FunctionCall.Args)
+					if len(argsJSON) > 1000 {
+						argsPreview := argsJSON[:1000] + "... (truncated, total length: " + fmt.Sprintf("%d", len(argsJSON)) + " bytes)"
+						g.logger.Infof("     Part %d - FunctionCall: Name=%q, Args=%s", j, part.FunctionCall.Name, argsPreview)
+					} else {
+						g.logger.Infof("     Part %d - FunctionCall: Name=%q, Args=%s", j, part.FunctionCall.Name, argsJSON)
+					}
 				}
 			}
 		} else {
@@ -690,7 +713,7 @@ func (g *GoogleGenAIAdapter) logRawResponse(modelID string, result *genai.Genera
 		if result.PromptFeedback.BlockReason != "" {
 			g.logger.Warnf("⚠️ Vertex API blocked the prompt - BlockReason: %q", result.PromptFeedback.BlockReason)
 		}
-		if result.PromptFeedback.SafetyRatings != nil && len(result.PromptFeedback.SafetyRatings) > 0 {
+		if len(result.PromptFeedback.SafetyRatings) > 0 {
 			g.logger.Infof("   SafetyRatings count: %d", len(result.PromptFeedback.SafetyRatings))
 			for k, rating := range result.PromptFeedback.SafetyRatings {
 				g.logger.Infof("     SafetyRating %d - Category: %q, Probability: %q", k, rating.Category, rating.Probability)
@@ -701,14 +724,20 @@ func (g *GoogleGenAIAdapter) logRawResponse(modelID string, result *genai.Genera
 	// Try to serialize the full response to JSON for complete debugging
 	// Note: This may fail if genai.GenerateContentResponse has unexported fields or circular references
 	// We'll log what we can extract manually above, but try JSON as well
+	type functionCallSummary struct {
+		Name string
+		Args string // JSON string of arguments
+	}
+
 	type responseSummary struct {
-		CandidatesCount            int
-		HasUsageMetadata           bool
-		HasPromptFeedback          bool
-		FirstCandidateFinishReason string
-		FirstCandidatePartsCount   int
-		FirstCandidateTextLength   int
-		ResultTextHelper           string
+		CandidatesCount             int
+		HasUsageMetadata            bool
+		HasPromptFeedback           bool
+		FirstCandidateFinishReason  string
+		FirstCandidatePartsCount    int
+		FirstCandidateTextLength    int
+		ResultTextHelper            string
+		FirstCandidateFunctionCalls []functionCallSummary
 	}
 
 	summary := responseSummary{
@@ -722,8 +751,15 @@ func (g *GoogleGenAIAdapter) logRawResponse(modelID string, result *genai.Genera
 		summary.FirstCandidateFinishReason = string(firstCandidate.FinishReason)
 		if firstCandidate.Content != nil {
 			summary.FirstCandidatePartsCount = len(firstCandidate.Content.Parts)
+			summary.FirstCandidateFunctionCalls = make([]functionCallSummary, 0)
 			for _, part := range firstCandidate.Content.Parts {
 				summary.FirstCandidateTextLength += len(part.Text)
+				if part.FunctionCall != nil {
+					summary.FirstCandidateFunctionCalls = append(summary.FirstCandidateFunctionCalls, functionCallSummary{
+						Name: part.FunctionCall.Name,
+						Args: convertArgumentsToString(part.FunctionCall.Args),
+					})
+				}
 			}
 		}
 		summary.ResultTextHelper = result.Text()
@@ -737,7 +773,7 @@ func (g *GoogleGenAIAdapter) logRawResponse(modelID string, result *genai.Genera
 		g.logger.Infof("🔍 RAW VERTEX RESPONSE SUMMARY (JSON):")
 		g.logger.Infof("%s", jsonStr)
 	} else {
-		g.logger.Warnf("⚠️ Failed to serialize response summary to JSON: %v", err)
+		g.logger.Warnf("⚠️ Failed to serialize response summary to JSON: %w", err)
 	}
 }
 

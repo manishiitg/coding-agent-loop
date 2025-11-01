@@ -52,13 +52,13 @@ func (poa *PlanOrganizerAgent) organizerInputProcessor(templateVars map[string]s
 	// Parse and execute the template
 	tmpl, err := template.New("organizer").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing organizer template: %v", err)
+		return fmt.Sprintf("Error parsing organizer template: %w", err)
 	}
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, templateVars)
 	if err != nil {
-		return fmt.Sprintf("Error executing organizer template: %v", err)
+		return fmt.Sprintf("Error executing organizer template: %w", err)
 	}
 
 	return result.String()

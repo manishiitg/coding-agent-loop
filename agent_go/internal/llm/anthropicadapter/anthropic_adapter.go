@@ -304,10 +304,9 @@ func convertTools(llmTools []llmtypes.Tool) []anthropic.ToolUnionParam {
 
 		// Extract function parameters as JSON schema
 		var parameters map[string]interface{}
-		if params, ok := tool.Function.Parameters.(map[string]interface{}); ok {
-			parameters = params
-		} else if tool.Function.Parameters != nil {
-			// Try to marshal and unmarshal if not a map
+		if tool.Function.Parameters != nil {
+			// Convert from typed Parameters to map
+			// Parameters is now *llmtypes.Parameters, so convert it to map
 			paramsBytes, err := json.Marshal(tool.Function.Parameters)
 			if err == nil {
 				var paramsMap map[string]interface{}
@@ -471,26 +470,35 @@ func convertResponse(result *anthropic.Message) *llmtypes.ContentResponse {
 
 	// Extract token usage if available
 	// Usage is not a pointer in Anthropic SDK
-	choice.GenerationInfo = make(map[string]interface{})
+	inputTokens := int(result.Usage.InputTokens)
+	outputTokens := int(result.Usage.OutputTokens)
+	totalTokens := int(result.Usage.InputTokens + result.Usage.OutputTokens)
 
-	// Standardized field names
-	choice.GenerationInfo["input_tokens"] = int(result.Usage.InputTokens)
-	choice.GenerationInfo["output_tokens"] = int(result.Usage.OutputTokens)
-	choice.GenerationInfo["total_tokens"] = int(result.Usage.InputTokens + result.Usage.OutputTokens)
-
-	// Anthropic-specific field names for compatibility
-	choice.GenerationInfo["InputTokens"] = int(result.Usage.InputTokens)
-	choice.GenerationInfo["OutputTokens"] = int(result.Usage.OutputTokens)
+	genInfo := &llmtypes.GenerationInfo{
+		InputTokens:     &inputTokens,
+		OutputTokens:    &outputTokens,
+		TotalTokens:     &totalTokens,
+		InputTokensCap:  &inputTokens,
+		OutputTokensCap: &outputTokens,
+	}
 
 	// Cache tokens if available
 	if result.Usage.CacheReadInputTokens > 0 {
-		choice.GenerationInfo["cache_read_input_tokens"] = int(result.Usage.CacheReadInputTokens)
-		choice.GenerationInfo["CacheReadInputTokens"] = int(result.Usage.CacheReadInputTokens)
+		cacheReadTokens := int(result.Usage.CacheReadInputTokens)
+		genInfo.Additional = make(map[string]interface{})
+		genInfo.Additional["cache_read_input_tokens"] = cacheReadTokens
+		genInfo.Additional["CacheReadInputTokens"] = cacheReadTokens
 	}
 	if result.Usage.CacheCreationInputTokens > 0 {
-		choice.GenerationInfo["cache_creation_input_tokens"] = int(result.Usage.CacheCreationInputTokens)
-		choice.GenerationInfo["CacheCreationInputTokens"] = int(result.Usage.CacheCreationInputTokens)
+		cacheCreationTokens := int(result.Usage.CacheCreationInputTokens)
+		if genInfo.Additional == nil {
+			genInfo.Additional = make(map[string]interface{})
+		}
+		genInfo.Additional["cache_creation_input_tokens"] = cacheCreationTokens
+		genInfo.Additional["CacheCreationInputTokens"] = cacheCreationTokens
 	}
+
+	choice.GenerationInfo = genInfo
 
 	choices = append(choices, choice)
 

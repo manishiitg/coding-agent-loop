@@ -256,12 +256,12 @@ Convert the markdown plan to structured JSON format. Return ONLY the JSON object
 	// Parse and execute the template
 	tmpl, err := template.New("plan_reader").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing plan reader template: %v", err)
+		return fmt.Sprintf("Error parsing plan reader template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing plan reader template: %v", err)
+		return fmt.Sprintf("Error executing plan reader template: %w", err)
 	}
 
 	return result.String()

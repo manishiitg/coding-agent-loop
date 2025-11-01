@@ -648,8 +648,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			if len(crossProviderFallbacks) > 0 {
 				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
 			}
-			sendMessage(fmt.Sprintf("   - Original error: %v", originalError))
-			sendMessage(fmt.Sprintf("   - Suggestion: Try reducing conversation history or input length"))
+			sendMessage("   - Original error: " + fmt.Sprint(originalError))
+			sendMessage("   - Suggestion: Try reducing conversation history or input length")
 
 			// Emit max token fallback all failed event (replaced span-based tracing)
 			maxTokenAllFailedEvent := &events.GenericEventData{
@@ -668,7 +668,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				},
 			}
 			a.EmitTypedEvent(ctx, maxTokenAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for max_token error: %v", originalError)
+			lastErr = fmt.Errorf("all fallback models failed for max_token error: %w", originalError)
 			break
 		}
 
@@ -1071,7 +1071,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				},
 			}
 			a.EmitTypedEvent(ctx, throttlingMaxRetriesEvent)
-			lastErr = fmt.Errorf("all models failed after %d attempts: %v", maxRetries, err)
+			lastErr = fmt.Errorf("all models failed after %d attempts: %w", maxRetries, err)
 			break
 		}
 
@@ -1450,8 +1450,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			if len(crossProviderFallbacks) > 0 {
 				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
 			}
-			sendMessage(fmt.Sprintf("   - Original error: %v", err))
-			sendMessage(fmt.Sprintf("   - Suggestion: Try rephrasing your question or providing more context"))
+			sendMessage("   - Original error: " + err.Error())
+			sendMessage("   - Suggestion: Try rephrasing your question or providing more context")
 
 			// Emit empty content fallback all failed event (replaced span-based tracing)
 			emptyContentAllFailedEvent := &events.GenericEventData{
@@ -1471,7 +1471,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				},
 			}
 			a.EmitTypedEvent(ctx, emptyContentAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for empty content error: %v", err)
+			lastErr = fmt.Errorf("all fallback models failed for empty content error: %w", err)
 			break
 		}
 
@@ -1697,8 +1697,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			if len(crossProviderFallbacks) > 0 {
 				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
 			}
-			sendMessage(fmt.Sprintf("   - Original error: %v", err))
-			sendMessage(fmt.Sprintf("   - Suggestion: Check network connectivity and try again"))
+			sendMessage("   - Original error: " + err.Error())
+			sendMessage("   - Suggestion: Check network connectivity and try again")
 
 			// Emit connection error fallback all failed event
 			connectionErrorAllFailedEvent := &events.GenericEventData{
@@ -1718,7 +1718,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				},
 			}
 			a.EmitTypedEvent(ctx, connectionErrorAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for connection error: %v", err)
+			lastErr = fmt.Errorf("all fallback models failed for connection error: %w", err)
 			break
 		}
 
@@ -1947,7 +1947,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 	}
 	a.EmitTypedEvent(ctx, errorAllFailedEvent)
 
-	return nil, fmt.Errorf("all fallback models failed for %s: %v", errorType, err), observability.UsageMetrics{}
+	return nil, fmt.Errorf("all fallback models failed for %s: %w", errorType, err), observability.UsageMetrics{}
 }
 
 // createFallbackLLM creates a fallback LLM instance for the given modelID

@@ -192,7 +192,7 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather for a location",
-				Parameters: map[string]any{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]any{
 						"location": map[string]any{
@@ -201,7 +201,7 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"location"},
-				},
+				}),
 			},
 		}
 
@@ -275,7 +275,7 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather for a location",
-				Parameters: map[string]any{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]any{
 						"location": map[string]any{
@@ -284,7 +284,7 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"location"},
-				},
+				}),
 			},
 		}
 
@@ -383,19 +383,37 @@ func testLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent) {
 	}
 
 	foundTokens := false
-	for field, label := range tokenFields {
-		if value, ok := choice.GenerationInfo[field]; ok {
-			fmt.Printf("✅ %s: %v\n", label, value)
+	info := choice.GenerationInfo
+	if info != nil {
+		// Check typed fields
+		if info.InputTokens != nil {
+			fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], *info.InputTokens)
 			foundTokens = true
+		}
+		if info.OutputTokens != nil {
+			fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], *info.OutputTokens)
+			foundTokens = true
+		}
+		if info.TotalTokens != nil {
+			fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], *info.TotalTokens)
+			foundTokens = true
+		}
+		// Check Additional map for other fields
+		if info.Additional != nil {
+			for field, label := range tokenFields {
+				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
+					if value, ok := info.Additional[field]; ok {
+						fmt.Printf("✅ %s: %v\n", label, value)
+						foundTokens = true
+					}
+				}
+			}
 		}
 	}
 
 	if !foundTokens {
 		fmt.Printf("❌ No standard token fields found in GenerationInfo\n")
-		fmt.Printf("   Available fields in GenerationInfo:\n")
-		for key, value := range choice.GenerationInfo {
-			fmt.Printf("     - %s: %v\n", key, value)
-		}
+		fmt.Printf("   GenerationInfo: %+v\n", info)
 		fmt.Printf("\n   This suggests the LLM provider doesn't return token usage\n")
 	} else {
 		fmt.Printf("\n✅ Token usage data is available from LangChain!\n")
@@ -405,8 +423,17 @@ func testLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent) {
 	// Show all available GenerationInfo for debugging
 	fmt.Printf("\n🔍 Complete GenerationInfo:\n")
 	fmt.Printf("==========================\n")
-	for key, value := range choice.GenerationInfo {
-		fmt.Printf("   %s: %v (type: %T)\n", key, value, value)
+	if info != nil {
+		fmt.Printf("   InputTokens: %v\n", info.InputTokens)
+		fmt.Printf("   OutputTokens: %v\n", info.OutputTokens)
+		fmt.Printf("   TotalTokens: %v\n", info.TotalTokens)
+		if info.Additional != nil {
+			for key, value := range info.Additional {
+				fmt.Printf("   %s: %v (type: %T)\n", key, value, value)
+			}
+		}
+	} else {
+		fmt.Printf("   GenerationInfo is nil\n")
 	}
 
 	// Show raw response structure for debugging
@@ -420,7 +447,9 @@ func testLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent) {
 		fmt.Printf("   Content type: %T\n", choice.Content)
 		fmt.Printf("   GenerationInfo type: %T\n", choice.GenerationInfo)
 		if choice.GenerationInfo != nil {
-			fmt.Printf("   GenerationInfo keys: %v\n", getMapKeys(choice.GenerationInfo))
+			info := choice.GenerationInfo
+			fmt.Printf("   GenerationInfo: InputTokens=%v, OutputTokens=%v, TotalTokens=%v\n",
+				info.InputTokens, info.OutputTokens, info.TotalTokens)
 		}
 	}
 }
@@ -496,30 +525,41 @@ func testLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageC
 
 	foundTokens := false
 	var inputTokens, outputTokens, totalTokens interface{}
+	info := choice.GenerationInfo
 
-	for field, label := range tokenFields {
-		if value, ok := choice.GenerationInfo[field]; ok {
-			fmt.Printf("✅ %s: %v\n", label, value)
+	if info != nil {
+		// Check typed fields
+		if info.InputTokens != nil {
+			inputTokens = *info.InputTokens
+			fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], inputTokens)
 			foundTokens = true
-
-			// Store values for validation
-			switch field {
-			case "input_tokens":
-				inputTokens = value
-			case "output_tokens":
-				outputTokens = value
-			case "total_tokens":
-				totalTokens = value
+		}
+		if info.OutputTokens != nil {
+			outputTokens = *info.OutputTokens
+			fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], outputTokens)
+			foundTokens = true
+		}
+		if info.TotalTokens != nil {
+			totalTokens = *info.TotalTokens
+			fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], totalTokens)
+			foundTokens = true
+		}
+		// Check Additional map for other fields
+		if info.Additional != nil {
+			for field, label := range tokenFields {
+				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
+					if value, ok := info.Additional[field]; ok {
+						fmt.Printf("✅ %s: %v\n", label, value)
+						foundTokens = true
+					}
+				}
 			}
 		}
 	}
 
 	if !foundTokens {
 		fmt.Printf("❌ No standard token fields found in GenerationInfo\n")
-		fmt.Printf("   Available fields in GenerationInfo:\n")
-		for key, value := range choice.GenerationInfo {
-			fmt.Printf("     - %s: %v\n", key, value)
-		}
+		fmt.Printf("   GenerationInfo: %+v\n", info)
 		fmt.Printf("\n   This suggests the adapter is not extracting token usage correctly\n")
 	} else {
 		fmt.Printf("\n✅ Token usage data extracted successfully!\n")
@@ -563,8 +603,17 @@ func testLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageC
 	// Show all available GenerationInfo for debugging
 	fmt.Printf("\n🔍 Complete GenerationInfo:\n")
 	fmt.Printf("==========================\n")
-	for key, value := range choice.GenerationInfo {
-		fmt.Printf("   %s: %v (type: %T)\n", key, value, value)
+	if info != nil {
+		fmt.Printf("   InputTokens: %v\n", info.InputTokens)
+		fmt.Printf("   OutputTokens: %v\n", info.OutputTokens)
+		fmt.Printf("   TotalTokens: %v\n", info.TotalTokens)
+		if info.Additional != nil {
+			for key, value := range info.Additional {
+				fmt.Printf("   %s: %v (type: %T)\n", key, value, value)
+			}
+		}
+	} else {
+		fmt.Printf("   GenerationInfo is nil\n")
 	}
 }
 
@@ -602,13 +651,4 @@ func extractIntValue(v interface{}) int {
 	default:
 		return 0
 	}
-}
-
-// getMapKeys returns all keys from a map
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }

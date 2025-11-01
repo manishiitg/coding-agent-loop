@@ -55,7 +55,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 		Logger:      logger,
 	})
 	if err != nil {
-		log.Printf("❌ Failed to create OpenAI LLM: %v", err)
+		log.Printf("❌ Failed to create OpenAI LLM: %w", err)
 		return
 	}
 
@@ -65,7 +65,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_file",
 			Description: "Read contents of a file",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"path": map[string]interface{}{
@@ -74,7 +74,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 					},
 				},
 				"required": []string{"path"},
-			},
+			}),
 		},
 	}
 
@@ -93,7 +93,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 	duration := time.Since(startTime)
 
 	if err != nil {
-		log.Printf("❌ Tool call failed: %v", err)
+		log.Printf("❌ Tool call failed: %w", err)
 		return
 	}
 
@@ -116,15 +116,16 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 
 	// Check token usage
 	if choice.GenerationInfo != nil {
+		info := choice.GenerationInfo
 		log.Printf("📊 Token Usage:")
-		if input, ok := choice.GenerationInfo["input_tokens"]; ok {
-			log.Printf("   Input tokens: %v", input)
+		if info.InputTokens != nil {
+			log.Printf("   Input tokens: %v", *info.InputTokens)
 		}
-		if output, ok := choice.GenerationInfo["output_tokens"]; ok {
-			log.Printf("   Output tokens: %v", output)
+		if info.OutputTokens != nil {
+			log.Printf("   Output tokens: %v", *info.OutputTokens)
 		}
-		if total, ok := choice.GenerationInfo["total_tokens"]; ok {
-			log.Printf("   Total tokens: %v", total)
+		if info.TotalTokens != nil {
+			log.Printf("   Total tokens: %v", *info.TotalTokens)
 		}
 	}
 
@@ -142,7 +143,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 	secondDuration := time.Since(secondStartTime)
 
 	if err != nil {
-		log.Printf("❌ Second tool call failed: %v", err)
+		log.Printf("❌ Second tool call failed: %w", err)
 		return
 	}
 
@@ -163,7 +164,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "get_weather",
 			Description: "Get current weather for a location",
-			Parameters: map[string]interface{}{
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"location": map[string]interface{}{
@@ -172,7 +173,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 					},
 				},
 				"required": []string{"location"},
-			},
+			}),
 		},
 	}
 
@@ -188,7 +189,7 @@ func runOpenAIToolCallTest(cmd *cobra.Command, args []string) {
 	multiToolDuration := time.Since(multiToolStartTime)
 
 	if err != nil {
-		log.Printf("❌ Multiple tool call failed: %v", err)
+		log.Printf("❌ Multiple tool call failed: %w", err)
 		return
 	}
 

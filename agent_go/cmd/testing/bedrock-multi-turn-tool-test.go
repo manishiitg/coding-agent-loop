@@ -2,7 +2,7 @@ package testing
 
 import (
 	"context"
-	"log"
+	// log removed; use shared test logger
 	"os"
 	"strings"
 	"time"
@@ -54,24 +54,26 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 	maxTurns := bedrockMultiTurnToolFlags.maxTurns
 	verbose := bedrockMultiTurnToolFlags.verbose
 
-	log.Printf("🚀 Testing Bedrock Multi-Turn Tool Calling with %s", modelID)
-	log.Printf("   Max Turns: %d", maxTurns)
+	InitTestLogger("", "")
+	logger := GetTestLogger()
+
+	logger.Infof("🚀 Testing Bedrock Multi-Turn Tool Calling with %s", modelID)
+	logger.Infof("   Max Turns: %d", maxTurns)
 
 	// Check for AWS credentials
 	if os.Getenv("AWS_REGION") == "" {
-		log.Printf("⚠️  AWS_REGION not set, using default: us-east-1")
+		logger.Warn("⚠️  AWS_REGION not set, using default: us-east-1")
 	}
 	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
-		log.Printf("❌ AWS_ACCESS_KEY_ID environment variable is required")
+		logger.Error("❌ AWS_ACCESS_KEY_ID environment variable is required")
 		return
 	}
 	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
-		log.Printf("❌ AWS_SECRET_ACCESS_KEY environment variable is required")
+		logger.Error("❌ AWS_SECRET_ACCESS_KEY environment variable is required")
 		return
 	}
 
 	// Create Bedrock LLM using our adapter
-	logger := GetTestLogger()
 	bedrockLLM, err := llm.InitializeLLM(llm.Config{
 		Provider:    llm.ProviderBedrock,
 		ModelID:     modelID,
@@ -79,7 +81,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 		Logger:      logger,
 	})
 	if err != nil {
-		log.Printf("❌ Failed to create Bedrock LLM: %v", err)
+		logger.Errorf("❌ Failed to create Bedrock LLM: %w", err)
 		return
 	}
 
@@ -90,7 +92,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_file_info",
 				Description: "Get information about a file (size, modification time, etc.)",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"filepath": map[string]interface{}{
@@ -99,7 +101,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"filepath"},
-				},
+				}),
 			},
 		},
 		{
@@ -107,7 +109,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "calculate_math",
 				Description: "Perform mathematical calculations",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"expression": map[string]interface{}{
@@ -116,7 +118,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"expression"},
-				},
+				}),
 			},
 		},
 		{
@@ -124,7 +126,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather for a location",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"location": map[string]interface{}{
@@ -133,7 +135,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"location"},
-				},
+				}),
 			},
 		},
 		{
@@ -141,7 +143,7 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 			Function: &llmtypes.FunctionDefinition{
 				Name:        "search_knowledge",
 				Description: "Search knowledge base for information",
-				Parameters: map[string]interface{}{
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"query": map[string]interface{}{
@@ -150,59 +152,60 @@ func runBedrockMultiTurnToolTest(cmd *cobra.Command, args []string) {
 						},
 					},
 					"required": []string{"query"},
-				},
+				}),
 			},
 		},
 	}
 
 	// Test 1: Sequential tool calls (one after another)
-	log.Printf("\n" + strings.Repeat("=", 80))
-	log.Printf("🧪 TEST 1: Sequential Tool Calls")
-	log.Printf(strings.Repeat("=", 80))
+	logger.Info("\n" + strings.Repeat("=", 80))
+	logger.Info("🧪 TEST 1: Sequential Tool Calls")
+	logger.Info(strings.Repeat("=", 80))
 	testBedrockSequentialToolCalls(bedrockLLM, tools, maxTurns, verbose)
 
 	// Test 2: Parallel tool calls (multiple tools in one turn)
-	log.Printf("\n" + strings.Repeat("=", 80))
-	log.Printf("🧪 TEST 2: Parallel Tool Calls (Multiple Tools in One Turn)")
-	log.Printf(strings.Repeat("=", 80))
+	logger.Info("\n" + strings.Repeat("=", 80))
+	logger.Info("🧪 TEST 2: Parallel Tool Calls (Multiple Tools in One Turn)")
+	logger.Info(strings.Repeat("=", 80))
 	testBedrockParallelToolCalls(bedrockLLM, tools, maxTurns, verbose)
 
 	// Test 3: Multi-step reasoning with tools
-	log.Printf("\n" + strings.Repeat("=", 80))
-	log.Printf("🧪 TEST 3: Multi-Step Reasoning with Tools")
-	log.Printf(strings.Repeat("=", 80))
+	logger.Info("\n" + strings.Repeat("=", 80))
+	logger.Info("🧪 TEST 3: Multi-Step Reasoning with Tools")
+	logger.Info(strings.Repeat("=", 80))
 	testBedrockMultiStepReasoning(bedrockLLM, tools, maxTurns, verbose)
 
-	log.Printf("\n🎯 All Bedrock multi-turn tool calling tests completed!")
+	logger.Info("\n🎯 All Bedrock multi-turn tool calling tests completed!")
 }
 
 // testBedrockSequentialToolCalls tests tools being called one after another
 func testBedrockSequentialToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, maxTurns int, verbose bool) {
+	logger := GetTestLogger()
 	ctx := context.Background()
 	messages := []llmtypes.MessageContent{
 		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman,
 			"First, calculate 15 * 23. Then, get the weather for New York. Finally, search for information about Go programming language."),
 	}
 
-	log.Printf("📝 User: First, calculate 15 * 23. Then, get the weather for New York. Finally, search for information about Go programming language.")
+	logger.Info("📝 User: First, calculate 15 * 23. Then, get the weather for New York. Finally, search for information about Go programming language.")
 
 	var totalTokens int
 	startTime := time.Now()
 
 	for turn := 0; turn < maxTurns; turn++ {
 		if verbose {
-			log.Printf("\n--- Turn %d ---", turn+1)
+			logger.Infof("\n--- Turn %d ---", turn+1)
 		}
 
 		// Generate response
 		resp, err := llm.GenerateContent(ctx, messages, llmtypes.WithTools(tools), llmtypes.WithToolChoiceString("auto"))
 		if err != nil {
-			log.Printf("❌ Turn %d: Error generating response: %v", turn+1, err)
+			logger.Errorf("❌ Turn %d: Error generating response: %v", turn+1, err)
 			return
 		}
 
 		if len(resp.Choices) == 0 {
-			log.Printf("❌ Turn %d: No response choices", turn+1)
+			logger.Errorf("❌ Turn %d: No response choices", turn+1)
 			return
 		}
 
@@ -210,26 +213,28 @@ func testBedrockSequentialToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, m
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["prompt_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["completion_tokens"].(int); ok {
-					totalTokens += input + output
-					if verbose {
-						log.Printf("   Tokens: input=%d, output=%d", input, output)
-					}
-				}
-			} else if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-					if verbose {
-						log.Printf("   Tokens: input=%d, output=%d", input, output)
-					}
+			var input, output int
+			if choice.GenerationInfo.PromptTokens != nil {
+				input = *choice.GenerationInfo.PromptTokens
+			} else if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.CompletionTokens != nil {
+				output = *choice.GenerationInfo.CompletionTokens
+			} else if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
+				if verbose {
+					logger.Infof("   Tokens: input=%d, output=%d", input, output)
 				}
 			}
 		}
 
 		// Check if there are tool calls
 		if len(choice.ToolCalls) > 0 {
-			log.Printf("🔧 Turn %d: LLM made %d tool call(s):", turn+1, len(choice.ToolCalls))
+			logger.Infof("🔧 Turn %d: LLM made %d tool call(s):", turn+1, len(choice.ToolCalls))
 
 			// Append assistant message with tool calls
 			assistantParts := []llmtypes.ContentPart{}
@@ -246,12 +251,12 @@ func testBedrockSequentialToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, m
 
 			// Execute each tool call
 			for i, tc := range choice.ToolCalls {
-				log.Printf("   [%d] Tool: %s", i+1, tc.FunctionCall.Name)
-				log.Printf("       Args: %s", tc.FunctionCall.Arguments)
+				logger.Infof("   [%d] Tool: %s", i+1, tc.FunctionCall.Name)
+				logger.Infof("       Args: %s", tc.FunctionCall.Arguments)
 
 				// Execute tool (mock execution)
 				result := executeMockTool(tc.FunctionCall.Name, tc.FunctionCall.Arguments)
-				log.Printf("       Result: %s", truncateString(result, 100))
+				logger.Infof("       Result: %s", truncateString(result, 100))
 
 				// Append tool result to conversation
 				messages = append(messages, llmtypes.MessageContent{
@@ -265,51 +270,52 @@ func testBedrockSequentialToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, m
 					},
 				})
 			}
-			log.Printf("   Waiting for LLM to process tool results...\n")
+			logger.Info("   Waiting for LLM to process tool results...\n")
 		} else {
 			// No tool calls - conversation complete
-			log.Printf("\n✅ Turn %d: Final Response (no more tool calls)", turn+1)
+			logger.Infof("\n✅ Turn %d: Final Response (no more tool calls)", turn+1)
 			if choice.Content != "" {
-				log.Printf("📝 Assistant: %s", choice.Content)
+				logger.Infof("📝 Assistant: %s", choice.Content)
 			}
 			duration := time.Since(startTime)
-			log.Printf("\n📊 Test Summary:")
-			log.Printf("   Total Turns: %d", turn+1)
-			log.Printf("   Duration: %v", duration)
-			log.Printf("   Total Tokens: %d", totalTokens)
+			logger.Info("\n📊 Test Summary:")
+			logger.Infof("   Total Turns: %d", turn+1)
+			logger.Infof("   Duration: %v", duration)
+			logger.Infof("   Total Tokens: %d", totalTokens)
 			return
 		}
 	}
 
-	log.Printf("⚠️  Reached max turns (%d) without completion", maxTurns)
+	logger.Warnf("⚠️  Reached max turns (%d) without completion", maxTurns)
 }
 
 // testBedrockParallelToolCalls tests multiple tools called in parallel
 func testBedrockParallelToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, maxTurns int, verbose bool) {
+	logger := GetTestLogger()
 	ctx := context.Background()
 	messages := []llmtypes.MessageContent{
 		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman,
 			"Get the weather for Tokyo, calculate 42 * 18, and search for information about Python programming - all at once please."),
 	}
 
-	log.Printf("📝 User: Get the weather for Tokyo, calculate 42 * 18, and search for information about Python programming - all at once please.")
+	logger.Info("📝 User: Get the weather for Tokyo, calculate 42 * 18, and search for information about Python programming - all at once please.")
 
 	var totalTokens int
 	startTime := time.Now()
 
 	for turn := 0; turn < maxTurns; turn++ {
 		if verbose {
-			log.Printf("\n--- Turn %d ---", turn+1)
+			logger.Infof("\n--- Turn %d ---", turn+1)
 		}
 
 		resp, err := llm.GenerateContent(ctx, messages, llmtypes.WithTools(tools), llmtypes.WithToolChoiceString("auto"))
 		if err != nil {
-			log.Printf("❌ Turn %d: Error: %v", turn+1, err)
+			logger.Errorf("❌ Turn %d: Error: %v", turn+1, err)
 			return
 		}
 
 		if len(resp.Choices) == 0 {
-			log.Printf("❌ Turn %d: No response", turn+1)
+			logger.Errorf("❌ Turn %d: No response", turn+1)
 			return
 		}
 
@@ -317,19 +323,24 @@ func testBedrockParallelToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, max
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["prompt_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["completion_tokens"].(int); ok {
-					totalTokens += input + output
-				}
-			} else if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-				}
+			var input, output int
+			if choice.GenerationInfo.PromptTokens != nil {
+				input = *choice.GenerationInfo.PromptTokens
+			} else if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.CompletionTokens != nil {
+				output = *choice.GenerationInfo.CompletionTokens
+			} else if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
 			}
 		}
 
 		if len(choice.ToolCalls) > 0 {
-			log.Printf("🔧 Turn %d: LLM made %d parallel tool call(s):", turn+1, len(choice.ToolCalls))
+			logger.Infof("🔧 Turn %d: LLM made %d parallel tool call(s):", turn+1, len(choice.ToolCalls))
 
 			// Append assistant message
 			assistantParts := []llmtypes.ContentPart{}
@@ -346,11 +357,11 @@ func testBedrockParallelToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, max
 
 			// Execute all tools in parallel conceptually
 			for i, tc := range choice.ToolCalls {
-				log.Printf("   [%d] Tool: %s", i+1, tc.FunctionCall.Name)
-				log.Printf("       Args: %s", tc.FunctionCall.Arguments)
+				logger.Infof("   [%d] Tool: %s", i+1, tc.FunctionCall.Name)
+				logger.Infof("       Args: %s", tc.FunctionCall.Arguments)
 
 				result := executeMockTool(tc.FunctionCall.Name, tc.FunctionCall.Arguments)
-				log.Printf("       Result: %s", truncateString(result, 100))
+				logger.Infof("       Result: %s", truncateString(result, 100))
 
 				messages = append(messages, llmtypes.MessageContent{
 					Role: llmtypes.ChatMessageTypeTool,
@@ -363,50 +374,51 @@ func testBedrockParallelToolCalls(llm llmtypes.Model, tools []llmtypes.Tool, max
 					},
 				})
 			}
-			log.Printf("   All tool results returned, waiting for LLM response...\n")
+			logger.Info("   All tool results returned, waiting for LLM response...\n")
 		} else {
-			log.Printf("\n✅ Turn %d: Final Response", turn+1)
+			logger.Infof("\n✅ Turn %d: Final Response", turn+1)
 			if choice.Content != "" {
-				log.Printf("📝 Assistant: %s", choice.Content)
+				logger.Infof("📝 Assistant: %s", choice.Content)
 			}
 			duration := time.Since(startTime)
-			log.Printf("\n📊 Test Summary:")
-			log.Printf("   Total Turns: %d", turn+1)
-			log.Printf("   Duration: %v", duration)
-			log.Printf("   Total Tokens: %d", totalTokens)
+			logger.Info("\n📊 Test Summary:")
+			logger.Infof("   Total Turns: %d", turn+1)
+			logger.Infof("   Duration: %v", duration)
+			logger.Infof("   Total Tokens: %d", totalTokens)
 			return
 		}
 	}
 
-	log.Printf("⚠️  Reached max turns")
+	logger.Warn("⚠️  Reached max turns")
 }
 
 // testBedrockMultiStepReasoning tests complex multi-step reasoning with tool results
 func testBedrockMultiStepReasoning(llm llmtypes.Model, tools []llmtypes.Tool, maxTurns int, verbose bool) {
+	logger := GetTestLogger()
 	ctx := context.Background()
 	messages := []llmtypes.MessageContent{
 		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman,
 			"I need to plan a trip. First, check the weather in San Francisco and Seattle. Based on the weather, recommend which city is better for a trip. Then calculate the total cost if the trip costs $500 per day for 3 days."),
 	}
 
-	log.Printf("📝 User: I need to plan a trip. First, check the weather in San Francisco and Seattle. Based on the weather, recommend which city is better for a trip. Then calculate the total cost if the trip costs $500 per day for 3 days.")
+	logger.Info("📝 User: I need to plan a trip. First, check the weather in San Francisco and Seattle. Based on the weather, recommend which city is better for a trip. Then calculate the total cost if the trip costs $500 per day for 3 days.")
 
 	var totalTokens int
 	startTime := time.Now()
 
 	for turn := 0; turn < maxTurns; turn++ {
 		if verbose {
-			log.Printf("\n--- Turn %d ---", turn+1)
+			logger.Infof("\n--- Turn %d ---", turn+1)
 		}
 
 		resp, err := llm.GenerateContent(ctx, messages, llmtypes.WithTools(tools), llmtypes.WithToolChoiceString("auto"))
 		if err != nil {
-			log.Printf("❌ Turn %d: Error: %v", turn+1, err)
+			logger.Errorf("❌ Turn %d: Error: %v", turn+1, err)
 			return
 		}
 
 		if len(resp.Choices) == 0 {
-			log.Printf("❌ Turn %d: No response", turn+1)
+			logger.Errorf("❌ Turn %d: No response", turn+1)
 			return
 		}
 
@@ -414,26 +426,31 @@ func testBedrockMultiStepReasoning(llm llmtypes.Model, tools []llmtypes.Tool, ma
 
 		// Track token usage
 		if choice.GenerationInfo != nil {
-			if input, ok := choice.GenerationInfo["prompt_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["completion_tokens"].(int); ok {
-					totalTokens += input + output
-				}
-			} else if input, ok := choice.GenerationInfo["input_tokens"].(int); ok {
-				if output, ok := choice.GenerationInfo["output_tokens"].(int); ok {
-					totalTokens += input + output
-				}
+			var input, output int
+			if choice.GenerationInfo.PromptTokens != nil {
+				input = *choice.GenerationInfo.PromptTokens
+			} else if choice.GenerationInfo.InputTokens != nil {
+				input = *choice.GenerationInfo.InputTokens
+			}
+			if choice.GenerationInfo.CompletionTokens != nil {
+				output = *choice.GenerationInfo.CompletionTokens
+			} else if choice.GenerationInfo.OutputTokens != nil {
+				output = *choice.GenerationInfo.OutputTokens
+			}
+			if input > 0 || output > 0 {
+				totalTokens += input + output
 			}
 		}
 
 		if len(choice.ToolCalls) > 0 {
-			log.Printf("🔧 Turn %d: LLM made %d tool call(s):", turn+1, len(choice.ToolCalls))
+			logger.Infof("🔧 Turn %d: LLM made %d tool call(s):", turn+1, len(choice.ToolCalls))
 
 			// Append assistant message
 			assistantParts := []llmtypes.ContentPart{}
 			if choice.Content != "" {
 				assistantParts = append(assistantParts, llmtypes.TextContent{Text: choice.Content})
 				if verbose {
-					log.Printf("   Assistant reasoning: %s", truncateString(choice.Content, 150))
+					logger.Infof("   Assistant reasoning: %s", truncateString(choice.Content, 150))
 				}
 			}
 			for _, tc := range choice.ToolCalls {
@@ -446,11 +463,11 @@ func testBedrockMultiStepReasoning(llm llmtypes.Model, tools []llmtypes.Tool, ma
 
 			// Execute tools
 			for i, tc := range choice.ToolCalls {
-				log.Printf("   [%d] Tool: %s", i+1, tc.FunctionCall.Name)
-				log.Printf("       Args: %s", tc.FunctionCall.Arguments)
+				logger.Infof("   [%d] Tool: %s", i+1, tc.FunctionCall.Name)
+				logger.Infof("       Args: %s", tc.FunctionCall.Arguments)
 
 				result := executeMockTool(tc.FunctionCall.Name, tc.FunctionCall.Arguments)
-				log.Printf("       Result: %s", truncateString(result, 100))
+				logger.Infof("       Result: %s", truncateString(result, 100))
 
 				messages = append(messages, llmtypes.MessageContent{
 					Role: llmtypes.ChatMessageTypeTool,
@@ -463,22 +480,22 @@ func testBedrockMultiStepReasoning(llm llmtypes.Model, tools []llmtypes.Tool, ma
 					},
 				})
 			}
-			log.Printf("   Waiting for LLM to analyze results and continue...\n")
+			logger.Info("   Waiting for LLM to analyze results and continue...\n")
 		} else {
-			log.Printf("\n✅ Turn %d: Final Response", turn+1)
+			logger.Infof("\n✅ Turn %d: Final Response", turn+1)
 			if choice.Content != "" {
-				log.Printf("📝 Assistant: %s", choice.Content)
+				logger.Infof("📝 Assistant: %s", choice.Content)
 			}
 			duration := time.Since(startTime)
-			log.Printf("\n📊 Test Summary:")
-			log.Printf("   Total Turns: %d", turn+1)
-			log.Printf("   Duration: %v", duration)
-			log.Printf("   Total Tokens: %d", totalTokens)
+			logger.Info("\n📊 Test Summary:")
+			logger.Infof("   Total Turns: %d", turn+1)
+			logger.Infof("   Duration: %v", duration)
+			logger.Infof("   Total Tokens: %d", totalTokens)
 			return
 		}
 	}
 
-	log.Printf("⚠️  Reached max turns")
+	logger.Warn("⚠️  Reached max turns")
 }
 
 // Note: executeMockTool and truncateString are already defined in openai-multi-turn-tool-test.go

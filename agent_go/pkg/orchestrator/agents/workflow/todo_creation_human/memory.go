@@ -14,9 +14,9 @@ func GetTodoCreationHumanMemoryRequirements() string {
 │   ├── planning/
 │   │   └── plan.md             (Execution plan)
 │   ├── validation/
-│   │   ├── step_1_validation_report.md
-│   │   ├── step_2_validation_report.md
-│   │   └── step_N_validation_report.md
+│   │   ├── Step_Title_1_validation_report.md
+│   │   ├── Step_Title_2_validation_report.md
+│   │   └── Step_Title_N_validation_report.md
 │   └── learnings/
 │       ├── success_patterns.md
 │       ├── failure_analysis.md

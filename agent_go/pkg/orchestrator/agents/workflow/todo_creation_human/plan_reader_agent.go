@@ -141,10 +141,10 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 
 ## 📁 FILE PERMISSIONS
 **READ:**
-- **{{.WorkspacePath}}/todo_creation_human/planning/plan.md** (read markdown plan)
-- **{{.WorkspacePath}}/todo_creation_human/learnings/success_patterns.md** (success learning insights - if exists)
-- **{{.WorkspacePath}}/todo_creation_human/learnings/failure_analysis.md** (failure patterns to avoid - if exists)
-- **{{.WorkspacePath}}/todo_creation_human/learnings/step_*_learning.md** (per-step learning details - if exists)
+- **{{.WorkspacePath}}/planning/plan.md** (read markdown plan)
+- **{{.WorkspacePath}}/learnings/success_patterns.md** (success learning insights - if exists)
+- **{{.WorkspacePath}}/learnings/failure_analysis.md** (failure patterns to avoid - if exists)
+- **{{.WorkspacePath}}/learnings/step_*_learning.md** (per-step learning details - if exists)
 
 **NO WRITE PERMISSIONS:**
 - This agent does NOT write any files - only reads and converts
@@ -152,11 +152,11 @@ func (hcpra *HumanControlledPlanReaderAgent) planReaderInputProcessor(templateVa
 ## 📋 CONVERSION GUIDELINES
 
 **Your ONLY Job**:
-1. Read the markdown plan from plan.md
-2. **Read learnings files** from learnings/ directory (if they exist):
-   - Read learnings/success_patterns.md to extract success patterns
-   - Read learnings/failure_analysis.md to extract failure patterns
-   - Read learnings/step_*_learning.md for per-step learning details
+1. Read the markdown plan from {{.WorkspacePath}}/planning/plan.md
+2. **Read learnings files** from {{.WorkspacePath}}/learnings/ directory (if they exist):
+   - Read {{.WorkspacePath}}/learnings/success_patterns.md to extract success patterns
+   - Read {{.WorkspacePath}}/learnings/failure_analysis.md to extract failure patterns
+   - Read {{.WorkspacePath}}/learnings/step_*_learning.md for per-step learning details
 3. Parse the markdown structure into structured JSON format
 4. Extract steps
 5. Convert each step's details into the required JSON structure
@@ -217,9 +217,9 @@ JSON Output:
 
 **Incorporating Learnings**:
 When learnings files exist, enhance the extracted patterns:
-- Read learnings/success_patterns.md to find additional success patterns not in the plan
-- Read learnings/failure_analysis.md to find failure patterns to include
-- Read step-specific learnings/step_X_learning.md to get detailed insights for each step
+- Read {{.WorkspacePath}}/learnings/success_patterns.md to find additional success patterns not in the plan
+- Read {{.WorkspacePath}}/learnings/failure_analysis.md to find failure patterns to include
+- Read step-specific {{.WorkspacePath}}/learnings/step_X_learning.md to get detailed insights for each step
 - Merge learnings patterns with patterns extracted from the plan
 - If same pattern appears in both source and learnings, include it only once
 
@@ -252,8 +252,8 @@ Convert the markdown plan to structured JSON format. Return ONLY the JSON object
 {{.PlanMarkdown}}
 
 **IMPORTANT NOTES**: 
-1. Read the markdown plan file from plan.md
-2. **Read learnings files** from todo_creation_human/learnings/ directory if they exist (handle gracefully if missing)
+1. Read the markdown plan file from {{.WorkspacePath}}/planning/plan.md
+2. **Read learnings files** from {{.WorkspacePath}}/learnings/ directory if they exist (handle gracefully if missing)
 3. Parse the markdown structure carefully to extract all required fields
 4. **Incorporate learnings** into success_patterns and failure_patterns when available
 5. Convert markdown lists and formatting to clean JSON values

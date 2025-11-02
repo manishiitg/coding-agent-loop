@@ -923,10 +923,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				// Tool execution completed - emit tool call end event
-
-				// Emit tool call end event using typed event data (consolidated - contains all tool information)
-				toolEndEvent := events.NewToolCallEndEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "")
-				a.EmitTypedEvent(ctx, toolEndEvent)
+				// Only emit ToolCallEndEvent if result is not an error (errors already emit ToolCallErrorEvent)
+				if result == nil || !result.IsError {
+					// Emit tool call end event using typed event data (consolidated - contains all tool information)
+					toolEndEvent := events.NewToolCallEndEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "")
+					a.EmitTypedEvent(ctx, toolEndEvent)
+				}
 
 				// Note: Removed redundant tool_output and tool_response events
 				// tool_call_end now contains all necessary tool information

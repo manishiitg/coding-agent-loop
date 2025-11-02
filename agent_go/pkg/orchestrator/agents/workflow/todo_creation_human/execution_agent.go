@@ -15,8 +15,6 @@ import (
 
 // HumanControlledTodoPlannerExecutionTemplate holds template variables for human-controlled execution prompts
 type HumanControlledTodoPlannerExecutionTemplate struct {
-	StepNumber              string
-	TotalSteps              string
 	StepTitle               string
 	StepDescription         string
 	StepSuccessCriteria     string
@@ -58,8 +56,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 
 	// Prepare template variables
 	executionTemplateVars := map[string]string{
-		"StepNumber":              templateVars["StepNumber"],
-		"TotalSteps":              templateVars["TotalSteps"],
 		"StepTitle":               templateVars["StepTitle"],
 		"StepDescription":         templateVars["StepDescription"],
 		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
@@ -68,14 +64,13 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"WorkspacePath":           workspacePath,
 		"ValidationFeedback":      templateVars["ValidationFeedback"],
 		"LearningAgentOutput":     templateVars["LearningAgentOutput"],
-		"VariableNames":           templateVars["VariableNames"],  // May be empty if no variables
-		"VariableValues":          templateVars["VariableValues"], // May be empty if no variables
+		"PreviousHumanFeedback":   templateVars["PreviousHumanFeedback"], // Human feedback from previous iteration
+		"VariableNames":           templateVars["VariableNames"],         // May be empty if no variables
+		"VariableValues":          templateVars["VariableValues"],        // May be empty if no variables
 	}
 
 	// Create template data for validation
 	templateData := HumanControlledTodoPlannerExecutionTemplate{
-		StepNumber:              executionTemplateVars["StepNumber"],
-		TotalSteps:              executionTemplateVars["TotalSteps"],
 		StepTitle:               executionTemplateVars["StepTitle"],
 		StepDescription:         executionTemplateVars["StepDescription"],
 		StepSuccessCriteria:     executionTemplateVars["StepSuccessCriteria"],
@@ -84,6 +79,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		WorkspacePath:           executionTemplateVars["WorkspacePath"],
 		ValidationFeedback:      executionTemplateVars["ValidationFeedback"],
 		LearningAgentOutput:     executionTemplateVars["LearningAgentOutput"],
+		PreviousHumanFeedback:   executionTemplateVars["PreviousHumanFeedback"],
 		VariableNames:           executionTemplateVars["VariableNames"],
 		VariableValues:          executionTemplateVars["VariableValues"],
 	}
@@ -96,8 +92,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecutionInputProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := HumanControlledTodoPlannerExecutionTemplate{
-		StepNumber:              templateVars["StepNumber"],
-		TotalSteps:              templateVars["TotalSteps"],
 		StepTitle:               templateVars["StepTitle"],
 		StepDescription:         templateVars["StepDescription"],
 		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
@@ -111,14 +105,10 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		VariableValues:          templateVars["VariableValues"],
 	}
 
-	// 	## 📁 FILE PERMISSIONS
-	// **READ:**
-	// - {{.WorkspacePath}}/todo_creation_human/planning/plan.md (current plan)
-
 	// Define the template
 	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
 
-**CURRENT STEP**: {{.StepNumber}}/{{.TotalSteps}} - {{.StepTitle}}
+**CURRENT STEP**: {{.StepTitle}}
 **STEP DESCRIPTION**: {{.StepDescription}}
 **WORKSPACE**: {{.WorkspacePath}}
 
@@ -139,30 +129,29 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 ## 🤖 AGENT IDENTITY
 - **Role**: Execution Agent
 - **Responsibility**: Execute a single step from the plan using MCP tools
-- **Mode**: Single step execution (step {{.StepNumber}} of {{.TotalSteps}})
+- **Mode**: Single step execution
 
 ## 📁 FILE PERMISSIONS (Execution Agent)
 
 **READ:**
-- planning/plan.md (current plan for reference) - path: {{.WorkspacePath}}/todo_creation_human/planning/plan.md
-- Context files from previous steps (as specified in Context Dependencies) - paths are relative to {{.WorkspacePath}}/todo_creation_human/execution/
+- Context files from previous steps (as specified in Context Dependencies) - paths are relative to {{.WorkspacePath}}
 - Any workspace files needed for task execution - paths must be relative to {{.WorkspacePath}}
 
 **WRITE:**
-- **ONLY** context output files in {{.WorkspacePath}}/todo_creation_human/execution/ folder
-- When "Context Output" field specifies "step_X_results.md", write to: {{.WorkspacePath}}/todo_creation_human/execution/step_X_results.md
-- **ABSOLUTELY NO** writing to any other folders or locations outside {{.WorkspacePath}}/todo_creation_human/execution/
+- **ONLY** context output files in {{.WorkspacePath}} folder
+- When "Context Output" field specifies "step_X_results.md", write to: {{.WorkspacePath}}/step_X_results.md
+- **ABSOLUTELY NO** writing to any other folders or locations outside {{.WorkspacePath}}
 - **ABSOLUTELY NO** validation reports or documentation files (validation agent handles those)
-- **ABSOLUTELY NO** writing to workspace root or any directory outside the todo_creation_human/ folder structure
+- **ABSOLUTELY NO** writing to workspace root or any directory outside {{.WorkspacePath}}
 
 **RESTRICTIONS:**
 - Focus on executing the task using MCP tools
 - Read workspace files for context as needed (paths relative to {{.WorkspacePath}})
-- Create context output file ONLY in {{.WorkspacePath}}/todo_creation_human/execution/ subfolder if specified in step
+- Create context output file ONLY in {{.WorkspacePath}} if specified in step
 - Return execution results in your response
 - No documentation or report writing (validation agent handles that)
 - **CRITICAL**: ALL file paths must be relative to {{.WorkspacePath}} - NEVER write outside this workspace path
-- **CRITICAL**: If Context Output is "step_X_results.md", the full path is {{.WorkspacePath}}/todo_creation_human/execution/step_X_results.md
+- **CRITICAL**: If Context Output is "step_X_results.md", the full path is {{.WorkspacePath}}/step_X_results.md
 - **CRITICAL**: NEVER use absolute paths or write to directories outside {{.WorkspacePath}}
 
 ## 📝 EVIDENCE COLLECTION (When to Gather Evidence)
@@ -176,7 +165,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Example Evidence:**
 - "grep found 15 matches in 3 files"
 - "read_file returned 245 lines from config.json"
-- "Created {{.WorkspacePath}}/todo_creation_human/execution/step_1_results.md with 10 database URLs"
+- "Created {{.WorkspacePath}}/step_1_results.md with 10 database URLs"
 
 {{if .LearningAgentOutput}}
 ## 🧠 LEARNING AGENT OUTPUT
@@ -194,11 +183,19 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Important**: This is feedback from the validation of your previous attempt. Please address the issues mentioned above and improve your execution approach based on this feedback.
 {{end}}
 
-**Note**: Human feedback is provided through conversation history. Review the conversation context for any previous human guidance.
+{{if .PreviousHumanFeedback}}
+## 💬 HUMAN FEEDBACK FOR THIS STEP
+
+{{.PreviousHumanFeedback}}
+
+**Important**: This is human feedback specifically for this step execution. Please carefully review this feedback and adjust your execution approach accordingly.
+{{end}}
+
+**Note**: {{if not .PreviousHumanFeedback}}Human feedback is also provided through conversation history. Review the conversation context for any previous human guidance.{{else}}Additional context may also be available in conversation history.{{end}}
 
 ## 🎯 CURRENT STEP EXECUTION
 
-**Step {{.StepNumber}}/{{.TotalSteps}} - {{.StepTitle}}**
+**Step - {{.StepTitle}}**
 **Description**: {{.StepDescription}}
 
 ### 📋 Complete Step Information
@@ -230,7 +227,7 @@ Provide a clear execution summary in your response:
 
 ---
 
-**Step {{.StepNumber}}/{{.TotalSteps}} Execution Summary**
+**Step Execution Summary**
 
 **Status**: [COMPLETED/FAILED/IN_PROGRESS]
 
@@ -259,24 +256,24 @@ Provide a clear execution summary in your response:
 - Result: Successfully read 245 lines, found 3 database connection strings
 - Used grep.search with pattern="mongodb://.*" to extract MongoDB URLs
 - Result: Found 3 MongoDB URLs on lines 45, 78, 123
-- Used fileserver.write_file with path="{{.WorkspacePath}}/todo_creation_human/execution/step_1_database_urls.md" to save results
+- Used fileserver.write_file with path="{{.WorkspacePath}}/step_1_database_urls.md" to save results
 - Result: Created context output file with extracted database URLs and connection details
 
 **Success Criteria Check**: 
 - Criteria: Extract all database URLs from configuration files and save to context file
-- Met: Yes - Found 3 MongoDB URLs and saved to {{.WorkspacePath}}/todo_creation_human/execution/step_1_database_urls.md
+- Met: Yes - Found 3 MongoDB URLs and saved to {{.WorkspacePath}}/step_1_database_urls.md
 
 **Context Output**: 
-- {{.WorkspacePath}}/todo_creation_human/execution/step_1_database_urls.md
+- {{.WorkspacePath}}/step_1_database_urls.md
 
 **IMPORTANT PATH GUIDELINES:**
-- When Context Output field says "step_1_results.md", the FULL path is: {{.WorkspacePath}}/todo_creation_human/execution/step_1_results.md
-- When reading context dependencies like "step_1_results.md", the FULL path is: {{.WorkspacePath}}/todo_creation_human/execution/step_1_results.md
+- When Context Output field says "step_1_results.md", the FULL path is: {{.WorkspacePath}}/step_1_results.md
+- When reading context dependencies like "step_1_results.md", the FULL path is: {{.WorkspacePath}}/step_1_results.md
 - ALWAYS use {{.WorkspacePath}} as the base - NEVER write outside this path
 
 ---
 
-**Note**: Focus on executing step {{.StepNumber}} completely using MCP tools. Read workspace files for context. Return results in your response. The validation agent will document and verify your execution.`
+**Note**: Focus on executing the step completely using MCP tools. Read workspace files for context. Return results in your response. The validation agent will document and verify your execution.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("execution").Parse(templateStr)

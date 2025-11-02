@@ -147,14 +147,14 @@ func (hctpca *HumanControlledTodoPlannerCritiqueAgent) critiqueInputProcessor(te
 ## 📁 FILE PERMISSIONS (Critique Agent)
 
 **READ:**
-- planning/plan.md (original plan - to verify all steps are captured)
-- learnings/success_patterns.md (to verify success patterns are captured)
-- learnings/failure_analysis.md (to verify failure patterns are captured)
-- learnings/step_*_learning.md (to verify per-step learning details are captured)
-- todo_final.md (generated todo list to critique - located at {{.WorkspacePath}}/todo_final.md)
+- {{.WorkspacePath}}/planning/plan.md (original plan - to verify all steps are captured)
+- {{.WorkspacePath}}/learnings/success_patterns.md (to verify success patterns are captured)
+- {{.WorkspacePath}}/learnings/failure_analysis.md (to verify failure patterns are captured)
+- {{.WorkspacePath}}/learnings/step_*_learning.md (to verify per-step learning details are captured)
+- {{.WorkspacePath}}/../todo_final.md (generated todo list to critique - located at workspace root, one level up from {{.WorkspacePath}})
 
 **RESTRICTIONS:**
-- Read from todo_creation_human/ folder (planning/, learnings/) AND workspace root (todo_final.md)
+- Read from {{.WorkspacePath}}/ folder (planning/, learnings/) AND workspace root ({{.WorkspacePath}}/../todo_final.md)
 - Do NOT modify any files - this is a read-only critique operation
 - Focus on completeness, accuracy, and proper capture of learnings
 
@@ -415,11 +415,11 @@ Variables that must be masked in todo_final.md:
 ## 📁 SOURCES TO READ AND VALIDATE
 
 **READ AND ANALYZE:**
-1. planning/plan.md - Original plan to verify all steps are captured
-2. learnings/success_patterns.md - Success patterns that should be integrated
-3. learnings/failure_analysis.md - Failure patterns that should be integrated  
-4. learnings/step_*_learning.md - Per-step learning details (if available)
-5. todo_final.md - Generated todo list at %s/todo_final.md
+1. {{.WorkspacePath}}/planning/plan.md - Original plan to verify all steps are captured
+2. {{.WorkspacePath}}/learnings/success_patterns.md - Success patterns that should be integrated
+3. {{.WorkspacePath}}/learnings/failure_analysis.md - Failure patterns that should be integrated  
+4. {{.WorkspacePath}}/learnings/step_*_learning.md - Per-step learning details (if available)
+5. {{.WorkspacePath}}/../todo_final.md - Generated todo list at workspace root (one level up from {{.WorkspacePath}})
 
 %s
 
@@ -467,5 +467,5 @@ Return a simple JSON object:
 
 6. **Fuzzy Variable Matching**: Check that similar values are replaced with placeholders (e.g., any github.com URL → {{GITHUB_REPO_URL}})
 
-Return ONLY the JSON object, no markdown, no explanation.`, workspacePath, workspacePath, variableSection)
+Return ONLY the JSON object, no markdown, no explanation.`, workspacePath, variableSection)
 }

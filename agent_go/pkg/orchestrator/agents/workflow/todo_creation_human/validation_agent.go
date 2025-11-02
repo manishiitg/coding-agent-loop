@@ -15,8 +15,6 @@ import (
 
 // HumanControlledTodoPlannerValidationTemplate holds template variables for validation prompts
 type HumanControlledTodoPlannerValidationTemplate struct {
-	StepNumber              string
-	TotalSteps              string
 	StepTitle               string
 	StepDescription         string
 	StepSuccessCriteria     string
@@ -64,8 +62,6 @@ func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAge
 // Execute implements the OrchestratorAgent interface
 func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	// Extract variables from template variables
-	stepNumber := templateVars["StepNumber"]
-	totalSteps := templateVars["TotalSteps"]
 	stepTitle := templateVars["StepTitle"]
 	stepDescription := templateVars["StepDescription"]
 	stepSuccessCriteria := templateVars["StepSuccessCriteria"]
@@ -76,8 +72,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 
 	// Prepare template variables
 	validationTemplateVars := map[string]string{
-		"StepNumber":              stepNumber,
-		"TotalSteps":              totalSteps,
 		"StepTitle":               stepTitle,
 		"StepDescription":         stepDescription,
 		"StepSuccessCriteria":     stepSuccessCriteria,
@@ -89,8 +83,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 
 	// Create template data for validation
 	templateData := HumanControlledTodoPlannerValidationTemplate{
-		StepNumber:              stepNumber,
-		TotalSteps:              totalSteps,
 		StepTitle:               stepTitle,
 		StepDescription:         stepDescription,
 		StepSuccessCriteria:     stepSuccessCriteria,
@@ -162,8 +154,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidationInputProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := HumanControlledTodoPlannerValidationTemplate{
-		StepNumber:              templateVars["StepNumber"],
-		TotalSteps:              templateVars["TotalSteps"],
 		StepTitle:               templateVars["StepTitle"],
 		StepDescription:         templateVars["StepDescription"],
 		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
@@ -174,9 +164,9 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 	}
 
 	// Define the template
-	templateStr := `## 🎯 PRIMARY TASK - VALIDATE STEP {{.StepNumber}} EXECUTION
+	templateStr := `## 🎯 PRIMARY TASK - VALIDATE STEP EXECUTION
 
-**STEP**: {{.StepNumber}}/{{.TotalSteps}} - {{.StepTitle}}
+**STEP**: {{.StepTitle}}
 **STEP DESCRIPTION**: {{.StepDescription}}
 **WORKSPACE**: {{.WorkspacePath}}
 
@@ -192,22 +182,22 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Validation Agent
-- **Responsibility**: Verify if step {{.StepNumber}} success criteria was met and execution was completed properly
+- **Responsibility**: Verify if the step success criteria was met and execution was completed properly
 - **Mode**: Success criteria verification with execution output analysis
 
 ## 📁 FILE PERMISSIONS (Validation Agent)
 
 **READ:**
-- planning/plan.md (original plan for reference)
-- Context output files created by execution agent
+- Context output files created by execution agent (located in {{.WorkspacePath}}/execution/ folder)
 - Any workspace files needed to verify execution claims
 
 **WRITE:**
-- validation/step_{{.StepNumber}}_validation_report.md (validation report with execution summary)
+- {{.WorkspacePath}}/validation/{{.StepTitle}}_validation_report.md (validation report with execution summary)
+  - **Note**: Replace spaces and special characters in step title with underscores for the filename (e.g., "Step 1: Setup" becomes "Step_1_Setup_validation_report.md")
 
 **RESTRICTIONS:**
-- Only modify files within {{.WorkspacePath}}/todo_creation_human/
-- Write validation report to validation/ folder
+- Only modify files within {{.WorkspacePath}}/
+- Write validation report to {{.WorkspacePath}}/validation/ folder
 - Document execution conversation in validation report
 - Focus on verifying execution claims using evidence
 
@@ -232,9 +222,9 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 ## 🔍 VALIDATION PROCESS
 
-**Step {{.StepNumber}}/{{.TotalSteps}} - "{{.StepTitle}}"**
+**Step - "{{.StepTitle}}"**
 
-**Your Task**: Validate if step {{.StepNumber}} was completed successfully by checking if the SUCCESS CRITERIA was met.
+**Your Task**: Validate if the step was completed successfully by checking if the SUCCESS CRITERIA was met.
 
 **Success Criteria**: {{.StepSuccessCriteria}}
 
@@ -252,7 +242,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 **RETURN STRUCTURED JSON RESPONSE ONLY**
 
-Analyze the execution conversation history and validate if step {{.StepNumber}} was completed successfully. Return a JSON response with the following structure:
+Analyze the execution conversation history and validate if the step was completed successfully. Return a JSON response with the following structure:
 
 The response should be a JSON object with:
 - is_success_criteria_met: boolean - Whether the success criteria was met based on execution evidence
@@ -281,7 +271,7 @@ Example JSON structure:
 }
 ` + "```" + `
 
-**Note**: Focus on step {{.StepNumber}} execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.`
+**Note**: Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)

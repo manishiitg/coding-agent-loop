@@ -150,7 +150,7 @@ func planningSystemPromptProcessor(templateVars map[string]string) string {
 - Focus on creating/updating plan.md, not on investigating the workspace structure
 
 **File to Update:**
-- **{{.WorkspacePath}}/todo_creation_human/planning/plan.md**
+- **{{.WorkspacePath}}/planning/plan.md**
 
 ## 📋 MARKDOWN PLAN STRUCTURE
 
@@ -183,7 +183,7 @@ After successfully writing the plan.md file, respond with:
 - Confirmation that plan.md was written successfully
 
 **Example Response:**
-"I've created a comprehensive plan with 5 steps in {{.WorkspacePath}}/todo_creation_human/planning/plan.md:
+"I've created a comprehensive plan with 5 steps in {{.WorkspacePath}}/planning/plan.md:
 1. Analyze codebase structure
 2. Identify modification points
 3. Implement changes

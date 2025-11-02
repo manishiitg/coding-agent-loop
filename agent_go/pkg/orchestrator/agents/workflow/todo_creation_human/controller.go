@@ -128,7 +128,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 
 // getStepsProgressPath returns the path to steps_done.json file
 func (hcpo *HumanControlledTodoPlannerOrchestrator) getStepsProgressPath() string {
-	return fmt.Sprintf("%s/todo_creation_human/steps_done.json", hcpo.GetWorkspacePath())
+	return fmt.Sprintf("%s/steps_done.json", hcpo.GetWorkspacePath())
 }
 
 // loadStepProgress loads progress from steps_done.json
@@ -195,12 +195,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.GetLogger().Infof("🚀 Starting human-controlled todo planning for objective: %s", objective)
 
 	// Set objective and workspace path directly
+	// WorkspacePath includes /todo_creation_human subdirectory
 	hcpo.SetObjective(objective)
-	hcpo.SetWorkspacePath(workspacePath)
+	hcpo.SetWorkspacePath(fmt.Sprintf("%s/todo_creation_human", workspacePath))
 
 	// PHASE 0: Variable Extraction with Human Verification (NEW)
 	// Check if variables.json already exists
-	variablesPath := fmt.Sprintf("%s/todo_creation_human/variables/variables.json", workspacePath)
+	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
 	variablesExist, existingVariablesManifest, err := hcpo.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
 		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing variables: %w", err)
@@ -310,8 +311,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
 	}
 
-	// Check if plan.md already exists
-	planPath := fmt.Sprintf("%s/todo_creation_human/planning/plan.md", workspacePath)
+	// Check if plan.md already exists (workspacePath now includes /todo_creation_human)
+	planPath := fmt.Sprintf("%s/planning/plan.md", hcpo.GetWorkspacePath())
 	planExists, planContent, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
 		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing plan: %w", err)
@@ -690,15 +691,45 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					startFromStep = nextIncompleteStep - 1 // Convert back to 0-based
 					hcpo.GetLogger().Infof("✅ User chose to resume from step %d", nextIncompleteStep)
 				case "option2": // Start from beginning (normal execution)
-					hcpo.GetLogger().Infof("🔄 User chose to start from beginning, will reset progress")
-					// Delete existing progress and start fresh
+					hcpo.GetLogger().Infof("🔄 User chose to start from beginning, will reset progress and cleanup execution artifacts")
+					// Delete existing progress
 					if err := hcpo.deleteStepProgress(ctx); err != nil {
 						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+					}
+					// Clean up execution artifacts for fresh start
+					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+					} else {
+						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory")
+					}
+					// Clean up validation artifacts
+					validationDir := fmt.Sprintf("%s/validation", hcpo.GetWorkspacePath())
+					if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory: %w", err)
+					} else {
+						hcpo.GetLogger().Infof("🗑️ Cleaned up validation directory")
+					}
+					// Clean up learning artifacts
+					learningsDir := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
+					if err := hcpo.CleanupDirectory(ctx, learningsDir, "learnings"); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup learnings directory: %w", err)
+					} else {
+						hcpo.GetLogger().Infof("🗑️ Cleaned up learnings directory")
 					}
 					existingProgress = nil
 					startFromStep = 0
 				case "option3": // Fast execute completed steps
 					hcpo.GetLogger().Infof("⚡ User chose fast execute mode for completed steps")
+
+					// Clean up execution artifacts for steps that will be re-executed
+					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+					} else {
+						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory for fast re-execution")
+					}
+
 					fastExecuteMode = true
 					fastExecuteEndStep = max(existingProgress.CompletedStepIndices)
 					// Delete previous completed indices to re-execute them
@@ -767,15 +798,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 		"WorkspacePath": hcpo.GetWorkspacePath(),
 	}
 
-	// Add human feedback as a user message to conversation history BEFORE executing
-	// This ensures it's part of the conversation and won't be duplicated by BaseAgent.Execute
+	// Add human feedback to conversation history so it's sent directly in execution method
+	// For first iteration: BaseAgent.Execute will use conversationHistory directly
+	// For subsequent iterations: BaseAgent.Execute will use conversationHistory directly
 	if humanFeedback != "" {
 		feedbackMessage := llmtypes.MessageContent{
 			Role:  llmtypes.ChatMessageTypeHuman,
 			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: humanFeedback}},
 		}
 		conversationHistory = append(conversationHistory, feedbackMessage)
-		hcpo.GetLogger().Infof("📝 Added human feedback as user message to conversation history for iteration %d", iteration)
+		hcpo.GetLogger().Infof("📝 Added human feedback to conversation history for iteration %d (will be sent directly in execution method)", iteration)
 	}
 
 	// Create fresh planning agent with proper context
@@ -785,8 +817,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	}
 
 	// Execute planning agent
-	// If this is the first iteration (empty conversationHistory), default message will be used
-	// If conversationHistory already contains human feedback, it will be used from history
+	// First iteration: User message processor will use HumanFeedback from templateVars
+	// Subsequent iterations: conversationHistory already contains feedback and will be used directly
 	_, updatedConversationHistory, err := planningAgent.Execute(ctx, planningTemplateVars, conversationHistory)
 	if err != nil {
 		return "", nil, fmt.Errorf("planning failed: %w", err)
@@ -807,7 +839,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanReaderPhase(ctx conte
 	}
 
 	// Read markdown plan content from workspace
-	planPath := fmt.Sprintf("%s/todo_creation_human/planning/plan.md", hcpo.GetWorkspacePath())
+	planPath := fmt.Sprintf("%s/planning/plan.md", hcpo.GetWorkspacePath())
 	hcpo.GetLogger().Infof("📖 Reading plan markdown from: %s", planPath)
 
 	planMarkdown, err := hcpo.ReadWorkspaceFile(ctx, planPath)
@@ -965,6 +997,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				}
 			}
 
+			// Save human feedback for template variables before resetting
+			previousHumanFeedback := humanFeedback
+
 			// Add human feedback to conversation history if provided
 			if humanFeedback != "" {
 				humanFeedbackMessage := llmtypes.MessageContent{
@@ -980,6 +1015,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 			// Prepare template variables for this specific step with individual fields
 			// RESOLVE VARIABLES: Replace {{VARS}} with actual values for execution
+			// Execution agent workspace path includes /execution/ subdirectory
+			executionWorkspacePath := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
 			templateVars := map[string]string{
 				"StepNumber":          fmt.Sprintf("%d", i+1),
 				"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
@@ -987,7 +1024,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				"StepDescription":     hcpo.resolveVariables(step.Description),
 				"StepSuccessCriteria": hcpo.resolveVariables(step.SuccessCriteria),
 				"StepContextOutput":   hcpo.resolveVariables(step.ContextOutput),
-				"WorkspacePath":       hcpo.GetWorkspacePath(),
+				"WorkspacePath":       executionWorkspacePath,
 				"LearningAgentOutput": "", // Will be populated with learning agent's output
 			}
 
@@ -1031,6 +1068,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			// Add variable values if available (name = value - description format)
 			if variableValues := hcpo.formatVariableValues(); variableValues != "" {
 				templateVars["VariableValues"] = variableValues
+			}
+
+			// Add human feedback to template variables if provided
+			if previousHumanFeedback != "" {
+				templateVars["PreviousHumanFeedback"] = previousHumanFeedback
+			} else {
+				templateVars["PreviousHumanFeedback"] = ""
 			}
 
 			// Inner loop: Automatic retry logic
@@ -1211,7 +1255,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				}
 			}
 
-			// BLOCKING HUMAN FEEDBACK - Ask user if they want to continue to next step or re-execute current step
+			// BLOCKING HUMAN FEEDBACK - Ask user if they want to continue to next step
+			// If user rejects (doesn't approve), automatically re-execute with their feedback
 			// FAST MODE: Skip human feedback and auto-approve
 			isFastExecuteStep := hcpo.IsFastExecuteStep(i)
 			var approved bool
@@ -1257,25 +1302,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					hcpo.GetLogger().Infof("✅ Step %d/%d marked as completed and saved", i+1, len(breakdownSteps))
 				}
 				stepCompleted = true
-			} else if !isFastExecuteStep {
-				// User rejected - ask if they want to re-execute this step with feedback or move to next step
-				// Skip this in fast mode (should not happen anyway since we auto-approve)
-				shouldReexecute, err := hcpo.requestReexecuteDecision(ctx, i+1, len(breakdownSteps), feedback)
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Re-execution decision request failed: %w", err)
-					shouldReexecute = false // Default to stop if decision fails
-				}
-
-				if shouldReexecute {
-					// User wants to re-execute - set feedback and continue outer loop
-					hcpo.GetLogger().Infof("🔄 Will re-execute step %d with human feedback: %s", i+1, feedback)
-					humanFeedback = feedback
-					// Outer loop will continue, adding feedback to conversation history
-				} else {
-					// User wants to stop execution
-					hcpo.GetLogger().Infof("🛑 User requested to stop execution after step %d with feedback: %s", i+1, feedback)
-					break // Break out of outer loop (ends all steps)
-				}
+			} else {
+				// User rejected - automatically re-execute with their feedback
+				// No need to ask again - rejection means they want to re-execute
+				hcpo.GetLogger().Infof("🔄 User rejected approval - will automatically re-execute step %d with human feedback: %s", i+1, feedback)
+				humanFeedback = feedback
+				// Outer loop will continue, adding feedback to conversation history and templateVars
 			}
 		} // End of outer loop for step execution
 	}
@@ -1331,7 +1363,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(c
 	}
 
 	// Read the generated variables.json file
-	variablesPath := fmt.Sprintf("%s/todo_creation_human/variables/variables.json", hcpo.GetWorkspacePath())
+	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
 	variablesContent, err := hcpo.ReadWorkspaceFile(ctx, variablesPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read variables.json: %w", err)
@@ -1412,7 +1444,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) loadVariableValues(ctx conte
 	}
 
 	// Load variable values from variables.json
-	variablesPath := fmt.Sprintf("%s/todo_creation_human/variables/variables.json", hcpo.GetWorkspacePath())
+	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
 	variablesContent, err := hcpo.ReadWorkspaceFile(ctx, variablesPath)
 	if err != nil {
 		return fmt.Errorf("failed to read variables.json: %w", err)
@@ -1759,27 +1791,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestHumanFeedback(ctx con
 		requestID,
 		fmt.Sprintf("Step %d/%d validation completed. Should we continue with execution of the next step?", currentStep, totalSteps),
 		validationResult, // Show validation results as context
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
-}
-
-// requestReexecuteDecision asks user if they want to re-execute the current step with feedback or skip to next step
-// Returns: (shouldReexecute bool, error)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) requestReexecuteDecision(ctx context.Context, currentStep, totalSteps int, feedback string) (bool, error) {
-	hcpo.GetLogger().Infof("🔄 Requesting re-execution decision for step %d/%d", currentStep, totalSteps)
-
-	// Generate unique request ID
-	requestID := fmt.Sprintf("reexecute_decision_%d_%d_%d", currentStep, totalSteps, time.Now().UnixNano())
-
-	// Use common human feedback function with yes/no semantics
-	return hcpo.RequestYesNoFeedback(
-		ctx,
-		requestID,
-		fmt.Sprintf("You provided feedback for step %d/%d. Would you like to re-execute this step with your feedback, or skip to the next step?", currentStep, totalSteps),
-		"Re-execute Step with Feedback",
-		"Skip to Next Step",
-		fmt.Sprintf("Your feedback: %s", feedback),
 		hcpo.getSessionID(),
 		hcpo.getWorkflowID(),
 	)

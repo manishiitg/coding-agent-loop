@@ -104,7 +104,7 @@ func (agent *HumanControlledTodoPlannerSuccessLearningAgent) successLearningInpu
 Extract complete tool calls with full argument JSON from execution history.`
 		}
 		return `GENERAL PATTERNS` + "`" + `
-Extract high-level approaches, strategies, and workflow patterns.`
+Extract high-level approaches, strategies, and workflow patterns. Also extract exact tool names (without arguments) used during execution.`
 	}() + `
 
 ## 📋 **STEP CONTEXT**
@@ -148,7 +148,7 @@ This step was executed successfully! Analyze what made it work well and document
 		if templateVars["LearningDetailLevel"] == "exact" {
 			return `Extract EXACT tool calls from the execution conversation history below`
 		}
-		return `Analyze the execution conversation to identify high-level approaches and patterns`
+		return `Analyze the execution conversation to identify high-level approaches and patterns. Extract tool names (without arguments) used during execution.`
 	}() + `
 3. **Identify success factors** - ` + func() string {
 		if templateVars["LearningDetailLevel"] == "exact" {
@@ -164,9 +164,9 @@ This step was executed successfully! Analyze what made it work well and document
 	}() + `
 5. **Document success patterns** - ` + func() string {
 		if templateVars["LearningDetailLevel"] == "exact" {
-			return `Write EXACT tool calls with arguments to learnings/success_patterns.md and learnings/step_X_learning.md`
+			return `Write EXACT tool calls with arguments to {{.WorkspacePath}}/learnings/success_patterns.md and {{.WorkspacePath}}/learnings/step_X_learning.md`
 		}
-		return `Write general success patterns and approaches to learnings/success_patterns.md and learnings/step_X_learning.md`
+		return `Write general success patterns and approaches to {{.WorkspacePath}}/learnings/success_patterns.md and {{.WorkspacePath}}/learnings/step_X_learning.md`
 	}() + `
 6. **DO NOT update plan.md** - Plan updates are handled separately by other agents
 
@@ -204,13 +204,26 @@ The ExecutionHistory section below contains the complete execution conversation.
 - **Sequence Patterns**: What order or workflow was most successful
 - **Key Principles**: What general principles or best practices emerged
 
+**Extract Tool Names:**
+From "## Tool Call" sections in ExecutionHistory, extract:
+- **Tool Name**: The exact MCP tool name (e.g., fileserver.read_file, aws.cli_query, kubernetes.kubectl_apply)
+- **DO NOT** extract arguments - only the tool name itself
+- List all unique tools used during successful execution
+
 **Example of General Pattern Extraction:**
 - Used file system tools to read configuration before making changes
 - Validated environment state before deploying
 - Used dry-run mode to test before applying changes
 - Checked resource status after operations to confirm success
 
-**Focus**: Extract the general path to success, not specific tool arguments. Capture the "what" and "why" of the approach, not the exact "how" with specific parameters.`
+**Example Tool Names Extraction:**
+From ExecutionHistory tool calls, extract:
+- fileserver.read_file
+- aws.cli_query
+- kubernetes.kubectl_apply
+- kubernetes.kubectl_get
+
+**Focus**: Extract the general path to success and the exact tool names (without arguments). Capture the "what" and "why" of the approach, not the exact "how" with specific parameters.`
 	}() + `
 
 ### **Learning Documentation Focus:**
@@ -230,6 +243,7 @@ Document the **final working approach** that achieved success in learnings files
 		return `- **Description**: Deploy using kubectl apply to production
 - **Success Criteria**: All pods Running status, rollout successful, endpoint accessible
 - **Why This Step**: Dry-run validation prevents errors, status checks ensure completion, health verification confirms success
+- **Tools Used**: kubernetes.kubectl_apply, kubernetes.kubectl_rollout_status, kubernetes.kubectl_get
 - **Success Patterns**:
   - Use dry-run validation before applying changes
   - Verify prerequisites (namespace exists) before deployment
@@ -265,6 +279,14 @@ You have access to all MCP tools to examine workspace files and gather additiona
 		return `[General approaches and workflow patterns]`
 	}() + `
 
+` + func() string {
+		if templateVars["LearningDetailLevel"] != "exact" {
+			return `### Tools Used:
+- [List exact tool names (without arguments) used during successful execution, e.g., fileserver.read_file, aws.cli_query]`
+		}
+		return ``
+	}() + `
+
 ---
 
 ## Learning Documentation Actions
@@ -291,7 +313,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 		return `general patterns and approaches extracted from ExecutionHistory`
 	}() + `]
 
-**NOTE**: Document learnings in learnings/ folder files - do NOT update plan.md file
+**NOTE**: Document learnings in {{.WorkspacePath}}/learnings/ folder files - do NOT update {{.WorkspacePath}}/planning/plan.md file
 
 ### Success Patterns Documented (` + func() string {
 		if templateVars["LearningDetailLevel"] == "exact" {
@@ -312,38 +334,49 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - [Context dependencies that were crucial for success]`
 	}() + `
 
+` + func() string {
+		if templateVars["LearningDetailLevel"] != "exact" {
+			return `### Tools Used (Without Arguments):
+- [List all unique tool names used during execution, e.g., fileserver.read_file, aws.cli_query, kubernetes.kubectl_apply]
+- [Extract tool names from ExecutionHistory "## Tool Call" sections]
+- [DO NOT include arguments - only tool names]`
+		}
+		return ``
+	}() + `
+
 ---
 
 ## 📁 **FILE PERMISSIONS (Success Learning Agent)**
 
 **READ:**
-- planning/plan.md (current markdown plan) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/planning/plan.md
-- validation/step_X_validation_report.md (validation results with execution summary) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/validation/step_X_validation_report.md
+- {{.WorkspacePath}}/planning/plan.md (current markdown plan)
+- {{.WorkspacePath}}/validation/step_X_validation_report.md (validation results with execution summary)
 
 **WRITE:**
-- learnings/success_patterns.md (append cumulative success patterns) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/success_patterns.md
-- learnings/step_X_learning.md (create detailed learning for this step) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/step_X_learning.md
+- {{.WorkspacePath}}/learnings/success_patterns.md (append cumulative success patterns)
+- {{.WorkspacePath}}/learnings/step_X_learning.md (create detailed learning for this step)
 
 **RESTRICTIONS:**
-- Learning outputs go to learnings/ folder ONLY
-- **DO NOT** update or modify planning/plan.md (plan updates are handled separately)
-- **DO NOT** read or write files in execution/ folder (execution agent handles those)
+- Learning outputs go to {{.WorkspacePath}}/learnings/ folder ONLY
+- **DO NOT** update or modify {{.WorkspacePath}}/planning/plan.md (plan updates are handled separately)
+- **DO NOT** read or write files in {{.WorkspacePath}}/execution/ folder (execution agent handles those)
 - Read execution details from validation reports (which contain execution conversation)
 - Focus on capturing success patterns and best practices
-- All file paths must be relative to ` + templateVars["WorkspacePath"] + `/todo_creation_human/
+- All file paths must be within {{.WorkspacePath}}/
 
 ---
 
 **Key Requirements:**
 - Analyze what made execution successful and document learnings
-- **DO NOT** update planning/plan.md (plan updates are handled separately)
-- Document learnings ONLY in learnings/ folder
+- **DO NOT** update {{.WorkspacePath}}/planning/plan.md (plan updates are handled separately)
+- Document learnings ONLY in {{.WorkspacePath}}/learnings/ folder
 - Focus on capturing success patterns that can be referenced later
+- In general mode: Extract tool names (without arguments) alongside high-level patterns
 - ONLY add Success Patterns if meaningful ` + func() string {
 		if templateVars["LearningDetailLevel"] == "exact" {
 			return `tool calls were identified - include complete argument JSON`
 		}
-		return `patterns were identified - focus on what and why, not exact tools`
+		return `patterns were identified - include tool names (without arguments) alongside high-level patterns`
 	}() + `
 `
 }

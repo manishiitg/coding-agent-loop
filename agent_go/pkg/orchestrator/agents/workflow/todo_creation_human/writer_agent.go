@@ -105,18 +105,18 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) humanControlledWriterInputP
 ## 📁 FILE PERMISSIONS (Writer Agent)
 
 **READ:**
-- planning/plan.md (original plan - primary source)
-- learnings/success_patterns.md (success learning insights - if exists)
-- learnings/failure_analysis.md (failure patterns to avoid - if exists)
-- learnings/step_*_learning.md (per-step learning details - if exists)
+- {{.WorkspacePath}}/planning/plan.md (original plan - primary source)
+- {{.WorkspacePath}}/learnings/success_patterns.md (success learning insights - if exists)
+- {{.WorkspacePath}}/learnings/failure_analysis.md (failure patterns to avoid - if exists)
+- {{.WorkspacePath}}/learnings/step_*_learning.md (per-step learning details - if exists)
 
 **WRITE:**
-- todo_final.md (final structured todo list - writes to workspace root: {{.WorkspacePath}}/todo_final.md)
+- {{.WorkspacePath}}/../todo_final.md (final structured todo list - writes to workspace root, one level up from {{.WorkspacePath}})
 
 **RESTRICTIONS:**
-- Read from todo_creation_human/ folder (planning/ and learnings/ only)
+- Read from {{.WorkspacePath}}/ folder (planning/ and learnings/ only)
 - Focus on extracting patterns and insights from plan.md and learnings (ignore execution/validation data)
-- Write todo_final.md to workspace root (NOT inside todo_creation_human/)
+- Write todo_final.md to workspace root (one level up from {{.WorkspacePath}})
 - Format MUST be parseable and executable by another LLM
 - Handle missing learning files gracefully (they may not exist for all steps)
 
@@ -164,7 +164,7 @@ Available variables to mask:
 
 ## 📤 Output Format
 
-**CREATE** {{.WorkspacePath}}/todo_final.md
+**CREATE** {{.WorkspacePath}}/../todo_final.md
 
 **CRITICAL: Output format is JSON, saved in a .md file (not markdown!):**
 
@@ -204,10 +204,10 @@ The JSON structure must be:
 - The entire output must be valid, parseable JSON
 
 **Extraction Guidelines**:
-- Read planning/plan.md to get all steps with their structure
-- Read learnings/success_patterns.md to extract successful approaches for success_patterns arrays
-- Read learnings/failure_analysis.md to extract failed approaches for failure_patterns arrays
-- Read learnings/step_*_learning.md for per-step specific learnings
+- Read {{.WorkspacePath}}/planning/plan.md to get all steps with their structure
+- Read {{.WorkspacePath}}/learnings/success_patterns.md to extract successful approaches for success_patterns arrays
+- Read {{.WorkspacePath}}/learnings/failure_analysis.md to extract failed approaches for failure_patterns arrays
+- Read {{.WorkspacePath}}/learnings/step_*_learning.md for per-step specific learnings
 - Each step must be converted to the JSON structure above
 
 **Variable Masking (CRITICAL)**:

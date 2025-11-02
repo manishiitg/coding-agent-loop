@@ -86,9 +86,9 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 
 ## 📂 VARIABLES DIRECTORY
 **IMPORTANT**: Variables should be saved to:
-- **Directory**: {{.WorkspacePath}}/todo_creation_human/variables/
+- **Directory**: {{.WorkspacePath}}/variables/
 - **File**: variables.json
-- **Full Path**: {{.WorkspacePath}}/todo_creation_human/variables/variables.json
+- **Full Path**: {{.WorkspacePath}}/variables/variables.json
 
 **Note**: If variables.json already exists at this path, the orchestrator will check for it before calling you. You are responsible for creating this file with your extracted variables.
 
@@ -150,7 +150,7 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 3. **For each hard-coded value**, create a variable (or use the user-provided variable name if they specified it)
 4. **Create variable definitions** with name, value, description
 5. **Generate templated objective** with {{"{{"}}VARIABLES{{"}}"}} replacing the original values
-6. **Create JSON file** at {{.WorkspacePath}}/todo_creation_human/variables/variables.json (create directory if needed)
+6. **Create JSON file** at {{.WorkspacePath}}/variables/variables.json (create directory if needed)
 7. **Output the complete JSON** in your response so the orchestrator can parse it
 
 ## 🔑 CRITICAL RULES
@@ -160,7 +160,7 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 3. **Preserve the objective structure** - only replace values with {{"{{"}}VARS{{"}}"}}
 4. **Use descriptive variable names** - UPPER_SNAKE_CASE, descriptive (or user-provided names)
 5. **Provide clear descriptions** - what does this variable represent?
-6. **Write JSON to**: {{.WorkspacePath}}/todo_creation_human/variables/variables.json ONLY
+6. **Write JSON to**: {{.WorkspacePath}}/variables/variables.json ONLY
 7. **DO NOT** search the entire workspace or create files elsewhere
 
 ` + GetTodoCreationHumanMemoryRequirements() + `

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -291,6 +292,209 @@ func (bo *BaseOrchestrator) GetType() string {
 	return string(bo.orchestratorType)
 }
 
+// validatePathInWorkspace validates that the input path is within the workspace boundary
+func validatePathInWorkspace(workspacePath, inputPath string) error {
+	if workspacePath == "" {
+		return nil // No validation if workspacePath is not set
+	}
+
+	// Normalize workspace path
+	workspaceAbs, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace path: %w", err)
+	}
+	workspaceAbs = filepath.Clean(workspaceAbs)
+
+	// Resolve input path relative to workspace if it's relative
+	var inputAbs string
+	if filepath.IsAbs(inputPath) {
+		inputAbs, err = filepath.Abs(inputPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve input path: %w", err)
+		}
+	} else {
+		// Relative path - check both workspace-relative and CWD-relative resolutions
+		// First, resolve relative to workspace (standard behavior)
+		inputAbsFromWorkspace := filepath.Join(workspaceAbs, inputPath)
+		inputAbsFromWorkspace = filepath.Clean(inputAbsFromWorkspace)
+
+		// Also check what it resolves to from current working directory
+		// This catches cases like "Workflow/HRMS PR Review/summary.md" which is a sibling, not a child
+		inputAbsFromCWD, err := filepath.Abs(inputPath)
+		if err == nil {
+			inputAbsFromCWD = filepath.Clean(inputAbsFromCWD)
+			// Check if CWD-resolved path is outside workspace
+			cwdRel, relErr := filepath.Rel(workspaceAbs, inputAbsFromCWD)
+			if relErr == nil && (strings.HasPrefix(cwdRel, "..") || cwdRel == "..") {
+				// CWD path is outside workspace - this is the real intent, so use CWD resolution and block it
+				inputAbs = inputAbsFromCWD
+			} else {
+				// CWD path is inside workspace - use workspace-relative resolution
+				inputAbs = inputAbsFromWorkspace
+			}
+		} else {
+			// Fallback to workspace-relative if CWD resolution fails
+			inputAbs = inputAbsFromWorkspace
+		}
+	}
+	inputAbs = filepath.Clean(inputAbs)
+
+	// Check if input path is within workspace boundary
+	// First, verify that inputAbs actually has workspaceAbs as a prefix with proper path separator
+	// This ensures we're checking directory boundaries, not just string prefixes
+	workspaceAbsSlash := filepath.ToSlash(workspaceAbs) + "/"
+	inputAbsSlash := filepath.ToSlash(inputAbs)
+
+	// Check if paths are equal (same directory) or input is a subdirectory
+	if inputAbsSlash != filepath.ToSlash(workspaceAbs) && !strings.HasPrefix(inputAbsSlash, workspaceAbsSlash) {
+		return fmt.Errorf("path '%s' (resolved to '%s') is outside workspace boundary '%s'. All file operations must be within the configured workspace", inputPath, inputAbs, workspacePath)
+	}
+
+	// Additional check using relative path (catches edge cases)
+	rel, err := filepath.Rel(workspaceAbs, inputAbs)
+	if err != nil {
+		return fmt.Errorf("path validation error: %w", err)
+	}
+
+	// Check if path escapes workspace (contains ".." or is absolute)
+	if strings.HasPrefix(rel, "..") || rel == ".." {
+		return fmt.Errorf("path '%s' (resolved to '%s', relative: '%s') is outside workspace boundary '%s'. All file operations must be within the configured workspace", inputPath, inputAbs, rel, workspacePath)
+	}
+
+	return nil
+}
+
+// normalizePathForWorkspace normalizes a path to be workspace-relative
+// Returns a workspace-relative path (e.g., "." becomes "", "subfolder" stays "subfolder", absolute paths become relative)
+func normalizePathForWorkspace(workspacePath, inputPath string) (string, error) {
+	if workspacePath == "" {
+		// No workspace - return path as-is
+		return inputPath, nil
+	}
+
+	// Handle empty string or "." - normalize to "" which represents workspace root
+	if inputPath == "" || inputPath == "." {
+		return "", nil
+	}
+
+	// Normalize workspace path
+	workspaceAbs, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve workspace path: %w", err)
+	}
+	workspaceAbs = filepath.Clean(workspaceAbs)
+
+	// Resolve input path relative to workspace if it's relative
+	var inputAbs string
+	if filepath.IsAbs(inputPath) {
+		inputAbs, err = filepath.Abs(inputPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve input path: %w", err)
+		}
+	} else {
+		// Relative path - resolve relative to workspace
+		inputAbs = filepath.Join(workspaceAbs, inputPath)
+	}
+	inputAbs = filepath.Clean(inputAbs)
+
+	// Convert to workspace-relative path
+	rel, err := filepath.Rel(workspaceAbs, inputAbs)
+	if err != nil {
+		return "", fmt.Errorf("path normalization error: %w", err)
+	}
+
+	// Handle edge cases
+	if rel == "." || rel == "" {
+		return "", nil // Workspace root
+	}
+
+	return rel, nil
+}
+
+// wrapWorkspaceToolsWithFolderGuard wraps workspace tool executors with path validation
+// Only wraps if workspacePath is set. Tools without path parameters are passed through unchanged.
+func (bo *BaseOrchestrator) wrapWorkspaceToolsWithFolderGuard(executors map[string]interface{}) map[string]interface{} {
+	workspacePath := bo.GetWorkspacePath()
+	if workspacePath == "" {
+		// No workspace path set - return executors unchanged
+		return executors
+	}
+
+	// Tools that need path validation with their parameter names
+	toolsToValidate := map[string][]string{
+		"read_workspace_file":             {"filepath"},
+		"update_workspace_file":           {"filepath"},
+		"diff_patch_workspace_file":       {"filepath"},
+		"delete_workspace_file":           {"filepath"},
+		"move_workspace_file":             {"source_filepath", "destination_filepath"},
+		"list_workspace_files":            {"folder"},
+		"regex_search_workspace_files":    {"folder"},
+		"semantic_search_workspace_files": {"folder"},
+	}
+
+	wrappedExecutors := make(map[string]interface{})
+
+	for toolName, executor := range executors {
+		paramsToValidate, needsValidation := toolsToValidate[toolName]
+
+		if !needsValidation {
+			// Tool doesn't need validation - pass through unchanged
+			wrappedExecutors[toolName] = executor
+			continue
+		}
+
+		// Type assert executor to function type
+		originalExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error))
+		if !ok {
+			// Type assertion failed - pass through unchanged
+			wrappedExecutors[toolName] = executor
+			continue
+		}
+
+		// Create wrapper function with proper variable capture
+		toolNameCopy := toolName
+		paramsToValidateCopy := paramsToValidate
+		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// Validate and normalize all path parameters
+			for _, paramName := range paramsToValidateCopy {
+				if paramValue, exists := args[paramName]; exists {
+					if pathStr, ok := paramValue.(string); ok {
+						// Empty string or "." means workspace root - normalize to ""
+						if pathStr == "" || pathStr == "." {
+							args[paramName] = ""
+							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '' (workspace root)", toolNameCopy, paramName, pathStr)
+							continue
+						}
+						// First validate the path
+						bo.GetLogger().Infof("🔒 Validating path for tool %s, parameter %s: workspace='%s', input='%s'", toolNameCopy, paramName, workspacePath, pathStr)
+						if err := validatePathInWorkspace(workspacePath, pathStr); err != nil {
+							bo.GetLogger().Warnf("⚠️ Path validation failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
+							return "", err
+						}
+						bo.GetLogger().Infof("✅ Path validation passed for tool %s, parameter %s", toolNameCopy, paramName)
+						// Then normalize it to workspace-relative path
+						normalizedPath, err := normalizePathForWorkspace(workspacePath, pathStr)
+						if err != nil {
+							bo.GetLogger().Warnf("⚠️ Path normalization failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
+							return "", err
+						}
+						// Update the args with normalized path
+						args[paramName] = normalizedPath
+						bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s'", toolNameCopy, paramName, pathStr, normalizedPath)
+					}
+				}
+			}
+
+			// All validations passed and paths normalized - call original executor
+			return originalExecutor(ctx, args)
+		}
+
+		wrappedExecutors[toolName] = wrappedExecutor
+	}
+
+	return wrappedExecutors
+}
+
 // CreateStandardAgentConfig creates a standardized agent configuration
 // use CreateAndSetupStandardAgent instead which combines configuration and setup.
 func (bo *BaseOrchestrator) CreateStandardAgentConfig(agentName string, maxTurns int, outputFormat agents.OutputFormat) *agents.OrchestratorAgentConfig {
@@ -406,10 +610,13 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
 		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {
@@ -500,10 +707,13 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
 		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {
@@ -612,10 +822,13 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
 		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {
@@ -727,10 +940,13 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServersAndSyste
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
 		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {

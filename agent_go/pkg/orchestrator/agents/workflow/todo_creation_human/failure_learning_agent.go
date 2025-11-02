@@ -104,7 +104,7 @@ func (agent *HumanControlledTodoPlannerFailureLearningAgent) failureLearningInpu
 Extract specific failed tool calls with complete argument JSON.`
 		}
 		return `GENERAL PATTERNS` + "`" + `
-Extract high-level failure patterns and approaches that didn't work.`
+Extract high-level failure patterns and approaches that didn't work. Also extract exact tool names (without arguments) used during failed execution.`
 	}() + `
 
 ## 📋 **STEP CONTEXT**
@@ -144,11 +144,17 @@ This step execution failed validation. Analyze what went wrong and provide a ref
 
 ### **Failure Analysis Process:**
 1. **Read current plan** - Examine plan.md to understand the current step (read-only, do not modify)
-2. **Identify failure points** - What specific issues caused the validation to fail
-3. **Analyze root causes** - Why did the execution not meet the success criteria
-4. **Generate refined task** - Create an improved task description for retry (for use in conversation, not plan update)
-5. **Document failure insights** - Write to learnings/failure_analysis.md and learnings/step_X_learning.md
-6. **DO NOT update plan.md** - Plan updates are handled separately by other agents
+2. **Parse ExecutionHistory** - ` + func() string {
+		if templateVars["LearningDetailLevel"] == "exact" {
+			return `Extract EXACT failed tool calls from the execution conversation history below`
+		}
+		return `Analyze the execution conversation to identify failure points. Extract tool names (without arguments) used during failed execution.`
+	}() + `
+3. **Identify failure points** - What specific issues caused the validation to fail
+4. **Analyze root causes** - Why did the execution not meet the success criteria
+5. **Generate refined task** - Create an improved task description for retry (for use in conversation, not plan update)
+6. **Document failure insights** - Write to {{.WorkspacePath}}/learnings/failure_analysis.md and {{.WorkspacePath}}/learnings/step_X_learning.md
+7. **DO NOT update plan.md** - Plan updates are handled separately by other agents
 
 ### **Root Cause Analysis:**
 Categorize the failure and identify root cause:
@@ -168,6 +174,25 @@ Categorize the failure and identify root cause:
 - **Prevention Strategy**: [How to avoid this]
 - **Alternative Approach**: [What to try instead]
 
+` + func() string {
+		if templateVars["LearningDetailLevel"] != "exact" {
+			return `### **How to Extract Tool Names from ExecutionHistory:**
+From "## Tool Call" sections in ExecutionHistory, extract:
+- **Tool Name**: The exact MCP tool name (e.g., fileserver.read_file, aws.cli_query, kubernetes.kubectl_apply)
+- **DO NOT** extract arguments - only the tool name itself
+- List all unique tools used during failed execution (both successful and failed tool calls)
+
+**Example Tool Names Extraction:**
+From ExecutionHistory tool calls, extract:
+- fileserver.read_file
+- aws.cli_query
+- kubernetes.kubectl_apply
+
+**Focus**: Extract the exact tool names used, alongside high-level failure analysis.`
+		}
+		return ``
+	}() + `
+
 ### **Learning Documentation Focus:**
 Document **learnings from the failure** in learnings files (do NOT update plan.md):
 
@@ -185,6 +210,7 @@ Document **learnings from the failure** in learnings files (do NOT update plan.m
 		return `- **Description**: Deploy using kubectl apply to production
 - **Success Criteria**: All pods Running, rollout successful, no error events
 - **Why This Step**: Previous failure showed namespace validation is critical. Timeout prevents hanging.
+- **Tools Used (Failed Attempt)**: docker.docker_run, kubernetes.kubectl_apply (without namespace check)
 - **Failure Patterns**:
   - Don't use container runtime tools directly (use orchestration tools)
   - Don't skip namespace validation (caused deployment error)
@@ -221,6 +247,16 @@ Provide your response in this exact format:
 ### Learning Analysis:
 [Concise analysis of what worked, what failed, and key insights for future execution]
 
+` + func() string {
+		if templateVars["LearningDetailLevel"] != "exact" {
+			return `### Tools Used (Without Arguments):
+- [List exact tool names (without arguments) used during failed execution, e.g., fileserver.read_file, aws.cli_query]
+- [Extract tool names from ExecutionHistory "## Tool Call" sections]
+- [Include both successful and failed tool calls]`
+		}
+		return ``
+	}() + `
+
 ---
 
 ## Learning Documentation Actions
@@ -242,39 +278,51 @@ Provide your response in this exact format:
 		return `clear patterns or approaches that failed were identified - include high-level descriptions of what didn't work and why`
 	}() + `]
 
-**NOTE**: Document learnings in learnings/ folder files - do NOT update plan.md file
+**NOTE**: Document learnings in {{.WorkspacePath}}/learnings/ folder files - do NOT update {{.WorkspacePath}}/planning/plan.md file
 
 ### Execution Insights Captured:
 - [Successful tools and approaches that worked well]
 - [Patterns and best practices discovered]
 - [Context dependencies that were missing or incorrect]
 
+` + func() string {
+		if templateVars["LearningDetailLevel"] != "exact" {
+			return `### Tools Used (Without Arguments):
+- [List all unique tool names used during execution, e.g., fileserver.read_file, aws.cli_query, kubernetes.kubectl_apply]
+- [Extract tool names from ExecutionHistory "## Tool Call" sections]
+- [Include both successful and failed tool calls]
+- [DO NOT include arguments - only tool names]`
+		}
+		return ``
+	}() + `
+
 ---
 
 ## 📁 **FILE PERMISSIONS (Failure Learning Agent)**
 
 **READ:**
-- planning/plan.md (current markdown plan) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/planning/plan.md
-- validation/step_X_validation_report.md (validation results with execution summary) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/validation/step_X_validation_report.md
+- {{.WorkspacePath}}/planning/plan.md (current markdown plan)
+- {{.WorkspacePath}}/validation/step_X_validation_report.md (validation results with execution summary)
 
 **WRITE:**
-- learnings/failure_analysis.md (append failure patterns and anti-patterns) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/failure_analysis.md
-- learnings/step_X_learning.md (create detailed failure analysis for this step) - path: ` + templateVars["WorkspacePath"] + `/todo_creation_human/learnings/step_X_learning.md
+- {{.WorkspacePath}}/learnings/failure_analysis.md (append failure patterns and anti-patterns)
+- {{.WorkspacePath}}/learnings/step_X_learning.md (create detailed failure analysis for this step)
 
 **RESTRICTIONS:**
-- Learning outputs go to learnings/ folder ONLY
-- **DO NOT** update or modify planning/plan.md (plan updates are handled separately)
-- **DO NOT** read or write files in execution/ folder (execution agent handles those)
+- Learning outputs go to {{.WorkspacePath}}/learnings/ folder ONLY
+- **DO NOT** update or modify {{.WorkspacePath}}/planning/plan.md (plan updates are handled separately)
+- **DO NOT** read or write files in {{.WorkspacePath}}/execution/ folder (execution agent handles those)
 - Read execution details from validation reports (which contain execution conversation)
 - Focus on failure analysis and retry guidance
-- All file paths must be relative to ` + templateVars["WorkspacePath"] + `/todo_creation_human/
+- All file paths must be within {{.WorkspacePath}}/
 
 ---
 
 **Key Requirements:**
 - Analyze failure and provide refined task for immediate retry
-- **DO NOT** update planning/plan.md (plan updates are handled separately)
-- Document learnings ONLY in learnings/ folder
+- **DO NOT** update {{.WorkspacePath}}/planning/plan.md (plan updates are handled separately)
+- Document learnings ONLY in {{.WorkspacePath}}/learnings/ folder
+- In general mode: Extract tool names (without arguments) alongside failure analysis
 - ONLY add Failure Patterns if meaningful failures identified
 - Focus on documenting what failed and what to avoid for future reference
 `

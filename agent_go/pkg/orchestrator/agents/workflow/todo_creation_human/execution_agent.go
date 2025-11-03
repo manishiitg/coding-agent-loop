@@ -26,6 +26,10 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	PreviousHumanFeedback   string
 	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
+	HasLoop                 string // "true" or "false" as string
+	LoopCondition           string // Loop condition description (required when HasLoop="true")
+	CurrentIteration        string // Current iteration number
+	MaxIterations           string // Max iterations allowed
 }
 
 // HumanControlledTodoPlannerExecutionAgent executes the objective using MCP servers in human-controlled mode
@@ -67,6 +71,10 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"PreviousHumanFeedback":   templateVars["PreviousHumanFeedback"], // Human feedback from previous iteration
 		"VariableNames":           templateVars["VariableNames"],         // May be empty if no variables
 		"VariableValues":          templateVars["VariableValues"],        // May be empty if no variables
+		"HasLoop":                 templateVars["HasLoop"],               // May be empty or "false" if no loop
+		"LoopCondition":           templateVars["LoopCondition"],         // May be empty if no loop
+		"CurrentIteration":        templateVars["CurrentIteration"],      // May be empty if no loop
+		"MaxIterations":           templateVars["MaxIterations"],         // May be empty if no loop
 	}
 
 	// Create template data for validation
@@ -82,6 +90,10 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		PreviousHumanFeedback:   executionTemplateVars["PreviousHumanFeedback"],
 		VariableNames:           executionTemplateVars["VariableNames"],
 		VariableValues:          executionTemplateVars["VariableValues"],
+		HasLoop:                 executionTemplateVars["HasLoop"],
+		LoopCondition:           executionTemplateVars["LoopCondition"],
+		CurrentIteration:        executionTemplateVars["CurrentIteration"],
+		MaxIterations:           executionTemplateVars["MaxIterations"],
 	}
 
 	// Execute using template validation
@@ -103,6 +115,10 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		PreviousHumanFeedback:   templateVars["PreviousHumanFeedback"],
 		VariableNames:           templateVars["VariableNames"],
 		VariableValues:          templateVars["VariableValues"],
+		HasLoop:                 templateVars["HasLoop"],
+		LoopCondition:           templateVars["LoopCondition"],
+		CurrentIteration:        templateVars["CurrentIteration"],
+		MaxIterations:           templateVars["MaxIterations"],
 	}
 
 	// Define the template
@@ -130,6 +146,30 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 - **Role**: Execution Agent
 - **Responsibility**: Execute a single step from the plan using MCP tools
 - **Mode**: Single step execution
+
+{{if eq .HasLoop "true"}}
+## 🔄 LOOP MODE ACTIVE
+
+**This step is executing in LOOP MODE** - you will execute this step repeatedly until the loop condition is met.
+
+**Loop Condition**: {{.LoopCondition}}
+
+**Current Status**:
+- **Current Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
+- **Max Iterations**: {{.MaxIterations}}
+
+**Your Task in Loop Mode**:
+- Execute the step as described below
+- Work towards meeting the loop condition: "{{.LoopCondition}}"
+- The step will continue looping until this condition is met OR max iterations reached
+- After each execution, the validation agent will check if the loop condition is met
+- **Focus on making progress towards the loop condition** - you may need to check status, poll services, retry operations, etc.
+
+**Important**: 
+- The loop condition ({{.LoopCondition}}) is the same as the success criteria
+- Once the loop condition is met, the step will exit the loop and be marked as completed
+- Continue executing until the condition is satisfied
+{{end}}
 
 ## 📁 FILE PERMISSIONS (Execution Agent)
 

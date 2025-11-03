@@ -53,8 +53,16 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                   
                   {/* Step Content */}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
-                      {step.title || `Step ${index + 1}`}
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {step.title || `Step ${index + 1}`}
+                      </div>
+                      {step.has_loop && (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-md font-medium">
+                          <span>🔄</span>
+                          <span>Loop</span>
+                        </span>
+                      )}
                     </div>
                     {step.description && (
                       <div className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-2">
@@ -84,6 +92,27 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                         <div className="text-xs">
                           <span className="font-medium text-indigo-700 dark:text-indigo-400">Reason for Validation:</span>
                           <span className="text-gray-600 dark:text-gray-400 ml-1">{step.reason_for_validation}</span>
+                        </div>
+                      )}
+                      
+                      {step.has_loop && step.loop_condition && (
+                        <div className="text-xs">
+                          <span className="font-medium text-cyan-700 dark:text-cyan-400">Loop Condition:</span>
+                          <span className="text-gray-600 dark:text-gray-400 ml-1">{step.loop_condition}</span>
+                        </div>
+                      )}
+                      
+                      {step.has_loop && step.max_iterations && (
+                        <div className="text-xs">
+                          <span className="font-medium text-cyan-700 dark:text-cyan-400">Max Iterations:</span>
+                          <span className="text-gray-600 dark:text-gray-400 ml-1">{step.max_iterations}</span>
+                        </div>
+                      )}
+                      
+                      {step.has_loop && step.loop_description && (
+                        <div className="text-xs">
+                          <span className="font-medium text-cyan-700 dark:text-cyan-400">Loop Description:</span>
+                          <span className="text-gray-600 dark:text-gray-400 ml-1 italic">{step.loop_description}</span>
                         </div>
                       )}
                       

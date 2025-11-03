@@ -1192,9 +1192,17 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	}
 
 	// Use the context-aware bridge to emit the event
-	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit human feedback event: %w", err)
+	bridge := bo.GetContextAwareBridge()
+	if bridge == nil {
+		bo.GetLogger().Errorf("❌ Context-aware bridge is nil, cannot emit blocking human feedback event")
+		return false, "", fmt.Errorf("context-aware bridge is nil")
 	}
+	bo.GetLogger().Infof("📤 Attempting to emit blocking_human_feedback event via context-aware bridge")
+	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+		bo.GetLogger().Errorf("❌ Failed to emit human feedback event: %w", err)
+		return false, "", fmt.Errorf("failed to emit event: %w", err)
+	}
+	bo.GetLogger().Infof("✅ Successfully emitted blocking_human_feedback event: requestID=%s", requestID)
 
 	// Use HumanFeedbackStore to wait for response
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
@@ -1584,12 +1592,12 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	return nil
 }
 
-// CleanupDirectory deletes all files in a directory using list_workspace_files to enumerate files
-// then deletes each file found (skipping directories)
+// CleanupDirectory recursively deletes all files and directories in a directory using list_workspace_files
+// to enumerate files recursively, then deletes all files first, then directories (deepest first)
 func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string, dirName string) error {
-	bo.GetLogger().Infof("🧹 Cleaning up %s directory: %s", dirName, dirPath)
+	bo.GetLogger().Infof("🧹 Cleaning up %s directory recursively: %s", dirName, dirPath)
 
-	// Use list_workspace_files to enumerate all files in the directory, then delete them
+	// Use list_workspace_files to enumerate all files in the directory recursively, then delete them
 	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
 	if !exists {
 		bo.GetLogger().Warnf("⚠️ list_workspace_files executor not found, skipping directory cleanup")
@@ -1602,10 +1610,10 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 		return nil
 	}
 
-	// Call list_workspace_files to get all files in the directory
+	// Call list_workspace_files to get all files recursively (use high max_depth for recursive listing)
 	listArgs := map[string]interface{}{
 		"folder":    dirPath,
-		"max_depth": 1, // Only list files in this directory, not subdirectories
+		"max_depth": 100, // High depth to list all files and directories recursively
 	}
 
 	fileListJSON, err := listExecutor(ctx, listArgs)
@@ -1635,34 +1643,80 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 		}
 	}
 
-	// Delete each file found (skip directories)
-	deletedCount := 0
+	// Separate files and directories for proper deletion order
+	var filesToDelete []string
+	var dirsToDelete []string
+
 	for _, fileInfo := range filesList {
 		filepath, ok := fileInfo["filepath"].(string)
 		if !ok || filepath == "" {
 			continue
 		}
 
-		// Skip directories - only delete files
-		if isDirectory, ok := fileInfo["is_directory"].(bool); ok && isDirectory {
-			bo.GetLogger().Infof("⏭️ Skipping directory: %s", filepath)
+		// Skip the root directory itself
+		if filepath == dirPath {
 			continue
 		}
 
-		// Delete the file
-		if err := bo.DeleteWorkspaceFile(ctx, filepath); err == nil {
-			deletedCount++
-			bo.GetLogger().Infof("🗑️ Deleted: %s", filepath)
+		// Check if it's a directory
+		if isDirectory, ok := fileInfo["is_directory"].(bool); ok && isDirectory {
+			dirsToDelete = append(dirsToDelete, filepath)
 		} else {
-			// Log but don't fail - some files might already be deleted or have other issues
-			bo.GetLogger().Warnf("⚠️ Failed to delete %s: %v", filepath, err)
+			filesToDelete = append(filesToDelete, filepath)
 		}
 	}
 
-	if deletedCount > 0 {
-		bo.GetLogger().Infof("✅ Cleaned up %d files from %s directory", deletedCount, dirName)
+	// Delete all files first
+	deletedFileCount := 0
+	for _, filepath := range filesToDelete {
+		if err := bo.DeleteWorkspaceFile(ctx, filepath); err == nil {
+			deletedFileCount++
+			bo.GetLogger().Infof("🗑️ Deleted file: %s", filepath)
+		} else {
+			// Log but don't fail - some files might already be deleted or have other issues
+			bo.GetLogger().Warnf("⚠️ Failed to delete file %s: %v", filepath, err)
+		}
+	}
+
+	// Delete directories (deepest first - sort by path length descending)
+	// This ensures child directories are deleted before parent directories
+	sortKey := func(path string) int {
+		// Count path separators to determine depth
+		count := 0
+		for _, char := range path {
+			if char == '/' || char == '\\' {
+				count++
+			}
+		}
+		return count
+	}
+
+	// Sort directories by depth (deepest first)
+	for i := 0; i < len(dirsToDelete)-1; i++ {
+		for j := i + 1; j < len(dirsToDelete); j++ {
+			if sortKey(dirsToDelete[i]) < sortKey(dirsToDelete[j]) {
+				dirsToDelete[i], dirsToDelete[j] = dirsToDelete[j], dirsToDelete[i]
+			}
+		}
+	}
+
+	deletedDirCount := 0
+	for _, dirpath := range dirsToDelete {
+		// Delete directory using DeleteWorkspaceFile (workspace tool should handle directories)
+		if err := bo.DeleteWorkspaceFile(ctx, dirpath); err == nil {
+			deletedDirCount++
+			bo.GetLogger().Infof("🗑️ Deleted directory: %s", dirpath)
+		} else {
+			// Log but don't fail - some directories might already be deleted or have other issues
+			bo.GetLogger().Warnf("⚠️ Failed to delete directory %s: %v", dirpath, err)
+		}
+	}
+
+	totalDeleted := deletedFileCount + deletedDirCount
+	if totalDeleted > 0 {
+		bo.GetLogger().Infof("✅ Cleaned up %d files and %d directories from %s directory (total: %d)", deletedFileCount, deletedDirCount, dirName, totalDeleted)
 	} else {
-		bo.GetLogger().Infof("ℹ️ No files found to delete in %s directory (may have been empty)", dirName)
+		bo.GetLogger().Infof("ℹ️ No files or directories found to delete in %s directory (may have been empty)", dirName)
 	}
 
 	return nil

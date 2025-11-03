@@ -16,6 +16,7 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
       'update_workspace_file',
       'diff_patch_workspace_file',
       'list_workspace_files',
+      'delete_workspace_file',
       // Add more as we implement their UI
     ]
     const isWorkspace = workspaceToolNames.includes(toolName)

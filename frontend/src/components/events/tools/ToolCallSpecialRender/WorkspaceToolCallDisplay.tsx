@@ -310,6 +310,62 @@ export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> =
     )
   }
 
+  // Handle delete_workspace_file tool
+  if (toolName === 'delete_workspace_file') {
+    const filepath = (parsedArgs.filepath as string) || ''
+    const commitMessage = (parsedArgs.commit_message as string) || ''
+    
+    return (
+      <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-2">
+        <div className="flex items-center justify-between gap-3">
+          {/* Left side: Icon and main content */}
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-orange-700 dark:text-orange-300">
+                🗑️ Delete Workspace File{' '}
+                <span className="text-xs font-normal text-orange-600 dark:text-orange-400">
+                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.server_name && ` • Server: ${event.server_name}`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right side: Time */}
+          {event.timestamp && (
+            <div className="text-xs text-orange-600 dark:text-orange-400 flex-shrink-0">
+              {new Date(event.timestamp).toLocaleTimeString()}
+            </div>
+          )}
+        </div>
+
+        {/* File path */}
+        {filepath && (
+          <div className="mt-2">
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+              <div className="text-xs font-medium text-orange-700 dark:text-orange-300 mb-1">📁 File Path:</div>
+              <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
+                {filepath}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Commit message */}
+        {commitMessage && (
+          <div className="mt-2">
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+              <div className="text-xs font-medium text-orange-700 dark:text-orange-300 mb-1">💬 Commit Message:</div>
+              <div className="text-sm text-gray-800 dark:text-gray-200">
+                {commitMessage}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // Handle other workspace tools (fallback to JSON for now)
   return (
     <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-2">

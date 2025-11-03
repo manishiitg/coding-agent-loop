@@ -348,44 +348,88 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
       },
       
-      // Process workspace events and trigger highlighting
+      // Process workspace events and trigger highlighting or file removal
       processWorkspaceEvent: (event: PollingEvent) => {
-        // Only process tool_call_start events
-        if (event.type !== 'tool_call_start' || !event.data) {
-          return false
-        }
-        
-        const eventData = event.data as Record<string, unknown>
-        if (!eventData?.data) {
-          return false
-        }
-        
-        const toolData = eventData.data as Record<string, unknown>
-        const toolName = toolData.tool_name as string
-        const toolParams = toolData.tool_params as Record<string, unknown>
-        
-        // Check if this is a file creation/modification tool
-        const fileCreationTools = ['update_workspace_file', 'patch_workspace_file', 'diff_patch_workspace_file', 'read_workspace_file', 'get_workspace_file_nested']
-        if (!fileCreationTools.includes(toolName)) {
-          return false
-        }
-        
-        try {
-          const args = JSON.parse((toolParams?.arguments as string) || '{}')
-          const filepath = args.filepath as string
-          
-          if (filepath) {
-            // Detected file operation
-            
-            // Trigger file highlighting
-            get().highlightFile(filepath)
-            
-            return true
-          } else {
-            // Tool detected but no filepath in arguments
+        // Handle tool_call_start events for highlighting
+        if (event.type === 'tool_call_start' && event.data) {
+          const eventData = event.data as Record<string, unknown>
+          if (!eventData?.data) {
+            return false
           }
-        } catch (error) {
-          console.error('[WorkspaceStore] Failed to parse tool arguments:', error)
+          
+          const toolData = eventData.data as Record<string, unknown>
+          const toolName = toolData.tool_name as string
+          const toolParams = toolData.tool_params as Record<string, unknown>
+          
+          // Check if this is a file creation/modification tool
+          const fileCreationTools = ['update_workspace_file', 'patch_workspace_file', 'diff_patch_workspace_file', 'read_workspace_file', 'get_workspace_file_nested']
+          if (!fileCreationTools.includes(toolName)) {
+            return false
+          }
+          
+          try {
+            const args = JSON.parse((toolParams?.arguments as string) || '{}')
+            const filepath = args.filepath as string
+            
+            if (filepath) {
+              // Detected file operation
+              
+              // Trigger file highlighting
+              get().highlightFile(filepath)
+              
+              return true
+            } else {
+              // Tool detected but no filepath in arguments
+            }
+          } catch (error) {
+            console.error('[WorkspaceStore] Failed to parse tool arguments:', error)
+          }
+          
+          return false
+        }
+        
+        // Handle tool_call_end events for file deletion
+        if (event.type === 'tool_call_end' && event.data) {
+          const eventData = event.data as Record<string, unknown>
+          if (!eventData?.data) {
+            return false
+          }
+          
+          const toolData = eventData.data as Record<string, unknown>
+          const toolName = toolData.tool_name as string
+          
+          // Check if this is a delete_workspace_file tool
+          if (toolName !== 'delete_workspace_file') {
+            return false
+          }
+          
+          try {
+            const result = (toolData.result as string) || ''
+            if (!result) {
+              return false
+            }
+            
+            const parsedResult = JSON.parse(result)
+            const filepath = (parsedResult.filepath as string) || ''
+            const deleted = (parsedResult.deleted as boolean) || false
+            
+            if (filepath && deleted) {
+              // File or folder was successfully deleted, remove it from UI
+              get().removeFile(filepath)
+              
+              // Also clear selection if the deleted file was selected
+              const state = get()
+              if (state.selectedFile?.path === filepath) {
+                set({ selectedFile: null, fileContent: '', showFileContent: false })
+              }
+              
+              return true
+            }
+          } catch (error) {
+            console.error('[WorkspaceStore] Failed to parse delete tool result:', error)
+          }
+          
+          return false
         }
         
         return false

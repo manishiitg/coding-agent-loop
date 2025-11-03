@@ -90,9 +90,25 @@ func (hcpra *HumanControlledPlanReaderAgent) ExecuteStructured(ctx context.Conte
 								"type": "string"
 							},
 							"description": "List of approaches that failed, including tools to avoid (extract from 'Failure Patterns:' section)"
+						},
+						"has_loop": {
+							"type": "boolean",
+							"description": "Whether this step needs to loop until condition is met. Set to true for steps requiring iteration/polling/retrying"
+						},
+						"loop_condition": {
+							"type": "string",
+							"description": "Condition that must be met to exit the loop (REQUIRED when has_loop is true). This should be the same as success_criteria - describe the condition that must be met. CRITICAL: Preserve the COMPLETE loop condition text exactly as written. DO NOT truncate or summarize."
+						},
+						"max_iterations": {
+							"type": "integer",
+							"description": "Maximum number of loop iterations allowed to prevent infinite loops (default: 10). Only include when has_loop is true"
+						},
+						"loop_description": {
+							"type": "string",
+							"description": "Human-readable explanation of why the loop is needed and how it works. Only include when has_loop is true and a description is provided in the plan"
 						}
 					},
-					"required": ["title", "description", "success_criteria", "requires_validation"]
+					"required": ["title", "description", "success_criteria", "requires_validation", "has_loop"]
 				}
 			}
 		},
@@ -188,6 +204,10 @@ The output JSON must maintain variable placeholders, not resolved values.
   - success_criteria: From "- **Success Criteria**: [content]" - **CRITICAL**: Preserve the COMPLETE success criteria text exactly as written. DO NOT truncate or summarize.
   - requires_validation: From "- **Requires Validation**: [true/false]" - Set to true ONLY when step requires: (1) Multiple tool calls in sequence (5+ tool invocations), (2) Long/complex tool calls with substantial output processing, (3) Many multiple tools with interdependencies, or (4) Complex logic execution with conditional branching or multi-step workflows. Set to false for simple steps with 1-4 straightforward tool calls that LLMs can execute and verify themselves.
   - reason_for_validation: From "- **Reason for Validation**: [content]" - explanation when requires_validation is true (optional, only if requires_validation=true). Should explain specifically why validation is needed: mention the number of tool calls, complexity of logic, interdependencies, or specific challenges. **CRITICAL**: Preserve the COMPLETE reason text exactly as written.
+  - has_loop: From "- **Has Loop**: [true/false]" - Whether step needs to loop until condition is met
+  - loop_condition: From "- **Loop Condition**: [content]" - **REQUIRED when has_loop is true**. Condition that must be met to exit the loop (should be same as success_criteria). **CRITICAL**: Preserve the COMPLETE loop condition text exactly as written. DO NOT truncate or summarize. If has_loop is true but loop_condition is missing, this is an ERROR - the plan is invalid.
+  - max_iterations: From "- **Max Iterations**: [number]" - Maximum loop iterations (default: 10 if not specified). Only include when has_loop is true
+  - loop_description: From "- **Loop Description**: [content]" - Human-readable explanation of loop behavior. Only include when has_loop is true and description is provided
   - context_dependencies: From "- **Context Dependencies**: [content]" - See conversion rules below
   - context_output: From "- **Context Output**: [content]"
   - success_patterns: From "- **Success Patterns**: [bullet list]" - See parsing rules below

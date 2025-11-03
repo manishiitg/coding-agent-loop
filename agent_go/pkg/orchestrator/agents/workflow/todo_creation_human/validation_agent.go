@@ -22,6 +22,7 @@ type HumanControlledTodoPlannerValidationTemplate struct {
 	StepContextOutput       string
 	WorkspacePath           string
 	ExecutionHistory        string
+	LoopCondition           string // For loop steps: condition to check
 }
 
 // ValidationFeedback represents combined issues and recommendations from validation
@@ -37,6 +38,8 @@ type ValidationResponse struct {
 	ExecutionStatus      string               `json:"execution_status"` // COMPLETED/PARTIAL/FAILED/INCOMPLETE
 	Reasoning            string               `json:"reasoning"`
 	Feedback             []ValidationFeedback `json:"feedback"`
+	LoopConditionMet     bool                 `json:"loop_condition_met"` // For loop steps: whether loop condition is met
+	LoopReasoning        string               `json:"loop_reasoning"`     // For loop steps: reasoning for loop condition check
 }
 
 // HumanControlledTodoPlannerValidationAgent validates if tasks were completed properly
@@ -82,6 +85,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 	}
 
 	// Create template data for validation
+	loopCondition := templateVars["LoopCondition"]
 	templateData := HumanControlledTodoPlannerValidationTemplate{
 		StepTitle:               stepTitle,
 		StepDescription:         stepDescription,
@@ -90,6 +94,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 		StepContextOutput:       stepContextOutput,
 		WorkspacePath:           workspacePath,
 		ExecutionHistory:        executionHistory,
+		LoopCondition:           loopCondition,
 	}
 
 	// Execute using template validation
@@ -136,6 +141,14 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 					},
 					"required": ["type", "description", "severity"]
 				}
+			},
+			"loop_condition_met": {
+				"type": "boolean",
+				"description": "Whether the loop condition is met (only used when LoopCondition is provided in template vars). Required when checking loop condition."
+			},
+			"loop_reasoning": {
+				"type": "string",
+				"description": "Reasoning for loop condition evaluation (only used when LoopCondition is provided). Required when checking loop condition."
 			}
 		},
 		"required": ["is_success_criteria_met", "execution_status", "reasoning"]
@@ -161,6 +174,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
 		ExecutionHistory:        templateVars["ExecutionHistory"],
+		LoopCondition:           templateVars["LoopCondition"],
 	}
 
 	// Define the template
@@ -220,6 +234,30 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 {{.ExecutionHistory}}
 
 
+{{if .LoopCondition}}
+## 🔄 LOOP CONDITION CHECK MODE
+
+**This step is in loop mode - you are checking the LOOP CONDITION, not the full success criteria.**
+
+**Loop Condition**: {{.LoopCondition}}
+
+**Your Task**: Evaluate if the LOOP CONDITION is met based on the execution results.
+
+**Loop Condition Check Steps**:
+1. **Review Execution History**: Analyze conversation for evidence related to the loop condition
+2. **Check Loop Condition**: Verify if condition "{{.LoopCondition}}" is met
+3. **Analyze Tool Usage**: Check which tools were used and their results
+4. **Assess Evidence**: Determine if the loop condition is satisfied
+
+**Decision**:
+- ✅ **LOOP CONDITION MET**: Loop condition is satisfied - step can exit loop
+- ❌ **LOOP CONDITION NOT MET**: Loop condition is not satisfied - step must continue looping
+
+**IMPORTANT**: 
+- Return loop_condition_met: true if condition is met, false otherwise
+- Return loop_reasoning: Detailed explanation of why the loop condition is or is not met
+- Still return is_success_criteria_met, execution_status, and reasoning for consistency (but focus on loop condition evaluation)
+{{else}}
 ## 🔍 VALIDATION PROCESS
 
 **Step - "{{.StepTitle}}"**
@@ -237,6 +275,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 **Decision**:
 - ✅ **PASS**: Success criteria met with sufficient evidence
 - ❌ **FAIL**: Success criteria not met or insufficient evidence
+{{end}}
 
 ## 📤 Output Format
 
@@ -249,7 +288,26 @@ The response should be a JSON object with:
 - execution_status: string - Overall status (COMPLETED/PARTIAL/FAILED/INCOMPLETE)
 - reasoning: string - Detailed reasoning for the validation decision
 - feedback: array of objects with type, description, and severity (HIGH/MEDIUM/LOW)
+{{if .LoopCondition}}
+- loop_condition_met: boolean - **REQUIRED when LoopCondition is provided** - Whether the loop condition is met
+- loop_reasoning: string - **REQUIRED when LoopCondition is provided** - Detailed reasoning for loop condition evaluation
+{{end}}
 
+{{if .LoopCondition}}
+Example JSON structure for loop condition check:
+` + "```json" + `
+{
+  "is_success_criteria_met": true,
+  "execution_status": "COMPLETED",
+  "reasoning": "Execution completed and loop condition evaluation performed.",
+  "loop_condition_met": true,
+  "loop_reasoning": "The execution conversation shows clear evidence that the loop condition '{{.LoopCondition}}' is met. [Provide specific evidence from execution history]",
+  "feedback": []
+}
+` + "```" + `
+
+**Note**: Focus on evaluating the LOOP CONDITION. Check if the execution conversation provides sufficient evidence that the loop condition is met. Return loop_condition_met and loop_reasoning in your response.
+{{else}}
 Example JSON structure:
 ` + "```json" + `
 {
@@ -271,7 +329,8 @@ Example JSON structure:
 }
 ` + "```" + `
 
-**Note**: Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.`
+**Note**: Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.
+{{end}}`
 
 	// Parse and execute the template
 	tmpl, err := template.New("validation").Parse(templateStr)

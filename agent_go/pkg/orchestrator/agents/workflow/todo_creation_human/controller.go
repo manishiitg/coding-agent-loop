@@ -36,6 +36,10 @@ type TodoStep struct {
 	ContextOutput       string   `json:"context_output"`
 	SuccessPatterns     []string `json:"success_patterns,omitempty"` // what worked (includes tools)
 	FailurePatterns     []string `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
+	HasLoop             bool     `json:"has_loop"`                   // true if step needs to loop
+	LoopCondition       string   `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
+	MaxIterations       int      `json:"max_iterations,omitempty"`   // max iterations (default: 10)
+	LoopDescription     string   `json:"loop_description,omitempty"` // human-readable explanation
 }
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
@@ -724,11 +728,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 					// Clean up execution artifacts for steps that will be re-executed
 					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+					hcpo.GetLogger().Infof("🔍 DEBUG: About to call CleanupDirectory for fast execute, path: %s", executionDir)
 					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
 						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
 					} else {
 						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory for fast re-execution")
 					}
+					hcpo.GetLogger().Infof("🔍 DEBUG: CleanupDirectory call completed for fast execute")
 
 					fastExecuteMode = true
 					fastExecuteEndStep = max(existingProgress.CompletedStepIndices)
@@ -878,6 +884,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanReaderPhase(ctx conte
 		return nil, fmt.Errorf("plan reading failed: %w", err)
 	}
 
+	// Validate loop fields: if has_loop is true, loop_condition must be provided
+	for i, step := range result.Steps {
+		if step.HasLoop {
+			if step.LoopCondition == "" {
+				return nil, fmt.Errorf("plan validation failed: step %d has has_loop=true but loop_condition is missing (required)", i+1)
+			}
+			// Set default max_iterations if not provided
+			if step.MaxIterations == 0 {
+				step.MaxIterations = 10
+				result.Steps[i] = step
+				hcpo.GetLogger().Infof("⚠️ Step %d has loop but no max_iterations specified, using default: 10", i+1)
+			}
+		}
+	}
+
 	hcpo.GetLogger().Infof("✅ Plan converted to structured JSON successfully")
 	return result, nil
 }
@@ -897,6 +918,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			ContextOutput:       step.ContextOutput.String(), // Convert FlexibleContextOutput to string
 			SuccessPatterns:     step.SuccessPatterns,
 			FailurePatterns:     step.FailurePatterns,
+			HasLoop:             step.HasLoop,
+			LoopCondition:       step.LoopCondition,
+			MaxIterations:       step.MaxIterations,
+			LoopDescription:     step.LoopDescription,
 		}
 	}
 	return todoSteps
@@ -1077,192 +1102,510 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				templateVars["PreviousHumanFeedback"] = ""
 			}
 
+			// Validate loop condition is provided when has_loop is true
+			if step.HasLoop {
+				if step.LoopCondition == "" {
+					return nil, fmt.Errorf("step %d has has_loop=true but loop_condition is empty (required)", i+1)
+				}
+				// Set default max_iterations if not provided
+				if step.MaxIterations == 0 {
+					step.MaxIterations = 10
+					hcpo.GetLogger().Infof("⚠️ Step %d has loop but no max_iterations specified, using default: 10", i+1)
+				}
+			}
+
 			// Inner loop: Automatic retry logic
 			var validationFeedback []ValidationFeedback
 			var validationResponse *ValidationResponse
 
-			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
-				hcpo.GetLogger().Infof("🔄 Executing step %d/%d (attempt %d/%d): %s", i+1, len(breakdownSteps), retryAttempt, maxRetryAttempts, step.Title)
+			// Loop handling: if step has loop, wrap execution in loop that checks loop condition
+			var loopConditionMet bool
+			var loopIterationCount int
+			// Store previous iteration's execution and validation outputs for loop feedback
+			var previousIterationExecutionOutput string
+			var previousIterationValidationOutput string
 
-				// Add validation feedback to template variables if this is a retry
-				if retryAttempt > 1 && validationFeedback != nil {
-					feedbackJSON, _ := json.Marshal(validationFeedback)
-					templateVars["ValidationFeedback"] = fmt.Sprintf("## Validation Feedback (Retry Attempt %d):\n%s", retryAttempt, string(feedbackJSON))
-					hcpo.GetLogger().Infof("📝 Added validation feedback to template variables for step %d, retry %d", i+1, retryAttempt)
-				} else {
-					templateVars["ValidationFeedback"] = "" // No validation feedback for first attempt
-				}
+			// Main execution loop (either single execution or loop iterations)
+			// For non-loop steps, this executes once. For loop steps, it iterates until condition is met.
+			// NOTE: executionConversationHistory is reset at the start of each loop iteration (except preserves human feedback and previous iteration outputs)
+			for loopIteration := 0; ; loopIteration++ {
+				// Initialize loop state on first iteration
+				if loopIteration == 0 && step.HasLoop {
+					loopConditionMet = false
+					loopIterationCount = 0
+					previousIterationExecutionOutput = ""
+					previousIterationValidationOutput = ""
+					hcpo.GetLogger().Infof("🔄 Step %d loop starting (max iterations: %d, condition: %s)", i+1, step.MaxIterations, step.LoopCondition)
+				} else if loopIteration > 0 && step.HasLoop {
+					// Reset execution history for new loop iteration, but preserve human feedback and previous iteration outputs
+					historyMsgCount := len(executionConversationHistory)
+					hcpo.GetLogger().Infof("🔄 Step %d loop iteration %d/%d starting - resetting execution history (%d messages)", i+1, loopIterationCount, step.MaxIterations, historyMsgCount)
 
-				// Create execution agent for this step
-				// Resolve variables in step title before using in agent name
-				resolvedTitle := hcpo.resolveVariables(step.Title)
-				agentName := fmt.Sprintf("execution-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
-				executionAgent, err := hcpo.createExecutionAgent(ctx, "execution", i+1, iteration, agentName)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create execution agent for step %d: %w", i+1, err)
-				}
-
-				// Execute this specific step with execution conversation history
-				_, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, executionConversationHistory)
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, retryAttempt, err)
-					if retryAttempt >= maxRetryAttempts {
-						hcpo.GetLogger().Errorf("❌ Step %d execution failed after %d attempts, exiting retry loop", i+1, maxRetryAttempts)
-						break // Exit retry loop - will proceed to human feedback
+					// Preserve only previous steps feedback and human feedback, reset the rest
+					var preservedHistory []llmtypes.MessageContent
+					// Extract previous steps feedback if present
+					for _, msg := range executionConversationHistory {
+						if len(msg.Parts) > 0 {
+							if textContent, ok := msg.Parts[0].(llmtypes.TextContent); ok {
+								if strings.Contains(textContent.Text, "## Previous Steps' Feedback for Context:") {
+									preservedHistory = append(preservedHistory, msg)
+									continue
+								}
+								// Extract human feedback messages
+								if strings.Contains(textContent.Text, "## Human Feedback for Step") {
+									preservedHistory = append(preservedHistory, msg)
+									continue
+								}
+							}
+						}
 					}
-					continue // Retry on next attempt
+
+					// Add previous iteration's execution and validation outputs if available
+					if previousIterationExecutionOutput != "" || previousIterationValidationOutput != "" {
+						combinedOutput := strings.Builder{}
+						combinedOutput.WriteString(fmt.Sprintf("## Previous Loop Iteration (Iteration %d) Feedback:\n\n", loopIterationCount-1))
+
+						if previousIterationExecutionOutput != "" {
+							combinedOutput.WriteString("### Execution Output:\n")
+							combinedOutput.WriteString(previousIterationExecutionOutput)
+							combinedOutput.WriteString("\n\n")
+						}
+
+						if previousIterationValidationOutput != "" {
+							combinedOutput.WriteString("### Validation Output:\n")
+							combinedOutput.WriteString(previousIterationValidationOutput)
+							combinedOutput.WriteString("\n\n")
+						}
+
+						iterationFeedbackMessage := llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeHuman,
+							Parts: []llmtypes.ContentPart{llmtypes.TextContent{
+								Text: combinedOutput.String(),
+							}},
+						}
+						preservedHistory = append(preservedHistory, iterationFeedbackMessage)
+						hcpo.GetLogger().Infof("📝 Preserved previous iteration (iteration %d) execution and validation outputs in execution history for loop iteration %d", loopIterationCount-1, loopIterationCount)
+					}
+
+					// Also add current human feedback if any (from outer loop)
+					if humanFeedback != "" {
+						humanFeedbackMessage := llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeHuman,
+							Parts: []llmtypes.ContentPart{llmtypes.TextContent{
+								Text: fmt.Sprintf("## Human Feedback for Step %d:\n%s", i+1, humanFeedback),
+							}},
+						}
+						preservedHistory = append(preservedHistory, humanFeedbackMessage)
+						hcpo.GetLogger().Infof("📝 Preserved human feedback in execution history for loop iteration %d", loopIterationCount)
+						humanFeedback = "" // Reset for next iteration
+					}
+
+					// Reset history to only preserved messages (previous steps feedback + human feedback + previous iteration outputs)
+					executionConversationHistory = preservedHistory
+					if len(preservedHistory) > 0 {
+						hcpo.GetLogger().Infof("📝 Preserved %d messages (previous steps feedback + human feedback + previous iteration outputs) in execution history", len(preservedHistory))
+					}
 				}
 
-				hcpo.GetLogger().Infof("✅ Step %d execution completed successfully (attempt %d)", i+1, retryAttempt)
+				// Check loop exit conditions (only for loop steps)
+				if step.HasLoop {
+					if loopConditionMet {
+						hcpo.GetLogger().Infof("✅ Step %d loop condition met after %d iterations, exiting loop", i+1, loopIterationCount)
+						// Skip validation, mark as completed
+						validationResponse = &ValidationResponse{
+							IsSuccessCriteriaMet: true,
+							ExecutionStatus:      "COMPLETED",
+							Reasoning:            fmt.Sprintf("Loop condition met after %d iterations. Validation skipped per loop exit.", loopIterationCount),
+						}
+						break // Exit main loop - proceed to mark as completed
+					}
+					if loopIterationCount >= step.MaxIterations {
+						hcpo.GetLogger().Errorf("❌ Step %d reached max iterations (%d) without meeting loop condition, requesting human intervention", i+1, step.MaxIterations)
+						// Request human intervention immediately, skip validation
+						var err error
+						var feedback string
+						var approved bool
+						approved, feedback, err = hcpo.requestHumanFeedback(ctx, i+1, len(breakdownSteps),
+							fmt.Sprintf("Loop reached max iterations (%d) without meeting condition: %s", step.MaxIterations, step.LoopCondition))
+						if err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Human feedback request failed: %w", err)
+							// Default to not approved so step doesn't complete
+							approved = false
+						}
+						if approved {
+							// User approved - treat as completed despite max iterations
+							hcpo.GetLogger().Infof("✅ User approved step %d despite max iterations, marking as completed", i+1)
+							validationResponse = &ValidationResponse{
+								IsSuccessCriteriaMet: true,
+								ExecutionStatus:      "COMPLETED",
+								Reasoning:            "User approved completion despite max iterations reached",
+							}
+							loopConditionMet = true // Mark condition as met so loop exits
+							break                   // Exit main loop
+						} else {
+							// User rejected - store feedback for re-execution
+							hcpo.GetLogger().Infof("🔄 User rejected approval, will re-execute step %d with feedback", i+1)
+							humanFeedback = feedback
+							stepCompleted = false // Don't mark as completed, outer loop will re-execute
+							break                 // Exit main loop to go back to outer loop
+						}
+					}
+					loopIterationCount++
+					hcpo.GetLogger().Infof("🔄 Step %d loop iteration %d/%d", i+1, loopIterationCount, step.MaxIterations)
+				}
 
-				// Check if step requires validation
-				if !step.RequiresValidation {
-					// Simple step - skip validation and learning, mark as completed
-					hcpo.GetLogger().Infof("⏭️ Step %d does not require validation (requires_validation=false), skipping validation and learning", i+1)
+				// Add loop context to template variables if in loop mode
+				if step.HasLoop {
+					templateVars["HasLoop"] = "true"
+					templateVars["LoopCondition"] = step.LoopCondition
+					templateVars["CurrentIteration"] = fmt.Sprintf("%d", loopIterationCount)
+					templateVars["MaxIterations"] = fmt.Sprintf("%d", step.MaxIterations)
+				} else {
+					templateVars["HasLoop"] = "false"
+					templateVars["LoopCondition"] = ""
+					templateVars["CurrentIteration"] = ""
+					templateVars["MaxIterations"] = ""
+				}
+
+				for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
+					hcpo.GetLogger().Infof("🔄 Executing step %d/%d (attempt %d/%d): %s", i+1, len(breakdownSteps), retryAttempt, maxRetryAttempts, step.Title)
+
+					// Add validation feedback to template variables if this is a retry
+					if retryAttempt > 1 && validationFeedback != nil {
+						feedbackJSON, _ := json.Marshal(validationFeedback)
+						templateVars["ValidationFeedback"] = fmt.Sprintf("## Validation Feedback (Retry Attempt %d):\n%s", retryAttempt, string(feedbackJSON))
+						hcpo.GetLogger().Infof("📝 Added validation feedback to template variables for step %d, retry %d", i+1, retryAttempt)
+					} else {
+						templateVars["ValidationFeedback"] = "" // No validation feedback for first attempt
+					}
+
+					// Create execution agent for this step
+					// Resolve variables in step title before using in agent name
+					resolvedTitle := hcpo.resolveVariables(step.Title)
+					agentName := fmt.Sprintf("execution-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
+					// Add loop iteration to agent name if in loop mode
+					if step.HasLoop && loopIterationCount > 0 {
+						agentName = fmt.Sprintf("%s-loop-%d", agentName, loopIterationCount)
+					}
+					executionAgent, err := hcpo.createExecutionAgent(ctx, "execution", i+1, iteration, agentName)
+					if err != nil {
+						return nil, fmt.Errorf("failed to create execution agent for step %d: %w", i+1, err)
+					}
+
+					// Execute this specific step with execution conversation history
+					// executionConversationHistory accumulates across retry attempts within the same loop iteration,
+					// but is reset at the start of each new loop iteration (preserving only human feedback)
+					_, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, executionConversationHistory)
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, retryAttempt, err)
+						if retryAttempt >= maxRetryAttempts {
+							hcpo.GetLogger().Errorf("❌ Step %d execution failed after %d attempts, exiting retry loop", i+1, maxRetryAttempts)
+							break // Exit retry loop - will proceed to human feedback
+						}
+						continue // Retry on next attempt
+					}
+
+					hcpo.GetLogger().Infof("✅ Step %d execution completed successfully (attempt %d)", i+1, retryAttempt)
+
+					// Check if step requires validation
+					// Fast mode: Validation is ALWAYS called unless requires_validation=false
+					// Loop steps: Validation is ALWAYS called to check loop condition
+					if !step.RequiresValidation {
+						// Simple step - skip validation and learning, mark as completed
+						hcpo.GetLogger().Infof("⏭️ Step %d does not require validation (requires_validation=false), skipping validation and learning", i+1)
+						if step.ReasonForValidation != "" {
+							hcpo.GetLogger().Infof("📝 Step %d reason (not needed but provided): %s", i+1, step.ReasonForValidation)
+						}
+
+						// For loop steps, we still need to check if the loop condition is met
+						// Even if validation is not required, we need to verify completion for loop steps
+						if step.HasLoop {
+							hcpo.GetLogger().Infof("🔍 Step %d is in loop mode - checking loop condition even though requires_validation=false", i+1)
+							// Create validation agent to check loop condition only
+							validationAgentName := fmt.Sprintf("validation-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
+							if loopIterationCount > 0 {
+								validationAgentName = fmt.Sprintf("%s-loop-%d", validationAgentName, loopIterationCount)
+							}
+							validationAgent, err := hcpo.createValidationAgent(ctx, "validation", i+1, iteration, validationAgentName)
+							if err != nil {
+								hcpo.GetLogger().Warnf("⚠️ Failed to create validation agent for loop condition check: %v", err)
+								// If validation agent creation fails, continue loop (will retry)
+								break // Exit retry loop, continue main loop
+							}
+
+							// Prepare validation template variables for loop condition check
+							validationTemplateVars := map[string]string{
+								"StepNumber":          fmt.Sprintf("%d", i+1),
+								"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
+								"StepTitle":           step.Title,
+								"StepDescription":     step.Description,
+								"StepSuccessCriteria": step.SuccessCriteria,
+								"StepContextOutput":   step.ContextOutput,
+								"WorkspacePath":       hcpo.GetWorkspacePath(),
+								"ExecutionHistory":    shared.FormatConversationHistory(executionConversationHistory),
+								"LoopCondition":       step.LoopCondition, // Pass loop condition for checking
+							}
+
+							if len(step.ContextDependencies) > 0 {
+								validationTemplateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
+							} else {
+								validationTemplateVars["StepContextDependencies"] = ""
+							}
+
+							hcpo.GetLogger().Infof("🔍 Checking loop condition for step %d (iteration %d): %s", i+1, loopIterationCount, step.LoopCondition)
+
+							// Check loop condition using validation agent
+							validationResponse, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
+							if err != nil {
+								hcpo.GetLogger().Warnf("⚠️ Loop condition check failed (iteration %d): %v", loopIterationCount, err)
+								// If check fails, continue loop (will retry next iteration)
+								break // Exit retry loop, continue main loop
+							}
+
+							// Check if loop condition is met
+							if validationResponse.LoopConditionMet {
+								hcpo.GetLogger().Infof("✅ Step %d loop condition met (iteration %d) - step completed", i+1, loopIterationCount)
+								loopConditionMet = true
+								// Mark as completed
+								validationResponse.IsSuccessCriteriaMet = true
+								validationResponse.ExecutionStatus = "COMPLETED"
+								validationResponse.Reasoning = fmt.Sprintf("Loop condition met after %d iterations. Validation skipped per requires_validation=false, but loop condition was checked.", loopIterationCount)
+								break // Exit retry loop, will exit main loop at top
+							} else {
+								hcpo.GetLogger().Infof("🔄 Step %d loop condition not met yet (iteration %d/%d), continuing loop", i+1, loopIterationCount, step.MaxIterations)
+								// Capture execution and validation outputs for next iteration
+								previousIterationExecutionOutput = shared.FormatConversationHistory(executionConversationHistory)
+								validationOutputParts := []string{}
+								if validationResponse.Reasoning != "" {
+									validationOutputParts = append(validationOutputParts, fmt.Sprintf("**Reasoning**: %s", validationResponse.Reasoning))
+								}
+								if validationResponse.LoopReasoning != "" {
+									validationOutputParts = append(validationOutputParts, fmt.Sprintf("**Loop Reasoning**: %s", validationResponse.LoopReasoning))
+								}
+								if len(validationResponse.Feedback) > 0 {
+									feedbackParts := []string{"**Feedback**: "}
+									for _, fb := range validationResponse.Feedback {
+										feedbackParts = append(feedbackParts, fmt.Sprintf("- [%s] %s: %s", fb.Severity, fb.Type, fb.Description))
+									}
+									validationOutputParts = append(validationOutputParts, strings.Join(feedbackParts, "\n"))
+								}
+								previousIterationValidationOutput = strings.Join(validationOutputParts, "\n\n")
+								hcpo.GetLogger().Infof("📝 Captured execution and validation outputs for iteration %d (will be included in next iteration)", loopIterationCount)
+								break // Exit retry loop, continue main loop for next iteration
+							}
+						} else {
+							// Non-loop step without validation - create synthetic success response
+							validationResponse = &ValidationResponse{
+								IsSuccessCriteriaMet: true,
+								ExecutionStatus:      "COMPLETED",
+								Reasoning:            "Step executed successfully. Validation skipped per requires_validation=false setting.",
+							}
+							break // Exit retry loop and continue to next step
+						}
+					}
+
+					// Complex step - requires validation
+					// Note: Validation is always called unless requires_validation=false (even in fast mode)
+					// For loop steps, validation is required to check loop condition
+					hcpo.GetLogger().Infof("🔍 Validating step %d execution (attempt %d) - requires_validation=true", i+1, retryAttempt)
 					if step.ReasonForValidation != "" {
-						hcpo.GetLogger().Infof("📝 Step %d reason (not needed but provided): %s", i+1, step.ReasonForValidation)
+						hcpo.GetLogger().Infof("📝 Step %d validation reason: %s", i+1, step.ReasonForValidation)
 					}
-					// Create a synthetic success validation response for consistency
-					validationResponse = &ValidationResponse{
-						IsSuccessCriteriaMet: true,
-						ExecutionStatus:      "COMPLETED",
-						Reasoning:            "Step executed successfully. Validation skipped per requires_validation=false setting.",
+
+					// Reuse resolved title from execution agent (already resolved above)
+					validationAgentName := fmt.Sprintf("validation-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
+					// Add loop iteration to validation agent name if in loop mode
+					if step.HasLoop && loopIterationCount > 0 {
+						validationAgentName = fmt.Sprintf("%s-loop-%d", validationAgentName, loopIterationCount)
 					}
-					break // Exit retry loop and continue to next step
-				}
-
-				// Complex step - requires validation
-				hcpo.GetLogger().Infof("🔍 Validating step %d execution (attempt %d) - requires_validation=true", i+1, retryAttempt)
-				if step.ReasonForValidation != "" {
-					hcpo.GetLogger().Infof("📝 Step %d validation reason: %s", i+1, step.ReasonForValidation)
-				}
-
-				// Reuse resolved title from execution agent (already resolved above)
-				validationAgentName := fmt.Sprintf("validation-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
-				validationAgent, err := hcpo.createValidationAgent(ctx, "validation", i+1, iteration, validationAgentName)
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to create validation agent for step %d: %v", i+1, err)
-					if retryAttempt >= maxRetryAttempts {
-						break // Exit retry loop - will proceed to human feedback
+					validationAgent, err := hcpo.createValidationAgent(ctx, "validation", i+1, iteration, validationAgentName)
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to create validation agent for step %d: %v", i+1, err)
+						if retryAttempt >= maxRetryAttempts {
+							break // Exit retry loop - will proceed to human feedback
+						}
+						continue // Retry on next attempt
 					}
-					continue // Retry on next attempt
-				}
 
-				// Prepare validation template variables with individual fields
-				validationTemplateVars := map[string]string{
-					"StepNumber":          fmt.Sprintf("%d", i+1),
-					"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
-					"StepTitle":           step.Title,
-					"StepDescription":     step.Description,
-					"StepSuccessCriteria": step.SuccessCriteria,
-					"StepContextOutput":   step.ContextOutput,
-					"WorkspacePath":       hcpo.GetWorkspacePath(),
-					"ExecutionHistory":    shared.FormatConversationHistory(executionConversationHistory),
-				}
-
-				// Add context dependencies as a comma-separated string
-				if len(step.ContextDependencies) > 0 {
-					validationTemplateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
-				} else {
-					validationTemplateVars["StepContextDependencies"] = ""
-				}
-
-				// Validate this step's execution using structured output
-				validationResponse, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, retryAttempt, err)
-					if retryAttempt >= maxRetryAttempts {
-						break // Exit retry loop - will proceed to human feedback with nil validationResponse
+					// Prepare validation template variables with individual fields
+					validationTemplateVars := map[string]string{
+						"StepNumber":          fmt.Sprintf("%d", i+1),
+						"TotalSteps":          fmt.Sprintf("%d", len(breakdownSteps)),
+						"StepTitle":           step.Title,
+						"StepDescription":     step.Description,
+						"StepSuccessCriteria": step.SuccessCriteria,
+						"StepContextOutput":   step.ContextOutput,
+						"WorkspacePath":       hcpo.GetWorkspacePath(),
+						"ExecutionHistory":    shared.FormatConversationHistory(executionConversationHistory),
 					}
-					continue // Retry on next attempt
-				}
 
-				hcpo.GetLogger().Infof("✅ Step %d validation completed successfully (attempt %d)", i+1, retryAttempt)
-				hcpo.GetLogger().Infof("📊 Validation result: Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
+					// Add context dependencies as a comma-separated string
+					if len(step.ContextDependencies) > 0 {
+						validationTemplateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
+					} else {
+						validationTemplateVars["StepContextDependencies"] = ""
+					}
 
-				// FAST MODE: Skip learning agents entirely
-				isFastExecuteStep := hcpo.IsFastExecuteStep(i)
-				if isFastExecuteStep {
-					hcpo.GetLogger().Infof("⚡ Fast mode: Skipping learning agents for step %d", i+1)
-				} else {
-					// Run appropriate learning phase based on validation result
-					if validationResponse.IsSuccessCriteriaMet {
-						// Success Learning Agent - analyze what worked well and update plan.json
-						hcpo.GetLogger().Infof("🧠 Running success learning analysis for step %d", i+1)
-						successLearningOutput, err := hcpo.runSuccessLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
-						if err != nil {
-							hcpo.GetLogger().Warnf("⚠️ Success learning phase failed for step %d: %v", i+1, err)
+					// If in loop mode, pass loop condition to validation agent
+					if step.HasLoop {
+						validationTemplateVars["LoopCondition"] = step.LoopCondition
+						hcpo.GetLogger().Infof("🔍 Checking loop condition for step %d (iteration %d): %s", i+1, loopIterationCount, step.LoopCondition)
+					} else {
+						validationTemplateVars["LoopCondition"] = ""
+					}
+
+					// Validate this step's execution using structured output
+					validationResponse, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, retryAttempt, err)
+						if retryAttempt >= maxRetryAttempts {
+							break // Exit retry loop - will proceed to human feedback with nil validationResponse
+						}
+						continue // Retry on next attempt
+					}
+
+					hcpo.GetLogger().Infof("✅ Step %d validation completed successfully (attempt %d)", i+1, retryAttempt)
+					hcpo.GetLogger().Infof("📊 Validation result: Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
+
+					// If in loop mode, check loop condition instead of full validation
+					if step.HasLoop {
+						// Check loop condition from validation response
+						if validationResponse.LoopConditionMet {
+							hcpo.GetLogger().Infof("✅ Step %d loop condition met (iteration %d)", i+1, loopIterationCount)
+							loopConditionMet = true
+							break // Exit retry loop, will exit main loop at top
 						} else {
-							hcpo.GetLogger().Infof("✅ Success learning analysis completed for step %d", i+1)
+							hcpo.GetLogger().Infof("🔄 Step %d loop condition not met yet (iteration %d/%d), continuing loop", i+1, loopIterationCount, step.MaxIterations)
+							// Capture execution and validation outputs for next iteration
+							previousIterationExecutionOutput = shared.FormatConversationHistory(executionConversationHistory)
+							validationOutputParts := []string{}
+							if validationResponse.Reasoning != "" {
+								validationOutputParts = append(validationOutputParts, fmt.Sprintf("**Reasoning**: %s", validationResponse.Reasoning))
+							}
+							if validationResponse.LoopReasoning != "" {
+								validationOutputParts = append(validationOutputParts, fmt.Sprintf("**Loop Reasoning**: %s", validationResponse.LoopReasoning))
+							}
+							if len(validationResponse.Feedback) > 0 {
+								feedbackParts := []string{"**Feedback**: "}
+								for _, fb := range validationResponse.Feedback {
+									feedbackParts = append(feedbackParts, fmt.Sprintf("- [%s] %s: %s", fb.Severity, fb.Type, fb.Description))
+								}
+								validationOutputParts = append(validationOutputParts, strings.Join(feedbackParts, "\n"))
+							}
+							previousIterationValidationOutput = strings.Join(validationOutputParts, "\n\n")
+							hcpo.GetLogger().Infof("📝 Captured execution and validation outputs for iteration %d (will be included in next iteration)", loopIterationCount)
+							break // Exit retry loop, continue main loop for next iteration
+						}
+					}
 
-							// Append success learning analysis to existing LearningAgentOutput
-							if successLearningOutput != "" {
-								existingOutput := templateVars["LearningAgentOutput"]
-								if existingOutput != "" {
-									templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + successLearningOutput
-								} else {
-									templateVars["LearningAgentOutput"] = successLearningOutput
+					// FAST MODE: Skip learning agents entirely
+					isFastExecuteStep := hcpo.IsFastExecuteStep(i)
+					if isFastExecuteStep {
+						hcpo.GetLogger().Infof("⚡ Fast mode: Skipping learning agents for step %d", i+1)
+					} else {
+						// Run appropriate learning phase based on validation result
+						if validationResponse.IsSuccessCriteriaMet {
+							// Success Learning Agent - analyze what worked well and update plan.json
+							hcpo.GetLogger().Infof("🧠 Running success learning analysis for step %d", i+1)
+							successLearningOutput, err := hcpo.runSuccessLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
+							if err != nil {
+								hcpo.GetLogger().Warnf("⚠️ Success learning phase failed for step %d: %v", i+1, err)
+							} else {
+								hcpo.GetLogger().Infof("✅ Success learning analysis completed for step %d", i+1)
+
+								// Append success learning analysis to existing LearningAgentOutput
+								if successLearningOutput != "" {
+									existingOutput := templateVars["LearningAgentOutput"]
+									if existingOutput != "" {
+										templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + successLearningOutput
+									} else {
+										templateVars["LearningAgentOutput"] = successLearningOutput
+									}
+								}
+							}
+						} else {
+							// Failure Learning Agent - analyze what went wrong and provide refined task description
+							hcpo.GetLogger().Infof("🧠 Running failure learning analysis for step %d", i+1)
+							refinedTaskDescription, learningAnalysis, err := hcpo.runFailureLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
+							if err != nil {
+								hcpo.GetLogger().Warnf("⚠️ Failure learning phase failed for step %d: %v", i+1, err)
+							} else {
+								hcpo.GetLogger().Infof("✅ Failure learning analysis completed for step %d", i+1)
+
+								// Update step description for retry
+								if refinedTaskDescription != "" {
+									step.Description = refinedTaskDescription
+									templateVars["StepDescription"] = refinedTaskDescription
+									hcpo.GetLogger().Infof("🔄 Updated step %d description with refined task for retry", i+1)
+								}
+
+								// Update LearningAgentOutput with full learning analysis
+								if learningAnalysis != "" {
+									existingOutput := templateVars["LearningAgentOutput"]
+									if existingOutput != "" {
+										templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + learningAnalysis
+									} else {
+										templateVars["LearningAgentOutput"] = learningAnalysis
+									}
 								}
 							}
 						}
-					} else {
-						// Failure Learning Agent - analyze what went wrong and provide refined task description
-						hcpo.GetLogger().Infof("🧠 Running failure learning analysis for step %d", i+1)
-						refinedTaskDescription, learningAnalysis, err := hcpo.runFailureLearningPhase(ctx, i+1, len(breakdownSteps), &step, executionConversationHistory, validationResponse)
-						if err != nil {
-							hcpo.GetLogger().Warnf("⚠️ Failure learning phase failed for step %d: %v", i+1, err)
+					}
+
+					// Check if success criteria was met (only for non-loop steps or when loop handling is done)
+					if !step.HasLoop {
+						if validationResponse.IsSuccessCriteriaMet {
+							hcpo.GetLogger().Infof("✅ Step %d passed validation - success criteria met", i+1)
+							break // Exit retry loop and continue to next step
 						} else {
-							hcpo.GetLogger().Infof("✅ Failure learning analysis completed for step %d", i+1)
+							hcpo.GetLogger().Warnf("⚠️ Step %d failed validation - success criteria not met (attempt %d/%d)", i+1, retryAttempt, maxRetryAttempts)
 
-							// Update step description for retry
-							if refinedTaskDescription != "" {
-								step.Description = refinedTaskDescription
-								templateVars["StepDescription"] = refinedTaskDescription
-								hcpo.GetLogger().Infof("🔄 Updated step %d description with refined task for retry", i+1)
-							}
+							// Store feedback for next retry attempt
+							validationFeedback = validationResponse.Feedback
 
-							// Update LearningAgentOutput with full learning analysis
-							if learningAnalysis != "" {
-								existingOutput := templateVars["LearningAgentOutput"]
-								if existingOutput != "" {
-									templateVars["LearningAgentOutput"] = existingOutput + "\n\n" + learningAnalysis
-								} else {
-									templateVars["LearningAgentOutput"] = learningAnalysis
-								}
+							if retryAttempt >= maxRetryAttempts {
+								hcpo.GetLogger().Errorf("❌ Step %d failed validation after %d attempts", i+1, maxRetryAttempts)
+								// Continue to next step even if validation failed
+								break
+							} else {
+								hcpo.GetLogger().Infof("🔄 Retrying step %d execution with validation feedback", i+1)
+								// Note: conversation history is preserved from previous attempts for context
 							}
 						}
 					}
+				} // End of retry loop
+
+				// If in loop mode and condition not met, continue main loop
+				if step.HasLoop && !loopConditionMet {
+					continue // Continue main loop for next iteration
 				}
 
-				// Check if success criteria was met
-				if validationResponse.IsSuccessCriteriaMet {
-					hcpo.GetLogger().Infof("✅ Step %d passed validation - success criteria met", i+1)
-					break // Exit retry loop and continue to next step
-				} else {
-					hcpo.GetLogger().Warnf("⚠️ Step %d failed validation - success criteria not met (attempt %d/%d)", i+1, retryAttempt, maxRetryAttempts)
-
-					// Store feedback for next retry attempt
-					validationFeedback = validationResponse.Feedback
-
-					if retryAttempt >= maxRetryAttempts {
-						hcpo.GetLogger().Errorf("❌ Step %d failed validation after %d attempts", i+1, maxRetryAttempts)
-						// Continue to next step even if validation failed
-						break
-					} else {
-						hcpo.GetLogger().Infof("🔄 Retrying step %d execution with validation feedback", i+1)
-						// Note: conversation history is preserved from previous attempts for context
-					}
+				// Exit main loop if not in loop mode or loop condition met
+				if !step.HasLoop {
+					// Non-loop step: execute once and exit
+					break // Exit main execution loop
 				}
-			}
+				if loopConditionMet {
+					// Loop step with condition met: exit loop
+					break // Exit main execution loop
+				}
+				// Loop step with condition not met: continue to next iteration
+			} // End of main execution loop
 
 			// BLOCKING HUMAN FEEDBACK - Ask user if they want to continue to next step
 			// If user rejects (doesn't approve), automatically re-execute with their feedback
 			// FAST MODE: Skip human feedback and auto-approve
+			// LOOP MODE: Skip human feedback if loop exited successfully (condition met)
 			isFastExecuteStep := hcpo.IsFastExecuteStep(i)
 			var approved bool
 			var feedback string
 
-			if isFastExecuteStep {
+			// Skip human feedback if loop completed successfully (condition met)
+			if step.HasLoop && loopConditionMet {
+				hcpo.GetLogger().Infof("✅ Step %d loop completed successfully (condition met), skipping human feedback", i+1)
+				approved = true
+				feedback = "" // No feedback needed
+			} else if isFastExecuteStep {
 				hcpo.GetLogger().Infof("⚡ Fast mode: Auto-approving step %d without human feedback", i+1)
 				approved = true
 				feedback = "" // No feedback in fast mode

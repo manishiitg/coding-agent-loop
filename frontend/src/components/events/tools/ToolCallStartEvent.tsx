@@ -15,13 +15,13 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
       'read_workspace_file',
       'list_workspace_files',
       'diff_patch_workspace_file',
+      'delete_workspace_file',
       // TODO: Add more tools as we implement their UI
       // 'get_workspace_file_nested',
       // 'regex_search_workspace_files',
       // 'semantic_search_workspace_files',
       // 'sync_workspace_to_github',
       // 'get_workspace_github_status',
-      // 'delete_workspace_file',
       // 'move_workspace_file'
     ]
     const isWorkspace = workspaceToolNames.includes(toolName)

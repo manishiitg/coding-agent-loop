@@ -90,7 +90,7 @@ func NewPlanReaderAgent(config *agents.OrchestratorAgentConfig, logger utils.Ext
 }
 
 // ExecuteStructured executes the plan reader agent and returns structured output
-func (pra *PlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*PlanningResponse, error) {
+func (pra *PlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*PlanningResponse, []llmtypes.MessageContent, error) {
 	// Define the JSON schema for plan conversion
 	schema := `{
 		"type": "object",
@@ -150,12 +150,12 @@ func (pra *PlanReaderAgent) ExecuteStructured(ctx context.Context, templateVars 
 	}`
 
 	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := agents.ExecuteStructuredWithInputProcessor[PlanningResponse](pra.BaseOrchestratorAgent, ctx, templateVars, pra.planReaderInputProcessor, conversationHistory, schema)
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessor[PlanningResponse](pra.BaseOrchestratorAgent, ctx, templateVars, pra.planReaderInputProcessor, conversationHistory, schema, "", false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &result, nil
+	return &result, updatedHistory, nil
 }
 
 // Execute implements the OrchestratorAgent interface

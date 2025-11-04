@@ -74,7 +74,7 @@ func (hctpwa *HumanControlledTodoPlannerWriterAgent) Execute(ctx context.Context
 	}
 
 	// Execute using template validation
-	return hctpwa.ExecuteWithTemplateValidation(ctx, writerTemplateVars, hctpwa.humanControlledWriterInputProcessor, conversationHistory, templateData)
+	return hctpwa.ExecuteWithTemplateValidation(ctx, writerTemplateVars, hctpwa.humanControlledWriterInputProcessor, conversationHistory, templateData, "", false)
 }
 
 // humanControlledWriterInputProcessor processes inputs specifically for human-controlled todo list creation

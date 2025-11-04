@@ -638,10 +638,12 @@ func (po *PlannerOrchestrator) analyzeDependenciesWithStructuredOutput(ctx conte
 	}
 
 	// Use the agent's ExecuteStructured method directly
-	breakdownResponse, err := breakdownAgentTyped.ExecuteStructured(ctx, templateVars, po.conversationHistory)
+	breakdownResponse, updatedHistory, err := breakdownAgentTyped.ExecuteStructured(ctx, templateVars, po.conversationHistory)
 	if err != nil {
 		return nil, fmt.Errorf("plan breakdown structured execution failed: %w", err)
 	}
+	// Update conversation history with returned history
+	po.conversationHistory = updatedHistory
 
 	// Convert structured response to ParallelStep format
 	var parallelSteps []ParallelStep

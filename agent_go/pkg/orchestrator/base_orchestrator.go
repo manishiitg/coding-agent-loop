@@ -773,16 +773,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
 	}
 
-	// Set system prompt and user message processors if provided
+	// Set user message processor if provided
 	// Since agents embed *BaseOrchestratorAgent, methods are promoted
-	if systemPromptProcessor != nil {
-		if settable, ok := agent.(agents.SystemPromptProcessorSetter); ok {
-			settable.SetSystemPromptProcessor(systemPromptProcessor)
-			bo.GetLogger().Infof("✅ System prompt processor set for %s", agentName)
-		} else {
-			bo.GetLogger().Warnf("⚠️ Could not set system prompt processor for %s - agent does not implement SystemPromptProcessorSetter", agentName)
-		}
-	}
+	// Note: systemPromptProcessor is now passed as parameter to Execute methods, not set here
 	if userMessageProcessor != nil {
 		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
 			settable.SetUserMessageProcessor(userMessageProcessor)
@@ -814,124 +807,6 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
 		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
-		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
-	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
-	}
-
-	// Register custom tools
-	if customTools != nil && customToolExecutors != nil {
-		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
-
-		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
-
-		for _, tool := range customTools {
-			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
-				// Convert Parameters to map[string]interface{}
-				var params map[string]interface{}
-				if tool.Function.Parameters != nil {
-					paramsBytes, err := json.Marshal(tool.Function.Parameters)
-					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
-					}
-				}
-				if params == nil {
-					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-					continue
-				}
-
-				// Type assert executor to function type
-				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
-						tool.Function.Name,
-						tool.Function.Description,
-						params,
-						toolExecutor,
-					)
-				} else {
-					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
-				}
-			}
-		}
-
-		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
-	}
-
-	// Processors are now stored in BaseOrchestratorAgent, agent can use them directly
-	return agent, nil
-}
-
-// CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt creates and sets up an agent with custom servers, system prompt and user message processors
-func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt(
-	ctx context.Context,
-	agentName string,
-	phase string,
-	step, iteration int,
-	maxTurns int,
-	outputFormat agents.OutputFormat,
-	customServers []string,
-	systemPromptProcessor func(map[string]string) string,
-	userMessageProcessor func(map[string]string) string,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llmtypes.Tool,
-	customToolExecutors map[string]interface{},
-) (agents.OrchestratorAgent, error) {
-	// Create standardized agent configuration with custom servers
-	config := bo.CreateStandardAgentConfigWithCustomServers(agentName, maxTurns, outputFormat, customServers)
-
-	// Create agent using provided factory function
-	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
-
-	// Initialize and setup agent
-	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
-	}
-
-	// Set system prompt and user message processors if provided
-	// Since agents embed *BaseOrchestratorAgent, methods are promoted
-	if systemPromptProcessor != nil {
-		if settable, ok := agent.(agents.SystemPromptProcessorSetter); ok {
-			settable.SetSystemPromptProcessor(systemPromptProcessor)
-			bo.GetLogger().Infof("✅ System prompt processor set for %s", agentName)
-		} else {
-			bo.GetLogger().Warnf("⚠️ Could not set system prompt processor for %s - agent does not implement SystemPromptProcessorSetter", agentName)
-		}
-	}
-	if userMessageProcessor != nil {
-		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
-			settable.SetUserMessageProcessor(userMessageProcessor)
-			bo.GetLogger().Infof("✅ User message processor set for %s", agentName)
-		} else {
-			bo.GetLogger().Warnf("⚠️ Could not set user message processor for %s - agent does not implement UserMessageProcessorSetter", agentName)
-		}
-	}
-
-	// Validate essentials and connect event bridge
-	eventBridge := bo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
-	}
-
-	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
-	}
-
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
-	}
-
-	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
-	baseAgentName := baseAgent.GetName()
-	if cab, ok := eventBridge.(interface {
-		SetOrchestratorContext(phase string, step, iteration int, agentName string)
-	}); ok {
-		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
-		mcpAgent.AddEventListener(eventBridge)
 		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
 		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
 	} else {

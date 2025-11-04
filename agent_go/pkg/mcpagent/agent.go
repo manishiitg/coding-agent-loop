@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -1189,6 +1190,188 @@ func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []l
 	}
 
 	return structuredResult, updatedMessages, nil
+}
+
+// AskWithHistoryStructuredViaTool runs an interaction using message history and extracts structured output
+// from a dynamically registered tool call. The LLM can call the tool during conversation, and we extract
+// the structured data from the tool call arguments after conversation completes.
+func AskWithHistoryStructuredViaTool[T any](
+	a *Agent,
+	ctx context.Context,
+	messages []llmtypes.MessageContent,
+	toolName string,
+	toolDescription string,
+	schema string,
+) (StructuredOutputResult[T], error) {
+	// Parse schema string to get tool parameters
+	toolParams, err := parseSchemaForToolParameters(schema)
+	if err != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to parse schema for tool parameters: %w", err)
+	}
+
+	// Create a cancellable context to break conversation as soon as tool is called
+	toolCalledCtx, cancelToolCalled := context.WithCancel(ctx)
+	defer cancelToolCalled()
+
+	// Channel to signal that tool was called (thread-safe)
+	toolCalledChan := make(chan bool, 1)
+
+	// Register custom tool dynamically
+	// The execution function signals that tool was called and cancels the context to break immediately
+	executionFunc := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Signal that tool was called (non-blocking)
+		select {
+		case toolCalledChan <- true:
+		default:
+		}
+		// Cancel the context to break the conversation immediately
+		cancelToolCalled()
+		// Return minimal message - we'll break immediately so this won't be processed
+		return "", nil
+	}
+
+	a.RegisterCustomTool(toolName, toolDescription, toolParams, executionFunc)
+
+	// Call existing AskWithHistory - will break as soon as tool is called
+	textResponse, updatedMessages, err := a.AskWithHistory(toolCalledCtx, messages)
+
+	// Check if tool was called (non-blocking check)
+	toolCalled := false
+	select {
+	case <-toolCalledChan:
+		toolCalled = true
+	default:
+	}
+
+	// If tool was called, context cancellation is expected - we still need to extract structured output
+	if toolCalled {
+		// Scan messages for structured tool call (even if AskWithHistory returned error due to cancellation)
+		structuredResult, found, extractErr := extractStructuredToolCall[T](updatedMessages, toolName)
+		if extractErr != nil {
+			var zero StructuredOutputResult[T]
+			return zero, fmt.Errorf("tool was called but structured output extraction failed: %w", extractErr)
+		}
+
+		if found {
+			// Structured tool was called - return structured result immediately
+			return StructuredOutputResult[T]{
+				HasStructuredOutput: true,
+				StructuredResult:    structuredResult,
+				TextResponse:        "",
+				Messages:            updatedMessages,
+			}, nil
+		}
+
+		// Tool was called but not found in messages - error
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("tool was called but not found in messages")
+	}
+
+	// Tool was not called - check if there was an error
+	if err != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to get response from conversation: %w", err)
+	}
+
+	// Scan messages for structured tool call (in case it was called but flag wasn't set)
+	structuredResult, found, extractErr := extractStructuredToolCall[T](updatedMessages, toolName)
+	if extractErr != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to extract structured tool call: %w", extractErr)
+	}
+
+	if found {
+		// Structured tool was called - return structured result
+		return StructuredOutputResult[T]{
+			HasStructuredOutput: true,
+			StructuredResult:    structuredResult,
+			TextResponse:        "",
+			Messages:            updatedMessages,
+		}, nil
+	}
+
+	// Structured tool was not called - return text response (conversational input)
+	return StructuredOutputResult[T]{
+		HasStructuredOutput: false,
+		StructuredResult:    structuredResult, // zero value
+		TextResponse:        textResponse,
+		Messages:            updatedMessages,
+	}, nil
+}
+
+// StructuredOutputResult represents the result of AskWithHistoryStructuredViaTool
+// It can contain either structured output (if tool was called) or text response (if tool was not called)
+type StructuredOutputResult[T any] struct {
+	HasStructuredOutput bool
+	StructuredResult    T
+	TextResponse        string
+	Messages            []llmtypes.MessageContent
+}
+
+// parseSchemaForToolParameters parses a JSON schema string and extracts properties for tool parameters
+func parseSchemaForToolParameters(schemaString string) (map[string]interface{}, error) {
+	var schema map[string]interface{}
+	if err := json.Unmarshal([]byte(schemaString), &schema); err != nil {
+		return nil, fmt.Errorf("failed to parse schema JSON: %w", err)
+	}
+
+	// Extract properties - this becomes the tool parameters
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("schema missing 'properties' field or it's not an object")
+	}
+
+	// Build tool parameter schema with type "object"
+	toolParams := map[string]interface{}{
+		"type":       "object",
+		"properties": properties,
+	}
+
+	// Add required fields if present
+	if required, ok := schema["required"].([]interface{}); ok {
+		toolParams["required"] = required
+	}
+
+	return toolParams, nil
+}
+
+// extractStructuredToolCall scans messages for tool calls matching the tool name and extracts structured data
+func extractStructuredToolCall[T any](messages []llmtypes.MessageContent, toolName string) (T, bool, error) {
+	var zero T
+
+	// Scan messages in reverse order to find the last (most recent) tool call
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+
+		// Only check AI messages (they contain tool calls)
+		if msg.Role != llmtypes.ChatMessageTypeAI {
+			continue
+		}
+
+		// Check each part for tool calls
+		for _, part := range msg.Parts {
+			if toolCall, ok := part.(llmtypes.ToolCall); ok {
+				if toolCall.FunctionCall != nil && toolCall.FunctionCall.Name == toolName {
+					// Found matching tool call - extract arguments
+					argsJSON := toolCall.FunctionCall.Arguments
+					if argsJSON == "" {
+						return zero, false, fmt.Errorf("tool call '%s' has empty arguments", toolName)
+					}
+
+					// Parse JSON arguments into struct type T
+					var result T
+					if err := json.Unmarshal([]byte(argsJSON), &result); err != nil {
+						return zero, false, fmt.Errorf("failed to parse tool call arguments: %w", err)
+					}
+
+					return result, true, nil
+				}
+			}
+		}
+	}
+
+	return zero, false, nil
 }
 
 // GetServerNames returns the list of connected server names

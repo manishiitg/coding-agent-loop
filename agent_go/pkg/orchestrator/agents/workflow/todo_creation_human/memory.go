@@ -10,22 +10,21 @@ func GetTodoCreationHumanMemoryRequirements() string {
 ### **Directory Structure**
 ` + "```" + `
 {{.WorkspacePath}}/
-├── todo_creation_human/              (Planning workspace - temporary)
-│   ├── planning/
-│   │   └── plan.md             (Execution plan)
-│   ├── validation/
-│   │   ├── Step_Title_1_validation_report.md
-│   │   ├── Step_Title_2_validation_report.md
-│   │   └── Step_Title_N_validation_report.md
-│   └── learnings/
-│       ├── success_patterns.md
-│       ├── failure_analysis.md
-│       └── step_X_learning.md
-└── todo_final.md               (Final todo list - workspace root)
+├── planning/
+│   └── plan.json           (Structured plan JSON - primary execution plan)
+├── execution/              (Execution agent outputs - temporary)
+│   └── step_X_results.md   (Context output files from execution)
+├── learnings/
+│   ├── success_patterns.md
+│   ├── failure_analysis.md
+│   └── step_X_learning.md
+├── variables/
+│   └── variables.json      (Variable definitions and values)
+└── ../todo_final.md        (Final todo list - one level up from {{.WorkspacePath}})
 ` + "```" + `
 
 ### **Core Principles (All Agents)**
-- **Relative Paths Only**: All paths relative to {{.WorkspacePath}}/todo_creation_human/
+- **Relative Paths Only**: All paths relative to {{.WorkspacePath}}/
 - **Workspace Boundaries**: Only read/write within designated workspace folders
 - **File Discovery**: Use **list_workspace_files** to check file existence before reading
 - **Graceful Handling**: Handle missing files appropriately

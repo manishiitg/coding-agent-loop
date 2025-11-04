@@ -1629,21 +1629,22 @@ func (e *OrchestratorAgentStartEvent) GetEventType() EventType {
 
 type OrchestratorAgentEndEvent struct {
 	BaseEventData
-	AgentType    string            `json:"agent_type"`           // planning, execution, validation, organizer
-	AgentName    string            `json:"agent_name"`           // specific agent name
-	Objective    string            `json:"objective"`            // what the agent was trying to accomplish
-	InputData    map[string]string `json:"input_data"`           // template variables passed to agent
-	Result       string            `json:"result"`               // agent's output/result
-	Success      bool              `json:"success"`              // whether agent completed successfully
-	Error        string            `json:"error,omitempty"`      // error message if failed
-	Duration     time.Duration     `json:"duration"`             // how long the agent took
-	ModelID      string            `json:"model_id"`             // which LLM model was used
-	Provider     string            `json:"provider"`             // which LLM provider
-	ServersCount int               `json:"servers_count"`        // number of MCP servers used
-	MaxTurns     int               `json:"max_turns"`            // maximum conversation turns
-	PlanID       string            `json:"plan_id,omitempty"`    // associated plan ID
-	StepIndex    int               `json:"step_index,omitempty"` // which step in the plan
-	Iteration    int               `json:"iteration,omitempty"`  // which iteration of the loop
+	AgentType          string                 `json:"agent_type"`           // planning, execution, validation, organizer
+	AgentName          string                 `json:"agent_name"`           // specific agent name
+	Objective          string                 `json:"objective"`            // what the agent was trying to accomplish
+	InputData          map[string]string       `json:"input_data"`           // template variables passed to agent
+	Result             string                 `json:"result"`               // agent's output/result (text summary)
+	StructuredResponse map[string]interface{} `json:"structured_response,omitempty"` // structured response data (for ExecuteStructured calls)
+	Success            bool                   `json:"success"`              // whether agent completed successfully
+	Error              string                 `json:"error,omitempty"`      // error message if failed
+	Duration           time.Duration          `json:"duration"`             // how long the agent took
+	ModelID            string                 `json:"model_id"`             // which LLM model was used
+	Provider           string                 `json:"provider"`             // which LLM provider
+	ServersCount       int                    `json:"servers_count"`        // number of MCP servers used
+	MaxTurns           int                    `json:"max_turns"`            // maximum conversation turns
+	PlanID             string                 `json:"plan_id,omitempty"`    // associated plan ID
+	StepIndex          int                    `json:"step_index,omitempty"` // which step in the plan
+	Iteration          int                    `json:"iteration,omitempty"`  // which iteration of the loop
 }
 
 func (e *OrchestratorAgentEndEvent) GetEventType() EventType {

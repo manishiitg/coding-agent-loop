@@ -22,12 +22,14 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	StepContextOutput       string
 	WorkspacePath           string
 	ValidationFeedback      string
+	PreviousIterationOutput string // Previous loop iteration execution output (for loop steps)
 	LearningAgentOutput     string // Combined success/failure patterns and learning insights
 	PreviousHumanFeedback   string
 	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
 	HasLoop                 string // "true" or "false" as string
 	LoopCondition           string // Loop condition description (required when HasLoop="true")
+	LoopDescription         string // Human-readable explanation of the loop (optional)
 	CurrentIteration        string // Current iteration number
 	MaxIterations           string // Max iterations allowed
 }
@@ -67,12 +69,14 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		"StepContextOutput":       templateVars["StepContextOutput"],
 		"WorkspacePath":           workspacePath,
 		"ValidationFeedback":      templateVars["ValidationFeedback"],
+		"PreviousIterationOutput": templateVars["PreviousIterationOutput"], // Previous loop iteration execution output
 		"LearningAgentOutput":     templateVars["LearningAgentOutput"],
 		"PreviousHumanFeedback":   templateVars["PreviousHumanFeedback"], // Human feedback from previous iteration
 		"VariableNames":           templateVars["VariableNames"],         // May be empty if no variables
 		"VariableValues":          templateVars["VariableValues"],        // May be empty if no variables
 		"HasLoop":                 templateVars["HasLoop"],               // May be empty or "false" if no loop
 		"LoopCondition":           templateVars["LoopCondition"],         // May be empty if no loop
+		"LoopDescription":         templateVars["LoopDescription"],       // May be empty if no loop
 		"CurrentIteration":        templateVars["CurrentIteration"],      // May be empty if no loop
 		"MaxIterations":           templateVars["MaxIterations"],         // May be empty if no loop
 	}
@@ -86,18 +90,20 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 		StepContextOutput:       executionTemplateVars["StepContextOutput"],
 		WorkspacePath:           executionTemplateVars["WorkspacePath"],
 		ValidationFeedback:      executionTemplateVars["ValidationFeedback"],
+		PreviousIterationOutput: executionTemplateVars["PreviousIterationOutput"],
 		LearningAgentOutput:     executionTemplateVars["LearningAgentOutput"],
 		PreviousHumanFeedback:   executionTemplateVars["PreviousHumanFeedback"],
 		VariableNames:           executionTemplateVars["VariableNames"],
 		VariableValues:          executionTemplateVars["VariableValues"],
 		HasLoop:                 executionTemplateVars["HasLoop"],
 		LoopCondition:           executionTemplateVars["LoopCondition"],
+		LoopDescription:         executionTemplateVars["LoopDescription"],
 		CurrentIteration:        executionTemplateVars["CurrentIteration"],
 		MaxIterations:           executionTemplateVars["MaxIterations"],
 	}
 
-	// Execute using template validation
-	return hctpea.ExecuteWithTemplateValidation(ctx, executionTemplateVars, hctpea.humanControlledExecutionInputProcessor, conversationHistory, templateData)
+	// Execute using template validation - no conversation history needed, all context in template variables
+	return hctpea.ExecuteWithTemplateValidation(ctx, executionTemplateVars, hctpea.humanControlledExecutionInputProcessor, []llmtypes.MessageContent{}, templateData, "", false)
 }
 
 // humanControlledExecutionInputProcessor processes inputs specifically for human-controlled plan execution
@@ -111,12 +117,14 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
 		ValidationFeedback:      templateVars["ValidationFeedback"],
+		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
 		LearningAgentOutput:     templateVars["LearningAgentOutput"],
 		PreviousHumanFeedback:   templateVars["PreviousHumanFeedback"],
 		VariableNames:           templateVars["VariableNames"],
 		VariableValues:          templateVars["VariableValues"],
 		HasLoop:                 templateVars["HasLoop"],
 		LoopCondition:           templateVars["LoopCondition"],
+		LoopDescription:         templateVars["LoopDescription"],
 		CurrentIteration:        templateVars["CurrentIteration"],
 		MaxIterations:           templateVars["MaxIterations"],
 	}
@@ -153,6 +161,9 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **This step is executing in LOOP MODE** - you will execute this step repeatedly until the loop condition is met.
 
 **Loop Condition**: {{.LoopCondition}}
+{{if .LoopDescription}}
+**Loop Description**: {{.LoopDescription}}
+{{end}}
 
 **Current Status**:
 - **Current Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
@@ -215,6 +226,14 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Important**: The learning agent has analyzed previous executions and provided this guidance. Use this analysis to improve your execution approach, including success patterns to follow and failure patterns to avoid.
 {{end}}
 
+{{if .PreviousIterationOutput}}
+## 🔄 PREVIOUS LOOP ITERATION EXECUTION OUTPUT
+
+{{.PreviousIterationOutput}}
+
+**Important**: This is the execution output from the previous loop iteration. Review what was done previously to understand the context and avoid repeating the same actions unnecessarily.
+{{end}}
+
 {{if .ValidationFeedback}}
 ## ⚠️ VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT
 
@@ -231,7 +250,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 **Important**: This is human feedback specifically for this step execution. Please carefully review this feedback and adjust your execution approach accordingly.
 {{end}}
 
-**Note**: {{if not .PreviousHumanFeedback}}Human feedback is also provided through conversation history. Review the conversation context for any previous human guidance.{{else}}Additional context may also be available in conversation history.{{end}}
+**Note**: All context is provided through template variables above. Use the template variables for all necessary information.
 
 ## 🎯 CURRENT STEP EXECUTION
 

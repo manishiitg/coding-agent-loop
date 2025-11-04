@@ -75,11 +75,11 @@ func (hctpca *HumanControlledTodoPlannerCritiqueAgent) Execute(ctx context.Conte
 	}
 
 	// Execute using template validation
-	return hctpca.ExecuteWithTemplateValidation(ctx, critiqueTemplateVars, hctpca.critiqueInputProcessor, conversationHistory, templateData)
+	return hctpca.ExecuteWithTemplateValidation(ctx, critiqueTemplateVars, hctpca.critiqueInputProcessor, conversationHistory, templateData, "", false)
 }
 
 // ExecuteStructured executes the critique agent and returns structured output
-func (hctpca *HumanControlledTodoPlannerCritiqueAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*CritiqueResponse, error) {
+func (hctpca *HumanControlledTodoPlannerCritiqueAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*CritiqueResponse, []llmtypes.MessageContent, error) {
 	// Define the JSON schema for critique analysis
 	schema := `{
 		"type": "object",
@@ -110,19 +110,21 @@ func (hctpca *HumanControlledTodoPlannerCritiqueAgent) ExecuteStructured(ctx con
 	}`
 
 	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := agents.ExecuteStructuredWithInputProcessor[CritiqueResponse](
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessor[CritiqueResponse](
 		hctpca.BaseOrchestratorAgent,
 		ctx,
 		templateVars,
 		hctpca.critiqueStructuredInputProcessor,
 		conversationHistory,
 		schema,
+		"",
+		false,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &result, nil
+	return &result, updatedHistory, nil
 }
 
 // critiqueInputProcessor processes inputs specifically for todo list critique

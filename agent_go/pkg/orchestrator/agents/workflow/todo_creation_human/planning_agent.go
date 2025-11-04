@@ -61,8 +61,6 @@ type PlanStep struct {
 	Title               string                `json:"title"`
 	Description         string                `json:"description"`
 	SuccessCriteria     string                `json:"success_criteria"`
-	RequiresValidation  bool                  `json:"requires_validation"`             // true if step requires validation agent
-	ReasonForValidation string                `json:"reason_for_validation,omitempty"` // explanation when requires_validation=true
 	ContextDependencies []string              `json:"context_dependencies"`
 	ContextOutput       FlexibleContextOutput `json:"context_output"`             // Use flexible type to handle string or array
 	SuccessPatterns     []string              `json:"success_patterns,omitempty"` // what worked (includes tools)
@@ -93,131 +91,329 @@ func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgent
 	}
 }
 
-// Execute implements the OrchestratorAgent interface
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	// Use ExecuteWithInputProcessor to get agent events (orchestrator_agent_start/end)
-	// This will automatically emit agent start/end events
-	// Note: userMessageProcessor is set in controller, so this fallback won't be used, but required by signature
-	return hctppa.ExecuteWithInputProcessor(ctx, templateVars, func(map[string]string) string {
-		return "Create or update plan.md with a structured plan to execute the objective."
-	}, conversationHistory)
-}
+// ExecuteStructured executes the planning agent and returns structured JSON output
+// userMessage: The user message to send (e.g., "Generate plan" for CREATE, or human feedback for UPDATE)
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string) (*PlanningResponse, []llmtypes.MessageContent, error) {
+	// Define the JSON schema for plan generation
+	schema := `{
+		"type": "object",
+		"properties": {
+			"steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"title": {
+							"type": "string",
+							"description": "Short, clear title for the step"
+						},
+						"description": {
+							"type": "string",
+							"description": "COMPREHENSIVE, DETAILED description of what this step accomplishes. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context. Write a complete, detailed explanation that fully captures the step's requirements and scope."
+						},
+						"success_criteria": {
+							"type": "string",
+							"description": "Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive"
+						},
+						"context_dependencies": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."
+						},
+						"context_output": {
+							"type": "string",
+							"description": "What context file this step will create for subsequent steps - e.g., 'step_1_results.md'. Can be string or array (will be converted)."
+						},
+						"has_loop": {
+							"type": "boolean",
+							"description": "Whether this step needs to loop until condition is met. Set to true when step requires: (1) Polling/waiting for services or resources to become ready, (2) Retrying operations until they succeed, (3) Iterating until data appears or condition changes, (4) Checking status repeatedly until a goal is achieved, (5) Complex multi-operation tasks where the outcome is uncertain, (6) Tasks depending on external systems/APIs that might not be immediately available."
+						},
+						"loop_condition": {
+							"type": "string",
+							"description": "Condition that must be met to exit the loop (REQUIRED when has_loop is true). This should be the same as success_criteria - describe the condition that must be met."
+						},
+						"max_iterations": {
+							"type": "integer",
+							"description": "Maximum number of loop iterations allowed to prevent infinite loops (default: 10). Use higher values (20-50) for long-running operations, use lower values (3-5) for quick status checks. Only include when has_loop is true."
+						},
+						"loop_description": {
+							"type": "string",
+							"description": "Human-readable explanation of why the loop is needed and how it works. Only include when has_loop is true and a description is provided."
+						}
+					},
+					"required": ["title", "description", "success_criteria", "has_loop"]
+				}
+			}
+		},
+		"required": ["steps"]
+	}`
 
-// planningSystemPromptProcessor generates the detailed system prompt for planning
-func planningSystemPromptProcessor(templateVars map[string]string) string {
-	// Create template data
-	templateData := HumanControlledTodoPlannerPlanningTemplate{
-		Objective:     templateVars["Objective"],
-		WorkspacePath: templateVars["WorkspacePath"],
+	// Generate system prompt using the processor
+	systemPrompt := planningSystemPromptProcessor(templateVars)
+
+	// Create a simple input processor that just returns the user message
+	// In UPDATE mode: ExistingPlanJSON is in the system prompt, userMessage (human feedback) is the user message
+	// In CREATE mode: userMessage is "Generate plan"
+	inputProcessor := func(map[string]string) string {
+		return userMessage
 	}
 
-	// Define the template - detailed system prompt for planning
-	templateStr := `## 🚀 PRIMARY TASK - CREATE STRUCTURED PLAN TO EXECUTE OBJECTIVE
+	// Use the new ExecuteStructuredWithInputProcessorViaTool method
+	toolName := "submit_planning_response"
+	toolDescription := "Submit the final structured planning response in JSON format. This tool should be called when you have completed the plan and are ready to provide the structured output."
 
-**OBJECTIVE**: {{.Objective}}
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessorViaTool[PlanningResponse](hctppa.BaseOrchestratorAgent, ctx, templateVars, inputProcessor, conversationHistory, schema, systemPrompt, false, toolName, toolDescription)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &result, updatedHistory, nil
+}
+
+// Execute implements the OrchestratorAgent interface (kept for compatibility, but ExecuteStructured should be used)
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	// This method is kept for interface compatibility but is not used in the current implementation.
+	// The controller uses ExecuteStructured instead.
+	// Return a simple user message that will work if this method is ever called
+	userMessage := "Generate plan"
+	if humanFeedback := templateVars["HumanFeedback"]; humanFeedback != "" && strings.TrimSpace(humanFeedback) != "" {
+		userMessage = humanFeedback
+	}
+
+	result, updatedHistory, err := hctppa.ExecuteStructured(ctx, templateVars, conversationHistory, userMessage)
+	if err != nil {
+		return "", conversationHistory, err
+	}
+
+	// Convert structured response to string for compatibility
+	resultJSON, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", conversationHistory, fmt.Errorf("failed to marshal structured response: %w", err)
+	}
+
+	return string(resultJSON), updatedHistory, nil
+}
+
+// planningSystemPromptProcessor routes to appropriate system prompt based on whether updating or creating
+func planningSystemPromptProcessor(templateVars map[string]string) string {
+	// Check if we're updating an existing plan
+	if existingPlanJSON := templateVars["ExistingPlanJSON"]; existingPlanJSON != "" && strings.TrimSpace(existingPlanJSON) != "" {
+		return planningSystemPromptProcessorForUpdate(templateVars)
+	}
+	return planningSystemPromptProcessorForCreate(templateVars)
+}
+
+// planningSystemPromptProcessorForCreate generates system prompt for creating a new plan
+func planningSystemPromptProcessorForCreate(templateVars map[string]string) string {
+	templateData := map[string]string{
+		"Objective":     templateVars["Objective"],
+		"WorkspacePath": templateVars["WorkspacePath"],
+		"VariableNames": templateVars["VariableNames"],
+	}
+
+	templateStr := `## 🤖 AGENT IDENTITY
+- **Role**: Planning Agent (Create Mode)
+- **Responsibility**: Generate a comprehensive structured plan in JSON format to execute the objective
+- **Output Format**: Structured JSON (not markdown, not files)
+
+## 🎯 OBJECTIVE
+
+**PRIMARY OBJECTIVE**: {{.Objective}}
+
 **WORKSPACE**: {{.WorkspacePath}}
 
-## 🤖 AGENT IDENTITY
-- **Role**: Planning Agent
-- **Responsibility**: Create a comprehensive structured plan to execute the objective
+{{if .VariableNames}}
+## 🔑 AVAILABLE VARIABLES
+
+**IMPORTANT**: The objective may contain variable placeholders like {{"{{"}}VARIABLE_NAME{{"}}"}}. These are environment-specific values that will be replaced at execution time.
+
+Available variables:
+{{.VariableNames}}
+
+**CRITICAL VARIABLE HANDLING RULES**:
+- **PRESERVE variable placeholders** in all plan steps (title, description, success_criteria, etc.)
+- **NEVER replace placeholders** with actual values - keep them as {{"{{"}}VARIABLE_NAME{{"}}"}}
+- **NEVER hard-code values** - always use variable placeholders when values change across environments
+- **Use variables consistently** - if the objective mentions a variable, use it in relevant step descriptions
+- **DO NOT CREATE NEW VARIABLES** - Only use variables that are already present in the objective or existing plan. Do not introduce new variable placeholders that weren't already defined.
+- **Example**: If objective has {{"{{"}}AWS_ACCOUNT_ID{{"}}"}}, use {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} in step descriptions, not actual account IDs
+
+**Why?** Plans must work across dev/staging/prod environments without modification. Execution agents will replace placeholders with actual values.
+
+{{end}}
+## 🔧 MCP TOOLS AND CAPABILITIES
+
+**MCP Tools Available**: You have access to MCP servers and their tools. These are provided so you understand what capabilities will be available during execution.
+
+**CRITICAL TOOL USAGE RULES**:
+- **DO NOT execute tools unless absolutely required** for planning purposes
+- **You may review available tools** to understand capabilities and inform your plan
+- **Only execute tools if**:
+  - You need to verify specific information that directly affects the plan structure
+  - You need to check constraints, requirements, or system states that cannot be inferred
+  - The information is critical for creating an accurate, executable plan
+- **Default behavior**: Generate the plan based on the objective and your knowledge of available tools WITHOUT executing them
+- **Remember**: Execution agents will have the same tools available - focus on planning strategy, not execution details
 
 ## 📋 PLANNING GUIDELINES
 - **Comprehensive Scope**: Create complete plan to achieve objective
 - **Actionable Steps**: Each step should be concrete and executable
-- **DETAILED DESCRIPTIONS**: Write COMPREHENSIVE, DETAILED descriptions for each step. Descriptions should be thorough, complete, and provide sufficient context. Include specific details about what needs to be accomplished, what tools or approaches might be needed, what outcomes are expected, and any important considerations. DO NOT create short or brief descriptions - aim for detailed explanations that fully capture the step's requirements and scope.
+- **DETAILED DESCRIPTIONS**: Write COMPREHENSIVE, DETAILED descriptions for each step. Descriptions should be thorough, complete, and provide sufficient context. Include specific details about what needs to be accomplished, what tools or approaches might be needed, what outcomes are expected, and any important considerations.
 - **Clear Success Criteria**: Define how to verify each step worked - be specific and detailed
 - **Logical Order**: Steps should follow logical sequence
 - **Focus on Strategy**: Plan what needs to be done, not how to do it (execution details will be handled by execution agents)
 - **Agent Execution Limits**: Each step should be completable by one agent using MCP tools before reaching context output limits
-- **Requires Validation Decision**: In most cases, LLMs are capable of running tools themselves and processing the correct output. Set requires_validation to true ONLY when the step requires: (1) Multiple tool calls in sequence (5+ tool invocations), (2) Long/complex tool calls with substantial output processing, (3) Many multiple tools with interdependencies, or (4) Complex logic execution with conditional branching or multi-step workflows. For simple steps with 1-4 straightforward tool calls, set requires_validation to false.
-- **Loop Support**: Some steps cannot be completed in a single execution and need to loop until a condition is met. **GENERALLY, loops should be required when it's a complex task that might require multiple operations to complete a single step.** Set has_loop to true when the step requires: (1) Polling/waiting for a service or resource to become ready, (2) Retrying operations until they succeed, (3) Iterating until data appears or condition changes, (4) Checking status repeatedly until a goal is achieved, (5) Complex multi-operation tasks where the outcome is uncertain and may need repeated attempts with different approaches, (6) Tasks that depend on external systems/APIs that might not be immediately available or might need multiple attempts. When has_loop is true, you MUST provide loop_condition (which should be the same as success_criteria - the condition that must be met to exit the loop). Also provide max_iterations (default: 10, use higher values 20-50 for long-running operations like deployments or service startups, use lower values 3-5 for quick status checks) to prevent infinite loops. Example: "Continue until database connection is established and verified" - same as success criteria.
-- **Success/Failure Patterns**: ONLY include these if you have specific MCP tools, exact commands, or clear patterns from previous executions. Do NOT add empty or generic patterns.
+- **All Steps Are Validated**: Every step will be validated after execution - no need to specify validation requirements
+- **Loop Support**: Set has_loop to true when the step requires: (1) Polling/waiting for a service or resource to become ready, (2) Retrying operations until they succeed, (3) Iterating until data appears or condition changes, (4) Checking status repeatedly until a goal is achieved, (5) Complex multi-operation tasks where the outcome is uncertain, (6) Tasks that depend on external systems/APIs that might not be immediately available. When has_loop is true, you MUST provide loop_condition (same as success_criteria) and max_iterations (default: 10, use 20-50 for long-running operations, use 3-5 for quick status checks).
 
 ## 🤖 MULTI-AGENT COORDINATION
 - **Different Agents**: Each step is executed by a different agent
 - **Data Sharing**: Steps may need to share context/data between each other
-- **Context Dependencies**: Each step should specify what context files it needs from previous steps
+- **Context Dependencies**: Each step should specify what context files it needs from previous steps (use empty array [] if none)
 - **Context Output**: Each step should specify what context file it will create for subsequent steps
-- **Workspace Files**: Store data in workspace files when steps need to share information
 - **Use relative paths only** - NEVER use absolute paths
-- **Document findings** in workspace files for other agents
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
-## 📤 Output Format
-
-**UPDATE PLAN.MD FILE**
+## 📤 OUTPUT REQUIREMENTS
 
 **CRITICAL**: 
-- Always update the existing plan.md file in the workspace
-- If no plan exists, create a new one
-- **DO NOT read any other files from the workspace** - only work with plan.md
-- Focus on creating/updating plan.md, not on investigating the workspace structure
-
-**File to Update:**
-- **{{.WorkspacePath}}/planning/plan.md**
-
-## 📋 MARKDOWN PLAN STRUCTURE
-
-Create a markdown plan with this structure:
-
-` + "```markdown" + `
-# Plan: [Objective Title]
-
-## Steps
-
-### Step 1: [Step Name]
-- **Description**: [COMPREHENSIVE, DETAILED description of what this step accomplishes. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context. Write a complete, detailed explanation that fully captures the step's requirements and scope. Should be completable by one agent using MCP tools]
-- **Success Criteria**: [Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive]
-- **Requires Validation**: [true/false] - Set to true ONLY when step requires: (1) Multiple tool calls in sequence (5+ tool invocations), (2) Long/complex tool calls with substantial output processing, (3) Many multiple tools with interdependencies, or (4) Complex logic execution with conditional branching or multi-step workflows. Set to false for simple steps with 1-4 straightforward tool calls that LLMs can execute and verify themselves.
-- **Reason for Validation**: [Only include when Requires Validation is true. Explain specifically why validation is needed: mention the number of tool calls, complexity of logic, interdependencies, or specific challenges that require verification. Examples: "This step requires 8+ sequential tool calls with interdependent results that need verification", "Complex conditional logic with multiple branching paths requires validation", "Long-running tool calls with substantial output that needs comprehensive processing verification"]
-- **Has Loop**: [true/false] - **GENERALLY, set to true when it's a complex task that might require multiple operations to complete a single step.** Set to true when step needs to loop/iterate until a condition is met, including: (1) Polling/waiting for services or resources to become ready, (2) Retrying operations until they succeed, (3) Iterating until data appears or condition changes, (4) Checking status repeatedly until a goal is achieved, (5) Complex multi-operation tasks where the outcome is uncertain and may need repeated attempts, (6) Tasks depending on external systems/APIs that might not be immediately available. Set to false for simple, straightforward steps that complete in a single execution with predictable outcomes.
-- **Loop Condition**: [ONLY include when Has Loop is true. REQUIRED field when Has Loop is true. This should be the same as Success Criteria - describe the condition that must be met to exit the loop. Example: "Continue until database connection is established and verified" - same as success criteria]
-- **Max Iterations**: [ONLY include when Has Loop is true. Integer value for maximum loop iterations to prevent infinite loops. Default: 10. Use higher values (20-50) for long-running operations like deployments or service startups, use lower values (3-5) for quick status checks]
-- **Loop Description**: [Optional - ONLY include when Has Loop is true. Human-readable explanation of why the loop is needed and how it works]
-- **Context Dependencies**: [List of context files from previous steps - use "none" if first step]
-- **Context Output**: [What context file this step will create for subsequent steps - e.g., "step_1_results.md"]
-- **Success Patterns**: [Optional - ONLY include if you have specific tools/approaches that worked in previous executions]
-- **Failure Patterns**: [Optional - ONLY include if you have specific tools/approaches that failed in previous executions]
-
-[Continue this pattern for all steps...]
-` + "```" + `
-
-## 📤 YOUR RESPONSE AFTER WRITING FILE
-
-After successfully writing the plan.md file, respond with:
-- Brief summary of the plan created
-- Number of steps in the plan
-- Key milestones or phases identified
-- Confirmation that plan.md was written successfully
-
-**Example Response:**
-"I've created a comprehensive plan with 5 steps in {{.WorkspacePath}}/planning/plan.md:
-1. Analyze codebase structure
-2. Identify modification points
-3. Implement changes
-4. Run tests
-5. Document changes
-
-The plan focuses on systematic analysis before implementation, with clear context handoffs between steps."
-
-**IMPORTANT NOTES**: 
-1. Focus on creating a clear, actionable markdown plan
-2. Each step should be concrete and contribute directly to achieving the goal
-3. **CRITICAL - DESCRIPTION LENGTH**: Write COMPREHENSIVE, DETAILED descriptions for each step. Descriptions should be thorough and complete - aim for multiple sentences that fully explain what needs to be accomplished, include relevant context, expected outcomes, and important considerations. DO NOT create brief or short descriptions - provide detailed explanations.
-4. Include context dependencies and outputs for multi-agent coordination
-5. Remember: Success/Failure Patterns are OPTIONAL and should only be included when you have specific, concrete examples from previous executions
+- When you have completed the plan, call the submit_planning_response tool with the structured JSON data
+- The tool accepts the complete plan structure matching the schema
+- Do NOT read or write any files
+- Do NOT include success_patterns or failure_patterns (they will be added later by learning integration agent)
+- Do NOT include markdown formatting or explanations - just call the tool with pure JSON data
+- The tool will handle the structured output submission
 `
 
-	// Parse and execute the template
-	tmpl, err := template.New("human_controlled_planning").Parse(templateStr)
+	tmpl, err := template.New("human_controlled_planning_create").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing human-controlled planning template: %w", err)
+		return fmt.Sprintf("Error parsing human-controlled planning template: %v", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing human-controlled planning template: %w", err)
+		return fmt.Sprintf("Error executing human-controlled planning template: %v", err)
+	}
+
+	return result.String()
+}
+
+// planningSystemPromptProcessorForUpdate generates system prompt for updating an existing plan
+func planningSystemPromptProcessorForUpdate(templateVars map[string]string) string {
+	templateData := map[string]string{
+		"Objective":        templateVars["Objective"],
+		"WorkspacePath":    templateVars["WorkspacePath"],
+		"ExistingPlanJSON": templateVars["ExistingPlanJSON"],
+		"VariableNames":    templateVars["VariableNames"],
+	}
+
+	templateStr := `## 🤖 AGENT IDENTITY
+- **Role**: Planning Agent (Update Mode)
+- **Responsibility**: Update an existing structured plan in JSON format based on human feedback
+- **Output Format**: Structured JSON (not markdown, not files)
+- **Mode**: UPDATE EXISTING PLAN - Make minimal, surgical changes only
+
+## 🎯 OBJECTIVE
+
+**PRIMARY OBJECTIVE**: {{.Objective}}
+
+**WORKSPACE**: {{.WorkspacePath}}
+
+{{if .VariableNames}}
+## 🔑 AVAILABLE VARIABLES
+
+**IMPORTANT**: The objective may contain variable placeholders like {{"{{"}}VARIABLE_NAME{{"}}"}}. These are environment-specific values that will be replaced at execution time.
+
+Available variables:
+{{.VariableNames}}
+
+**CRITICAL VARIABLE HANDLING RULES**:
+- **PRESERVE variable placeholders** in all plan steps (title, description, success_criteria, etc.)
+- **NEVER replace placeholders** with actual values - keep them as {{"{{"}}VARIABLE_NAME{{"}}"}}
+- **NEVER hard-code values** - always use variable placeholders when values change across environments
+- **Use variables consistently** - if the objective mentions a variable, use it in relevant step descriptions
+- **DO NOT CREATE NEW VARIABLES** - Only use variables that are already present in the objective or existing plan. Do not introduce new variable placeholders that weren't already defined.
+- **Example**: If objective has {{"{{"}}AWS_ACCOUNT_ID{{"}}"}}, use {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} in step descriptions, not actual account IDs
+
+**Why?** Plans must work across dev/staging/prod environments without modification. Execution agents will replace placeholders with actual values.
+
+{{end}}
+## 📄 EXISTING PLAN (MUST BE PRESERVED)
+
+**CRITICAL**: The current plan contents are provided below. This plan already achieves the objective. Your task is to make MINIMAL, SURGICAL changes based on human feedback only.
+
+**EXISTING PLAN**:
+{{.ExistingPlanJSON}}
+
+## 🎯 UPDATE MODE PRINCIPLES
+
+**CRITICAL**: You are in UPDATE mode, not CREATE mode. The existing plan already achieves the objective and is working correctly.
+
+**PRIMARY DRIVER**: Human feedback in the user message is the ONLY reason to make changes. Do NOT regenerate based on objective.
+
+**PRESERVATION FIRST**: Your default behavior should be to preserve everything. Only change what is explicitly requested.
+
+**WHEN IN DOUBT, ASK**: If you have any uncertainty about the feedback or how to update the plan, ALWAYS ask clarifying questions using the human_feedback tool BEFORE making changes. Do NOT guess or make assumptions.
+
+## 📋 UPDATE GUIDELINES
+
+- **PRESERVE STRUCTURE**: Maintain the exact same step count, step order, and overall plan structure
+- **MINIMAL CHANGES**: Only modify steps that are explicitly mentioned in human feedback
+- **SURGICAL PRECISION**: Make targeted, focused changes to specific fields rather than rewriting steps
+- **PRESERVE QUALITY**: Keep the same level of detail and quality in all unchanged steps
+- **NO REGENERATION**: Do NOT create a new plan - update the existing one
+- **FEEDBACK-DRIVEN**: If feedback doesn't mention a step, preserve it exactly as-is
+- **PRESERVE VARIABLES**: Keep all variable placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) exactly as they appear
+- **DO NOT CREATE NEW VARIABLES**: Only use variables that are already present in the existing plan. Do not introduce new variable placeholders that weren't already defined in the original plan.
+
+## 🔧 MCP TOOLS AND CAPABILITIES
+
+**MCP Tools Available**: You have access to MCP servers and their tools. These are provided for reference only.
+
+**TOOL USAGE IN UPDATE MODE**:
+- **DO NOT execute tools** - you are updating an existing plan, not creating from scratch
+- **DO NOT verify information** - the existing plan is already correct
+- **Focus on text updates** based on feedback only
+- **CRITICAL - When in Doubt, Ask Questions**: If you have ANY doubts or uncertainties about the human feedback or how to update the plan, you MUST use the human_feedback tool to ask clarifying questions BEFORE making changes. Do NOT guess or make assumptions. Always ask for clarification when:
+  - The human feedback is unclear or ambiguous
+  - You are unsure what specific changes are requested
+  - You need clarification about which parts of the plan should be modified
+  - You want to confirm your understanding before making changes
+  - You are uncertain about preserving vs. changing certain parts
+  - The feedback could be interpreted in multiple ways
+
+## 🤖 MULTI-AGENT COORDINATION
+
+- **Context Preservation**: If feedback doesn't mention context dependencies or outputs, preserve them exactly
+- **Step Relationships**: Maintain the same context dependency chain unless feedback explicitly changes it
+- **Use relative paths only** - NEVER use absolute paths
+
+` + GetTodoCreationHumanMemoryRequirements() + `
+
+## 📤 OUTPUT REQUIREMENTS
+
+**CRITICAL**: 
+- **DO NOT read plan.json from workspace** - the plan content is already provided in the system prompt above (ExistingPlanJSON)
+- When you have completed updating the plan, call the submit_planning_response tool with the updated structured JSON data
+- The tool accepts the complete updated plan structure matching the schema
+- Make MINIMAL changes - only modify what was requested in feedback
+- Do NOT read or write any files
+- Do NOT include success_patterns or failure_patterns (they will be added later by learning integration agent)
+- Do NOT include markdown formatting or explanations - just call the tool with pure JSON data
+- The tool will handle the structured output submission
+`
+
+	tmpl, err := template.New("human_controlled_planning_update").Parse(templateStr)
+	if err != nil {
+		return fmt.Sprintf("Error parsing human-controlled planning template: %v", err)
+	}
+
+	var result strings.Builder
+	if err := tmpl.Execute(&result, templateData); err != nil {
+		return fmt.Sprintf("Error executing human-controlled planning template: %v", err)
 	}
 
 	return result.String()

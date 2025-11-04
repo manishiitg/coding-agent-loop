@@ -63,46 +63,13 @@ func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAge
 }
 
 // Execute implements the OrchestratorAgent interface
+// NOTE: This method is NOT USED - use ExecuteStructured() instead
 func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	// Extract variables from template variables
-	stepTitle := templateVars["StepTitle"]
-	stepDescription := templateVars["StepDescription"]
-	stepSuccessCriteria := templateVars["StepSuccessCriteria"]
-	stepContextDependencies := templateVars["StepContextDependencies"]
-	stepContextOutput := templateVars["StepContextOutput"]
-	workspacePath := templateVars["WorkspacePath"]
-	executionHistory := templateVars["ExecutionHistory"]
-
-	// Prepare template variables
-	validationTemplateVars := map[string]string{
-		"StepTitle":               stepTitle,
-		"StepDescription":         stepDescription,
-		"StepSuccessCriteria":     stepSuccessCriteria,
-		"StepContextDependencies": stepContextDependencies,
-		"StepContextOutput":       stepContextOutput,
-		"WorkspacePath":           workspacePath,
-		"ExecutionHistory":        executionHistory,
-	}
-
-	// Create template data for validation
-	loopCondition := templateVars["LoopCondition"]
-	templateData := HumanControlledTodoPlannerValidationTemplate{
-		StepTitle:               stepTitle,
-		StepDescription:         stepDescription,
-		StepSuccessCriteria:     stepSuccessCriteria,
-		StepContextDependencies: stepContextDependencies,
-		StepContextOutput:       stepContextOutput,
-		WorkspacePath:           workspacePath,
-		ExecutionHistory:        executionHistory,
-		LoopCondition:           loopCondition,
-	}
-
-	// Execute using template validation
-	return hctpva.ExecuteWithTemplateValidation(ctx, validationTemplateVars, hctpva.humanControlledValidationInputProcessor, conversationHistory, templateData)
+	return "", nil, fmt.Errorf("Execute() is not used for validation agent - use ExecuteStructured() instead")
 }
 
 // ExecuteStructured executes the validation agent and returns structured output
-func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, error) {
+func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, []llmtypes.MessageContent, error) {
 	// Define the JSON schema for validation analysis
 	schema := `{
 		"type": "object",
@@ -154,45 +121,33 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 		"required": ["is_success_criteria_met", "execution_status", "reasoning"]
 	}`
 
-	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := agents.ExecuteStructuredWithInputProcessor[ValidationResponse](hctpva.BaseOrchestratorAgent, ctx, templateVars, hctpva.humanControlledValidationInputProcessor, conversationHistory, schema)
-	if err != nil {
-		return nil, err
+	// Generate system prompt and user message separately
+	systemPrompt := hctpva.validationSystemPromptProcessor(templateVars)
+	userMessage := hctpva.validationUserMessageProcessor(templateVars)
+
+	// Create a simple input processor that returns the user message
+	inputProcessor := func(map[string]string) string {
+		return userMessage
 	}
 
-	return &result, nil
+	// Use the base orchestrator agent's ExecuteStructured method with system prompt (overwrite=true to replace default MCP prompt with agent-specific prompt)
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessor[ValidationResponse](hctpva.BaseOrchestratorAgent, ctx, templateVars, inputProcessor, conversationHistory, schema, systemPrompt, true)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &result, updatedHistory, nil
 }
 
-// humanControlledValidationInputProcessor processes inputs specifically for task completion validation
-func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidationInputProcessor(templateVars map[string]string) string {
+// validationSystemPromptProcessor generates the system prompt for validation agent
+func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := HumanControlledTodoPlannerValidationTemplate{
-		StepTitle:               templateVars["StepTitle"],
-		StepDescription:         templateVars["StepDescription"],
-		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
-		StepContextDependencies: templateVars["StepContextDependencies"],
-		StepContextOutput:       templateVars["StepContextOutput"],
-		WorkspacePath:           templateVars["WorkspacePath"],
-		ExecutionHistory:        templateVars["ExecutionHistory"],
-		LoopCondition:           templateVars["LoopCondition"],
+		WorkspacePath: templateVars["WorkspacePath"],
 	}
 
-	// Define the template
-	templateStr := `## 🎯 PRIMARY TASK - VALIDATE STEP EXECUTION
-
-**STEP**: {{.StepTitle}}
-**STEP DESCRIPTION**: {{.StepDescription}}
-**WORKSPACE**: {{.WorkspacePath}}
-
-### 📋 Complete Step Information
-**Success Criteria**: {{.StepSuccessCriteria}}
-**Context Dependencies**: {{.StepContextDependencies}}
-**Context Output**: {{.StepContextOutput}}
-
-### 🔍 Step Context Analysis
-**Success Criteria**: Use the success criteria above to verify completion
-**Context Dependencies**: Check if context dependencies files were properly read
-**Context Output**: Verify if the context output file was created as specified
+	// Define the system prompt template
+	templateStr := `# Validation Agent
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Validation Agent
@@ -203,16 +158,11 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 
 **READ:**
 - Context output files created by execution agent (located in {{.WorkspacePath}}/execution/ folder)
+  - Note: {{.WorkspacePath}} is the base workspace path, so execution files are at {{.WorkspacePath}}/execution/step_X_results.md
 - Any workspace files needed to verify execution claims
 
-**WRITE:**
-- {{.WorkspacePath}}/validation/{{.StepTitle}}_validation_report.md (validation report with execution summary)
-  - **Note**: Replace spaces and special characters in step title with underscores for the filename (e.g., "Step 1: Setup" becomes "Step_1_Setup_validation_report.md")
-
-**RESTRICTIONS:**
-- Only modify files within {{.WorkspacePath}}/
-- Write validation report to {{.WorkspacePath}}/validation/ folder
-- Document execution conversation in validation report
+**NO WRITE PERMISSIONS:**
+- This agent does NOT write any files - only returns structured JSON validation results
 - Focus on verifying execution claims using evidence
 
 ## ⚠️ EDGE CASE HANDLING
@@ -230,22 +180,29 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 - Mark as PARTIAL
 - Feedback: List specific missing information needed for full validation
 
-**EXECUTION CONVERSATION TO VALIDATE**:
-{{.ExecutionHistory}}
+## 🔍 VALIDATION PROCESS
 
+**General Validation Steps:**
+1. **Review Execution History**: Analyze conversation for evidence of completion
+2. **Check Success Criteria**: Verify if the success criteria was met
+3. **Analyze Tool Usage**: Check which tools were used and their results
+4. **Assess Evidence**: Identify what worked and what didn't
 
-{{if .LoopCondition}}
-## 🔄 LOOP CONDITION CHECK MODE
+**Decision Criteria:**
+- ✅ **PASS**: Success criteria met with sufficient evidence
+- ❌ **FAIL**: Success criteria not met or insufficient evidence
 
-**This step is in loop mode - you are checking the LOOP CONDITION, not the full success criteria.**
+## 🔄 LOOP CONDITION CHECK MODE (When Applicable)
 
-**Loop Condition**: {{.LoopCondition}}
+**When LoopCondition is provided in the user message:**
+- Focus on evaluating the LOOP CONDITION, not the full success criteria
+- Return loop_condition_met: true if condition is met, false otherwise
+- Return loop_reasoning: Detailed explanation of why the loop condition is or is not met
+- Still return is_success_criteria_met, execution_status, and reasoning for consistency (but focus on loop condition evaluation)
 
-**Your Task**: Evaluate if the LOOP CONDITION is met based on the execution results.
-
-**Loop Condition Check Steps**:
+**Loop Condition Check Steps:**
 1. **Review Execution History**: Analyze conversation for evidence related to the loop condition
-2. **Check Loop Condition**: Verify if condition "{{.LoopCondition}}" is met
+2. **Check Loop Condition**: Verify if the loop condition is met
 3. **Analyze Tool Usage**: Check which tools were used and their results
 4. **Assess Evidence**: Determine if the loop condition is satisfied
 
@@ -253,62 +210,19 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) humanControlledValidati
 - ✅ **LOOP CONDITION MET**: Loop condition is satisfied - step can exit loop
 - ❌ **LOOP CONDITION NOT MET**: Loop condition is not satisfied - step must continue looping
 
-**IMPORTANT**: 
-- Return loop_condition_met: true if condition is met, false otherwise
-- Return loop_reasoning: Detailed explanation of why the loop condition is or is not met
-- Still return is_success_criteria_met, execution_status, and reasoning for consistency (but focus on loop condition evaluation)
-{{else}}
-## 🔍 VALIDATION PROCESS
-
-**Step - "{{.StepTitle}}"**
-
-**Your Task**: Validate if the step was completed successfully by checking if the SUCCESS CRITERIA was met.
-
-**Success Criteria**: {{.StepSuccessCriteria}}
-
-**Validation Steps**:
-1. **Review Execution History**: Analyze conversation for evidence of completion
-2. **Check Success Criteria**: Verify if criteria "{{.StepSuccessCriteria}}" was met
-3. **Analyze Tool Usage**: Check which tools were used and their results
-4. **Assess Evidence**: Identify what worked and what didn't
-
-**Decision**:
-- ✅ **PASS**: Success criteria met with sufficient evidence
-- ❌ **FAIL**: Success criteria not met or insufficient evidence
-{{end}}
-
-## 📤 Output Format
+## 📤 OUTPUT FORMAT
 
 **RETURN STRUCTURED JSON RESPONSE ONLY**
-
-Analyze the execution conversation history and validate if the step was completed successfully. Return a JSON response with the following structure:
 
 The response should be a JSON object with:
 - is_success_criteria_met: boolean - Whether the success criteria was met based on execution evidence
 - execution_status: string - Overall status (COMPLETED/PARTIAL/FAILED/INCOMPLETE)
 - reasoning: string - Detailed reasoning for the validation decision
 - feedback: array of objects with type, description, and severity (HIGH/MEDIUM/LOW)
-{{if .LoopCondition}}
 - loop_condition_met: boolean - **REQUIRED when LoopCondition is provided** - Whether the loop condition is met
 - loop_reasoning: string - **REQUIRED when LoopCondition is provided** - Detailed reasoning for loop condition evaluation
-{{end}}
 
-{{if .LoopCondition}}
-Example JSON structure for loop condition check:
-` + "```json" + `
-{
-  "is_success_criteria_met": true,
-  "execution_status": "COMPLETED",
-  "reasoning": "Execution completed and loop condition evaluation performed.",
-  "loop_condition_met": true,
-  "loop_reasoning": "The execution conversation shows clear evidence that the loop condition '{{.LoopCondition}}' is met. [Provide specific evidence from execution history]",
-  "feedback": []
-}
-` + "```" + `
-
-**Note**: Focus on evaluating the LOOP CONDITION. Check if the execution conversation provides sufficient evidence that the loop condition is met. Return loop_condition_met and loop_reasoning in your response.
-{{else}}
-Example JSON structure:
+**Example JSON structure:**
 ` + "```json" + `
 {
   "is_success_criteria_met": true,
@@ -329,18 +243,84 @@ Example JSON structure:
 }
 ` + "```" + `
 
-**Note**: Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.
-{{end}}`
+**Note**: Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.`
 
 	// Parse and execute the template
-	tmpl, err := template.New("validation").Parse(templateStr)
+	tmpl, err := template.New("validationSystemPrompt").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing validation template: %w", err)
+		return fmt.Sprintf("Error parsing validation system prompt template: %w", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing validation template: %w", err)
+		return fmt.Sprintf("Error executing validation system prompt template: %w", err)
+	}
+
+	return result.String()
+}
+
+// validationUserMessageProcessor generates the user message for validation agent
+func (hctpva *HumanControlledTodoPlannerValidationAgent) validationUserMessageProcessor(templateVars map[string]string) string {
+	// Create template data
+	templateData := HumanControlledTodoPlannerValidationTemplate{
+		StepTitle:               templateVars["StepTitle"],
+		StepDescription:         templateVars["StepDescription"],
+		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
+		StepContextDependencies: templateVars["StepContextDependencies"],
+		StepContextOutput:       templateVars["StepContextOutput"],
+		WorkspacePath:           templateVars["WorkspacePath"],
+		ExecutionHistory:        templateVars["ExecutionHistory"],
+		LoopCondition:           templateVars["LoopCondition"],
+	}
+
+	// Define the user message template
+	templateStr := `# Validation Task
+
+## 📋 **STEP CONTEXT**
+- **Title**: {{.StepTitle}}
+- **Description**: {{.StepDescription}}
+- **Success Criteria**: {{.StepSuccessCriteria}}
+- **Context Dependencies**: {{.StepContextDependencies}}
+- **Context Output**: {{.StepContextOutput}}
+- **Workspace**: {{.WorkspacePath}}
+
+## 🔍 **STEP CONTEXT ANALYSIS**
+- **Success Criteria**: Use the success criteria above to verify completion
+- **Context Dependencies**: Check if context dependencies files were properly read
+- **Context Output**: Verify if the context output file was created as specified
+
+## 📝 **EXECUTION CONVERSATION TO VALIDATE**
+{{.ExecutionHistory}}
+
+{{if .LoopCondition}}
+## 🧠 **YOUR TASK**
+
+This step is in **LOOP CONDITION CHECK MODE** - you are checking the LOOP CONDITION, not the full success criteria.
+
+**Loop Condition**: {{.LoopCondition}}
+
+**Your Task**: Evaluate if the LOOP CONDITION is met based on the execution results.
+
+Follow the validation process in the system prompt, focusing on loop condition evaluation. Return loop_condition_met and loop_reasoning in your structured JSON response.
+{{else}}
+## 🧠 **YOUR TASK**
+
+Validate if the step "{{.StepTitle}}" was completed successfully by checking if the SUCCESS CRITERIA was met.
+
+**Success Criteria**: {{.StepSuccessCriteria}}
+
+Follow the validation process in the system prompt. Analyze the execution conversation history and return a structured JSON response with validation results.
+{{end}}`
+
+	// Parse and execute the template
+	tmpl, err := template.New("validationUserMessage").Parse(templateStr)
+	if err != nil {
+		return fmt.Sprintf("Error parsing validation user message template: %w", err)
+	}
+
+	var result strings.Builder
+	if err := tmpl.Execute(&result, templateData); err != nil {
+		return fmt.Sprintf("Error executing validation user message template: %w", err)
 	}
 
 	return result.String()

@@ -147,7 +147,7 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 		// Execute plan reader agent to get structured response
 		// The agent will detect variables and use human_feedback tool internally
 		// The agent handles variable resolution internally and doesn't need conversation history accumulation
-		planningResponse, err := planReaderAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
+		planningResponse, _, err := planReaderAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
 		if err != nil {
 			return "", fmt.Errorf("failed to parse todo_final.md with plan reader agent: %w", err)
 		}
@@ -311,7 +311,7 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 		"ExecutionOutput":     conversationHistoryStr, // Pass conversation history instead of just result
 	}
 
-	validationResponse, err := todoValidationAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
+	validationResponse, _, err := todoValidationAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
 	if err != nil {
 		return nil, fmt.Errorf("step %d validation failed: %w", stepNumber, err)
 	}

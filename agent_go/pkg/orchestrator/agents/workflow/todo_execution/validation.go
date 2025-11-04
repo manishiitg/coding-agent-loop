@@ -51,7 +51,7 @@ func NewTodoValidationAgent(config *agents.OrchestratorAgentConfig, logger utils
 }
 
 // ExecuteStructured executes the validation agent and returns structured output
-func (tva *TodoValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, error) {
+func (tva *TodoValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, []llmtypes.MessageContent, error) {
 	// Define the JSON schema for validation response
 	schema := `{
 		"type": "object",
@@ -69,12 +69,12 @@ func (tva *TodoValidationAgent) ExecuteStructured(ctx context.Context, templateV
 	}`
 
 	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := agents.ExecuteStructuredWithInputProcessor[ValidationResponse](tva.BaseOrchestratorAgent, ctx, templateVars, tva.todoValidationInputProcessor, conversationHistory, schema)
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessor[ValidationResponse](tva.BaseOrchestratorAgent, ctx, templateVars, tva.todoValidationInputProcessor, conversationHistory, schema, "", false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &result, nil
+	return &result, updatedHistory, nil
 }
 
 // Execute implements the OrchestratorAgent interface

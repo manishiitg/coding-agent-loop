@@ -38,7 +38,7 @@ func NewPlanBreakdownAgent(config *OrchestratorAgentConfig, logger utils.Extende
 }
 
 // ExecuteStructured executes the plan breakdown agent and returns structured output
-func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*BreakdownResponse, error) {
+func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*BreakdownResponse, []llmtypes.MessageContent, error) {
 	// Define the JSON schema for breakdown analysis
 	schema := `{
 		"type": "object",
@@ -80,12 +80,12 @@ func (pba *PlanBreakdownAgent) ExecuteStructured(ctx context.Context, templateVa
 	}`
 
 	// Use the base orchestrator agent's ExecuteStructured method
-	result, err := ExecuteStructuredWithInputProcessor[BreakdownResponse](pba.BaseOrchestratorAgent, ctx, templateVars, pba.breakdownInputProcessor, conversationHistory, schema)
+	result, updatedHistory, err := ExecuteStructuredWithInputProcessor[BreakdownResponse](pba.BaseOrchestratorAgent, ctx, templateVars, pba.breakdownInputProcessor, conversationHistory, schema, "", false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &result, nil
+	return &result, updatedHistory, nil
 }
 
 // Execute executes the plan breakdown agent using the standard agent pattern

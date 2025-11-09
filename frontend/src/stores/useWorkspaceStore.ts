@@ -29,6 +29,16 @@ interface WorkspaceState {
   showRevisionsModal: boolean
   setShowRevisionsModal: (show: boolean) => void
   
+  // Edit mode state
+  isEditMode: boolean
+  setIsEditMode: (isEdit: boolean) => void
+  editedContent: string
+  setEditedContent: (content: string) => void
+  isSaving: boolean
+  setIsSaving: (saving: boolean) => void
+  getHasUnsavedChanges: () => boolean
+  saveFile: (commitMessage?: string) => Promise<{success: boolean; error?: string}>
+  
   // Upload Dialog
   uploadDialog: {
     isOpen: boolean
@@ -113,6 +123,9 @@ const initialState = {
   loadingFileContent: false,
   showFileContent: false,
   showRevisionsModal: false,
+  isEditMode: false,
+  editedContent: '',
+  isSaving: false,
   uploadDialog: {
     isOpen: false,
     isLoading: false,
@@ -158,6 +171,49 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       setLoadingFileContent: (loading) => set({ loadingFileContent: loading }),
       setShowFileContent: (show) => set({ showFileContent: show }),
       setShowRevisionsModal: (show) => set({ showRevisionsModal: show }),
+      
+      // Edit mode state
+      setIsEditMode: (isEdit) => set({ isEditMode: isEdit }),
+      setEditedContent: (content) => set({ editedContent: content }),
+      setIsSaving: (saving) => set({ isSaving: saving }),
+      getHasUnsavedChanges: () => {
+        const state = get()
+        return state.editedContent !== state.fileContent && state.isEditMode
+      },
+      saveFile: async (commitMessage?: string) => {
+        const state = get()
+        if (!state.selectedFile) {
+          return { success: false, error: 'No file selected' }
+        }
+        
+        set({ isSaving: true })
+        try {
+          const response = await agentApi.updatePlannerFile(
+            state.selectedFile.path,
+            state.editedContent,
+            commitMessage
+          )
+          
+          if (response.success) {
+            set({
+              fileContent: state.editedContent,
+              editedContent: '',
+              isEditMode: false,
+              isSaving: false
+            })
+            // Refresh file list
+            await get().fetchFiles()
+            return { success: true }
+          } else {
+            set({ isSaving: false })
+            return { success: false, error: response.message || 'Failed to save file' }
+          }
+        } catch (error) {
+          set({ isSaving: false })
+          const errorMessage = error instanceof Error ? error.message : 'Failed to save file'
+          return { success: false, error: errorMessage }
+        }
+      },
       
       // Upload Dialog
       setUploadDialog: (dialog) => set((state) => ({

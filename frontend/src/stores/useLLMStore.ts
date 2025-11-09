@@ -22,6 +22,7 @@ interface LLMState extends StoreActions {
   customBedrockModels: string[]
   customOpenRouterModels: string[]
   customOpenAIModels: string[]
+  customVertexModels: string[]
   
   // Available models from backend
   availableBedrockModels: string[]
@@ -58,6 +59,8 @@ interface LLMState extends StoreActions {
   removeCustomOpenRouterModel: (model: string) => void
   addCustomOpenAIModel: (model: string) => void
   removeCustomOpenAIModel: (model: string) => void
+  addCustomVertexModel: (model: string) => void
+  removeCustomVertexModel: (model: string) => void
   
   // Legacy actions (for backward compatibility)
   updateProvider: (provider: 'openrouter' | 'bedrock') => void
@@ -127,6 +130,7 @@ export const useLLMStore = create<LLMState>()(
         customBedrockModels: [],
         customOpenRouterModels: [],
         customOpenAIModels: [],
+        customVertexModels: [],
         
         // Available models from backend
         availableBedrockModels: [],
@@ -208,6 +212,18 @@ export const useLLMStore = create<LLMState>()(
           const { customOpenAIModels } = get()
           set({ customOpenAIModels: customOpenAIModels.filter(m => m !== model) })
         },
+        
+        addCustomVertexModel: (model) => {
+          const { customVertexModels } = get()
+          if (!customVertexModels.includes(model)) {
+            set({ customVertexModels: [...customVertexModels, model] })
+          }
+        },
+        
+        removeCustomVertexModel: (model) => {
+          const { customVertexModels } = get()
+          set({ customVertexModels: customVertexModels.filter(m => m !== model) })
+        },
 
         // Load defaults from backend
         loadDefaultsFromBackend: async () => {
@@ -215,8 +231,16 @@ export const useLLMStore = create<LLMState>()(
             set({ isLoadingLLMs: true })
             const defaults = await llmConfigService.getLLMDefaults()
             
+            // Get current state to check if user has already selected a model
+            const currentState = get()
+            const hasUserSelection = currentState.primaryConfig.model_id && currentState.primaryConfig.model_id.trim() !== ''
+            
             set({
-              primaryConfig: defaults.primary_config,
+              // Only overwrite primaryConfig if user hasn't selected a model yet
+              // This preserves user's LLM selection across app reloads and modal opens
+              primaryConfig: hasUserSelection 
+                ? currentState.primaryConfig 
+                : defaults.primary_config,
               openrouterConfig: defaults.openrouter_config,
               bedrockConfig: defaults.bedrock_config,
               openaiConfig: defaults.openai_config,
@@ -270,8 +294,8 @@ export const useLLMStore = create<LLMState>()(
               request.api_key = apiKey
             }
             
-            // Add model ID for Bedrock validation
-            if (provider === 'bedrock' && modelId) {
+            // Add model ID for Bedrock and Vertex validation
+            if ((provider === 'bedrock' || provider === 'vertex') && modelId) {
               request.model_id = modelId
             }
             
@@ -361,7 +385,38 @@ export const useLLMStore = create<LLMState>()(
           set({ isLoadingLLMs: true, error: null })
           
           try {
-            const availableLLMs = getAllAvailableLLMs()
+            const state = get()
+            const baseLLMs = getAllAvailableLLMs()
+            
+            // Add custom models from store
+            const customBedrockLLMs = state.customBedrockModels.map(model => ({
+              provider: 'bedrock' as const,
+              model,
+              label: `Bedrock - ${model}`,
+              description: 'Custom Bedrock model'
+            }))
+            
+            const customVertexLLMs = state.customVertexModels.map(model => ({
+              provider: 'vertex' as const,
+              model,
+              label: `Vertex - ${model}`,
+              description: 'Custom Vertex AI model'
+            }))
+            
+            const customOpenAILLMs = state.customOpenAIModels.map(model => ({
+              provider: 'openai' as const,
+              model,
+              label: `OpenAI - ${model}`,
+              description: 'Custom OpenAI model'
+            }))
+            
+            const availableLLMs = [
+              ...baseLLMs,
+              ...customBedrockLLMs,
+              ...customVertexLLMs,
+              ...customOpenAILLMs
+            ]
+            
             set({ availableLLMs, isLoadingLLMs: false })
           } catch (error) {
             set({ 
@@ -452,6 +507,7 @@ export const useLLMStore = create<LLMState>()(
           customBedrockModels: state.customBedrockModels,
           customOpenRouterModels: state.customOpenRouterModels,
           customOpenAIModels: state.customOpenAIModels,
+          customVertexModels: state.customVertexModels,
           showLLMModal: state.showLLMModal,
           // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
           // These should always be loaded fresh from backend

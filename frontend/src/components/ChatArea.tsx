@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMem
 import debounce from 'lodash.debounce'
 import { agentApi } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
+import type { AgentMode } from '../stores/types'
 import { EXECUTION_MODES } from '../services/api-types'
 import { EventModeProvider } from './events'
 import { ChatInput } from './ChatInput'
@@ -73,9 +74,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   }, [agentMode, currentPresetServers, selectedServers])
   
   // Filter tools to only include those from effective servers
-  const enabledTools = allTools.filter(tool => 
-    tool.server && effectiveServers.includes(tool.server)
-  )
+  // If "NO_SERVERS" is selected, return empty tools (pure LLM mode)
+  const enabledTools = useMemo(() => {
+    if (effectiveServers.includes("NO_SERVERS")) {
+      return []
+    }
+    return allTools.filter(tool => 
+      tool.server && effectiveServers.includes(tool.server)
+    )
+  }, [allTools, effectiveServers])
   
   const {
     // Chat state
@@ -89,7 +96,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setPollingInterval,
     totalEvents,
     setTotalEvents,
-    lastEventCount,
     setLastEventCount,
     events,
     setEvents,
@@ -217,7 +223,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setModeCategory(category)
     
     // Set the corresponding agent mode using centralized mapping
-    const agentModeToSet = getAgentModeFromCategory(category) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+    const agentModeToSet = getAgentModeFromCategory(category) as AgentMode
     setAgentMode(agentModeToSet)
   }
 
@@ -286,37 +292,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Orchestrator execution mode state
   const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.PARALLEL)
   
-  // Performance metrics tracking (dev mode only)
-  const [performanceMetrics, setPerformanceMetrics] = useState({
-    renderCount: 0,
-    lastRenderTime: 0,
-    memoryEstimate: 0
-  })
-  
   // Handle orchestrator execution mode change
   const handleOrchestratorExecutionModeChange = useCallback((mode: OrchestratorExecutionMode) => {
     setOrchestratorExecutionMode(mode)
   }, [])
-  
-  // Track performance metrics when events change (dev mode only)
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      const startTime = performance.now()
-      
-      // Calculate memory estimate (rough approximation)
-      const memoryEstimate = events.reduce((total, event) => {
-        return total + JSON.stringify(event).length * 2 // Rough estimate
-      }, 0)
-
-      const endTime = performance.now()
-      
-      setPerformanceMetrics(prev => ({
-        renderCount: prev.renderCount + 1,
-        lastRenderTime: endTime - startTime,
-        memoryEstimate: Math.round(memoryEstimate / 1024) // KB
-      }))
-    }
-  }, [events])
   
   // Track processed completion events to avoid stopping on old ones
   const processedCompletionEventsRef = useRef<Set<string>>(new Set())
@@ -401,7 +380,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         behavior
       });
     });
-  }, []);
+  }, [])
+
+  // Callback to re-enable auto-scroll and scroll to bottom after feedback submission
+  const handleFeedbackSubmitted = useCallback(() => {
+    setAutoScroll(true)
+    scrollToBottom('smooth')
+  }, [setAutoScroll, scrollToBottom])
 
   // Auto-scroll to bottom when new events arrive (only if autoScroll is enabled)
   useEffect(() => {
@@ -688,6 +673,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             if (event.type === 'request_human_feedback') {
               setIsStreaming(false)
               setIsCompleted(false) // Not completed, just paused for human input
+              
+              // Disable auto-scroll when human feedback is requested
+              setAutoScroll(false)
               
               // Stop polling when human feedback is requested
               if (pollingInterval) {
@@ -1035,6 +1023,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                         if (event.type === 'request_human_feedback') {
                           setIsStreaming(false)
                           setIsCompleted(false)
+                          
+                          // Disable auto-scroll when human feedback is requested
+                          setAutoScroll(false)
                           
                           // Stop polling when human feedback is requested
                           if (pollingInterval) {
@@ -1499,7 +1490,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
           </WorkflowModeHandler>
         ) : agentMode === 'orchestrator' ? (
           <OrchestratorModeHandler
@@ -1511,7 +1502,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
           </OrchestratorModeHandler>
         ) : (
           <>
@@ -1520,7 +1511,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
           </>
         )}
         </div>
@@ -1533,27 +1524,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}
         />
-      )}
-      
-      {/* Streaming Status - Show at bottom when streaming */}
-      {isStreaming && !chatSessionId && (
-        <div className="px-3 py-1 border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
-          <div className="flex items-center justify-center gap-1 text-xs text-blue-600 dark:text-blue-400">
-            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
-            <span>Streaming</span>
-            <span>📊 {totalEvents} ({lastEventCount})</span>
-            
-            {/* Performance Metrics (Dev Mode Only) */}
-            {process.env.NODE_ENV === 'development' && (
-              <>
-                <span className="text-gray-500 dark:text-gray-400">|</span>
-                <span>Renders: {performanceMetrics.renderCount}</span>
-                <span>Memory: ~{performanceMetrics.memoryEstimate}KB</span>
-                <span>Render: {performanceMetrics.lastRenderTime.toFixed(1)}ms</span>
-              </>
-            )}
-          </div>
-        </div>
       )}
       
       {/* Historical Session Notice */}

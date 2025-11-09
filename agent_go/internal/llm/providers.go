@@ -489,7 +489,8 @@ func initializeOpenRouter(config Config) (llmtypes.Model, error) {
 	return llm, nil
 }
 
-// initializeVertex creates and configures a Vertex AI (Gemini) LLM instance
+// initializeVertex creates and configures a Vertex AI LLM instance
+// Supports both Gemini (via API key) and Anthropic (via OAuth2) models
 func initializeVertex(config Config) (llmtypes.Model, error) {
 	// LLM Initialization event data - use typed structure directly
 	llmMetadata := LLMMetadata{
@@ -506,16 +507,6 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 	// Emit LLM initialization start event
 	emitLLMInitializationStart(config.Tracers, string(config.Provider), config.ModelID, config.Temperature, config.TraceID, llmMetadata)
 
-	// Check for API key from environment
-	apiKey := os.Getenv("VERTEX_API_KEY")
-	if apiKey == "" {
-		// Try alternative environment variable names
-		apiKey = os.Getenv("GOOGLE_API_KEY")
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required")
-	}
-
 	// Set default model if not specified
 	modelID := config.ModelID
 	if modelID == "" {
@@ -523,7 +514,68 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 	}
 
 	logger := config.Logger
+
+	// Detect if this is an Anthropic model (starts with "claude-")
+	isAnthropicModel := strings.HasPrefix(modelID, "claude-")
+
+	if isAnthropicModel {
+		// Initialize Vertex AI Anthropic adapter
+		return initializeVertexAnthropic(config, modelID, logger)
+	}
+
+	// Initialize Gemini adapter (existing implementation)
+	return initializeVertexGemini(config, modelID, logger)
+}
+
+// initializeVertexAnthropic creates and configures a Vertex AI Anthropic LLM instance
+func initializeVertexAnthropic(config Config, modelID string, logger utils.ExtendedLogger) (llmtypes.Model, error) {
+	logger.Infof("Initializing Vertex AI Anthropic LLM - model_id: %s", modelID)
+
+	// Get required configuration
+	projectID := os.Getenv("VERTEX_PROJECT_ID")
+	if projectID == "" {
+		return nil, fmt.Errorf("VERTEX_PROJECT_ID environment variable is required for Anthropic models")
+	}
+
+	locationID := os.Getenv("VERTEX_LOCATION_ID")
+	if locationID == "" {
+		locationID = "global" // Default location
+		logger.Infof("VERTEX_LOCATION_ID not set, using default: %s", locationID)
+	}
+
+	// Create Vertex Anthropic adapter
+	llm := vertex.NewVertexAnthropicAdapter(projectID, locationID, modelID, logger)
+
+	// Emit LLM initialization success event
+	successMetadata := LLMMetadata{
+		ModelVersion: modelID,
+		User:         "vertex_user",
+		CustomFields: map[string]string{
+			"provider":     "vertex",
+			"model_type":   "anthropic",
+			"status":       StatusLLMInitialized,
+			"capabilities": CapabilityTextGeneration + "," + CapabilityToolCalling,
+		},
+	}
+	emitLLMInitializationSuccess(config.Tracers, string(config.Provider), modelID, CapabilityTextGeneration+","+CapabilityToolCalling, config.TraceID, successMetadata)
+
+	logger.Infof("Initialized Vertex AI Anthropic LLM - model_id: %s, project: %s, location: %s", modelID, projectID, locationID)
+	return llm, nil
+}
+
+// initializeVertexGemini creates and configures a Vertex AI Gemini LLM instance
+func initializeVertexGemini(config Config, modelID string, logger utils.ExtendedLogger) (llmtypes.Model, error) {
 	logger.Infof("Initializing Vertex AI (Gemini) LLM with API key - model_id: %s", modelID)
+
+	// Check for API key from environment
+	apiKey := os.Getenv("VERTEX_API_KEY")
+	if apiKey == "" {
+		// Try alternative environment variable names
+		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required for Gemini models")
+	}
 
 	// Use provided context or use background context
 	ctx := config.Context
@@ -545,10 +597,11 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 			ModelVersion: modelID,
 			User:         "vertex_user",
 			CustomFields: map[string]string{
-				"provider":  "vertex",
-				"operation": OperationLLMInitialization,
-				"error":     err.Error(),
-				"status":    StatusLLMFailed,
+				"provider":   "vertex",
+				"model_type": "gemini",
+				"operation":  OperationLLMInitialization,
+				"error":      err.Error(),
+				"status":     StatusLLMFailed,
 			},
 		}
 		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
@@ -565,13 +618,14 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 		User:         "vertex_user",
 		CustomFields: map[string]string{
 			"provider":     "vertex",
+			"model_type":   "gemini",
 			"status":       StatusLLMInitialized,
 			"capabilities": CapabilityTextGeneration + "," + CapabilityToolCalling,
 		},
 	}
 	emitLLMInitializationSuccess(config.Tracers, string(config.Provider), modelID, CapabilityTextGeneration+","+CapabilityToolCalling, config.TraceID, successMetadata)
 
-	logger.Infof("Initialized Vertex AI LLM - model_id: %s", modelID)
+	logger.Infof("Initialized Vertex AI Gemini LLM - model_id: %s", modelID)
 	return llm, nil
 }
 
@@ -1562,7 +1616,7 @@ func GetLLMDefaults() LLMDefaultsResponse {
 	}
 }
 
-// ValidateAPIKey validates API keys for OpenRouter, OpenAI, and Bedrock
+// ValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, and Vertex
 func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 	// Create logger for structured logging
 	logger := logger.CreateDefaultLogger()
@@ -1582,6 +1636,17 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 		// Bedrock uses AWS credentials, test them instead of API key
 		logger.Infof("[API KEY VALIDATION] Testing AWS Bedrock credentials")
 		isValid, message, err = validateBedrockCredentials(req.ModelID)
+	case "vertex":
+		// Vertex uses Google API key, optionally test with model ID
+		logger.Infof("[API KEY VALIDATION] Testing Vertex AI API key")
+		isValid, message, err = validateVertexAPIKey(req.APIKey, req.ModelID)
+	case "anthropic":
+		// Anthropic validation can be added here if needed
+		logger.Warnf("[API KEY VALIDATION WARN] Anthropic validation not yet implemented")
+		return APIKeyValidationResponse{
+			Valid: false,
+			Error: "Anthropic API key validation not yet implemented",
+		}
 	default:
 		logger.Warnf("[API KEY VALIDATION WARN] Unsupported provider: %s", req.Provider)
 		return APIKeyValidationResponse{
@@ -1709,6 +1774,84 @@ func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
 	default:
 		logger.Warnf("[OPENAI VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
 		return false, fmt.Sprintf("OpenAI API returned status %d", resp.StatusCode), nil
+	}
+}
+
+// validateVertexAPIKey validates a Vertex AI (Google Gemini) API key
+func validateVertexAPIKey(apiKey string, modelID string) (bool, string, error) {
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[VERTEX VALIDATION] Starting API key validation")
+
+	// Basic validation - Google API keys don't have a specific prefix
+	if apiKey == "" {
+		logger.Warnf("[VERTEX VALIDATION WARN] API key is empty")
+		return false, "API key is empty", nil
+	}
+	logger.Infof("[VERTEX VALIDATION] API key format check passed")
+
+	// If model ID is provided, test with that specific model
+	// Otherwise, test by listing available models
+	var testURL string
+	if modelID != "" {
+		// Test with specific model
+		testURL = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s?key=%s", modelID, apiKey)
+		logger.Infof("[VERTEX VALIDATION] Testing with model: %s", modelID)
+	} else {
+		// Test by listing models
+		testURL = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", apiKey)
+		logger.Infof("[VERTEX VALIDATION] Testing by listing available models")
+	}
+
+	// Test the API key by making a request to Gemini API
+	logger.Infof("[VERTEX VALIDATION] Making request to Gemini API")
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", testURL, nil)
+	if err != nil {
+		logger.Errorf("[VERTEX VALIDATION ERROR] Failed to create request: %w", err)
+		return false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	logger.Infof("[VERTEX VALIDATION] Sending request to Gemini API")
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Errorf("[VERTEX VALIDATION ERROR] Request failed: %w", err)
+		return false, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	logger.Infof("[VERTEX VALIDATION] Response status: %d", resp.StatusCode)
+
+	switch resp.StatusCode {
+	case 200:
+		logger.Infof("[VERTEX VALIDATION SUCCESS] API key is valid")
+		if modelID != "" {
+			return true, fmt.Sprintf("Vertex AI API key is valid for model %s", modelID), nil
+		}
+		return true, "Vertex AI API key is valid", nil
+	case 400:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Bad request - invalid API key or model")
+		return false, "Invalid API key or model ID", nil
+	case 401:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Unauthorized - invalid API key")
+		return false, "Invalid Vertex AI API key", nil
+	case 403:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Forbidden - API key lacks required permissions")
+		return false, "API key lacks required permissions", nil
+	case 404:
+		if modelID != "" {
+			logger.Warnf("[VERTEX VALIDATION FAILED] Model not found: %s", modelID)
+			return false, fmt.Sprintf("Model %s not found", modelID), nil
+		}
+		logger.Warnf("[VERTEX VALIDATION FAILED] Resource not found")
+		return false, "Resource not found", nil
+	case 429:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Rate limit exceeded")
+		return false, "Vertex AI API rate limit exceeded", nil
+	default:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
+		return false, fmt.Sprintf("Vertex AI API returned status %d", resp.StatusCode), nil
 	}
 }
 

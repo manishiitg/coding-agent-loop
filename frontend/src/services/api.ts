@@ -292,6 +292,16 @@ export const agentApi = {
     return response.data
   },
 
+  updatePlannerFile: async (filepath: string, content: string, commitMessage?: string) => {
+    const requestBody: { content: string; commit_message?: string } = { content }
+    if (commitMessage) {
+      requestBody.commit_message = commitMessage
+    }
+    // API handles path conversion internally
+    const response = await plannerApi.put(`/api/documents/${encodeURIComponent(filepath)}`, requestBody)
+    return response.data
+  },
+
   deletePlannerFile: async (filepath: string, commitMessage?: string) => {
     const params: Record<string, string> = { confirm: 'true' }
     if (commitMessage) {

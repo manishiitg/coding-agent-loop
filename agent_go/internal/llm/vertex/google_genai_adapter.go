@@ -2,8 +2,11 @@ package vertex
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -143,44 +146,8 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 		}
 
 		// Normal processing for messages without mixed parts
-		genaiParts := make([]*genai.Part, 0)
-		for _, part := range msg.Parts {
-			switch p := part.(type) {
-			case llmtypes.TextContent:
-				genaiParts = append(genaiParts, genai.NewPartFromText(p.Text))
-			case llmtypes.ToolCallResponse:
-				// Convert tool response to function response format
-				// Try to parse as JSON first, but if it fails (returns empty map),
-				// wrap the content as a string value to preserve the actual result
-				responseMap := parseJSONObject(p.Content)
-				// If parsing failed (empty map) and content exists and doesn't look like JSON, wrap it
-				if len(responseMap) == 0 && p.Content != "" && !strings.HasPrefix(strings.TrimSpace(p.Content), "{") {
-					// Wrap non-JSON string content in a map
-					responseMap = map[string]interface{}{
-						"result": p.Content,
-					}
-				}
-				genaiParts = append(genaiParts, genai.NewPartFromFunctionResponse(p.ToolCallID, responseMap))
-			case llmtypes.ToolCall:
-				// 🔧 FIX: Convert ToolCall parts to genai.Part with FunctionCall
-				// Gemini's genai library supports NewPartFromFunctionCall to include
-				// FunctionCalls in model messages. This is necessary for proper conversation
-				// history tracking. We parse the JSON arguments and create the Part.
-				if p.FunctionCall != nil {
-					// Parse JSON arguments string to map
-					argsMap := parseJSONObject(p.FunctionCall.Arguments)
-					// Create genai.Part with FunctionCall
-					genaiParts = append(genaiParts, genai.NewPartFromFunctionCall(p.FunctionCall.Name, argsMap))
-					if g.logger != nil {
-						g.logger.Debugf("Converting ToolCall part to genai FunctionCall: ID=%s, Name=%s", p.ID, p.FunctionCall.Name)
-					}
-				} else {
-					if g.logger != nil {
-						g.logger.Warnf("ToolCall part has nil FunctionCall: ID=%s", p.ID)
-					}
-				}
-			}
-		}
+		// Use convertMessageParts helper to handle all part types including ImageContent
+		genaiParts := g.convertMessageParts(msg.Parts)
 
 		if len(genaiParts) > 0 {
 			role := convertRole(string(msg.Role))
@@ -678,15 +645,33 @@ func (g *GoogleGenAIAdapter) convertMessageParts(parts []llmtypes.ContentPart) [
 		switch p := part.(type) {
 		case llmtypes.TextContent:
 			genaiParts = append(genaiParts, genai.NewPartFromText(p.Text))
+		case llmtypes.ImageContent:
+			// Convert ImageContent to genai.Part
+			if g.logger != nil {
+				g.logger.Debugf("Converting ImageContent to genai.Part: sourceType=%s, mediaType=%s, dataLength=%d", p.SourceType, p.MediaType, len(p.Data))
+			}
+			imagePart := g.createImagePart(p)
+			if imagePart != nil {
+				if g.logger != nil {
+					// Log details about the created part
+					if imagePart.InlineData != nil {
+						g.logger.Debugf("Image part created successfully: MIME type=%s, data length=%d", imagePart.InlineData.MIMEType, len(imagePart.InlineData.Data))
+					} else {
+						g.logger.Warnf("Image part created but InlineData is nil")
+					}
+				}
+				genaiParts = append(genaiParts, imagePart)
+			} else {
+				if g.logger != nil {
+					g.logger.Warnf("Failed to create image part from ImageContent")
+				}
+			}
 		case llmtypes.ToolCallResponse:
 			// Convert tool response to function response format
-			responseMap := parseJSONObject(p.Content)
-			// If parsing failed (empty map) and content exists and doesn't look like JSON, wrap it
-			if len(responseMap) == 0 && p.Content != "" && !strings.HasPrefix(strings.TrimSpace(p.Content), "{") {
-				// Wrap non-JSON string content in a map
-				responseMap = map[string]interface{}{
-					"result": p.Content,
-				}
+			// Send the raw string content directly to Gemini - no JSON parsing needed
+			// Gemini can handle the string content itself
+			responseMap := map[string]interface{}{
+				"result": p.Content,
 			}
 			genaiParts = append(genaiParts, genai.NewPartFromFunctionResponse(p.ToolCallID, responseMap))
 		case llmtypes.ToolCall:
@@ -966,6 +951,99 @@ func (g *GoogleGenAIAdapter) logRawResponse(requestID, modelID string, result *g
 // This allows structured output generation with schema validation
 func WithResponseSchema(ctx context.Context, schema *genai.Schema) context.Context {
 	return context.WithValue(ctx, ResponseSchemaKey, schema)
+}
+
+// createImagePart creates a genai.Part from ImageContent
+func (g *GoogleGenAIAdapter) createImagePart(img llmtypes.ImageContent) *genai.Part {
+	if img.SourceType == "base64" {
+		// Decode base64 string to bytes
+		imageBytes, err := base64.StdEncoding.DecodeString(img.Data)
+		if err != nil {
+			if g.logger != nil {
+				g.logger.Warnf("Failed to decode base64 image: %v", err)
+			}
+			return nil
+		}
+		if g.logger != nil {
+			g.logger.Debugf("Created image part from base64: %d bytes, MIME type: %s", len(imageBytes), img.MediaType)
+		}
+		// Use NewPartFromBytes with decoded bytes and MIME type
+		return genai.NewPartFromBytes(imageBytes, img.MediaType)
+	} else if img.SourceType == "url" {
+		// Fetch image from URL and convert to bytes
+		if g.logger != nil {
+			g.logger.Debugf("Fetching image from URL: %s", img.Data)
+		}
+		imageBytes, mimeType, err := g.fetchImageFromURL(img.Data)
+		if err != nil {
+			if g.logger != nil {
+				g.logger.Warnf("Failed to fetch image from URL %s: %v", img.Data, err)
+			}
+			return nil
+		}
+		if g.logger != nil {
+			g.logger.Debugf("Created image part from URL: %d bytes, MIME type: %s", len(imageBytes), mimeType)
+		}
+		// Use NewPartFromBytes with fetched bytes and detected MIME type
+		return genai.NewPartFromBytes(imageBytes, mimeType)
+	}
+	// Invalid source type
+	if g.logger != nil {
+		g.logger.Warnf("Invalid image source type: %s", img.SourceType)
+	}
+	return nil
+}
+
+// fetchImageFromURL fetches an image from a URL and returns the bytes and MIME type
+func (g *GoogleGenAIAdapter) fetchImageFromURL(url string) ([]byte, string, error) {
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Fetch the image
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Read image data
+	imageBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read image data: %w", err)
+	}
+
+	// Detect MIME type from Content-Type header or URL extension
+	mimeType := resp.Header.Get("Content-Type")
+	if mimeType == "" || !strings.HasPrefix(mimeType, "image/") {
+		// Try to detect from URL extension
+		urlLower := strings.ToLower(url)
+		if strings.HasSuffix(urlLower, ".jpg") || strings.HasSuffix(urlLower, ".jpeg") {
+			mimeType = "image/jpeg"
+		} else if strings.HasSuffix(urlLower, ".png") {
+			mimeType = "image/png"
+		} else if strings.HasSuffix(urlLower, ".gif") {
+			mimeType = "image/gif"
+		} else if strings.HasSuffix(urlLower, ".webp") {
+			mimeType = "image/webp"
+		} else {
+			// Default to JPEG if we can't determine
+			mimeType = "image/jpeg"
+		}
+	}
+
+	// Clean up MIME type (remove charset if present)
+	if idx := strings.Index(mimeType, ";"); idx != -1 {
+		mimeType = mimeType[:idx]
+	}
+
+	return imageBytes, strings.TrimSpace(mimeType), nil
 }
 
 // generateToolCallID generates a unique ID for tool calls

@@ -54,9 +54,8 @@ export interface EventData {
   orchestrator_agent_start?: OrchestratorAgentStartEvent;
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
-  structured_output_start?: StructuredOutputStartEvent;
-  structured_output_end?: StructuredOutputEndEvent;
-  structured_output_error?: StructuredOutputErrorEvent;
+  request_human_feedback?: RequestHumanFeedbackEvent;
+  todo_steps_extracted?: TodoStepsExtractedEvent;
 }
 export interface ToolCallStartEvent {
   timestamp?: string;
@@ -520,8 +519,8 @@ export interface ThrottlingDetectedEvent {
   attempt?: number;
   max_attempts?: number;
   duration?: string;
-  error_type?: string;   // "throttling", "empty_content", "connection_error", etc.
-  retry_delay?: string;  // Wait time before retry (e.g., "22.5s")
+  error_type?: string;
+  retry_delay?: string;
 }
 export interface TokenLimitExceededEvent {
   timestamp?: string;
@@ -923,6 +922,7 @@ export interface OrchestratorStartEvent {
   agents_count?: number;
   servers_count?: number;
   configuration?: string;
+  orchestrator_type?: string;
   execution_mode?: string;
 }
 export interface OrchestratorEndEvent {
@@ -944,6 +944,7 @@ export interface OrchestratorEndEvent {
   duration?: number;
   status?: string;
   error?: string;
+  orchestrator_type?: string;
   execution_mode?: string;
 }
 export interface OrchestratorErrorEvent {
@@ -963,6 +964,7 @@ export interface OrchestratorErrorEvent {
   context?: string;
   error?: string;
   duration?: number;
+  orchestrator_type?: string;
   execution_mode?: string;
 }
 export interface OrchestratorAgentStartEvent {
@@ -992,7 +994,6 @@ export interface OrchestratorAgentStartEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
-  execution_mode?: string;
 }
 export interface OrchestratorAgentEndEvent {
   timestamp?: string;
@@ -1025,7 +1026,6 @@ export interface OrchestratorAgentEndEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
-  execution_mode?: string;
 }
 export interface OrchestratorAgentErrorEvent {
   timestamp?: string;
@@ -1053,9 +1053,8 @@ export interface OrchestratorAgentErrorEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
-  execution_mode?: string;
 }
-export interface StructuredOutputStartEvent {
+export interface RequestHumanFeedbackEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
@@ -1069,10 +1068,17 @@ export interface StructuredOutputStartEvent {
   metadata?: {
     [k: string]: unknown;
   };
-  operation?: string;
-  event_type?: string;
+  objective?: string;
+  todo_list_markdown?: string;
+  workflow_id?: string;
+  request_id?: string;
+  verification_type?: string;
+  next_phase?: string;
+  title?: string;
+  action_label?: string;
+  action_description?: string;
 }
-export interface StructuredOutputEndEvent {
+export interface TodoStepsExtractedEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
@@ -1086,25 +1092,34 @@ export interface StructuredOutputEndEvent {
   metadata?: {
     [k: string]: unknown;
   };
-  operation?: string;
-  event_type?: string;
-  duration?: string;
+  total_steps_extracted?: number;
+  extracted_steps?: TodoStep[];
+  extraction_method?: string;
+  plan_source?: string;
 }
-export interface StructuredOutputErrorEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  operation?: string;
-  event_type?: string;
-  error?: string;
+export interface TodoStep {
+  title?: string;
+  description?: string;
+  success_criteria?: string;
+  why_this_step?: string;
+  context_dependencies?: string[];
+  context_output?: string;
+  success_patterns?: string[];
+  failure_patterns?: string[];
+  /**
+   * Whether this step needs to loop until condition is met
+   */
+  has_loop?: boolean;
+  /**
+   * Condition that must be met to exit the loop (required when has_loop is true)
+   */
+  loop_condition?: string;
+  /**
+   * Maximum number of loop iterations allowed (default: 10)
+   */
+  max_iterations?: number;
+  /**
+   * Human-readable explanation of the loop behavior
+   */
+  loop_description?: string;
 }

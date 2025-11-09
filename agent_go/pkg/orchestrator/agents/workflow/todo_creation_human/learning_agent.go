@@ -124,9 +124,11 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 This agent supports two learning detail levels:
 
 ### **EXACT MCP TOOLS Mode**
+- Extract **narrative context** describing what the execution accomplished or what went wrong
+- Include **explanations** for why each tool call was effective or failed
 - Extract complete tool calls with full argument JSON from execution history
-- Capture exact MCP tool invocations: tool_name with {"arg":"value"}
-- Document precise commands and arguments that led to success
+- Capture exact MCP tool invocations in structured format: tool_name and arguments
+- Document precise commands and arguments that led to success or failure
 
 ### **GENERAL PATTERNS Mode**
 - Extract high-level approaches, strategies, and workflow patterns
@@ -202,8 +204,11 @@ The ExecutionHistory section contains the complete execution conversation. Parse
 - **DO NOT capture**: Workspace tools like write_workspace_file, read_workspace_file, list_workspace_files (these are internal workspace management tools, not MCP server tools)
 
 **CRITICAL**: 
+- **Include narrative context**: Describe what the execution accomplished or what went wrong
+- **Include explanations**: Explain why each tool call was effective or why it failed
 - Focus on identifying which MCP server tool calls successfully achieved the step description/goal
 - Extract the EXACT arguments JSON that was used, not a summary or description
+- Use structured format: tool_name and arguments (not "tool_name with {...}" format)
 - Capture BOTH successful tool calls (what worked to achieve the step) AND failed tool calls (what didn't work)
 - Only capture MCP server tools, not workspace management tools
 - Connect tool calls back to the step description - which tools accomplished what part of the step goal`
@@ -266,12 +271,10 @@ Document BOTH success patterns (what worked) AND failure patterns (what to avoid
 - **Success Criteria**: All pods Running status, rollout successful, endpoint accessible
 - **Why This Step**: Dry-run catches syntax errors, rollout status ensures completion, health checks confirm service running
 - **Success Patterns** (what worked):
-  - kubernetes.kubectl_apply with {"file":"deployment.yaml","dry_run":"client"}
-  - kubernetes.kubectl_rollout_status with {"resource":"deployment","name":"myapp"}
-  - kubernetes.kubectl_get with {"resource":"pods","output":"json"}
+  - The execution successfully deployed the application to production. The following tool calls were effective: Dry-run validation: The kubernetes.kubectl_apply tool with dry-run enabled was crucial for catching configuration errors before actual deployment. tool_name: kubernetes.kubectl_apply, arguments: {"file":"deployment.yaml","dry_run":"client"}. Monitoring rollout: The kubernetes.kubectl_rollout_status tool tracked deployment progress to ensure completion. tool_name: kubernetes.kubectl_rollout_status, arguments: {"resource":"deployment","name":"myapp"}. Verifying pods: The kubernetes.kubectl_get tool checked pod status to confirm successful deployment. tool_name: kubernetes.kubectl_get, arguments: {"resource":"pods","output":"json"}
 - **Failure Patterns** (what to avoid):
-  - Don't use docker.docker_run with {"image":"myapp","command":["start"]} (use kubectl_apply instead)
-  - Don't skip namespace validation (caused deployment error)`
+  - The execution initially failed when attempting to use container runtime directly. Using wrong tool: The docker.docker_run tool failed because it bypassed the orchestration layer. tool_name: docker.docker_run, arguments: {"image":"myapp","command":["start"]}. Reason: Use kubectl_apply instead for proper Kubernetes deployment
+  - The execution failed due to missing namespace validation. Skipping prerequisite check: Deployment failed when namespace wasn't verified first. This caused deployment error and required manual intervention`
 		}
 		return `- **Description**: Deploy using kubectl apply to production
 - **Success Criteria**: All pods Running status, rollout successful, endpoint accessible
@@ -302,69 +305,19 @@ You have access to all MCP tools to examine workspace files and gather additiona
 
 ## 📝 **REQUIRED OUTPUT FORMAT**
 
-After writing files, provide a comprehensive summary:
+**CRITICAL**: After writing the learning file, output ONLY the file path that was updated. Keep your response minimal and concise.
 
-## Comprehensive Learning Analysis Summary
+**Output Format:**
+Updated: {{.WorkspacePath}}/learnings/step_X_learning.md
 
-### What Worked Well (Success Patterns):
-- [Key factors that made execution successful]
-- [Patterns or strategies that led to success]
-- [Best practices identified]
+**DO NOT provide:**
+- Comprehensive summaries
+- Detailed analysis reports
+- Long explanations
+- Lists of patterns or practices
 
-### What Didn't Work (Failure Patterns):
-- [Key factors that caused failures or issues]
-- [Patterns or strategies that failed or caused errors]
-- [Anti-patterns to avoid]
-
-### Best Practices Captured:
-- ` + func() string {
-		if learningDetailLevel == "exact" {
-			return `[Tool calls with complete arguments that worked: tool_name with {"arg":"value"}]`
-		}
-		return `[General approaches and workflow patterns that worked]`
-	}() + `
-
-### Anti-Patterns Captured:
-- ` + func() string {
-		if learningDetailLevel == "exact" {
-			return `[Tool calls with complete arguments that failed: tool_name with {"arg":"value"} - what to avoid]`
-		}
-		return `[General approaches and patterns that failed - what to avoid]`
-	}() + `
-
-` + func() string {
-		if learningDetailLevel != "exact" {
-			return `### Tools Used:
-- [List exact MCP server tool names (without arguments) used during execution, format: server_name.tool_name]
-- [Categorize each tool as successful or failed]
-- [DO NOT include workspace tools like write_workspace_file, read_workspace_file, list_workspace_files]`
-		}
-		return ``
-	}() + `
-
----
-
-## Learning Documentation Actions
-
-### Files Written (CONFIRM):
-- [ ] Called write_workspace_file for {{.WorkspacePath}}/learnings/step_X_learning.md (create comprehensive learnings with both success and failure patterns)
-
-### Learnings Documented:
-- [Success patterns captured: ` + func() string {
-		if learningDetailLevel == "exact" {
-			return `specific tools, commands, and step-by-step approach that worked`
-		}
-		return `general approaches and strategies that led to success`
-	}() + `]
-- [Failure patterns captured: ` + func() string {
-		if learningDetailLevel == "exact" {
-			return `specific tools, commands, and approaches that failed or should be avoided`
-		}
-		return `general approaches and strategies that failed or should be avoided`
-	}() + `]
-- [Root cause analysis for failures identified]
-- [Validation insights: what validation methods worked and what didn't]
-- [Context dependencies that were crucial for success or caused failures]
+**ONLY output:**
+- The file path that was written/updated
 
 **Key Requirements:**
 - **ALWAYS analyze BOTH success patterns AND failure patterns** from execution and validation
@@ -450,5 +403,6 @@ DO NOT replace them with actual values. Keep variable placeholders like {{AWS_AC
 - **ALWAYS document BOTH success patterns AND failure patterns**, even if validation passed or failed
 - Even when validation passes, there may be failure patterns to document (inefficient approaches, errors that were recovered, etc.)
 - Even when validation fails, there may be success patterns to document (parts that worked, approaches that partially succeeded, etc.)
+- **After writing the file, output ONLY the file path** (e.g., "Updated: ` + templateVars["WorkspacePath"] + `/learnings/step_X_learning.md"). Do NOT provide summaries or detailed analysis.
 `
 }

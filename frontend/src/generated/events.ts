@@ -512,6 +512,8 @@ export interface ThrottlingDetectedEvent {
   attempt?: number;
   max_attempts?: number;
   duration?: string;
+  error_type?: string;
+  retry_delay?: string;
 }
 export interface TokenLimitExceededEvent {
   timestamp?: string;

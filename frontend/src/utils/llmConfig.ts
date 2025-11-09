@@ -14,12 +14,15 @@ export const BEDROCK_MODELS = [
 ];
 
 export const OPENAI_MODELS = [
+  "gpt-5",
   "gpt-5-mini",
 ];
 
 export const VERTEX_MODELS = [
   "gemini-2.5-flash",
-  "gemini-2.5-pro"
+  "gemini-2.5-pro",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5"
 ];
 
 export const ANTHROPIC_MODELS = [
@@ -88,12 +91,14 @@ export const getAllAvailableLLMs = (): LLMOption[] => {
       label: `OpenAI - ${model}`,
       description: 'OpenAI model'
     })),
-    // Vertex models
+    // Vertex models (includes both Gemini and Anthropic models)
     ...VERTEX_MODELS.map(model => ({
       provider: 'vertex' as const,
       model,
       label: `Vertex - ${model}`,
-      description: 'Google Vertex AI Gemini model'
+      description: model.startsWith('claude-') 
+        ? 'Google Vertex AI Anthropic model (requires VERTEX_PROJECT_ID)' 
+        : 'Google Vertex AI Gemini model'
     })),
     // Anthropic models
     ...ANTHROPIC_MODELS.map(model => ({

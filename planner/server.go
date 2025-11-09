@@ -121,6 +121,9 @@ func runServer(cmd *cobra.Command, args []string) {
 		// File upload route
 		api.POST("/upload", handlers.UploadFile)
 
+		// Shell execution route
+		api.POST("/execute", handlers.ExecuteShellCommand)
+
 		// Version management routes (separate from wildcard routes)
 		api.GET("/versions/*filepath", handlers.GetFileVersionHistory)
 		api.POST("/restore/*filepath", handlers.RestoreFileVersion)

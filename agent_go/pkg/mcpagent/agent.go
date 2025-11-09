@@ -1268,12 +1268,8 @@ func AskWithHistoryStructuredViaTool[T any](
 		return zero, fmt.Errorf("tool was called but not found in messages")
 	}
 
-	// Tool was not called - check if there was an error
-	if err != nil {
-		var zero StructuredOutputResult[T]
-		return zero, fmt.Errorf("failed to get response from conversation: %w", err)
-	}
-
+	// Tool was not called according to flag - but check messages anyway
+	// (context cancellation might have happened even if tool was called)
 	// Scan messages for structured tool call (in case it was called but flag wasn't set)
 	structuredResult, found, extractErr := extractStructuredToolCall[T](updatedMessages, toolName)
 	if extractErr != nil {
@@ -1282,13 +1278,19 @@ func AskWithHistoryStructuredViaTool[T any](
 	}
 
 	if found {
-		// Structured tool was called - return structured result
+		// Structured tool was called - return structured result (even if there was an error)
 		return StructuredOutputResult[T]{
 			HasStructuredOutput: true,
 			StructuredResult:    structuredResult,
 			TextResponse:        "",
 			Messages:            updatedMessages,
 		}, nil
+	}
+
+	// Tool was not found in messages - check if there was an error
+	if err != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to get response from conversation: %w", err)
 	}
 
 	// Structured tool was not called - return text response (conversational input)

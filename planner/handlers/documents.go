@@ -163,10 +163,24 @@ func CreateDocument(c *gin.Context) {
 		return
 	}
 
+	// Get file info for metadata
+	fileInfo, err := os.Stat(fullPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Message: "Failed to get file info",
+			Error:   err.Error(),
+		})
+		return
+	}
+
 	// Create response
 	doc := models.Document{
-		FilePath: relativePath,
-		Folder:   folder,
+		FilePath:    relativePath,
+		Folder:      folder,
+		Size:        fileInfo.Size(),
+		ModifiedAt:  fileInfo.ModTime(),
+		IsDirectory: fileInfo.IsDir(),
 	}
 
 	// Handle git operations if commit message provided
@@ -220,9 +234,11 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 				}
 
 				doc := models.Document{
-					FilePath: relPathFromDocs,
-					Folder:   folder,
-					Type:     "folder", // Mark as folder
+					FilePath:    relPathFromDocs,
+					Folder:      folder,
+					Type:        "folder", // Mark as folder
+					IsDirectory: true,
+					ModifiedAt:  info.ModTime(),
 				}
 				documents = append(documents, doc)
 			}
@@ -263,9 +279,11 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 		if info.IsDir() {
 			// This is a folder - add it to the list
 			doc := models.Document{
-				FilePath: relPathFromDocs,
-				Folder:   folder,
-				Type:     "folder", // Mark as folder
+				FilePath:    relPathFromDocs,
+				Folder:      folder,
+				Type:        "folder", // Mark as folder
+				IsDirectory: true,
+				ModifiedAt:  info.ModTime(),
 			}
 			documents = append(documents, doc)
 		} else {
@@ -277,10 +295,13 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 			isImage := isImageFile(info.Name())
 
 			doc := models.Document{
-				FilePath: relPathFromDocs,
-				Folder:   folder,
-				Type:     "file", // Mark as file
-				IsImage:  isImage,
+				FilePath:    relPathFromDocs,
+				Folder:      folder,
+				Type:        "file", // Mark as file
+				IsImage:     isImage,
+				Size:        info.Size(),
+				ModifiedAt:  info.ModTime(),
+				IsDirectory: false,
 			}
 			documents = append(documents, doc)
 		}
@@ -442,12 +463,21 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	// Check if file exists and get file info
+	fileInfo, err := os.Stat(filePath)
+	if os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.APIResponse{
 			Success: false,
 			Message: "Document not found",
 			Error:   "Document not found: " + filePathParam,
+		})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Message: "Failed to get file info",
+			Error:   err.Error(),
 		})
 		return
 	}
@@ -497,10 +527,13 @@ func GetDocument(c *gin.Context) {
 	}
 
 	doc := models.Document{
-		FilePath: relativePath,
-		Folder:   folder,
-		Content:  contentStr, // Include content for read_workspace_file tool
-		IsImage:  isImage,
+		FilePath:    relativePath,
+		Folder:      folder,
+		Content:     contentStr, // Include content for read_workspace_file tool
+		IsImage:     isImage,
+		Size:        fileInfo.Size(),
+		ModifiedAt:  fileInfo.ModTime(),
+		IsDirectory: fileInfo.IsDir(),
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{
@@ -613,9 +646,23 @@ func UpdateDocument(c *gin.Context) {
 		return
 	}
 
+	// Get file info for metadata
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Message: "Failed to get file info",
+			Error:   err.Error(),
+		})
+		return
+	}
+
 	doc := models.Document{
-		FilePath: relativePath,
-		Folder:   folder,
+		FilePath:    relativePath,
+		Folder:      folder,
+		Size:        fileInfo.Size(),
+		ModifiedAt:  fileInfo.ModTime(),
+		IsDirectory: fileInfo.IsDir(),
 	}
 
 	// Determine appropriate message based on whether file was created or updated
@@ -868,10 +915,24 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
+	// Get file info for metadata
+	fileInfo, err := os.Stat(destinationFilePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Message: "Failed to get file info",
+			Error:   err.Error(),
+		})
+		return
+	}
+
 	responseData := models.Document{
-		FilePath: relativePath,
-		Folder:   filepath.Dir(relativePath),
-		Type:     "file",
+		FilePath:    relativePath,
+		Folder:      filepath.Dir(relativePath),
+		Type:        "file",
+		Size:        fileInfo.Size(),
+		ModifiedAt:  fileInfo.ModTime(),
+		IsDirectory: fileInfo.IsDir(),
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{

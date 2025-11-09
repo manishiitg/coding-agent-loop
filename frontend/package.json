@@ -31,6 +31,8 @@
     "clsx": "^2.1.1",
     "lodash.debounce": "^4.0.8",
     "lucide-react": "^0.525.0",
+    "monaco-editor": "^0.45.0",
+    "@monaco-editor/react": "^4.6.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",

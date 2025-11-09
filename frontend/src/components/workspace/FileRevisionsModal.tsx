@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { X, Clock, User, GitCommit, Eye, RotateCcw } from 'lucide-react'
+import { X, Clock, User, GitCommit, Eye, RotateCcw, FileText } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { FileVersion } from '../../services/api-types'
+import FileEditor from './FileEditor'
 
 interface FileRevisionsModalProps {
   isOpen: boolean
@@ -21,6 +22,7 @@ export default function FileRevisionsModal({
   const [error, setError] = useState<string | null>(null)
   const [selectedVersion, setSelectedVersion] = useState<FileVersion | null>(null)
   const [showDiffModal, setShowDiffModal] = useState(false)
+  const [showFullContent, setShowFullContent] = useState(false)
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -131,7 +133,10 @@ export default function FileRevisionsModal({
                   {versions.map((version, index) => (
                     <div
                       key={version.commit_hash}
-                      onClick={() => setSelectedVersion(version)}
+                      onClick={() => {
+                        setSelectedVersion(version)
+                        setShowFullContent(false)
+                      }}
                       className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                         selectedVersion?.commit_hash === version.commit_hash
                           ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
@@ -189,6 +194,15 @@ export default function FileRevisionsModal({
                       </p>
                     </div>
                     <div className="flex gap-2">
+                      {selectedVersion.content && (
+                        <button
+                          onClick={() => setShowFullContent(!showFullContent)}
+                          className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                        >
+                          <FileText className="w-4 h-4" />
+                          {showFullContent ? 'Hide' : 'View'} Full Content
+                        </button>
+                      )}
                       <button
                         onClick={() => setShowDiffModal(true)}
                         disabled={!selectedVersion.diff}
@@ -243,14 +257,25 @@ export default function FileRevisionsModal({
                     {selectedVersion.content && (
                       <div>
                         <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                          Content Preview
+                          {showFullContent ? 'Full Content' : 'Content Preview'}
                         </h4>
-                        <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded max-h-40 overflow-y-auto">
-                          <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-                            {selectedVersion.content.substring(0, 500)}
-                            {selectedVersion.content.length > 500 && '...'}
-                          </pre>
-                        </div>
+                        {showFullContent ? (
+                          <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden" style={{ height: '400px' }}>
+                            <FileEditor
+                              value={selectedVersion.content}
+                              filepath={filepath}
+                              readOnly={true}
+                              height="400px"
+                            />
+                          </div>
+                        ) : (
+                          <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded max-h-40 overflow-y-auto">
+                            <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                              {selectedVersion.content.substring(0, 500)}
+                              {selectedVersion.content.length > 500 && '...'}
+                            </pre>
+                          </div>
+                        )}
                       </div>
                     )}
 

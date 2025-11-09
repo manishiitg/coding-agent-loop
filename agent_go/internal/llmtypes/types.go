@@ -27,6 +27,20 @@ type TextContent struct {
 	Text string
 }
 
+// ImageContent represents an image content part
+// Supports both base64-encoded images and image URLs
+type ImageContent struct {
+	// SourceType is either "base64" or "url"
+	SourceType string
+	// MediaType is the MIME type (e.g., "image/jpeg", "image/png", "image/gif", "image/webp")
+	// Required for base64 source type
+	MediaType string
+	// Data contains either:
+	// - Base64-encoded image data (without data: URL prefix) for SourceType "base64"
+	// - Image URL for SourceType "url"
+	Data string
+}
+
 // ToolCall represents a tool/function call request
 type ToolCall struct {
 	ID           string

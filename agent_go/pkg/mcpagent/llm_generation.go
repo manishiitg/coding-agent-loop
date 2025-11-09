@@ -272,22 +272,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		if err == nil {
 			logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - SUCCESS - Response: %v", attempt+1, resp != nil)
 			usage = extractUsageMetricsWithMessages(resp, messages)
-			// Emit LLM generation success event (replaced span-based tracing)
-			llmAttemptEndEvent := &events.LLMGenerationEndEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Turn:      turn + 1,
-				Content:   resp.Choices[0].Content,
-				ToolCalls: len(resp.Choices[0].ToolCalls),
-				Duration:  time.Since(llmGenerationStartEvent.Timestamp),
-				UsageMetrics: events.UsageMetrics{
-					PromptTokens:     usage.InputTokens,
-					CompletionTokens: usage.OutputTokens,
-					TotalTokens:      usage.TotalTokens,
-				},
-			}
-			a.EmitTypedEvent(ctx, llmAttemptEndEvent)
+			// Note: llm_generation_end event is emitted by EndLLMGeneration() in conversation.go
+			// to avoid duplicate events
 			return resp, nil, usage
 		}
 

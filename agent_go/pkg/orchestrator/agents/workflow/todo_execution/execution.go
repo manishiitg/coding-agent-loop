@@ -43,8 +43,16 @@ func NewTodoExecutionAgent(config *agents.OrchestratorAgentConfig, logger utils.
 // todoExecutionInputProcessor processes inputs specifically for single step execution
 func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[string]string) string {
 
+	// Check if this is a loop step
+	hasLoop := templateVars["HasLoop"] == "true"
+	loopCondition := templateVars["LoopCondition"]
+	loopDescription := templateVars["LoopDescription"]
+	currentIteration := templateVars["CurrentIteration"]
+	maxIterations := templateVars["MaxIterations"]
+	previousIterationOutput := templateVars["PreviousIterationOutput"]
+
 	// Define the template for single step execution
-	templateStr := `## PRIMARY TASK - EXECUTE SINGLE STEP
+	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
 
 **STEP**: {{.StepNumber}}/{{.TotalSteps}}
 **TITLE**: {{.StepTitle}}
@@ -64,6 +72,34 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 **Context Output to Produce:**
 {{.StepContextOutput}}
 
+{{if .HasLoop}}
+## 🔄 LOOP MODE ACTIVE
+
+**This step is executing in LOOP MODE** - you will execute this step repeatedly until the loop condition is met.
+
+**Loop Condition**: {{.LoopCondition}}
+{{if .LoopDescription}}
+**Loop Description**: {{.LoopDescription}}
+{{end}}
+
+**Current Status**:
+- **Current Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
+- **Max Iterations**: {{.MaxIterations}}
+
+**Your Task in Loop Mode**:
+- Execute the step as described below
+- Work towards meeting the loop condition: "{{.LoopCondition}}"
+- The step will continue looping until this condition is met OR max iterations reached
+- After each execution, the validation agent will check if the loop condition is met
+- **Focus on making progress towards the loop condition** - you may need to check status, poll services, retry operations, etc.
+- **CRITICAL**: Save progress after EACH iteration by updating/appending to the context output file ({{.StepContextOutput}}) - don't wait until the loop completes. Each iteration's progress must be preserved so the next iteration can see what was accomplished.
+
+**Important**: 
+- The loop condition ({{.LoopCondition}}) is the same as the success criteria
+- Once the loop condition is met, the step will exit the loop and be marked as completed
+- Continue executing until the condition is satisfied
+{{end}}
+
 ## PROVEN APPROACHES (Follow These)
 
 **Success Patterns (What Worked):**
@@ -73,10 +109,18 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 {{.StepFailurePatterns}}
 
 {{if .PreviousFeedback}}
-## 🔄 PREVIOUS FEEDBACK
+## ⚠️ PREVIOUS FEEDBACK
 **Previous Validation Feedback**: {{.PreviousFeedback}}
 
 **IMPORTANT**: Use this feedback to improve your execution. Address any issues mentioned and follow the recommendations provided.
+{{end}}
+
+{{if .PreviousIterationOutput}}
+## 🔄 PREVIOUS LOOP ITERATION EXECUTION OUTPUT
+
+{{.PreviousIterationOutput}}
+
+**Important**: This is the execution output from the previous loop iteration. Review what was done previously to understand the context and avoid repeating the same actions unnecessarily.
 {{end}}
 
 ## 🤖 AGENT IDENTITY
@@ -97,8 +141,13 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 2. **Follow Success Patterns Exactly**: These are validated approaches that worked before
 3. **Avoid All Failure Patterns**: These approaches have failed and should not be used
 4. **Execute the Step**: Use proven tools and approaches from Success Patterns
+{{if .HasLoop}}
+5. **Work Towards Loop Condition**: Focus on making progress towards "{{.LoopCondition}}"
+6. **Save Progress After Each Iteration**: Update/append to context output file ({{.StepContextOutput}}) after each iteration
+{{else}}
 5. **Produce Context Output**: Ensure this step produces what subsequent steps need
 6. **Verify Success Criteria**: Confirm all criteria are met before completion
+{{end}}
 
 ` + GetTodoExecutionMemoryRequirements() + `
 
@@ -106,6 +155,9 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 - The workspace path has been pre-configured to use the correct run folder
 - Focus on executing the step using MCP tools
 - You don't need to create summary or documentation files
+{{if .HasLoop}}
+- **CRITICAL**: Save progress after EACH iteration - don't wait until the loop completes
+{{end}}
 
 Focus on executing this step effectively using proven approaches and avoiding failed patterns.`
 
@@ -130,6 +182,12 @@ Focus on executing this step effectively using proven approaches and avoiding fa
 		"PreviousFeedback":        templateVars["PreviousFeedback"],
 		"WorkspacePath":           templateVars["WorkspacePath"],
 		"RunOption":               templateVars["RunOption"],
+		"HasLoop":                 hasLoop,
+		"LoopCondition":           loopCondition,
+		"LoopDescription":         loopDescription,
+		"CurrentIteration":        currentIteration,
+		"MaxIterations":           maxIterations,
+		"PreviousIterationOutput": previousIterationOutput,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing template: %w", err)

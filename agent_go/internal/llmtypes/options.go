@@ -75,3 +75,30 @@ func TextParts(role ChatMessageType, texts ...string) MessageContent {
 		Parts: parts,
 	}
 }
+
+// ImagePart creates a message content with a single image part
+// sourceType should be "base64" or "url"
+// For base64: mediaType is required (e.g., "image/jpeg"), data is base64-encoded string
+// For url: mediaType is ignored, data is the image URL
+func ImagePart(role ChatMessageType, sourceType, mediaType, data string) MessageContent {
+	return MessageContent{
+		Role: role,
+		Parts: []ContentPart{
+			ImageContent{
+				SourceType: sourceType,
+				MediaType:  mediaType,
+				Data:       data,
+			},
+		},
+	}
+}
+
+// ImagePartBase64 creates a message content with a base64-encoded image
+func ImagePartBase64(role ChatMessageType, mediaType, base64Data string) MessageContent {
+	return ImagePart(role, "base64", mediaType, base64Data)
+}
+
+// ImagePartURL creates a message content with an image URL
+func ImagePartURL(role ChatMessageType, imageURL string) MessageContent {
+	return ImagePart(role, "url", "", imageURL)
+}

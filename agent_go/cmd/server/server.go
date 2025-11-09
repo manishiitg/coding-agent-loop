@@ -696,7 +696,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(defaults)
 }
 
-// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, and Anthropic
+// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, Vertex, and Anthropic
 func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req llm.APIKeyValidationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -806,19 +806,29 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		selectedServers = req.Servers
 	}
 
-	// Default to all servers if none specified
-	if len(selectedServers) == 0 {
-		selectedServers = []string{"all"}
+	var serverList string
+	// Check for explicit "NO_SERVERS" request (pure LLM mode, no tools)
+	if len(selectedServers) == 1 && selectedServers[0] == mcpclient.NoServers {
+		// Keep NoServers constant as-is - this will be handled by integration code
+		serverList = mcpclient.NoServers
+		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
+		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
+		log.Printf("[SERVER DEBUG] Server list: %s (pure LLM mode)", serverList)
+	} else {
+		// Default to all servers if none specified
+		if len(selectedServers) == 0 {
+			selectedServers = []string{"all"}
+		}
+
+		// Convert server array to comma-separated string for agent compatibility
+		serverList = strings.Join(selectedServers, ",")
+
+		// Debug logging for server selection
+		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
+		log.Printf("[SERVER DEBUG] Request servers: %v", req.Servers)
+		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
+		log.Printf("[SERVER DEBUG] Server list: %s", serverList)
 	}
-
-	// Convert server array to comma-separated string for agent compatibility
-	serverList := strings.Join(selectedServers, ",")
-
-	// Debug logging for server selection
-	log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
-	log.Printf("[SERVER DEBUG] Request servers: %v", req.Servers)
-	log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
-	log.Printf("[SERVER DEBUG] Server list: %s", serverList)
 
 	// Extract sessionID from header/cookie or fallback to queryID
 	sessionID := r.Header.Get("X-Session-ID")
@@ -1667,6 +1677,46 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[AGENT DEBUG] Failed to create LLM agent wrapper: %w", err)
 			sendError(fmt.Sprintf("Failed to create agent: %w", err), true)
 			return
+		}
+
+		// Add workspace tools to simple agents (chat mode)
+		// This matches how workspace tools are registered in workflow/orchestrator agents
+		if req.AgentMode == "simple" && llmAgent.GetUnderlyingAgent() != nil {
+			workspaceTools := virtualtools.CreateWorkspaceTools()
+			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+
+			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent", len(workspaceTools))
+
+			underlyingAgent := llmAgent.GetUnderlyingAgent()
+			for _, tool := range workspaceTools {
+				toolName := tool.Function.Name
+				if executor, exists := workspaceExecutors[toolName]; exists {
+					// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
+					// This matches the workflow implementation for consistency
+					var params map[string]interface{}
+					if tool.Function.Parameters != nil {
+						paramsBytes, err := json.Marshal(tool.Function.Parameters)
+						if err == nil {
+							json.Unmarshal(paramsBytes, &params)
+						}
+					}
+					if params == nil {
+						log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+						continue
+					}
+
+					// Executor is already the correct type (func(ctx, args) (string, error))
+					// No type assertion needed unlike workflow where executors are map[string]interface{}
+					underlyingAgent.RegisterCustomTool(
+						toolName,
+						tool.Function.Description,
+						params,
+						executor,
+					)
+					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s", toolName)
+				}
+			}
+			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
 		}
 
 		// Add custom agent instructions based on agent mode

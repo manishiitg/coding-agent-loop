@@ -175,6 +175,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 - The step will continue looping until this condition is met OR max iterations reached
 - After each execution, the validation agent will check if the loop condition is met
 - **Focus on making progress towards the loop condition** - you may need to check status, poll services, retry operations, etc.
+- **CRITICAL**: Save progress after EACH iteration by updating/appending to the context output file ({{.StepContextOutput}}) - don't wait until the loop completes. Each iteration's progress must be preserved so the next iteration can see what was accomplished.
 
 **Important**: 
 - The loop condition ({{.LoopCondition}}) is the same as the success criteria
@@ -265,7 +266,11 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 ### 🔍 Step Context Analysis
 **Success Criteria**: Use the success criteria above to verify completion
 **Context Dependencies**: Check context dependencies for files from previous steps
+{{if eq .HasLoop "true"}}
+**Context Output**: Update or append to the context output file ({{.StepContextOutput}}) after each iteration to preserve progress
+{{else}}
 **Context Output**: Create the context output file specified above for other agents
+{{end}}
 
 **Your Task**: Execute this specific step using the available MCP tools. Use the complete step information above, including success criteria, context dependencies, and context output requirements.
 
@@ -337,12 +342,12 @@ Provide a clear execution summary in your response:
 	// Parse and execute the template
 	tmpl, err := template.New("execution").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing execution template: %w", err)
+		return fmt.Sprintf("Error parsing execution template: %v", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing execution template: %w", err)
+		return fmt.Sprintf("Error executing execution template: %v", err)
 	}
 
 	return result.String()

@@ -96,7 +96,9 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(langfuseCmd)
 	TestingCmd.AddCommand(bedrockCmd)
 	TestingCmd.AddCommand(vertexCmd)
+	TestingCmd.AddCommand(vertexAnthropicCmd)
 	TestingCmd.AddCommand(anthropicCmd)
+	TestingCmd.AddCommand(openaiCmd)
 	TestingCmd.AddCommand(awsTestCmd)
 	TestingCmd.AddCommand(mcpCacheTestCmd) // MCP Connection Caching Test
 	TestingCmd.AddCommand(exaTestCmd)
@@ -115,4 +117,6 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(streamingTracerCmd)
 	TestingCmd.AddCommand(contextCancellationTestCmd)
 	TestingCmd.AddCommand(bufioScannerBugTestCmd)
+	TestingCmd.AddCommand(readImageTestCmd)
+	TestingCmd.AddCommand(readSecureAccessTestCmd)
 }

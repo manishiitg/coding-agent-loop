@@ -29,6 +29,7 @@ type BaseOrchestratorAgent struct {
 	systemPrompt         string
 	eventBridge          mcpagent.AgentEventListener    // Event bridge for auto events
 	userMessageProcessor func(map[string]string) string // Optional processor for user messages (replaces inputProcessor)
+	agentSessionID       string                         // Agent session ID for correlating orchestrator_agent_start and orchestrator_agent_end events
 }
 
 // NewBaseOrchestratorAgentWithEventBridge creates a new base orchestrator agent with event bridge
@@ -380,6 +381,9 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string) {
 	boa.logger.Infof("🔍 emitAgentStartEvent called for agent type: %s", boa.agentType)
 
+	// Generate unique agent session ID for correlating start/end events
+	boa.agentSessionID = events.GenerateEventID()
+
 	agentName := string(boa.agentType)
 	if boa.baseAgent != nil {
 		agentName = boa.baseAgent.GetName()
@@ -387,7 +391,8 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 
 	eventData := &events.OrchestratorAgentStartEvent{
 		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
+			Timestamp:     time.Now(),
+			CorrelationID: boa.agentSessionID, // Use shared session ID for correlation
 		},
 		AgentType:    string(boa.agentType),
 		AgentName:    agentName,
@@ -415,7 +420,8 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 
 	eventData := &events.OrchestratorAgentEndEvent{
 		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
+			Timestamp:     time.Now(),
+			CorrelationID: boa.agentSessionID, // Use shared session ID for correlation
 		},
 		AgentType:          string(boa.agentType),
 		AgentName:          agentName,

@@ -23,11 +23,18 @@ RUN go build -o planner .
 # Final stage
 FROM alpine:latest
 
-# Install ripgrep, git, and patch for GitHub integration and diff patching
-RUN apk add --no-cache ripgrep git patch
+# Install ripgrep, git, patch, and python3 for GitHub integration, diff patching, and script execution
+RUN apk add --no-cache ripgrep git patch python3 py3-pip
 
 # Create app user
 RUN adduser -D -s /bin/sh appuser
+
+# Configure pip to allow system-wide packages (safe in containerized environment)
+# Create pip config directory for appuser
+RUN mkdir -p /home/appuser/.config/pip && \
+    echo "[global]" > /home/appuser/.config/pip/pip.conf && \
+    echo "break-system-packages = true" >> /home/appuser/.config/pip/pip.conf && \
+    chown -R appuser:appuser /home/appuser/.config
 
 # Set working directory
 WORKDIR /app

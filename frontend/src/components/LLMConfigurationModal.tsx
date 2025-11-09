@@ -1370,7 +1370,8 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
 // Vertex Section Component
 function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
-  const { availableVertexModels } = useLLMStore()
+  const [newCustomModel, setNewCustomModel] = useState('')
+  const { availableVertexModels, customVertexModels, addCustomVertexModel, removeCustomVertexModel } = useLLMStore()
 
   useEffect(() => {
     if (config.api_key) {
@@ -1383,7 +1384,26 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
     onUpdate({ ...config, api_key: newApiKey })
   }
 
-  const allModels = availableVertexModels.length > 0 ? availableVertexModels : ['gemini-2.5-flash', 'gemini-2.5-pro']
+  const allModels = [...(availableVertexModels.length > 0 ? availableVertexModels : ['gemini-2.5-flash', 'gemini-2.5-pro']), ...customVertexModels]
+
+  const handleAddCustomModel = () => {
+    if (newCustomModel.trim() && !allModels.includes(newCustomModel.trim())) {
+      addCustomVertexModel(newCustomModel.trim())
+      setNewCustomModel('')
+      
+      // Refresh available LLMs in the store to sync with ChatInput
+      const { refreshAvailableLLMs } = useLLMStore.getState()
+      refreshAvailableLLMs()
+    }
+  }
+  
+  const handleRemoveCustomModel = (model: string) => {
+    removeCustomVertexModel(model)
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
+  }
 
   return (
     <div className="space-y-6">
@@ -1399,6 +1419,18 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
             <Key className="w-4 h-4 text-muted-foreground" />
             <h4 className="font-medium text-foreground">API Key</h4>
           </div>
+          {/* Info about Anthropic models */}
+          {config.model_id && config.model_id.startsWith('claude-') && (
+            <div className="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-medium mb-1">Anthropic Model Detected</p>
+                  <p className="text-xs">This model requires <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">VERTEX_PROJECT_ID</code> and <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">VERTEX_LOCATION_ID</code> environment variables set on the server. Authentication uses gcloud auth, service account, or Application Default Credentials.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {apiKey && (
             <div className="text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md">
               <div className="flex items-center gap-2">
@@ -1414,10 +1446,10 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                 value={apiKey}
                 onChange={(e) => handleAPIKeyChange(e.target.value)}
                 placeholder="Enter your Vertex AI API key"
-                className="flex-1❇ px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+                className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey)}
+                onClick={() => onTestAPIKey(apiKey, config.model_id)}
                 disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"
@@ -1453,6 +1485,55 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
               {allModels.map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
           </div>
+        </div>
+      </Card>
+
+      {/* Custom Models */}
+      <Card className="p-4">
+        <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
+        
+        {/* Add Custom Model */}
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newCustomModel}
+              onChange={(e) => setNewCustomModel(e.target.value)}
+              placeholder="Enter custom model ID (e.g., gemini-2.0-flash-exp or claude-sonnet-4-5)"
+              className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+              onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()}
+            />
+            <Button
+              onClick={handleAddCustomModel}
+              disabled={!newCustomModel.trim() || allModels.includes(newCustomModel.trim())}
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          
+          {/* Custom Models List */}
+          {customVertexModels.length > 0 && (
+            <div className="space-y-2">
+              <h5 className="text-sm font-medium text-muted-foreground">Custom Models:</h5>
+              <div className="space-y-1">
+                {customVertexModels.map((model) => (
+                  <div key={model} className="flex items-center justify-between bg-muted/50 p-2 rounded-md">
+                    <span className="text-sm text-foreground font-mono">{model}</span>
+                    <Button
+                      onClick={() => handleRemoveCustomModel(model)}
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
       <Card className="p-4">

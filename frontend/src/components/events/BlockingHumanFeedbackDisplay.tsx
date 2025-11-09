@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 
-interface BlockingHumanFeedbackEvent {
+export interface BlockingHumanFeedbackEvent {
   question?: string
   allow_feedback?: boolean
   context?: string
@@ -24,6 +24,7 @@ interface BlockingHumanFeedbackDisplayProps {
   }
   onApprove: (requestId: string, eventData?: BlockingHumanFeedbackEvent & { feedback?: string }) => void
   onSubmitFeedback?: (requestId: string, feedback: string) => void
+  onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state
 }
 
@@ -31,6 +32,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   event,
   onApprove,
   onSubmitFeedback,
+  onFeedbackSubmitted,
   isApproving = false
 }) => {
   const [feedback, setFeedback] = useState<string>('')
@@ -57,6 +59,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         setSubmittedFeedback(feedback.trim())
         setHasSubmitted(true)
         setFeedback('') // Clear feedback after submission
+        
+        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
+        if (onFeedbackSubmitted) {
+          // Use setTimeout to ensure the UI has updated before scrolling
+          setTimeout(() => {
+            onFeedbackSubmitted()
+          }, 100)
+        }
       } catch (error) {
         console.error('Failed to submit feedback:', error)
       } finally {
@@ -80,6 +90,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         })
         setSubmittedFeedback("Approve")
         setHasSubmitted(true)
+        
+        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
+        if (onFeedbackSubmitted) {
+          // Use setTimeout to ensure the UI has updated before scrolling
+          setTimeout(() => {
+            onFeedbackSubmitted()
+          }, 100)
+        }
       } catch (error) {
         console.error('Failed to approve:', error)
       } finally {
@@ -101,6 +119,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         })
         setSubmittedFeedback("Reject")
         setHasSubmitted(true)
+        
+        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
+        if (onFeedbackSubmitted) {
+          // Use setTimeout to ensure the UI has updated before scrolling
+          setTimeout(() => {
+            onFeedbackSubmitted()
+          }, 100)
+        }
       } catch (error) {
         console.error('Failed to reject:', error)
       } finally {
@@ -116,6 +142,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         await onSubmitFeedback(event.data.request_id, "option1")
         setSubmittedFeedback("option1")
         setHasSubmitted(true)
+        
+        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
+        if (onFeedbackSubmitted) {
+          // Use setTimeout to ensure the UI has updated before scrolling
+          setTimeout(() => {
+            onFeedbackSubmitted()
+          }, 100)
+        }
       } catch (error) {
         console.error('Failed to select option 1:', error)
       } finally {
@@ -131,6 +165,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         await onSubmitFeedback(event.data.request_id, "option2")
         setSubmittedFeedback("option2")
         setHasSubmitted(true)
+        
+        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
+        if (onFeedbackSubmitted) {
+          // Use setTimeout to ensure the UI has updated before scrolling
+          setTimeout(() => {
+            onFeedbackSubmitted()
+          }, 100)
+        }
       } catch (error) {
         console.error('Failed to select option 2:', error)
       } finally {
@@ -146,6 +188,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         await onSubmitFeedback(event.data.request_id, "option3")
         setSubmittedFeedback("option3")
         setHasSubmitted(true)
+        
+        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
+        if (onFeedbackSubmitted) {
+          // Use setTimeout to ensure the UI has updated before scrolling
+          setTimeout(() => {
+            onFeedbackSubmitted()
+          }, 100)
+        }
       } catch (error) {
         console.error('Failed to select option 3:', error)
       } finally {

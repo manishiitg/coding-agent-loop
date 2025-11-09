@@ -12,22 +12,22 @@ import (
 	"strings"
 
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llm/vertex"
-	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
+	"mcp-agent/agent_go/internal/llmtypes"
+
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"google.golang.org/genai"
 )
 
-var vertexCmd = &cobra.Command{
-	Use:   "vertex",
-	Short: "Test Vertex AI (Gemini) with API key and tool calling",
-	Run:   runVertex,
+var openaiCmd = &cobra.Command{
+	Use:   "openai",
+	Short: "Test OpenAI (GPT) with API key, tool calling, structured output, and image input",
+	Run:   runOpenAI,
 }
 
-type vertexTestFlags struct {
+type openaiTestFlags struct {
 	model      string
 	apiKey     string
 	withTools  bool
@@ -38,113 +38,93 @@ type vertexTestFlags struct {
 	imageURL   string
 }
 
-var vertexFlags vertexTestFlags
+var openaiFlags openaiTestFlags
 
 func init() {
-	vertexCmd.Flags().StringVar(&vertexFlags.model, "model", "gemini-2.5-flash", "Gemini model to test")
-	vertexCmd.Flags().StringVar(&vertexFlags.apiKey, "api-key", "", "Google API key (or set VERTEX_API_KEY env var)")
-	vertexCmd.Flags().BoolVar(&vertexFlags.withTools, "with-tools", false, "enable tool calling")
-	vertexCmd.Flags().BoolVar(&vertexFlags.withGitHub, "with-github", false, "use GitHub MCP tools for testing")
-	vertexCmd.Flags().BoolVar(&vertexFlags.structured, "structured", false, "test structured JSON output with ResponseSchema")
-	vertexCmd.Flags().StringVar(&vertexFlags.configPath, "config", "configs/mcp_servers_clean_user.json", "MCP config file path")
-	vertexCmd.Flags().StringVar(&vertexFlags.imagePath, "with-image", "", "path to image file to test image input (JPEG, PNG, GIF, WebP)")
-	vertexCmd.Flags().StringVar(&vertexFlags.imageURL, "image-url", "", "URL of image to test image input")
+	openaiCmd.Flags().StringVar(&openaiFlags.model, "model", "gpt-4o", "OpenAI model to test")
+	openaiCmd.Flags().StringVar(&openaiFlags.apiKey, "api-key", "", "OpenAI API key (or set OPENAI_API_KEY env var)")
+	openaiCmd.Flags().BoolVar(&openaiFlags.withTools, "with-tools", false, "enable tool calling")
+	openaiCmd.Flags().BoolVar(&openaiFlags.withGitHub, "with-github", false, "use GitHub MCP tools for testing")
+	openaiCmd.Flags().BoolVar(&openaiFlags.structured, "structured", false, "test structured JSON output with JSON mode")
+	openaiCmd.Flags().StringVar(&openaiFlags.configPath, "config", "configs/mcp_servers_clean_user.json", "MCP config file path")
+	openaiCmd.Flags().StringVar(&openaiFlags.imagePath, "with-image", "", "path to image file to test image input (JPEG, PNG, GIF, WebP)")
+	openaiCmd.Flags().StringVar(&openaiFlags.imageURL, "image-url", "", "URL of image to test image input")
 }
 
-func runVertex(cmd *cobra.Command, args []string) {
+func runOpenAI(cmd *cobra.Command, args []string) {
+	// Load .env file if present
+	if err := godotenv.Load("agent_go/.env"); err == nil {
+		// Environment loaded successfully
+	} else if err := godotenv.Load(".env"); err == nil {
+		// Environment loaded successfully
+	} else if err := godotenv.Load("../.env"); err == nil {
+		// Environment loaded successfully
+	}
+	// Note: If .env file not found, continue with system environment variables
+
 	logFile := viper.GetString("log-file")
 	logLevel := viper.GetString("log-level")
 	InitTestLogger(logFile, logLevel)
 	logger := GetTestLogger()
 
-	// Get API key
-	apiKey := vertexFlags.apiKey
+	// Get API key from environment or flag
+	apiKey := openaiFlags.apiKey
 	if apiKey == "" {
-		if key := os.Getenv("VERTEX_API_KEY"); key != "" {
-			apiKey = key
-		} else if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
-			apiKey = key
-		}
+		apiKey = os.Getenv("OPENAI_API_KEY")
 	}
 	if apiKey == "" {
-		log.Fatal("API key required: set --api-key flag or VERTEX_API_KEY/GOOGLE_API_KEY environment variable")
+		log.Fatal("API key required: set --api-key flag or OPENAI_API_KEY environment variable")
 	}
 
 	// Set API key as environment variable for internal LLM provider to pick up
-	os.Setenv("VERTEX_API_KEY", apiKey)
+	os.Setenv("OPENAI_API_KEY", apiKey)
 
 	ctx := context.Background()
 
 	testType := "image input (default)"
-	if vertexFlags.withTools {
+	if openaiFlags.withTools {
 		testType = "tool calling"
-	} else if vertexFlags.structured {
+	} else if openaiFlags.structured {
 		testType = "structured output"
-	} else if vertexFlags.imagePath != "" || vertexFlags.imageURL != "" {
+	} else if openaiFlags.imagePath != "" || openaiFlags.imageURL != "" {
 		testType = "image input"
 	}
-	logger.Info(fmt.Sprintf("🚀 Testing Vertex AI (%s)", testType))
+	logger.Info(fmt.Sprintf("🚀 Testing OpenAI GPT (%s)", testType))
 
 	// Set default model if not specified
-	modelID := vertexFlags.model
+	modelID := openaiFlags.model
 	if modelID == "" {
-		modelID = "gemini-2.5-flash"
+		modelID = "gpt-4o"
 	}
 
-	// Initialize Vertex AI LLM using internal provider
-	// The internal provider automatically uses vertex.New() which switches to BackendGeminiAPI with API key
+	// Initialize OpenAI LLM using internal provider
 	llmInstance, err := llm.InitializeLLM(llm.Config{
-		Provider:    llm.ProviderVertex,
+		Provider:    llm.ProviderOpenAI,
 		ModelID:     modelID,
 		Temperature: 0.7,
 		Logger:      logger,
-		Context:     ctx,
 	})
 	if err != nil {
-		log.Fatalf("Failed to initialize Vertex LLM: %v", err)
+		log.Fatalf("Failed to initialize OpenAI LLM: %v", err)
 	}
 
 	var tools []llmtypes.Tool
 	var messages []llmtypes.MessageContent
-	var responseSchema *genai.Schema
 
-	if vertexFlags.structured {
-		// Test structured output with ResponseSchema (recipe example from user)
-		logger.Info("📋 Setting up structured output test with ResponseSchema...")
-
-		// Create the ResponseSchema matching the user's example
-		responseSchema = &genai.Schema{
-			Type: genai.TypeArray,
-			Items: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"recipeName": {
-						Type: genai.TypeString,
-					},
-					"ingredients": {
-						Type: genai.TypeArray,
-						Items: &genai.Schema{
-							Type: genai.TypeString,
-						},
-					},
-				},
-				PropertyOrdering: []string{"recipeName", "ingredients"},
-			},
-		}
-
-		// Set context with ResponseSchema
-		ctx = vertex.WithResponseSchema(ctx, responseSchema)
+	if openaiFlags.structured {
+		// Test structured output with JSON mode
+		logger.Info("📋 Setting up structured output test with JSON mode...")
 
 		messages = []llmtypes.MessageContent{
-			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "List a few popular cookie recipes, and include the amounts of ingredients."),
+			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "List a few popular cookie recipes, and include the amounts of ingredients. Return as a JSON array where each recipe has 'recipeName' (string) and 'ingredients' (array of strings)."),
 		}
 
 		logger.Info("✅ Structured output test configured")
-		logger.Info("   Schema: Array of objects with recipeName (string) and ingredients (array of strings)")
-	} else if vertexFlags.withGitHub {
+		logger.Info("   Schema: JSON array of objects with recipeName (string) and ingredients (array of strings)")
+	} else if openaiFlags.withGitHub {
 		// Load GitHub MCP tools
 		logger.Info("🔗 Connecting to GitHub MCP server...")
-		config, err := mcpclient.LoadMergedConfig(vertexFlags.configPath, logger)
+		config, err := mcpclient.LoadMergedConfig(openaiFlags.configPath, logger)
 		if err != nil {
 			log.Fatalf("Failed to load MCP config: %v", err)
 		}
@@ -175,16 +155,13 @@ func runVertex(cmd *cobra.Command, args []string) {
 			log.Fatalf("Failed to convert tools: %v", err)
 		}
 
-		// Normalize tools
-		logger.Info("🔧 Normalizing tools for Gemini compatibility...")
-		mcpclient.NormalizeLLMTools(llmTools)
 		tools = llmTools
 
-		logger.Info(fmt.Sprintf("✅ Normalized %d tools for Gemini", len(tools)))
+		logger.Info(fmt.Sprintf("✅ Converted %d tools for OpenAI", len(tools)))
 		messages = []llmtypes.MessageContent{
 			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "List my GitHub repositories"),
 		}
-	} else if vertexFlags.withTools {
+	} else if openaiFlags.withTools {
 		// Define a simple weather tool
 		weatherTool := llmtypes.Tool{
 			Type: "function",
@@ -207,22 +184,22 @@ func runVertex(cmd *cobra.Command, args []string) {
 		messages = []llmtypes.MessageContent{
 			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "What's the weather in Tokyo?"),
 		}
-	} else if vertexFlags.imagePath != "" || vertexFlags.imageURL != "" {
+	} else if openaiFlags.imagePath != "" || openaiFlags.imageURL != "" {
 		// Test image input
 		logger.Info("🖼️ Setting up image input test...")
 
 		var imageParts []llmtypes.ContentPart
 
-		if vertexFlags.imagePath != "" {
+		if openaiFlags.imagePath != "" {
 			// Load and encode image file
-			logger.Info(fmt.Sprintf("📁 Loading image from file: %s", vertexFlags.imagePath))
-			imageData, err := os.ReadFile(vertexFlags.imagePath)
+			logger.Info(fmt.Sprintf("📁 Loading image from file: %s", openaiFlags.imagePath))
+			imageData, err := os.ReadFile(openaiFlags.imagePath)
 			if err != nil {
 				log.Fatalf("Failed to read image file: %v", err)
 			}
 
 			// Detect MIME type from file extension
-			ext := strings.ToLower(filepath.Ext(vertexFlags.imagePath))
+			ext := strings.ToLower(filepath.Ext(openaiFlags.imagePath))
 			mediaType := mime.TypeByExtension(ext)
 			if mediaType == "" {
 				// Fallback to common types
@@ -251,7 +228,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 			})
 		} else {
 			// Use image URL (from flag or default test URL)
-			imageURL := vertexFlags.imageURL
+			imageURL := openaiFlags.imageURL
 			if imageURL == "" {
 				// Default test image URL - Vertex AI logo
 				imageURL = "https://cdn.prod.website-files.com/657639ebfb91510f45654149/67cef0fb78a461a1580d3c5a_667f5f1018134e3c5a8549c2_AD_4nXfn52WaKNUy839wUllpITpaj7mvuOTR6AOzDk3SypLHLgO-_n8zgt7QJ7rxcLOfOJRWAShjk1dIZRmwuKYLCYFD4qgOq1SCiGFIYbnhDLjD1E0zTdb8cgnCBceLMy7lmCZ3qDUce-gCfJjofiZ9ftDF2m4.webp"
@@ -307,7 +284,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 	// Call with or without tools
 	var resp *llmtypes.ContentResponse
 	if len(tools) > 0 {
-		logger.Info(fmt.Sprintf("📤 Sending %d tools to Gemini...", len(tools)))
+		logger.Info(fmt.Sprintf("📤 Sending %d tools to GPT...", len(tools)))
 
 		// DEBUG: Marshal tools to JSON to see what's actually being sent
 		toolsJSON, _ := json.MarshalIndent(tools, "", "  ")
@@ -317,43 +294,12 @@ func runVertex(cmd *cobra.Command, args []string) {
 		}
 		logger.Info(fmt.Sprintf("🔍 Tools JSON structure (first 2000 chars):\n%s", string(toolsJSON[:jsonLen])))
 
-		// Check specific problematic tools
-		for i, tool := range tools {
-			if tool.Function != nil {
-				// Check for array parameters without items
-				if tool.Function.Parameters != nil {
-					// Convert Parameters to map for compatibility
-					paramsBytes, err := json.Marshal(tool.Function.Parameters)
-					var params map[string]interface{}
-					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
-					}
-					if params != nil {
-						if props, ok := params["properties"].(map[string]interface{}); ok {
-							for propName, propValue := range props {
-								if propMap, ok := propValue.(map[string]interface{}); ok {
-									if propType, ok := propMap["type"].(string); ok && propType == "array" {
-										hasItems := propMap["items"] != nil
-										if !hasItems {
-											logger.Info(fmt.Sprintf("⚠️ Tool %d (%s) has array param %s WITHOUT items!", i, tool.Function.Name, propName))
-										} else {
-											logger.Info(fmt.Sprintf("✅ Tool %d (%s) has array param %s WITH items", i, tool.Function.Name, propName))
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
 		resp, err = llmInstance.GenerateContent(ctx, messages,
 			llmtypes.WithModel(modelID),
 			llmtypes.WithTools(tools))
 	} else {
-		// For structured output, also enable JSON mode
-		if vertexFlags.structured {
+		// For structured output, enable JSON mode
+		if openaiFlags.structured {
 			resp, err = llmInstance.GenerateContent(ctx, messages,
 				llmtypes.WithModel(modelID),
 				llmtypes.WithJSONMode())
@@ -372,6 +318,30 @@ func runVertex(cmd *cobra.Command, args []string) {
 
 	choice := resp.Choices[0]
 
+	// Display token usage if available
+	if choice.GenerationInfo != nil {
+		info := choice.GenerationInfo
+		logger.Info("📊 Token Usage:")
+		if info.InputTokens != nil {
+			logger.Info(fmt.Sprintf("   Input tokens: %v", *info.InputTokens))
+		}
+		if info.OutputTokens != nil {
+			logger.Info(fmt.Sprintf("   Output tokens: %v", *info.OutputTokens))
+		}
+		if info.TotalTokens != nil {
+			logger.Info(fmt.Sprintf("   Total tokens: %v", *info.TotalTokens))
+		}
+		// Check for cache tokens in Additional map
+		if info.Additional != nil {
+			if cacheRead, ok := info.Additional["cache_read_input_tokens"]; ok {
+				logger.Info(fmt.Sprintf("   Cache read tokens: %v", cacheRead))
+			}
+			if cacheCreate, ok := info.Additional["cache_creation_input_tokens"]; ok {
+				logger.Info(fmt.Sprintf("   Cache creation tokens: %v", cacheCreate))
+			}
+		}
+	}
+
 	// Check for tool calls
 	if len(choice.ToolCalls) > 0 {
 		logger.Info(fmt.Sprintf("✅ Success! Detected %d tool call(s)", len(choice.ToolCalls)))
@@ -382,18 +352,43 @@ func runVertex(cmd *cobra.Command, args []string) {
 			})
 		}
 	} else if len(choice.Content) > 0 {
-		if vertexFlags.structured {
+		if openaiFlags.structured {
 			// Validate structured output
 			logger.Info("📋 Validating structured JSON output...")
 
-			// Try to parse as JSON array
+			// Try to parse as JSON - first try array, then object with array property
 			var recipes []map[string]interface{}
 			if err := json.Unmarshal([]byte(choice.Content), &recipes); err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Response is not valid JSON array: %v", err))
-				logger.Info("Response content:", map[string]interface{}{
-					"content": choice.Content,
-				})
-			} else {
+				// Try parsing as object with "cookies" or similar property
+				var obj map[string]interface{}
+				if err2 := json.Unmarshal([]byte(choice.Content), &obj); err2 == nil {
+					// Look for array properties
+					for key, value := range obj {
+						if arr, ok := value.([]interface{}); ok {
+							recipes = make([]map[string]interface{}, 0, len(arr))
+							for _, item := range arr {
+								if recipe, ok := item.(map[string]interface{}); ok {
+									recipes = append(recipes, recipe)
+								}
+							}
+							logger.Info(fmt.Sprintf("   Found %d recipes in '%s' property", len(recipes), key))
+							break
+						}
+					}
+				}
+				if len(recipes) == 0 {
+					logger.Warn(fmt.Sprintf("⚠️ Response is not valid JSON array: %v", err))
+					logger.Info("Response content (first 500 chars):", map[string]interface{}{
+						"content_preview": func() string {
+							if len(choice.Content) > 500 {
+								return choice.Content[:500] + "..."
+							}
+							return choice.Content
+						}(),
+					})
+				}
+			}
+			if len(recipes) > 0 {
 				logger.Info(fmt.Sprintf("✅ Valid JSON array with %d recipe(s)", len(recipes)))
 
 				// Validate structure
@@ -433,3 +428,4 @@ func runVertex(cmd *cobra.Command, args []string) {
 		}
 	}
 }
+

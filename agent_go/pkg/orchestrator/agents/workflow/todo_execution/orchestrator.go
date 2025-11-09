@@ -2,6 +2,7 @@ package todo_execution
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,67 @@ import (
 
 	"mcp-agent/agent_go/internal/llmtypes"
 )
+
+// FlexibleContextOutput handles both string and array formats for context_output
+type FlexibleContextOutput string
+
+// UnmarshalJSON implements custom unmarshaling for FlexibleContextOutput
+// Handles both string and array formats to prevent parsing errors
+func (f *FlexibleContextOutput) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*f = FlexibleContextOutput(str)
+		return nil
+	}
+
+	// Try to unmarshal as array
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		// Convert array to comma-separated string
+		*f = FlexibleContextOutput(strings.Join(arr, ", "))
+		return nil
+	}
+
+	return json.Unmarshal(data, f)
+}
+
+// PlanStep represents a step in the execution plan
+type PlanStep struct {
+	Title               string                `json:"title"`
+	Description         string                `json:"description"`
+	SuccessCriteria     string                `json:"success_criteria"`
+	WhyThisStep         string                `json:"why_this_step"`
+	ContextDependencies []string              `json:"context_dependencies"`
+	ContextOutput       FlexibleContextOutput `json:"context_output"`
+	SuccessPatterns     []string              `json:"success_patterns,omitempty"`
+	FailurePatterns     []string              `json:"failure_patterns,omitempty"`
+	HasLoop             bool                  `json:"has_loop,omitempty"`
+	LoopCondition       string                `json:"loop_condition,omitempty"`
+	MaxIterations       int                   `json:"max_iterations,omitempty"`
+	LoopDescription     string                `json:"loop_description,omitempty"`
+}
+
+// PlanningResponse represents the structured response from plan reading
+type PlanningResponse struct {
+	Steps []PlanStep `json:"steps"`
+}
+
+// TodoStep represents a todo step for execution
+type TodoStep struct {
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	SuccessCriteria     string   `json:"success_criteria"`
+	WhyThisStep         string   `json:"why_this_step"`
+	ContextDependencies []string `json:"context_dependencies"`
+	ContextOutput       string   `json:"context_output"`
+	SuccessPatterns     []string `json:"success_patterns,omitempty"`
+	FailurePatterns     []string `json:"failure_patterns,omitempty"`
+	HasLoop             bool     `json:"has_loop,omitempty"`
+	LoopCondition       string   `json:"loop_condition,omitempty"`
+	MaxIterations       int      `json:"max_iterations,omitempty"`
+	LoopDescription     string   `json:"loop_description,omitempty"`
+}
 
 // TodoStepsExtractedEvent represents todo steps extracted from a plan
 type TodoStepsExtractedEvent struct {
@@ -102,142 +164,196 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 	runWorkspacePath := filepath.Join(workspacePath, "runs", selectedRunFolder)
 	teo.SetWorkspacePath(runWorkspacePath)
 
-	// Parse todo_final.md into structured steps using plan reader agent
-	teo.GetLogger().Infof("📖 Parsing todo_final.md into structured steps using plan reader agent")
-	// Read todo_final.md from workspace root (not from run folder)
-	todoFinalPath := filepath.Join(workspacePath, "todo_final.md")
-	content, err := teo.ReadWorkspaceFile(ctx, todoFinalPath)
+	// Read todo_final.json directly from workspace root
+	teo.GetLogger().Infof("📖 Reading todo_final.json from workspace root")
+	todoFinalJSONPath := filepath.Join(workspacePath, "todo_final.json")
+	planContent, err := teo.ReadWorkspaceFile(ctx, todoFinalJSONPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read todo_final.md: %w", err)
+		return "", fmt.Errorf("failed to read todo_final.json: %w", err)
 	}
 
-	// Revision loop for plan reader with human feedback
-	maxPlanRevisions := 5
-	var humanFeedback string
-	var conversationHistory []llmtypes.MessageContent
-	var steps []TodoStep
+	// Parse JSON directly
+	var planningResponse PlanningResponse
+	if err := json.Unmarshal([]byte(planContent), &planningResponse); err != nil {
+		return "", fmt.Errorf("failed to parse todo_final.json: %w", err)
+	}
 
-	for revisionAttempt := 1; revisionAttempt <= maxPlanRevisions; revisionAttempt++ {
-		teo.GetLogger().Infof("🔄 Plan reader revision attempt %d/%d", revisionAttempt, maxPlanRevisions)
-
-		// Use plan reader agent to parse todo_final.md
-		planReaderAgent, err := teo.createPlanReaderAgent(ctx, revisionAttempt)
-		if err != nil {
-			return "", fmt.Errorf("failed to create plan reader agent: %w", err)
+	// Convert PlanningResponse.Steps to TodoStep array
+	steps := make([]TodoStep, len(planningResponse.Steps))
+	for i, step := range planningResponse.Steps {
+		// Set default max_iterations if not provided and has_loop is true
+		maxIterations := step.MaxIterations
+		if step.HasLoop && maxIterations == 0 {
+			maxIterations = 10 // Default max iterations
 		}
 
-		// Prepare template variables for plan reader agent
-		templateVars := map[string]string{
-			"Objective":     objective,
-			"WorkspacePath": workspacePath,
-			"PlanMarkdown":  content,
-			"FileType":      "todo_final",
-		}
-
-		// Add human feedback to conversation if provided
-		if humanFeedback != "" {
-			feedbackMessage := llmtypes.MessageContent{
-				Role:  llmtypes.ChatMessageTypeHuman,
-				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: humanFeedback}},
-			}
-			conversationHistory = append(conversationHistory, feedbackMessage)
-			teo.GetLogger().Infof("📝 Added human feedback to conversation history for revision %d", revisionAttempt)
-		}
-
-		// Execute plan reader agent to get structured response
-		// The agent will detect variables and use human_feedback tool internally
-		// The agent handles variable resolution internally and doesn't need conversation history accumulation
-		planningResponse, _, err := planReaderAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
-		if err != nil {
-			return "", fmt.Errorf("failed to parse todo_final.md with plan reader agent: %w", err)
-		}
-
-		// Convert PlanningResponse.Steps to TodoStep array
-		steps = make([]TodoStep, len(planningResponse.Steps))
-		for i, step := range planningResponse.Steps {
-			steps[i] = TodoStep{
-				Title:               step.Title,
-				Description:         step.Description,
-				SuccessCriteria:     step.SuccessCriteria,
-				WhyThisStep:         step.WhyThisStep,
-				ContextDependencies: step.ContextDependencies,
-				ContextOutput:       string(step.ContextOutput), // Convert FlexibleContextOutput to string
-				SuccessPatterns:     step.SuccessPatterns,
-				FailurePatterns:     step.FailurePatterns,
-			}
-		}
-
-		teo.GetLogger().Infof("📋 Parsed %d steps from todo_final.md (attempt %d)", len(steps), revisionAttempt)
-
-		// Emit todo steps extracted event (so frontend can display the extracted steps)
-		teo.emitTodoStepsExtractedEvent(ctx, steps, "todo_final_md")
-
-		// Request human approval for the extracted steps
-		approved, feedback, err := teo.requestStepsApproval(ctx, steps, revisionAttempt)
-		if err != nil {
-			return "", fmt.Errorf("failed to get approval for extracted steps: %w", err)
-		}
-
-		if approved {
-			teo.GetLogger().Infof("✅ Steps approved by user on attempt %d, proceeding with execution", revisionAttempt)
-			break // Exit revision loop
-		}
-
-		// User rejected with feedback - prepare for retry
-		teo.GetLogger().Infof("🔄 User requested revision (attempt %d/%d): %s", revisionAttempt, maxPlanRevisions, feedback)
-		humanFeedback = feedback // Store feedback for next attempt
-
-		if revisionAttempt >= maxPlanRevisions {
-			return fmt.Sprintf("Max plan reader revision attempts (%d) reached. Final feedback: %s", maxPlanRevisions, feedback), nil
+		steps[i] = TodoStep{
+			Title:               step.Title,
+			Description:         step.Description,
+			SuccessCriteria:     step.SuccessCriteria,
+			WhyThisStep:         step.WhyThisStep,
+			ContextDependencies: step.ContextDependencies,
+			ContextOutput:       string(step.ContextOutput), // Convert FlexibleContextOutput to string
+			SuccessPatterns:     step.SuccessPatterns,
+			FailurePatterns:     step.FailurePatterns,
+			HasLoop:             step.HasLoop,
+			LoopCondition:       step.LoopCondition,
+			MaxIterations:       maxIterations,
+			LoopDescription:     step.LoopDescription,
 		}
 	}
+
+	teo.GetLogger().Infof("📋 Parsed %d steps from todo_final.json", len(steps))
+
+	// Emit todo steps extracted event (so frontend can display the extracted steps)
+	teo.emitTodoStepsExtractedEvent(ctx, steps, "todo_final_json")
+
+	// Request human approval for the extracted steps
+	approved, feedback, err := teo.requestStepsApproval(ctx, steps, 1)
+	if err != nil {
+		return "", fmt.Errorf("failed to get approval for extracted steps: %w", err)
+	}
+
+	if !approved {
+		teo.GetLogger().Infof("⚠️ User did not approve steps. Feedback: %s", feedback)
+		return fmt.Sprintf("Steps not approved. Feedback: %s", feedback), nil
+	}
+
+	teo.GetLogger().Infof("✅ Steps approved by user, proceeding with execution")
 
 	// Execute each step individually with validation feedback loop
+	// For loop steps, iterate until condition is met or max iterations reached
 
 	for i, step := range steps {
 		teo.GetLogger().Infof("🔄 Executing step %d/%d: %s", i+1, len(steps), step.Title)
 
-		var executionResult string
-		var validationResult string
-		maxAttempts := 3
-		attempt := 1
+		// Initialize loop state for loop steps
+		var loopConditionMet bool
+		var loopIterationCount int
+		var previousIterationOutput string
 
-		for attempt <= maxAttempts {
-			teo.GetLogger().Infof("🔄 Attempt %d/%d for step %d", attempt, maxAttempts, i+1)
-
-			// Execute this specific step
-			var err error
-			var conversationHistory []llmtypes.MessageContent
-			executionResult, conversationHistory, err = teo.runStepExecutionPhase(ctx, step, i+1, len(steps), selectedRunFolder, runOption, validationResult)
-			if err != nil {
-				teo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, attempt, err)
-				executionResult = fmt.Sprintf("Step %d execution failed (attempt %d): %v", i+1, attempt, err)
-				conversationHistory = nil
+		// Main execution loop (either single execution or loop iterations)
+		// For non-loop steps, this executes once. For loop steps, it iterates until condition is met.
+		for loopIteration := 0; ; loopIteration++ {
+			// Initialize loop state on first iteration
+			if loopIteration == 0 && step.HasLoop {
+				loopConditionMet = false
+				loopIterationCount = 0
+				previousIterationOutput = ""
+				teo.GetLogger().Infof("🔄 Step %d loop starting (max iterations: %d, condition: %s)", i+1, step.MaxIterations, step.LoopCondition)
 			}
 
-			// Validate this specific step
-			validationResponse, err := teo.runStepValidationPhase(ctx, step, i+1, len(steps), executionResult, conversationHistory)
-			if err != nil {
-				teo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, attempt, err)
-				break
-			}
-
-			// Check if validation passed
-			if validationResponse.IsObjectiveSuccessCriteriaMet {
-				teo.GetLogger().Infof("✅ Step %d completed successfully on attempt %d: %s", i+1, attempt, validationResponse.Feedback)
-				break
-			} else {
-				teo.GetLogger().Infof("⚠️ Step %d validation failed on attempt %d: %s", i+1, attempt, validationResponse.Feedback)
-				validationResult = validationResponse.Feedback
-
-				if attempt < maxAttempts {
-					teo.GetLogger().Infof("🔄 Retrying step %d with feedback: %s", i+1, validationResponse.Feedback)
-				} else {
-					teo.GetLogger().Warnf("❌ Step %d failed after %d attempts. Final feedback: %s", i+1, maxAttempts, validationResponse.Feedback)
+			// Check loop exit conditions (only for loop steps) - before starting iteration
+			if step.HasLoop {
+				if loopConditionMet {
+					teo.GetLogger().Infof("✅ Step %d loop condition met after %d iterations, exiting loop", i+1, loopIterationCount)
+					break // Exit main loop - proceed to next step
+				}
+				if loopIterationCount >= step.MaxIterations {
+					teo.GetLogger().Errorf("❌ Step %d reached max iterations (%d) without meeting loop condition", i+1, step.MaxIterations)
+					break // Exit main loop - proceed to next step
+				}
+				// Increment iteration count at start of iteration
+				loopIterationCount++
+				if loopIterationCount > 1 {
+					teo.GetLogger().Infof("🔄 Step %d loop iteration %d/%d starting", i+1, loopIterationCount, step.MaxIterations)
 				}
 			}
 
-			attempt++
+			var executionResult string
+			var validationResult string
+			maxAttempts := 3
+			attempt := 1
+
+			// Retry loop for execution and validation
+			for attempt <= maxAttempts {
+				teo.GetLogger().Infof("🔄 Attempt %d/%d for step %d", attempt, maxAttempts, i+1)
+				if step.HasLoop {
+					teo.GetLogger().Infof("   (Loop iteration %d/%d)", loopIterationCount, step.MaxIterations)
+				}
+
+				// Execute this specific step
+				// For loop steps, use current iteration count (already incremented)
+				// For non-loop steps, use 0
+				currentIteration := loopIterationCount
+				if !step.HasLoop {
+					currentIteration = 0
+				}
+
+				var err error
+				var conversationHistory []llmtypes.MessageContent
+				executionResult, conversationHistory, err = teo.runStepExecutionPhase(ctx, step, i+1, len(steps), selectedRunFolder, runOption, validationResult, previousIterationOutput, currentIteration, step.MaxIterations)
+				if err != nil {
+					teo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, attempt, err)
+					executionResult = fmt.Sprintf("Step %d execution failed (attempt %d): %v", i+1, attempt, err)
+					conversationHistory = nil
+				}
+
+				// Validate this specific step
+				validationResponse, err := teo.runStepValidationPhase(ctx, step, i+1, len(steps), executionResult, conversationHistory)
+				if err != nil {
+					teo.GetLogger().Warnf("⚠️ Step %d validation failed (attempt %d): %v", i+1, attempt, err)
+					break
+				}
+
+				// For loop steps, check loop condition instead of full validation
+				if step.HasLoop {
+					if validationResponse.LoopConditionMet {
+						teo.GetLogger().Infof("✅ Step %d loop condition met on iteration %d: %s", i+1, loopIterationCount, validationResponse.LoopReasoning)
+						loopConditionMet = true
+						break // Exit retry loop - loop condition met
+					} else {
+						// Format feedback for logging
+						feedbackStr := formatValidationFeedback(validationResponse.Feedback)
+						if validationResponse.LoopReasoning != "" {
+							feedbackStr = validationResponse.LoopReasoning + "\n" + feedbackStr
+						}
+						teo.GetLogger().Infof("⚠️ Step %d loop condition not met (iteration %d): %s", i+1, loopIterationCount, feedbackStr)
+						previousIterationOutput = executionResult
+						// Note: loopIterationCount is incremented at the start of next iteration
+						break // Exit retry loop - continue to next loop iteration
+					}
+				} else {
+					// For non-loop steps, check if validation passed
+					// Format feedback array as string for logging
+					feedbackStr := formatValidationFeedback(validationResponse.Feedback)
+					if validationResponse.Reasoning != "" {
+						feedbackStr = validationResponse.Reasoning + "\n" + feedbackStr
+					}
+
+					if validationResponse.IsSuccessCriteriaMet {
+						teo.GetLogger().Infof("✅ Step %d completed successfully on attempt %d: %s", i+1, attempt, feedbackStr)
+						break // Exit retry loop - step completed
+					} else {
+						teo.GetLogger().Infof("⚠️ Step %d validation failed on attempt %d: %s", i+1, attempt, feedbackStr)
+						validationResult = feedbackStr
+
+						if attempt < maxAttempts {
+							teo.GetLogger().Infof("🔄 Retrying step %d with feedback: %s", i+1, feedbackStr)
+						} else {
+							teo.GetLogger().Warnf("❌ Step %d failed after %d attempts. Final feedback: %s", i+1, maxAttempts, feedbackStr)
+						}
+					}
+				}
+
+				attempt++
+			}
+
+			// If in loop mode and condition not met, continue main loop
+			if step.HasLoop && !loopConditionMet {
+				if loopIterationCount >= step.MaxIterations {
+					break // Exit main loop - max iterations reached
+				}
+				continue // Continue main loop for next iteration
+			}
+
+			// Exit main loop if not in loop mode or loop condition met
+			if !step.HasLoop {
+				break // Exit main execution loop
+			}
+			if loopConditionMet {
+				break // Exit main execution loop
+			}
 		}
 
 		// Results are logged and used for validation within the loop; no aggregation needed
@@ -250,7 +366,7 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 }
 
 // runStepExecutionPhase executes a single step using the execution agent
-func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, selectedRunFolder, runOption, previousFeedback string) (string, []llmtypes.MessageContent, error) {
+func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context, step TodoStep, stepNumber, totalSteps int, selectedRunFolder, runOption, previousFeedback, previousIterationOutput string, currentIteration, maxIterations int) (string, []llmtypes.MessageContent, error) {
 	executionAgent, err := teo.createExecutionAgent(ctx, step.Title, stepNumber, 0)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create execution agent: %w", err)
@@ -271,6 +387,12 @@ func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context,
 		"WorkspacePath":           teo.GetWorkspacePath(), // This now includes runs/{folder}
 		"RunOption":               runOption,
 		"PreviousFeedback":        previousFeedback,
+		"PreviousIterationOutput": previousIterationOutput,
+		"HasLoop":                 fmt.Sprintf("%v", step.HasLoop),
+		"LoopCondition":           step.LoopCondition,
+		"LoopDescription":         step.LoopDescription,
+		"CurrentIteration":        fmt.Sprintf("%d", currentIteration),
+		"MaxIterations":           fmt.Sprintf("%d", maxIterations),
 	}
 
 	executionResult, conversationHistory, err := executionAgent.Execute(ctx, templateVars, nil)
@@ -309,6 +431,7 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 		"StepSuccessCriteria": step.SuccessCriteria,
 		"WorkspacePath":       teo.GetWorkspacePath(), // This now includes runs/{folder}
 		"ExecutionOutput":     conversationHistoryStr, // Pass conversation history instead of just result
+		"LoopCondition":       step.LoopCondition,     // For loop steps: condition to check
 	}
 
 	validationResponse, _, err := todoValidationAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
@@ -365,38 +488,6 @@ func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context,
 	)
 	if err != nil {
 		return nil, err
-	}
-
-	return agent, nil
-}
-
-// createPlanReaderAgent creates a plan reader agent for parsing todo_final.md
-func (teo *TodoExecutionOrchestrator) createPlanReaderAgent(ctx context.Context, revisionAttempt int) (*PlanReaderAgent, error) {
-	// Use CreateAndSetupStandardAgentWithCustomServers instead of manual initialization
-	// This ensures custom tools (workspace + human) are properly registered
-	agentInterface, err := teo.CreateAndSetupStandardAgentWithCustomServers(
-		ctx,
-		"plan-reader-agent",
-		"plan_reading",
-		0,               // No step number (plan reader reads all steps)
-		revisionAttempt, // Use revision attempt as iteration
-		teo.GetMaxTurns(),
-		agents.OutputFormatStructured,
-		[]string{mcpclient.NoServers}, // No MCP servers - plan reader only converts markdown to JSON using workspace tools
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewPlanReaderAgent(config, logger, tracer, eventBridge)
-		},
-		teo.WorkspaceTools,
-		teo.WorkspaceToolExecutors,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create plan reader agent: %w", err)
-	}
-
-	// Cast to PlanReaderAgent
-	agent, ok := agentInterface.(*PlanReaderAgent)
-	if !ok {
-		return nil, fmt.Errorf("failed to cast agent to PlanReaderAgent")
 	}
 
 	return agent, nil
@@ -558,7 +649,20 @@ func (teo *TodoExecutionOrchestrator) createRunFolderStructure(ctx context.Conte
 
 // conversation history formatting moved to shared.FormatConversationHistory
 
-// emitTodoStepsExtractedEvent emits an event when todo steps are extracted from todo_final.md
+// formatValidationFeedback formats a ValidationFeedback array as a string for logging
+func formatValidationFeedback(feedback []ValidationFeedback) string {
+	if len(feedback) == 0 {
+		return "No feedback provided"
+	}
+
+	var parts []string
+	for _, f := range feedback {
+		parts = append(parts, fmt.Sprintf("[%s] %s: %s", f.Severity, f.Type, f.Description))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// emitTodoStepsExtractedEvent emits an event when todo steps are extracted from todo_final.json
 func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []TodoStep, planSource string) {
 	if teo.GetContextAwareBridge() == nil {
 		return
@@ -571,7 +675,7 @@ func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Co
 		},
 		TotalStepsExtracted: len(extractedSteps),
 		ExtractedSteps:      extractedSteps,
-		ExtractionMethod:    "plan_reader_agent",
+		ExtractionMethod:    "direct_json",
 		PlanSource:          planSource,
 	}
 

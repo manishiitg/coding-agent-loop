@@ -113,6 +113,7 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 	for _, msg := range langMessages {
 		// Extract content parts
 		var contentParts []string
+		var imageParts []llmtypes.ImageContent
 		var toolCallID string
 		var toolResponseContent string
 		var toolCalls []llmtypes.ToolCall
@@ -121,6 +122,8 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 			switch p := part.(type) {
 			case llmtypes.TextContent:
 				contentParts = append(contentParts, p.Text)
+			case llmtypes.ImageContent:
+				imageParts = append(imageParts, p)
 			case llmtypes.ToolCallResponse:
 				// Tool response - extract tool call ID and content (use raw content as string)
 				toolCallID = p.ToolCallID
@@ -144,16 +147,43 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 			}
 			openaiMessages = append(openaiMessages, openai.SystemMessage(content))
 		case string(llmtypes.ChatMessageTypeHuman):
-			// User message can have text content
-			content := ""
-			if len(contentParts) > 0 {
-				content = contentParts[0]
-				// If multiple parts, join them
-				for i := 1; i < len(contentParts); i++ {
-					content += "\n" + contentParts[i]
+			// User message can have text and/or images
+			// If images are present, use content array format
+			if len(imageParts) > 0 {
+				// Build content array with text and image parts
+				contentPartsArray := make([]openai.ChatCompletionContentPartUnionParam, 0)
+				
+				// Add text parts
+				for _, text := range contentParts {
+					if text != "" {
+						contentPartsArray = append(contentPartsArray, openai.TextContentPart(text))
+					}
 				}
+				
+				// Add image parts
+				for _, img := range imageParts {
+					imagePart := createImageContentPart(img)
+					if imagePart != nil {
+						contentPartsArray = append(contentPartsArray, *imagePart)
+					}
+				}
+				
+				// Only add message if there's content
+				if len(contentPartsArray) > 0 {
+					openaiMessages = append(openaiMessages, openai.UserMessage(contentPartsArray))
+				}
+			} else {
+				// Text-only message (existing behavior)
+				content := ""
+				if len(contentParts) > 0 {
+					content = contentParts[0]
+					// If multiple parts, join them
+					for i := 1; i < len(contentParts); i++ {
+						content += "\n" + contentParts[i]
+					}
+				}
+				openaiMessages = append(openaiMessages, openai.UserMessage(content))
 			}
-			openaiMessages = append(openaiMessages, openai.UserMessage(content))
 		case string(llmtypes.ChatMessageTypeAI):
 			// Assistant message can have text content or tool calls
 			content := ""
@@ -206,19 +236,68 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 				openaiMessages = append(openaiMessages, openai.ToolMessage(toolResponseContent, toolCallID))
 			}
 		default:
-			// Default to user message
-			content := ""
-			if len(contentParts) > 0 {
-				content = contentParts[0]
-				for i := 1; i < len(contentParts); i++ {
-					content += "\n" + contentParts[i]
+			// Default to user message - can have text and/or images
+			// If images are present, use content array format
+			if len(imageParts) > 0 {
+				// Build content array with text and image parts
+				contentPartsArray := make([]openai.ChatCompletionContentPartUnionParam, 0)
+				
+				// Add text parts
+				for _, text := range contentParts {
+					if text != "" {
+						contentPartsArray = append(contentPartsArray, openai.TextContentPart(text))
+					}
 				}
+				
+				// Add image parts
+				for _, img := range imageParts {
+					imagePart := createImageContentPart(img)
+					if imagePart != nil {
+						contentPartsArray = append(contentPartsArray, *imagePart)
+					}
+				}
+				
+				// Only add message if there's content
+				if len(contentPartsArray) > 0 {
+					openaiMessages = append(openaiMessages, openai.UserMessage(contentPartsArray))
+				}
+			} else {
+				// Text-only message (existing behavior)
+				content := ""
+				if len(contentParts) > 0 {
+					content = contentParts[0]
+					for i := 1; i < len(contentParts); i++ {
+						content += "\n" + contentParts[i]
+					}
+				}
+				openaiMessages = append(openaiMessages, openai.UserMessage(content))
 			}
-			openaiMessages = append(openaiMessages, openai.UserMessage(content))
 		}
 	}
 
 	return openaiMessages
+}
+
+// createImageContentPart creates an OpenAI image content part from ImageContent
+func createImageContentPart(img llmtypes.ImageContent) *openai.ChatCompletionContentPartUnionParam {
+	if img.SourceType == "base64" {
+		// Format base64 as data URL: data:image/<type>;base64,<data>
+		dataURL := fmt.Sprintf("data:%s;base64,%s", img.MediaType, img.Data)
+		imageURLParam := openai.ChatCompletionContentPartImageImageURLParam{
+			URL: dataURL,
+		}
+		imagePart := openai.ImageContentPart(imageURLParam)
+		return &imagePart
+	} else if img.SourceType == "url" {
+		// Use URL directly
+		imageURLParam := openai.ChatCompletionContentPartImageImageURLParam{
+			URL: img.Data,
+		}
+		imagePart := openai.ImageContentPart(imageURLParam)
+		return &imagePart
+	}
+	// Invalid source type
+	return nil
 }
 
 // convertTools converts llmtypes tools to OpenAI tools format

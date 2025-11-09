@@ -38,8 +38,8 @@ type ValidationResponse struct {
 	ExecutionStatus      string               `json:"execution_status"` // COMPLETED/PARTIAL/FAILED/INCOMPLETE
 	Reasoning            string               `json:"reasoning"`
 	Feedback             []ValidationFeedback `json:"feedback"`
-	LoopConditionMet     bool                 `json:"loop_condition_met"` // For loop steps: whether loop condition is met
-	LoopReasoning        string               `json:"loop_reasoning"`     // For loop steps: reasoning for loop condition check
+	LoopConditionMet     bool                 `json:"loop_condition_met,omitempty"` // For loop steps: whether loop condition is met (only when LoopCondition is provided)
+	LoopReasoning        string               `json:"loop_reasoning,omitempty"`     // For loop steps: reasoning for loop condition check (only when LoopCondition is provided)
 }
 
 // HumanControlledTodoPlannerValidationAgent validates if tasks were completed properly
@@ -70,22 +70,25 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 
 // ExecuteStructured executes the validation agent and returns structured output
 func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, []llmtypes.MessageContent, error) {
-	// Define the JSON schema for validation analysis
-	schema := `{
+	// Check if LoopCondition is provided (non-empty)
+	hasLoopCondition := templateVars["LoopCondition"] != "" && strings.TrimSpace(templateVars["LoopCondition"]) != ""
+
+	// Build base schema
+	baseSchema := `{
 		"type": "object",
 		"properties": {
 			"is_success_criteria_met": {
 				"type": "boolean",
-				"description": "Whether the success criteria was met based on execution evidence"
+				"description": "Whether the success criteria was met based on CLEAR, CONCRETE evidence in execution history. Be STRICT - only return true if ALL parts of success criteria have clear evidence and there are NO errors or failures in execution."
 			},
 			"execution_status": {
 				"type": "string",
 				"enum": ["COMPLETED", "PARTIAL", "FAILED", "INCOMPLETE"],
-				"description": "Overall status of step execution"
+				"description": "Overall status of step execution. Use FAILED if there are any errors, tool call failures, or if success criteria is not met. Use COMPLETED only if ALL success criteria are met with clear evidence and NO errors."
 			},
 			"reasoning": {
 				"type": "string",
-				"description": "Detailed reasoning for the validation decision"
+				"description": "Detailed reasoning for the validation decision. MUST explain: (1) What evidence was found (or missing) for each part of success criteria, (2) Any errors or failures in execution history, (3) Why the decision was made (pass/fail). Be specific and reference actual execution history content."
 			},
 			"feedback": {
 				"type": "array",
@@ -108,21 +111,32 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 					},
 					"required": ["type", "description", "severity"]
 				}
-			},
+			}`
+
+	// Conditionally add loop fields to schema
+	var schema string
+	if hasLoopCondition {
+		schema = baseSchema + `,
 			"loop_condition_met": {
 				"type": "boolean",
-				"description": "Whether the loop condition is met (only used when LoopCondition is provided in template vars). Required when checking loop condition."
+				"description": "Whether the loop condition is met. REQUIRED when LoopCondition is provided."
 			},
 			"loop_reasoning": {
 				"type": "string",
-				"description": "Reasoning for loop condition evaluation (only used when LoopCondition is provided). Required when checking loop condition."
+				"description": "Reasoning for loop condition evaluation. REQUIRED when LoopCondition is provided."
 			}
+		},
+		"required": ["is_success_criteria_met", "execution_status", "reasoning", "loop_condition_met", "loop_reasoning"]
+	}`
+	} else {
+		schema = baseSchema + `
 		},
 		"required": ["is_success_criteria_met", "execution_status", "reasoning"]
 	}`
+	}
 
 	// Generate system prompt and user message separately
-	systemPrompt := hctpva.validationSystemPromptProcessor(templateVars)
+	systemPrompt := hctpva.validationSystemPromptProcessor(templateVars, hasLoopCondition)
 	userMessage := hctpva.validationUserMessageProcessor(templateVars)
 
 	// Create a simple input processor that returns the user message
@@ -130,8 +144,23 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 		return userMessage
 	}
 
-	// Use the base orchestrator agent's ExecuteStructured method with system prompt (overwrite=true to replace default MCP prompt with agent-specific prompt)
-	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessor[ValidationResponse](hctpva.BaseOrchestratorAgent, ctx, templateVars, inputProcessor, conversationHistory, schema, systemPrompt, true)
+	// Use the base orchestrator agent's ExecuteStructuredViaTool method with system prompt (overwrite=true to replace default MCP prompt with agent-specific prompt)
+	// Define tool name and description for structured output via tool calls
+	toolName := "submit_validation_result"
+	toolDescription := "Submit the validation analysis result for the step execution. This tool should be called with the structured validation response containing whether the success criteria was met, execution status, reasoning, and feedback."
+
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessorViaTool[ValidationResponse](
+		hctpva.BaseOrchestratorAgent,
+		ctx,
+		templateVars,
+		inputProcessor,
+		conversationHistory,
+		schema,
+		systemPrompt,
+		true,
+		toolName,
+		toolDescription,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -140,10 +169,15 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 }
 
 // validationSystemPromptProcessor generates the system prompt for validation agent
-func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptProcessor(templateVars map[string]string) string {
-	// Create template data
-	templateData := HumanControlledTodoPlannerValidationTemplate{
-		WorkspacePath: templateVars["WorkspacePath"],
+func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptProcessor(templateVars map[string]string, hasLoopCondition bool) string {
+	// Create template data with loop condition flag
+	type SystemPromptTemplate struct {
+		WorkspacePath    string
+		HasLoopCondition bool
+	}
+	templateData := SystemPromptTemplate{
+		WorkspacePath:    templateVars["WorkspacePath"],
+		HasLoopCondition: hasLoopCondition,
 	}
 
 	// Define the system prompt template
@@ -182,15 +216,26 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 
 ## 🔍 VALIDATION PROCESS
 
+**CRITICAL VALIDATION PRINCIPLE**: Be STRICT and CONSERVATIVE. Only mark as successful if there is CLEAR, CONCRETE EVIDENCE that ALL parts of the success criteria were met. If there is ANY doubt, uncertainty, or missing evidence, mark as FAILED.
+
 **General Validation Steps:**
-1. **Review Execution History**: Analyze conversation for evidence of completion
-2. **Check Success Criteria**: Verify if the success criteria was met
-3. **Analyze Tool Usage**: Check which tools were used and their results
-4. **Assess Evidence**: Identify what worked and what didn't
+1. **Review Execution History**: Carefully analyze the ENTIRE conversation for evidence of completion
+2. **Check Success Criteria**: Verify if EACH part of the success criteria was met with concrete evidence
+3. **Analyze Tool Usage**: Check which tools were used, their results, and if they succeeded or failed
+4. **Look for Errors**: Identify ANY errors, failures, incomplete actions, or tool call failures
+5. **Assess Evidence**: Determine if there is SUFFICIENT evidence that the success criteria was met
 
 **Decision Criteria:**
-- ✅ **PASS**: Success criteria met with sufficient evidence
-- ❌ **FAIL**: Success criteria not met or insufficient evidence
+- ✅ **PASS**: Success criteria met with CLEAR, CONCRETE evidence - ALL parts of success criteria verified
+- ❌ **FAIL**: Success criteria NOT met OR insufficient evidence OR any errors/failures in execution OR any part of success criteria not verified
+
+**RED FLAGS (Mark as FAILED if you see):**
+- Any tool call failures or errors in execution history
+- Execution agent says it failed or couldn't complete the task
+- Missing evidence for any part of the success criteria
+- Execution history shows incomplete or partial completion
+- Agent mentions being stuck, unable to proceed, or encountering problems
+- Success criteria requires specific outcomes that are not clearly demonstrated in execution history
 
 ## 🔄 LOOP CONDITION CHECK MODE (When Applicable)
 
@@ -212,17 +257,46 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 
 ## 📤 OUTPUT FORMAT
 
-**RETURN STRUCTURED JSON RESPONSE ONLY**
+**USE THE 'submit_validation_result' TOOL TO SUBMIT YOUR VALIDATION ANALYSIS**
 
-The response should be a JSON object with:
+You MUST call the 'submit_validation_result' tool with your validation analysis. Do NOT return JSON directly in your response - use the tool instead.
+
+The tool accepts a structured object with:
 - is_success_criteria_met: boolean - Whether the success criteria was met based on execution evidence
 - execution_status: string - Overall status (COMPLETED/PARTIAL/FAILED/INCOMPLETE)
 - reasoning: string - Detailed reasoning for the validation decision
 - feedback: array of objects with type, description, and severity (HIGH/MEDIUM/LOW)
-- loop_condition_met: boolean - **REQUIRED when LoopCondition is provided** - Whether the loop condition is met
-- loop_reasoning: string - **REQUIRED when LoopCondition is provided** - Detailed reasoning for loop condition evaluation
+{{if .HasLoopCondition}}
+- loop_condition_met: boolean - **REQUIRED** - Whether the loop condition is met
+- loop_reasoning: string - **REQUIRED** - Detailed reasoning for loop condition evaluation
+{{else}}
+**CRITICAL**: Do NOT include loop_condition_met or loop_reasoning fields in your JSON response. These fields are ONLY used when LoopCondition is provided in the user message. Since LoopCondition is NOT provided, these fields must NOT appear in your response at all.
+{{end}}
 
 **Example JSON structure:**
+{{if .HasLoopCondition}}
+` + "```json" + `
+{
+  "is_success_criteria_met": true,
+  "execution_status": "COMPLETED",
+  "reasoning": "The execution conversation shows clear evidence that the success criteria was met. The agent successfully used MCP tools to accomplish the step objective and provided detailed results.",
+  "feedback": [
+    {
+      "type": "Issue",
+      "description": "Could have provided more detailed tool output",
+      "severity": "LOW"
+    },
+    {
+      "type": "Recommendation",
+      "description": "Include more detailed tool output in future executions",
+      "severity": "LOW"
+    }
+  ],
+  "loop_condition_met": true,
+  "loop_reasoning": "The loop condition was met based on the execution results."
+}
+` + "```" + `
+{{else}}
 ` + "```json" + `
 {
   "is_success_criteria_met": true,
@@ -242,8 +316,9 @@ The response should be a JSON object with:
   ]
 }
 ` + "```" + `
+{{end}}
 
-**Note**: Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.`
+**CRITICAL**: You MUST call the 'submit_validation_result' tool with your validation analysis. The tool will be available to you - use it to submit your structured validation response. Do NOT return JSON directly in your text response. Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("validationSystemPrompt").Parse(templateStr)
@@ -301,7 +376,7 @@ This step is in **LOOP CONDITION CHECK MODE** - you are checking the LOOP CONDIT
 
 **Your Task**: Evaluate if the LOOP CONDITION is met based on the execution results.
 
-Follow the validation process in the system prompt, focusing on loop condition evaluation. Return loop_condition_met and loop_reasoning in your structured JSON response.
+Follow the validation process in the system prompt, focusing on loop condition evaluation. Call the 'submit_validation_result' tool with your validation results, including loop_condition_met and loop_reasoning fields.
 {{else}}
 ## 🧠 **YOUR TASK**
 
@@ -309,7 +384,20 @@ Validate if the step "{{.StepTitle}}" was completed successfully by checking if 
 
 **Success Criteria**: {{.StepSuccessCriteria}}
 
-Follow the validation process in the system prompt. Analyze the execution conversation history and return a structured JSON response with validation results.
+**CRITICAL INSTRUCTIONS:**
+1. **Be STRICT**: Only mark as successful if there is CLEAR, CONCRETE evidence that ALL parts of the success criteria were met
+2. **Check for Errors**: Look for ANY tool call failures, errors, or incomplete actions in the execution history
+3. **Verify Each Part**: Verify that EACH part of the success criteria has corresponding evidence in the execution history
+4. **If in Doubt, FAIL**: If there is ANY uncertainty or missing evidence, mark as FAILED
+5. **Look for Failure Indicators**: Check if the execution agent mentioned failures, being stuck, or inability to complete the task
+
+**Validation Checklist:**
+- [ ] All parts of success criteria have clear evidence in execution history
+- [ ] No tool call failures or errors in execution
+- [ ] Execution agent did not report any failures or problems
+- [ ] Success criteria outcomes are clearly demonstrated
+
+Follow the validation process in the system prompt. Analyze the execution conversation history CAREFULLY and call the 'submit_validation_result' tool with your validation results.
 {{end}}`
 
 	// Parse and execute the template

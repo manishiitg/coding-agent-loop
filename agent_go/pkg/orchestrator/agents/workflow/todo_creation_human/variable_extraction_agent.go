@@ -52,7 +52,78 @@ func NewVariableExtractionAgent(
 	}
 }
 
+// ExecuteStructured executes the variable extraction agent and returns structured JSON output
+func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*VariablesManifest, []llmtypes.MessageContent, error) {
+	// Define the JSON schema for variable extraction
+	schema := `{
+		"type": "object",
+		"properties": {
+			"objective": {
+				"type": "string",
+				"description": "The templated objective with {{VARIABLE_NAME}} placeholders replacing hard-coded values"
+			},
+			"variables": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"name": {
+							"type": "string",
+							"description": "Variable name in UPPER_SNAKE_CASE format (e.g., AWS_ACCOUNT_ID)"
+						},
+						"value": {
+							"type": "string",
+							"description": "Original hard-coded value from the objective"
+						},
+						"description": {
+							"type": "string",
+							"description": "Clear description of what this variable represents"
+						}
+					},
+					"required": ["name", "value", "description"]
+				}
+			},
+			"extraction_date": {
+				"type": "string",
+				"description": "ISO 8601 timestamp of when variables were extracted (e.g., 2025-01-27T14:30:25Z)"
+			}
+		},
+		"required": ["objective", "variables", "extraction_date"]
+	}`
+
+	// Generate system prompt using the processor
+	systemPrompt := variableExtractionSystemPromptProcessor(templateVars)
+
+	// Create a simple input processor that returns the extraction instruction
+	inputProcessor := func(map[string]string) string {
+		return "Extract variables from the objective and call submit_variable_extraction_response tool with the structured output."
+	}
+
+	// Use ExecuteStructuredWithInputProcessorViaTool with generics
+	toolName := "submit_variable_extraction_response"
+	toolDescription := "Submit the final structured variable extraction response in JSON format. This tool should be called when you have completed variable extraction and are ready to provide the structured output."
+
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessorViaTool[VariablesManifest](
+		vea.BaseOrchestratorAgent,
+		ctx,
+		templateVars,
+		inputProcessor,
+		conversationHistory,
+		schema,
+		systemPrompt,
+		false, // Don't overwrite system prompt, append to it
+		toolName,
+		toolDescription,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &result, updatedHistory, nil
+}
+
 // Execute extracts variables from objective
+// NOTE: This method is deprecated - use ExecuteStructured() instead for better type safety and reliability
 func (vea *VariableExtractionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	return vea.ExecuteWithInputProcessor(ctx, templateVars, vea.variableExtractionInputProcessor, conversationHistory)
 }
@@ -169,12 +240,99 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 	// Parse and execute the template
 	tmpl, err := template.New("variable_extraction").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing template: %w", err)
+		return fmt.Sprintf("Error parsing template: %v", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing template: %w", err)
+		return fmt.Sprintf("Error executing template: %v", err)
+	}
+
+	return result.String()
+}
+
+// variableExtractionSystemPromptProcessor generates the system prompt for variable extraction
+func variableExtractionSystemPromptProcessor(templateVars map[string]string) string {
+	templateData := struct {
+		Objective     string
+		WorkspacePath string
+	}{
+		Objective:     templateVars["Objective"],
+		WorkspacePath: templateVars["WorkspacePath"],
+	}
+
+	templateStr := `## 🤖 AGENT IDENTITY
+- **Role**: Variable Extraction Agent
+- **Responsibility**: Identify hard-coded values in objective and convert them to reusable variables
+- **Output Format**: Structured JSON via submit_variable_extraction_response tool (not markdown, not files)
+
+## 🎯 PRIMARY TASK - EXTRACT VARIABLES FROM OBJECTIVE
+
+**YOUR INPUT - THE OBJECTIVE TO ANALYZE:**
+{{.Objective}}
+
+**WORKSPACE**: {{.WorkspacePath}}
+
+## 🎯 YOUR JOB - READ CAREFULLY
+
+**Extract variables from the OBJECTIVE TEXT shown above.**
+
+**Process:**
+1. Look at the OBJECTIVE text above - that is your ONLY data source
+2. **PRIORITY**: If the user explicitly mentions variables (e.g., "variables:", "AWS_ACCOUNT_ID=123", lists variables), extract those FIRST and use them as-is
+3. Find hard-coded values in that objective text (URLs, account IDs, passwords, etc.) and convert them to variables
+4. DO NOT search the workspace - only use the objective text above
+
+## 📋 WHAT TO EXTRACT
+
+**PRIORITY - User-Mentioned Variables:**
+- If the user explicitly mentions variables (e.g., "variables:", "AWS_ACCOUNT_ID=123", variable lists), extract those FIRST with their exact names and values
+
+**Extract These Types of Values:**
+- URLs (https://github.com/user/repo), account IDs (123456789), ports (3306)
+- Credentials (passwords, API keys), resource names (mydb-prod, s3-bucket)
+- Environment values (us-east-1, production), hosts/endpoints
+- Specific identifiers, paths, configurations
+
+**DO NOT Extract:**
+- Generic terms (repository, database, account - these are descriptive)
+- Action words (deploy, configure, setup)
+- Technology names (Spring Boot, React, PostgreSQL)
+
+**For Each Value:**
+1. Generate UPPER_SNAKE_CASE variable name
+2. Keep original value
+3. Add description of what it represents
+4. Replace in objective with {{"{{"}}VARIABLE_NAME{{"}}"}}
+
+## 🔑 CRITICAL RULES
+
+1. **User-mentioned variables take PRIORITY** - if user explicitly lists variables, use those FIRST with exact names and values
+2. **Every hard-coded VALUE** must become a variable (or skip if already covered by user-mentioned variables)
+3. **Preserve the objective structure** - only replace values with {{"{{"}}VARS{{"}}"}}
+4. **Use descriptive variable names** - UPPER_SNAKE_CASE, descriptive (or user-provided names)
+5. **Provide clear descriptions** - what does this variable represent?
+6. **DO NOT** search the entire workspace or create files - use structured output tool instead
+
+` + GetTodoCreationHumanMemoryRequirements() + `
+
+## 📤 OUTPUT REQUIREMENTS
+
+**CRITICAL**: 
+- Call submit_variable_extraction_response tool with structured JSON data when extraction is complete
+- Do NOT read/write files, include markdown formatting, or output JSON in text - just call the tool with structured data
+- The tool expects a JSON object with: objective (string), variables (array), extraction_date (ISO 8601 string)
+`
+
+	// Parse and execute the template
+	tmpl, err := template.New("variable_extraction_system_prompt").Parse(templateStr)
+	if err != nil {
+		return fmt.Sprintf("Error parsing variable extraction system prompt template: %v", err)
+	}
+
+	var result strings.Builder
+	if err := tmpl.Execute(&result, templateData); err != nil {
+		return fmt.Sprintf("Error executing variable extraction system prompt template: %v", err)
 	}
 
 	return result.String()

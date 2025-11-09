@@ -179,6 +179,7 @@ func convertMessages(langMessages []llmtypes.MessageContent) ([]anthropic.Messag
 	for _, msg := range langMessages {
 		// Extract content parts
 		var contentParts []string
+		var imageParts []llmtypes.ImageContent
 		var toolCallID string
 		var toolResponseContent string
 		var toolCalls []llmtypes.ToolCall
@@ -187,6 +188,8 @@ func convertMessages(langMessages []llmtypes.MessageContent) ([]anthropic.Messag
 			switch p := part.(type) {
 			case llmtypes.TextContent:
 				contentParts = append(contentParts, p.Text)
+			case llmtypes.ImageContent:
+				imageParts = append(imageParts, p)
 			case llmtypes.ToolCallResponse:
 				// Tool response - extract tool call ID and content
 				toolCallID = p.ToolCallID
@@ -205,19 +208,30 @@ func convertMessages(langMessages []llmtypes.MessageContent) ([]anthropic.Messag
 				systemMessage = strings.Join(contentParts, "\n")
 			}
 		case string(llmtypes.ChatMessageTypeHuman):
-			// User message
-			content := ""
+			// User message - can have text and/or images
+			contentBlocks := []anthropic.ContentBlockParamUnion{}
+
+			// Add text content if present
 			if len(contentParts) > 0 {
-				content = strings.Join(contentParts, "\n")
+				content := strings.Join(contentParts, "\n")
+				contentBlocks = append(contentBlocks, anthropic.NewTextBlock(content))
 			}
 
-			// Create text content block using helper
-			contentBlock := anthropic.NewTextBlock(content)
+			// Add image content blocks if present
+			for _, img := range imageParts {
+				imageBlock := createImageBlock(img)
+				if imageBlock != nil {
+					contentBlocks = append(contentBlocks, *imageBlock)
+				}
+			}
 
-			anthropicMessages = append(anthropicMessages, anthropic.MessageParam{
-				Role:    anthropic.MessageParamRoleUser,
-				Content: []anthropic.ContentBlockParamUnion{contentBlock},
-			})
+			// Only add message if there's content
+			if len(contentBlocks) > 0 {
+				anthropicMessages = append(anthropicMessages, anthropic.MessageParam{
+					Role:    anthropic.MessageParamRoleUser,
+					Content: contentBlocks,
+				})
+			}
 		case string(llmtypes.ChatMessageTypeAI):
 			// Assistant message can have text content or tool calls
 			content := ""
@@ -275,22 +289,52 @@ func convertMessages(langMessages []llmtypes.MessageContent) ([]anthropic.Messag
 				})
 			}
 		default:
-			// Default to user message
-			content := ""
+			// Default to user message - can have text and/or images
+			contentBlocks := []anthropic.ContentBlockParamUnion{}
+
+			// Add text content if present
 			if len(contentParts) > 0 {
-				content = strings.Join(contentParts, "\n")
+				content := strings.Join(contentParts, "\n")
+				contentBlocks = append(contentBlocks, anthropic.NewTextBlock(content))
 			}
 
-			contentBlock := anthropic.NewTextBlock(content)
+			// Add image content blocks if present
+			for _, img := range imageParts {
+				imageBlock := createImageBlock(img)
+				if imageBlock != nil {
+					contentBlocks = append(contentBlocks, *imageBlock)
+				}
+			}
 
-			anthropicMessages = append(anthropicMessages, anthropic.MessageParam{
-				Role:    anthropic.MessageParamRoleUser,
-				Content: []anthropic.ContentBlockParamUnion{contentBlock},
-			})
+			// Only add message if there's content
+			if len(contentBlocks) > 0 {
+				anthropicMessages = append(anthropicMessages, anthropic.MessageParam{
+					Role:    anthropic.MessageParamRoleUser,
+					Content: contentBlocks,
+				})
+			}
 		}
 	}
 
 	return anthropicMessages, systemMessage
+}
+
+// createImageBlock creates an Anthropic image content block from ImageContent
+func createImageBlock(img llmtypes.ImageContent) *anthropic.ContentBlockParamUnion {
+	if img.SourceType == "base64" {
+		// Use helper function for base64 images
+		imageBlock := anthropic.NewImageBlockBase64(img.MediaType, img.Data)
+		return &imageBlock
+	} else if img.SourceType == "url" {
+		// Create URL image source and use NewImageBlock
+		urlSource := anthropic.URLImageSourceParam{
+			URL: img.Data,
+		}
+		imageBlock := anthropic.NewImageBlock(urlSource)
+		return &imageBlock
+	}
+	// Invalid source type
+	return nil
 }
 
 // convertTools converts llmtypes tools to Anthropic tool format

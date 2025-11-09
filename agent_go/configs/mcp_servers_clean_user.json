@@ -22,7 +22,7 @@
       "args": ["mcp-google-sheets@latest"],
       "env": {
         "SERVICE_ACCOUNT_PATH": "/Users/mipl/ai-work/mcp-agent/agent_go/service-account.json",
-        "DRIVE_FOLDER_ID": "1KAhwqrp37tqTRTQzX_XwBnOpzOn2FiO3"
+        "DRIVE_FOLDER_ID": "1Am2CJ8x1Ru9JsbZ3Q45otxqLiQyPeWoi"
       }
     },
     "gmail": {
@@ -44,10 +44,6 @@
         "TAVILY_API_KEY": "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"
       },
       "description": "Advanced web search for validation and research"
-    },
-    "excel": {
-      "command": "uvx",
-      "args": ["excel-mcp-server", "stdio"]
     }
   }
 }

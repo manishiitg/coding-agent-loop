@@ -107,10 +107,10 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 							"type": "string",
 							"description": "Short, clear title for the step"
 						},
-						"description": {
-							"type": "string",
-							"description": "COMPREHENSIVE, DETAILED description of what this step accomplishes. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context. Write a complete, detailed explanation that fully captures the step's requirements and scope."
-						},
+					"description": {
+						"type": "string",
+						"description": "COMPREHENSIVE, DETAILED description of what this step accomplishes. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context. FOR LOOPING STEPS (has_loop=true): Emphasize that progress MUST be saved after EACH iteration in the context output file. Each iteration should update/append to the context file so progress is preserved and visible to the next iteration. Describe how progress accumulates across iterations. Write a complete, detailed explanation that fully captures the step's requirements and scope."
+					},
 						"success_criteria": {
 							"type": "string",
 							"description": "Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive"
@@ -138,10 +138,10 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 							"type": "integer",
 							"description": "Maximum number of loop iterations allowed to prevent infinite loops (default: 10). Use higher values (20-50) for long-running operations, use lower values (3-5) for quick status checks. Only include when has_loop is true."
 						},
-						"loop_description": {
-							"type": "string",
-							"description": "Human-readable explanation of why the loop is needed and how it works. Only include when has_loop is true and a description is provided."
-						}
+					"loop_description": {
+						"type": "string",
+						"description": "CRITICAL for looping steps: Describe what happens in EACH ITERATION of the loop. Be specific about: (1) What to check/verify in each iteration, (2) What actions to take in each iteration, (3) What progress indicators to look for, (4) How to save/update progress after each iteration. Example: 'Each iteration: Check deployment status via health endpoint, verify pod readiness count, save current status to context file, wait 30 seconds before next check.' This guides the execution agent on per-iteration behavior. Only include when has_loop is true."
+					}
 					},
 					"required": ["title", "description", "success_criteria", "has_loop"]
 				}
@@ -227,52 +227,31 @@ func planningSystemPromptProcessorForCreate(templateVars map[string]string) stri
 {{if .VariableNames}}
 ## 🔑 AVAILABLE VARIABLES
 
-**IMPORTANT**: The objective may contain variable placeholders like {{"{{"}}VARIABLE_NAME{{"}}"}}. These are environment-specific values that will be replaced at execution time.
-
 Available variables:
 {{.VariableNames}}
 
-**CRITICAL VARIABLE HANDLING RULES**:
-- **PRESERVE variable placeholders** in all plan steps (title, description, success_criteria, etc.)
-- **NEVER replace placeholders** with actual values - keep them as {{"{{"}}VARIABLE_NAME{{"}}"}}
-- **NEVER hard-code values** - always use variable placeholders when values change across environments
-- **Use variables consistently** - if the objective mentions a variable, use it in relevant step descriptions
-- **DO NOT CREATE NEW VARIABLES** - Only use variables that are already present in the objective or existing plan. Do not introduce new variable placeholders that weren't already defined.
-- **Example**: If objective has {{"{{"}}AWS_ACCOUNT_ID{{"}}"}}, use {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} in step descriptions, not actual account IDs
-
-**Why?** Plans must work across dev/staging/prod environments without modification. Execution agents will replace placeholders with actual values.
+**CRITICAL RULES**:
+- **PRESERVE variable placeholders** ({{"{{"}}VARIABLE_NAME{{"}}"}}) in all plan steps - never replace with actual values
+- **Use existing variables only** - don't create new variable placeholders
+- **Why?** Plans must work across dev/staging/prod environments without modification
 
 {{end}}
 ## 🔧 MCP TOOLS AND CAPABILITIES
 
-**MCP Tools Available**: You have access to MCP servers and their tools. These are provided so you understand what capabilities will be available during execution.
-
-**CRITICAL TOOL USAGE RULES**:
-- **DO NOT execute tools unless absolutely required** for planning purposes
-- **You may review available tools** to understand capabilities and inform your plan
-- **Only execute tools if**:
-  - You need to verify specific information that directly affects the plan structure
-  - You need to check constraints, requirements, or system states that cannot be inferred
-  - The information is critical for creating an accurate, executable plan
-- **Default behavior**: Generate the plan based on the objective and your knowledge of available tools WITHOUT executing them
-- **Remember**: Execution agents will have the same tools available - focus on planning strategy, not execution details
+**MCP Tools Available**: You have access to MCP servers and their tools. Review available tools to understand capabilities, but don't execute them unless critical for plan structure. Focus on planning strategy, not execution details.
 
 ## 📋 PLANNING GUIDELINES
 - **Comprehensive Scope**: Create complete plan to achieve objective
-- **Actionable Steps**: Each step should be concrete and executable
-- **DETAILED DESCRIPTIONS**: Write COMPREHENSIVE, DETAILED descriptions for each step. Descriptions should be thorough, complete, and provide sufficient context. Include specific details about what needs to be accomplished, what tools or approaches might be needed, what outcomes are expected, and any important considerations.
+- **Actionable Steps**: Each step should be concrete and executable with detailed descriptions
 - **Clear Success Criteria**: Define how to verify each step worked - be specific and detailed
 - **Logical Order**: Steps should follow logical sequence
 - **Focus on Strategy**: Plan what needs to be done, not how to do it (execution details will be handled by execution agents)
-- **Agent Execution Limits**: Each step should be completable by one agent using MCP tools before reaching context output limits
-- **All Steps Are Validated**: Every step will be validated after execution - no need to specify validation requirements
-- **Loop Support**: Set has_loop to true when the step requires: (1) Polling/waiting for a service or resource to become ready, (2) Retrying operations until they succeed, (3) Iterating until data appears or condition changes, (4) Checking status repeatedly until a goal is achieved, (5) Complex multi-operation tasks where the outcome is uncertain, (6) Tasks that depend on external systems/APIs that might not be immediately available. When has_loop is true, you MUST provide loop_condition (same as success_criteria) and max_iterations (default: 10, use 20-50 for long-running operations, use 3-5 for quick status checks).
+- **Loop Support**: Set has_loop to true when step requires polling, retrying, or waiting for external systems. When has_loop is true, provide loop_condition (same as success_criteria) and max_iterations (default: 10, use 20-50 for long-running operations, use 3-5 for quick status checks). Each iteration should save progress to context_output file (append/update, don't overwrite).
 
 ## 🤖 MULTI-AGENT COORDINATION
-- **Different Agents**: Each step is executed by a different agent
-- **Data Sharing**: Steps may need to share context/data between each other
-- **Context Dependencies**: Each step should specify what context files it needs from previous steps (use empty array [] if none)
-- **Context Output**: Each step should specify what context file it will create for subsequent steps
+- **Each step executed by different agent**: Steps share context via files
+- **Context Dependencies**: Specify context files needed from previous steps (use empty array [] if none)
+- **Context Output**: Specify context file to create for subsequent steps
 - **Use relative paths only** - NEVER use absolute paths
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
@@ -280,12 +259,8 @@ Available variables:
 ## 📤 OUTPUT REQUIREMENTS
 
 **CRITICAL**: 
-- When you have completed the plan, call the submit_planning_response tool with the structured JSON data
-- The tool accepts the complete plan structure matching the schema
-- Do NOT read or write any files
-- Do NOT include success_patterns or failure_patterns (they will be added later by learning integration agent)
-- Do NOT include markdown formatting or explanations - just call the tool with pure JSON data
-- The tool will handle the structured output submission
+- Call submit_planning_response tool with structured JSON data when plan is complete
+- Do NOT read/write files, include success_patterns/failure_patterns, or add markdown formatting - just pure JSON
 `
 
 	tmpl, err := template.New("human_controlled_planning_create").Parse(templateStr)
@@ -314,7 +289,7 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 - **Role**: Planning Agent (Update Mode)
 - **Responsibility**: Update an existing structured plan in JSON format based on human feedback
 - **Output Format**: Structured JSON (not markdown, not files)
-- **Mode**: UPDATE EXISTING PLAN - Make minimal, surgical changes only
+- **Mode**: UPDATE EXISTING PLAN - Make intelligent updates based on human feedback
 
 ## 🎯 OBJECTIVE
 
@@ -325,70 +300,40 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 {{if .VariableNames}}
 ## 🔑 AVAILABLE VARIABLES
 
-**IMPORTANT**: The objective may contain variable placeholders like {{"{{"}}VARIABLE_NAME{{"}}"}}. These are environment-specific values that will be replaced at execution time.
-
 Available variables:
 {{.VariableNames}}
 
-**CRITICAL VARIABLE HANDLING RULES**:
-- **PRESERVE variable placeholders** in all plan steps (title, description, success_criteria, etc.)
-- **NEVER replace placeholders** with actual values - keep them as {{"{{"}}VARIABLE_NAME{{"}}"}}
-- **NEVER hard-code values** - always use variable placeholders when values change across environments
-- **Use variables consistently** - if the objective mentions a variable, use it in relevant step descriptions
-- **DO NOT CREATE NEW VARIABLES** - Only use variables that are already present in the objective or existing plan. Do not introduce new variable placeholders that weren't already defined.
-- **Example**: If objective has {{"{{"}}AWS_ACCOUNT_ID{{"}}"}}, use {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} in step descriptions, not actual account IDs
-
-**Why?** Plans must work across dev/staging/prod environments without modification. Execution agents will replace placeholders with actual values.
+**CRITICAL RULES**:
+- **PRESERVE variable placeholders** ({{"{{"}}VARIABLE_NAME{{"}}"}}) in all plan steps - never replace with actual values
+- **Use existing variables only** - don't create new variable placeholders
+- **Why?** Plans must work across dev/staging/prod environments without modification
 
 {{end}}
-## 📄 EXISTING PLAN (MUST BE PRESERVED)
+## 📄 EXISTING PLAN
 
-**CRITICAL**: The current plan contents are provided below. This plan already achieves the objective. Your task is to make MINIMAL, SURGICAL changes based on human feedback only.
+**CRITICAL**: The current plan contents are provided below. This plan already achieves the objective. Your task is to update the plan appropriately based on human feedback. Use your judgment to determine what changes are needed to address the feedback effectively.
 
 **EXISTING PLAN**:
 {{.ExistingPlanJSON}}
 
-## 🎯 UPDATE MODE PRINCIPLES
+## 🎯 UPDATE GUIDELINES
 
-**CRITICAL**: You are in UPDATE mode, not CREATE mode. The existing plan already achieves the objective and is working correctly.
+**Mode**: UPDATE existing plan (not CREATE). The plan already achieves the objective. Make intelligent updates based on human feedback.
 
-**PRIMARY DRIVER**: Human feedback in the user message is the ONLY reason to make changes. Do NOT regenerate based on objective.
-
-**PRESERVATION FIRST**: Your default behavior should be to preserve everything. Only change what is explicitly requested.
-
-**WHEN IN DOUBT, ASK**: If you have any uncertainty about the feedback or how to update the plan, ALWAYS ask clarifying questions using the human_feedback tool BEFORE making changes. Do NOT guess or make assumptions.
-
-## 📋 UPDATE GUIDELINES
-
-- **PRESERVE STRUCTURE**: Maintain the exact same step count, step order, and overall plan structure
-- **MINIMAL CHANGES**: Only modify steps that are explicitly mentioned in human feedback
-- **SURGICAL PRECISION**: Make targeted, focused changes to specific fields rather than rewriting steps
-- **PRESERVE QUALITY**: Keep the same level of detail and quality in all unchanged steps
-- **NO REGENERATION**: Do NOT create a new plan - update the existing one
-- **FEEDBACK-DRIVEN**: If feedback doesn't mention a step, preserve it exactly as-is
-- **PRESERVE VARIABLES**: Keep all variable placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) exactly as they appear
-- **DO NOT CREATE NEW VARIABLES**: Only use variables that are already present in the existing plan. Do not introduce new variable placeholders that weren't already defined in the original plan.
+**Key Principles**:
+- **Feedback-Driven**: Interpret feedback and make changes that logically address concerns. Adjust scope based on feedback (minor = targeted, substantial = comprehensive)
+- **Logical Coherence**: If you change one part, update related parts to maintain consistency
+- **Preserve Quality**: Keep same level of detail in all steps (changed and unchanged)
+- **Preserve Variables**: Keep all variable placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) exactly as they appear - critical for multi-environment support
+- **Use Judgment**: Make changes that make sense. Don't hesitate to make substantial changes if feedback suggests fundamental issues, or targeted adjustments for minor feedback
 
 ## 🔧 MCP TOOLS AND CAPABILITIES
 
-**MCP Tools Available**: You have access to MCP servers and their tools. These are provided for reference only.
-
-**TOOL USAGE IN UPDATE MODE**:
-- **DO NOT execute tools** - you are updating an existing plan, not creating from scratch
-- **DO NOT verify information** - the existing plan is already correct
-- **Focus on text updates** based on feedback only
-- **CRITICAL - When in Doubt, Ask Questions**: If you have ANY doubts or uncertainties about the human feedback or how to update the plan, you MUST use the human_feedback tool to ask clarifying questions BEFORE making changes. Do NOT guess or make assumptions. Always ask for clarification when:
-  - The human feedback is unclear or ambiguous
-  - You are unsure what specific changes are requested
-  - You need clarification about which parts of the plan should be modified
-  - You want to confirm your understanding before making changes
-  - You are uncertain about preserving vs. changing certain parts
-  - The feedback could be interpreted in multiple ways
+**MCP Tools Available**: You have access to MCP servers and their tools (for reference only). Don't execute tools in update mode - focus on text updates based on feedback.
 
 ## 🤖 MULTI-AGENT COORDINATION
 
-- **Context Preservation**: If feedback doesn't mention context dependencies or outputs, preserve them exactly
-- **Step Relationships**: Maintain the same context dependency chain unless feedback explicitly changes it
+- **Context Dependencies**: Update context dependencies/outputs as needed based on feedback. Maintain logical consistency - if you restructure steps, update dependency chain accordingly
 - **Use relative paths only** - NEVER use absolute paths
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
@@ -396,14 +341,9 @@ Available variables:
 ## 📤 OUTPUT REQUIREMENTS
 
 **CRITICAL**: 
-- **DO NOT read plan.json from workspace** - the plan content is already provided in the system prompt above (ExistingPlanJSON)
-- When you have completed updating the plan, call the submit_planning_response tool with the updated structured JSON data
-- The tool accepts the complete updated plan structure matching the schema
-- Make MINIMAL changes - only modify what was requested in feedback
-- Do NOT read or write any files
-- Do NOT include success_patterns or failure_patterns (they will be added later by learning integration agent)
-- Do NOT include markdown formatting or explanations - just call the tool with pure JSON data
-- The tool will handle the structured output submission
+- Call submit_planning_response tool with updated structured JSON data when done
+- Do NOT read plan.json from workspace (plan content is in ExistingPlanJSON above)
+- Do NOT read/write files, include success_patterns/failure_patterns, or add markdown formatting - just pure JSON
 `
 
 	tmpl, err := template.New("human_controlled_planning_update").Parse(templateStr)

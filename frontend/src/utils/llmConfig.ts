@@ -14,6 +14,7 @@ export const BEDROCK_MODELS = [
 ];
 
 export const OPENAI_MODELS = [
+  "gpt-4.1",
   "gpt-5",
   "gpt-5-mini",
 ];

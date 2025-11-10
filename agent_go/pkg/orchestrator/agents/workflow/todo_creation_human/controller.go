@@ -3,6 +3,7 @@ package todo_creation_human
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -291,21 +292,47 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 			// Run variable extraction phase (with optional human feedback)
 			var err error
-			variablesManifest, templatedObjective, err = hcpo.runVariableExtractionPhase(ctx, revisionAttempt, variableFeedback, variableConversationHistory)
+			variablesManifest, templatedObjective, variableConversationHistory, err = hcpo.runVariableExtractionPhase(ctx, revisionAttempt, variableFeedback, variableConversationHistory)
 			if err != nil {
+				// Check if this error contains user feedback for next attempt (from non-structured response)
+				errMsg := err.Error()
+				hcpo.GetLogger().Infof("🔍 [DEBUG] Variable extraction phase error detected: %s", errMsg)
+				feedbackPrefix := "VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:"
+				if strings.Contains(errMsg, feedbackPrefix) {
+					hcpo.GetLogger().Infof("✅ [DEBUG] Detected VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK prefix in error")
+					// Extract feedback from error message (handle both wrapped and unwrapped errors)
+					parts := strings.Split(errMsg, feedbackPrefix)
+					if len(parts) > 1 {
+						extractedFeedback := strings.TrimSpace(parts[1])
+						hcpo.GetLogger().Infof("📝 Extracted user feedback from variable extraction text response: %s", extractedFeedback)
+
+						// Use extracted feedback for next iteration
+						variableFeedback = extractedFeedback
+
+						// Continue to next iteration (don't return error - this is expected behavior)
+						if revisionAttempt >= maxVariableRevisions {
+							hcpo.GetLogger().Warnf("⚠️ Max variable extraction revision attempts (%d) reached, continuing without variables", maxVariableRevisions)
+							templatedObjective = objective // Use original objective if extraction fails
+							break
+						}
+						hcpo.GetLogger().Infof("🔄 [DEBUG] Continuing to next variable extraction iteration with extracted feedback")
+						continue
+					} else {
+						hcpo.GetLogger().Warnf("⚠️ [DEBUG] Found prefix but couldn't extract feedback from error: %s", errMsg)
+					}
+				} else {
+					hcpo.GetLogger().Infof("❌ [DEBUG] Error does not contain VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK prefix, treating as real error")
+				}
+				// For other errors, log and continue without variables
 				hcpo.GetLogger().Warnf("⚠️ Variable extraction failed: %v, continuing without variables", err)
 				templatedObjective = objective // Use original objective if extraction fails
 				break
 			}
 
-			// Accumulate conversation history for next iteration
-			variableConversationHistory = append(variableConversationHistory, llmtypes.MessageContent{
-				Role:  llmtypes.ChatMessageTypeAI,
-				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: fmt.Sprintf("Extracted %d variables from objective", len(variablesManifest.Variables))}},
-			})
-
-			hcpo.GetLogger().Infof("✅ Extracted %d variables, templated objective: %s",
-				len(variablesManifest.Variables), templatedObjective)
+			// Use the updated conversation history from the agent (already includes the agent's response)
+			// No need to manually append - the agent's updatedHistory already contains the full conversation
+			hcpo.GetLogger().Infof("✅ Extracted %d variables, templated objective: %s (conversation has %d messages)",
+				len(variablesManifest.Variables), templatedObjective, len(variableConversationHistory))
 
 			// Request human approval for extracted variables
 			approved, feedback, err := hcpo.requestVariableApproval(ctx, variablesManifest, revisionAttempt)
@@ -517,6 +544,35 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			}
 			approvedPlan, planningConversationHistory, err = hcpo.runPlanningPhase(ctx, revisionAttempt, humanFeedback, planningConversationHistory, existingPlanForUpdate)
 			if err != nil {
+				// Check if this error contains user feedback for next attempt (from non-structured response)
+				errMsg := err.Error()
+				hcpo.GetLogger().Infof("🔍 [DEBUG] Planning phase error detected: %s", errMsg)
+				feedbackPrefix := "PLANNING_TEXT_RESPONSE_FEEDBACK:"
+				if strings.Contains(errMsg, feedbackPrefix) {
+					hcpo.GetLogger().Infof("✅ [DEBUG] Detected PLANNING_TEXT_RESPONSE_FEEDBACK prefix in error")
+					// Extract feedback from error message (handle both wrapped and unwrapped errors)
+					// Error might be: "PLANNING_TEXT_RESPONSE_FEEDBACK:feedback" or "planning phase failed: PLANNING_TEXT_RESPONSE_FEEDBACK:feedback"
+					parts := strings.Split(errMsg, feedbackPrefix)
+					if len(parts) > 1 {
+						extractedFeedback := strings.TrimSpace(parts[1])
+						hcpo.GetLogger().Infof("📝 Extracted user feedback from planning text response: %s", extractedFeedback)
+
+						// Use extracted feedback for next iteration
+						humanFeedback = extractedFeedback
+
+						// Continue to next iteration (don't return error - this is expected behavior)
+						if revisionAttempt >= maxPlanRevisions {
+							return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
+						}
+						hcpo.GetLogger().Infof("🔄 [DEBUG] Continuing to next planning iteration with extracted feedback")
+						continue
+					} else {
+						hcpo.GetLogger().Warnf("⚠️ [DEBUG] Found prefix but couldn't extract feedback from error: %s", errMsg)
+					}
+				} else {
+					hcpo.GetLogger().Infof("❌ [DEBUG] Error does not contain PLANNING_TEXT_RESPONSE_FEEDBACK prefix, treating as real error")
+				}
+				// For other errors, return as-is
 				return "", fmt.Errorf("planning phase failed: %w", err)
 			}
 
@@ -1010,6 +1066,51 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 
 	planResponse, updatedConversationHistory, err := planningAgentTyped.ExecuteStructured(ctx, planningTemplateVars, conversationHistory, userMessage)
 	if err != nil {
+		// Debug: Log the error type and message
+		hcpo.GetLogger().Infof("🔍 [DEBUG] Planning agent ExecuteStructured returned error: %T, message: %s", err, err.Error())
+		hcpo.GetLogger().Infof("🔍 [DEBUG] IsNonStructuredResponseError check: %v", agents.IsNonStructuredResponseError(err))
+
+		// Check if this is a non-structured response error (text response instead of structured output)
+		if agents.IsNonStructuredResponseError(err) {
+			hcpo.GetLogger().Infof("✅ [DEBUG] Detected NonStructuredResponseError in runPlanningPhase")
+			var nonStructuredErr *agents.NonStructuredResponseError
+			if errors.As(err, &nonStructuredErr) {
+				// Display the text response to the user and request feedback
+				hcpo.GetLogger().Infof("📝 Planning agent returned conversational text instead of structured output. Displaying to user for feedback.")
+
+				// Generate unique request ID
+				requestID := fmt.Sprintf("planning_text_response_%d_%d", iteration, time.Now().UnixNano())
+
+				// Display the text response and request feedback
+				approved, feedback, feedbackErr := hcpo.RequestHumanFeedback(
+					ctx,
+					requestID,
+					"The planning agent provided the following response instead of a structured plan. Please provide feedback to help it generate a proper structured plan:",
+					nonStructuredErr.TextResponse,
+					hcpo.getSessionID(),
+					hcpo.getWorkflowID(),
+				)
+
+				if feedbackErr != nil {
+					return nil, nil, fmt.Errorf("failed to request human feedback for planning text response: %w", feedbackErr)
+				}
+
+				// If user approved (clicked Approve button), treat as no feedback and continue
+				// Otherwise, use the feedback for next attempt
+				if approved {
+					hcpo.GetLogger().Infof("✅ User approved planning text response, but no structured plan was generated. This is unexpected - returning error.")
+					return nil, nil, fmt.Errorf("planning agent returned text response but user approved without providing feedback to generate structured plan")
+				}
+
+				// User provided feedback - return a special error that the loop can detect and handle
+				// Use a specific error prefix that the loop will recognize
+				// The updated history from the agent's response is included so conversation continues properly
+				feedbackError := fmt.Errorf("PLANNING_TEXT_RESPONSE_FEEDBACK:%s", feedback)
+				hcpo.GetLogger().Infof("🔄 [DEBUG] Returning feedback error from runPlanningPhase: %s", feedbackError.Error())
+				return nil, nonStructuredErr.UpdatedHistory, feedbackError
+			}
+		}
+		// For other errors, return as-is
 		return nil, nil, fmt.Errorf("planning failed: %w", err)
 	}
 
@@ -1660,13 +1761,14 @@ func max(slice []int) int {
 }
 
 // runVariableExtractionPhase extracts variables from objective (with optional human feedback)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent) (*VariablesManifest, string, error) {
+// Returns: (manifest, templatedObjective, updatedConversationHistory, error)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent) (*VariablesManifest, string, []llmtypes.MessageContent, error) {
 	hcpo.GetLogger().Infof("🔍 Starting variable extraction from objective (attempt %d)", iteration)
 
 	// Create variable extraction agent
 	extractionAgent, err := hcpo.createVariableExtractionAgent(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create variable extraction agent: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to create variable extraction agent: %w", err)
 	}
 
 	// Prepare template variables
@@ -1675,25 +1777,69 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(c
 		"WorkspacePath": hcpo.GetWorkspacePath(),
 	}
 
-	// Add human feedback to conversation if provided
-	if humanFeedback != "" {
-		feedbackMessage := llmtypes.MessageContent{
-			Role:  llmtypes.ChatMessageTypeHuman,
-			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: humanFeedback}},
-		}
-		conversationHistory = append(conversationHistory, feedbackMessage)
-		hcpo.GetLogger().Infof("📝 Added human feedback to variable extraction conversation (attempt %d)", iteration)
+	// Determine user message based on whether this is first attempt or revision
+	// - For first attempt: Use "Extract variables..." instruction
+	// - For revisions: Use human feedback if provided, otherwise use instruction
+	var userMessage string
+	if humanFeedback != "" && strings.TrimSpace(humanFeedback) != "" {
+		// Revision attempt: Use human feedback as user message
+		userMessage = humanFeedback
+		hcpo.GetLogger().Infof("📝 Using human feedback as user message for variable extraction (attempt %d)", iteration)
+	} else {
+		// First attempt: Use static instruction
+		userMessage = "Extract variables from the objective and call submit_variable_extraction_response tool with the structured output."
+		hcpo.GetLogger().Infof("📝 Using default instruction for variable extraction (attempt %d)", iteration)
 	}
 
 	// Execute variable extraction using structured output via tool
 	extractionAgentTyped, ok := extractionAgent.(*VariableExtractionAgent)
 	if !ok {
-		return nil, "", fmt.Errorf("failed to cast variable extraction agent to correct type")
+		return nil, "", nil, fmt.Errorf("failed to cast variable extraction agent to correct type")
 	}
 
-	manifest, updatedHistory, err := extractionAgentTyped.ExecuteStructured(ctx, extractionTemplateVars, conversationHistory)
+	manifest, updatedHistory, err := extractionAgentTyped.ExecuteStructured(ctx, extractionTemplateVars, conversationHistory, userMessage)
 	if err != nil {
-		return nil, "", fmt.Errorf("variable extraction failed: %w", err)
+		// Check if this is a non-structured response error (text response instead of structured output)
+		if agents.IsNonStructuredResponseError(err) {
+			var nonStructuredErr *agents.NonStructuredResponseError
+			if errors.As(err, &nonStructuredErr) {
+				// Display the text response to the user and request feedback
+				hcpo.GetLogger().Infof("📝 Variable extraction agent returned conversational text instead of structured output. Displaying to user for feedback.")
+
+				// Generate unique request ID
+				requestID := fmt.Sprintf("variable_extraction_text_response_%d_%d", iteration, time.Now().UnixNano())
+
+				// Display the text response and request feedback
+				approved, feedback, feedbackErr := hcpo.RequestHumanFeedback(
+					ctx,
+					requestID,
+					"The variable extraction agent provided the following response instead of a structured output. Please provide feedback to help it generate a proper structured response:",
+					nonStructuredErr.TextResponse,
+					hcpo.getSessionID(),
+					hcpo.getWorkflowID(),
+				)
+
+				if feedbackErr != nil {
+					return nil, "", nil, fmt.Errorf("failed to request human feedback for variable extraction text response: %w", feedbackErr)
+				}
+
+				// If user approved (clicked Approve button), treat as no feedback and continue
+				// Otherwise, use the feedback for next attempt
+				if approved {
+					hcpo.GetLogger().Infof("✅ User approved variable extraction text response, but no structured output was generated. This is unexpected - returning error.")
+					return nil, "", nil, fmt.Errorf("variable extraction agent returned text response but user approved without providing feedback to generate structured output")
+				}
+
+				// User provided feedback - return a special error that the loop can detect and handle
+				// Use a specific error prefix that the loop will recognize
+				// The updated history from the agent's response is included so conversation continues properly
+				feedbackError := fmt.Errorf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", feedback)
+				hcpo.GetLogger().Infof("🔄 [DEBUG] Returning feedback error from runVariableExtractionPhase: %s", feedbackError.Error())
+				return nil, "", nonStructuredErr.UpdatedHistory, feedbackError
+			}
+		}
+		// For other errors, return as-is
+		return nil, "", nil, fmt.Errorf("variable extraction failed: %w", err)
 	}
 
 	// Store manifest in orchestrator for future use
@@ -1714,7 +1860,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(c
 	}
 
 	hcpo.GetLogger().Infof("✅ Extracted %d variables from objective (conversation has %d messages)", len(manifest.Variables), len(updatedHistory))
-	return manifest, manifest.Objective, nil
+	return manifest, manifest.Objective, updatedHistory, nil
 }
 
 // requestVariableApproval requests human approval for extracted variables
@@ -2299,7 +2445,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 		iteration,
 		hcpo.GetMaxTurns(),
 		agents.OutputFormatStructured,
-		hcpo.GetSelectedServers(), // Pass MCP servers so agent knows available tools/capabilities for planning
+		[]string{mcpclient.NoServers}, // No MCP servers needed - pure LLM planning agent
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewHumanControlledTodoPlannerPlanningAgent(config, logger, tracer, eventBridge)
 		},

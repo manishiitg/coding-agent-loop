@@ -617,20 +617,60 @@ func (a *Agent) SetCurrentQuery(query string) {
 // createOnDemandConnection creates a connection to a specific server when needed in cache-only mode
 func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
 	logger := getLogger(a)
+	startTime := time.Now()
 	logger.Infof("[ON-DEMAND CONNECTION] Creating connection for server: %s", serverName)
 
+	// Add a shorter timeout for on-demand connections (3 minutes instead of 10)
+	// This prevents hanging for too long and provides faster feedback
+	connectTimeout := 3 * time.Minute
+	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+
+	// Start a goroutine to log progress and timeout warnings
+	progressDone := make(chan bool, 1)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second) // Log every 30 seconds
+		defer ticker.Stop()
+
+		elapsed := time.Since(startTime)
+		for {
+			select {
+			case <-ticker.C:
+				elapsed = time.Since(startTime)
+				remaining := connectTimeout - elapsed
+				if remaining > 0 {
+					logger.Infof("[ON-DEMAND CONNECTION] Still connecting to %s... (elapsed: %v, remaining: %v)",
+						serverName, elapsed.Round(time.Second), remaining.Round(time.Second))
+				} else {
+					logger.Warnf("[ON-DEMAND CONNECTION] Connection to %s has exceeded timeout (%v)", serverName, connectTimeout)
+				}
+			case <-connectCtx.Done():
+				return
+			case <-progressDone:
+				return
+			}
+		}
+	}()
+
 	// Load the merged config to get server details
+	logger.Infof("[ON-DEMAND CONNECTION] Loading config for server: %s", serverName)
 	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
 	if err != nil {
+		progressDone <- true
 		return nil, fmt.Errorf("failed to load merged config for on-demand connection: %w", err)
 	}
 
 	serverConfig, exists := config.MCPServers[serverName]
 	if !exists {
+		progressDone <- true
 		return nil, fmt.Errorf("server %s not found in config", serverName)
 	}
 
+	logger.Infof("[ON-DEMAND CONNECTION] Server config loaded: command=%s, args=%v, protocol=%s",
+		serverConfig.Command, serverConfig.Args, serverConfig.Protocol)
+
 	// Create a new client for this specific server
+	logger.Infof("[ON-DEMAND CONNECTION] Creating MCP client for server: %s", serverName)
 	client := mcpclient.New(mcpclient.MCPServerConfig{
 		Command:  serverConfig.Command,
 		Args:     serverConfig.Args,
@@ -639,12 +679,31 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 		Env:      serverConfig.Env, // Include environment variables
 	}, logger)
 
-	// Connect to the server
-	if err := client.Connect(ctx); err != nil {
+	// Connect to the server with timeout context
+	logger.Infof("[ON-DEMAND CONNECTION] Attempting to connect to server: %s (timeout: %v)", serverName, connectTimeout)
+	connectStartTime := time.Now()
+	if err := client.Connect(connectCtx); err != nil {
+		progressDone <- true
+		connectDuration := time.Since(connectStartTime)
+
+		// Check if it was a timeout
+		if connectCtx.Err() == context.DeadlineExceeded {
+			logger.Errorf("[ON-DEMAND CONNECTION] Connection to %s timed out after %v: %v",
+				serverName, connectDuration, err)
+			return nil, fmt.Errorf("connection to server %s timed out after %v: %w",
+				serverName, connectTimeout, err)
+		}
+
+		logger.Errorf("[ON-DEMAND CONNECTION] Failed to connect to server %s after %v: %v",
+			serverName, connectDuration, err)
 		return nil, fmt.Errorf("failed to connect to server %s: %w", serverName, err)
 	}
 
-	logger.Infof("[ON-DEMAND CONNECTION] Successfully connected to server: %s", serverName)
+	progressDone <- true
+	connectDuration := time.Since(connectStartTime)
+	totalDuration := time.Since(startTime)
+	logger.Infof("[ON-DEMAND CONNECTION] Successfully connected to server: %s (connect_time: %v, total_time: %v)",
+		serverName, connectDuration.Round(time.Millisecond), totalDuration.Round(time.Millisecond))
 	return client, nil
 }
 

@@ -38,8 +38,8 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<void>
+  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => Promise<void>
   deletePreset: (id: string) => Promise<void>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
@@ -162,6 +162,23 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               llmConfig = undefined
             }
             
+            // Parse use_code_execution_mode safely
+            let useCodeExecutionMode: boolean | undefined
+            try {
+              if (preset.use_code_execution_mode !== undefined && preset.use_code_execution_mode !== null) {
+                if (typeof preset.use_code_execution_mode === 'string') {
+                  // Could be "true"/"false" string or JSON string
+                  const parsed = preset.use_code_execution_mode === 'true' || preset.use_code_execution_mode === '1'
+                  useCodeExecutionMode = parsed
+                } else if (typeof preset.use_code_execution_mode === 'boolean') {
+                  useCodeExecutionMode = preset.use_code_execution_mode
+                }
+              }
+            } catch (error) {
+              console.error('[PRESET] Error parsing use_code_execution_mode:', error)
+              useCodeExecutionMode = undefined
+            }
+            
             return {
               id: preset.id,
               label: preset.label,
@@ -171,7 +188,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedTools, // NEW
               agentMode: preset.agent_mode as 'simple' | 'orchestrator' | 'workflow' | undefined,
               selectedFolder,
-              llmConfig
+              llmConfig,
+              useCodeExecutionMode
             }
           })
           
@@ -206,6 +224,23 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 }
               }
               
+              // Parse use_code_execution_mode safely
+              let useCodeExecutionMode: boolean | undefined
+              try {
+                if (preset.use_code_execution_mode !== undefined && preset.use_code_execution_mode !== null) {
+                  if (typeof preset.use_code_execution_mode === 'string') {
+                    // Could be "true"/"false" string or JSON string
+                    const parsed = preset.use_code_execution_mode === 'true' || preset.use_code_execution_mode === '1'
+                    useCodeExecutionMode = parsed
+                  } else if (typeof preset.use_code_execution_mode === 'boolean') {
+                    useCodeExecutionMode = preset.use_code_execution_mode
+                  }
+                }
+              } catch (error) {
+                console.error('[PRESET] Error parsing use_code_execution_mode:', error)
+                useCodeExecutionMode = undefined
+              }
+              
               return {
                 id: preset.id,
                 label: preset.label,
@@ -214,7 +249,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selectedTools: [], // NEW: Predefined presets don't have custom tool selection
                 agentMode: preset.agent_mode as 'simple' | 'orchestrator' | 'workflow' | undefined,
                 selectedFolder,
-                llmConfig
+                llmConfig,
+                useCodeExecutionMode
               }
             })
           
@@ -232,7 +268,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig) => {
+      addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode) => {
         try {
           // Filter out "*" markers - these indicate "all tools" mode
           // For "all tools", we send empty array to backend (which means use all tools from server)
@@ -259,6 +295,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             request.llm_config = llmConfig
           }
           
+          // Include code execution mode if provided
+          if (useCodeExecutionMode !== undefined) {
+            request.use_code_execution_mode = useCodeExecutionMode
+          }
+          
           console.log('[PRESET_SAVE] Sending to backend:', {
             request
           });
@@ -274,7 +315,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selectedTools, // NEW
             agentMode,
             selectedFolder,
-            llmConfig
+            llmConfig,
+            useCodeExecutionMode
           }
           
           set(state => ({
@@ -288,7 +330,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig) => {
+      updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode) => {
         try {
           // Filter out "*" markers - these indicate "all tools" mode
           // For "all tools", we send empty array to backend (which means use all tools from server)
@@ -308,6 +350,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             request.llm_config = llmConfig
           }
           
+          // Include code execution mode if provided
+          if (useCodeExecutionMode !== undefined) {
+            request.use_code_execution_mode = useCodeExecutionMode
+          }
+          
           console.log('[PRESET] Updating preset with request:', request)
           
           await agentApi.updatePresetQuery(id, request)
@@ -323,7 +370,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     selectedTools, // NEW
                     agentMode,
                     selectedFolder,
-                    llmConfig
+                    llmConfig,
+                    useCodeExecutionMode
                   }
                 : preset
             )

@@ -80,7 +80,8 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		llmInstance,
 		boa.systemPrompt,
 		boa.config.ServerNames,
-		boa.config.SelectedTools, // NEW: Pass selected tools
+		boa.config.SelectedTools,        // NEW: Pass selected tools
+		boa.config.UseCodeExecutionMode, // NEW: Pass code execution mode
 		boa.config.Mode,
 		boa.tracer,
 		traceID,
@@ -91,7 +92,6 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.MaxTurns,
 		boa.config.Provider,
 		boa.logger,
-		boa.config.CacheOnly,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)

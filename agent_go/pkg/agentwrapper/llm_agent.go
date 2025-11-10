@@ -45,7 +45,6 @@ type LLMAgentConfig struct {
 	Timeout            time.Duration
 	ToolTimeout        time.Duration      // Tool execution timeout (default: 5 minutes)
 	AgentMode          mcpagent.AgentMode // Agent mode (Simple or ReAct)
-	CacheOnly          bool               // If true, only use cached servers (skip servers without cache)
 	SelectedTools      []string           // Selected tools in "server:tool" format
 
 	// Smart routing configuration
@@ -56,6 +55,10 @@ type LLMAgentConfig struct {
 	// Detailed LLM configuration from frontend
 	FallbackModels        []string               // Custom fallback models from frontend
 	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration
+
+	// Code execution mode: When enabled, only virtual tools are added to LLM
+	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	UseCodeExecutionMode bool
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -168,7 +171,6 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		mcpagent.WithToolChoice(config.ToolChoice),
 		mcpagent.WithMaxTurns(config.MaxTurns),
 		mcpagent.WithToolTimeout(config.ToolTimeout),
-		mcpagent.WithCacheOnly(config.CacheOnly),
 	}
 
 	// Add cross-provider fallback configuration if provided
@@ -187,6 +189,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if len(config.SelectedTools) > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(config.SelectedTools))
 		logger.Infof("🔧 Selected tools configured: %d tools", len(config.SelectedTools))
+	}
+
+	// Add code execution mode if enabled
+	if config.UseCodeExecutionMode {
+		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
+		logger.Infof("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
 	}
 
 	// Add smart routing options if enabled

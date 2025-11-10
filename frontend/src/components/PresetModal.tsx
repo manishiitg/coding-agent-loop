@@ -3,9 +3,11 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings } from 'lucide-react';
+import { Folder, Plus, X, Settings, Info } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
+import { Checkbox } from './ui/checkbox';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
@@ -15,7 +17,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -40,6 +42,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
+  const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(false);
 
   // Store subscriptions - using selectors for stable references
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -84,6 +87,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         provider: primaryConfig.provider,
         model_id: primaryConfig.model_id
       });
+      setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
     } else {
       setLabel('');
       setQuery('');
@@ -96,6 +100,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         provider: primaryConfig.provider,
         model_id: primaryConfig.model_id
       });
+      setUseCodeExecutionMode(false);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig]);
 
@@ -134,10 +139,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       });
       
       // Use the local LLM config (either from editing preset or user selection)
-      onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
+      onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined, useCodeExecutionMode);
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, useCodeExecutionMode, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -272,6 +277,34 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   onToolChange={setSelectedTools}
                 />
               )}
+
+              {/* MCP Code Execution Mode */}
+              <div className="space-y-3">
+                <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                  <Settings className="w-4 h-4" />
+                  MCP Code Execution
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>When enabled, the agent uses generated Go code to access MCP tools instead of exposing them directly. This improves context efficiency by loading tools on-demand.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </label>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="preset-code-execution-mode"
+                    checked={useCodeExecutionMode}
+                    onCheckedChange={(checked) => setUseCodeExecutionMode(checked === true)}
+                  />
+                  <label htmlFor="preset-code-execution-mode" className="text-sm cursor-pointer">
+                    Enable MCP Code Execution Mode
+                  </label>
+                </div>
+              </div>
 
               {/* Folder Selection */}
               <div>

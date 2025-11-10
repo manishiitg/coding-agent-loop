@@ -191,7 +191,6 @@ func GetCachedOrFreshConnection(
 	serverName, configPath string,
 	tracers []observability.Tracer,
 	logger utils.ExtendedLogger,
-	cacheOnly bool,
 ) (*CachedConnectionResult, error) {
 
 	// Track cache operation start time
@@ -259,7 +258,6 @@ func GetCachedOrFreshConnection(
 		result.CacheUsed = true
 		result.CacheKey = mcpclient.NoServers
 		result.FreshFallback = false
-		result.CacheOnlyMode = cacheOnly
 
 		// Set empty collections (but preserve workspace tools)
 		result.Clients = make(map[string]mcpclient.ClientInterface)
@@ -329,51 +327,49 @@ func GetCachedOrFreshConnection(
 				"cache_key": cacheKey,
 			})
 
-			// In cache-only mode, try to reload cache from disk before giving up
-			if cacheOnly {
-				logger.Info("🔄 Cache-only mode: Attempting to reload cache from disk", map[string]interface{}{
+			// Try to reload cache from disk before giving up
+			logger.Info("🔄 Attempting to reload cache from disk", map[string]interface{}{
+				"server":    srvName,
+				"cache_key": cacheKey,
+			})
+
+			// Try to reload the cache entry from disk
+			if reloadedEntry := cacheManager.ReloadFromDisk(cacheKey); reloadedEntry != nil {
+				logger.Info("✅ Cache reloaded from disk", map[string]interface{}{
+					"server":    srvName,
+					"cache_key": cacheKey,
+					"tools":     len(reloadedEntry.Tools),
+				})
+
+				// Normalize tools reloaded from disk to ensure all array parameters have 'items' field
+				mcpclient.NormalizeLLMTools(reloadedEntry.Tools)
+
+				// Use the reloaded entry
+				age := time.Since(reloadedEntry.CreatedAt)
+				serverStatus[srvName] = ServerCacheStatus{
+					ServerName:     srvName,
+					Status:         "hit",
+					CacheKey:       cacheKey,
+					ToolsCount:     len(reloadedEntry.Tools),
+					PromptsCount:   len(reloadedEntry.Prompts),
+					ResourcesCount: len(reloadedEntry.Resources),
+					Age:            age.String(),
+				}
+
+				// Store cached data for later processing
+				if cachedData == nil {
+					cachedData = make(map[string]*CacheEntry)
+				}
+				cachedData[srvName] = reloadedEntry
+				cachedServers = append(cachedServers, srvName)
+				result.CacheKey = cacheKey
+				result.CacheUsed = true
+				continue // Skip to next server
+			} else {
+				logger.Warn("⚠️ Cache reload from disk failed", map[string]interface{}{
 					"server":    srvName,
 					"cache_key": cacheKey,
 				})
-
-				// Try to reload the cache entry from disk
-				if reloadedEntry := cacheManager.ReloadFromDisk(cacheKey); reloadedEntry != nil {
-					logger.Info("✅ Cache reloaded from disk", map[string]interface{}{
-						"server":    srvName,
-						"cache_key": cacheKey,
-						"tools":     len(reloadedEntry.Tools),
-					})
-
-					// Normalize tools reloaded from disk to ensure all array parameters have 'items' field
-					mcpclient.NormalizeLLMTools(reloadedEntry.Tools)
-
-					// Use the reloaded entry
-					age := time.Since(reloadedEntry.CreatedAt)
-					serverStatus[srvName] = ServerCacheStatus{
-						ServerName:     srvName,
-						Status:         "hit",
-						CacheKey:       cacheKey,
-						ToolsCount:     len(reloadedEntry.Tools),
-						PromptsCount:   len(reloadedEntry.Prompts),
-						ResourcesCount: len(reloadedEntry.Resources),
-						Age:            age.String(),
-					}
-
-					// Store cached data for later processing
-					if cachedData == nil {
-						cachedData = make(map[string]*CacheEntry)
-					}
-					cachedData[srvName] = reloadedEntry
-					cachedServers = append(cachedServers, srvName)
-					result.CacheKey = cacheKey
-					result.CacheUsed = true
-					continue // Skip to next server
-				} else {
-					logger.Warn("⚠️ Cache reload from disk failed", map[string]interface{}{
-						"server":    srvName,
-						"cache_key": cacheKey,
-					})
-				}
 			}
 
 			// Track cache miss status (no individual event emission)
@@ -389,17 +385,13 @@ func GetCachedOrFreshConnection(
 
 			missedServers = append(missedServers, srvName)
 			allFromCache = false
-
-			// If cacheOnly is true, don't break - continue to collect all cached servers
-			if !cacheOnly {
-				break // If any server is not cached, we need to do fresh connections
-			}
+			break // If any server is not cached, we need to do fresh connections
 		}
 	}
 
-	// If all servers have valid cache entries, use cached data
+	// If all servers have valid cache entries, use cached data but still connect to servers
 	if allFromCache && len(cachedData) > 0 {
-		logger.Info("🎯 Using cached data for all servers", map[string]interface{}{
+		logger.Info("🎯 Using cached data for all servers (will still connect)", map[string]interface{}{
 			"cached_servers": len(cachedData),
 		})
 
@@ -417,66 +409,7 @@ func GetCachedOrFreshConnection(
 			nil, // No errors at this point
 		)
 
-		return processCachedData(cachedData, config, servers, logger)
-	}
-
-	// If cacheOnly is true and we have some cached servers, use only cached servers
-	if cacheOnly && len(cachedData) > 0 {
-		logger.Info("🎯 Cache-only mode: Using only cached servers", map[string]interface{}{
-			"cached_servers": len(cachedServers),
-			"missed_servers": len(missedServers),
-			"cached":         cachedServers,
-			"missed":         missedServers,
-		})
-
-		// Emit comprehensive cache event for partial cached data usage
-		cacheTime := time.Since(cacheStartTime)
-		EmitComprehensiveCacheEvent(
-			tracers,
-			"partial_cache_only",
-			configPath,
-			cachedServers, // Only use cached servers
-			result,
-			serverStatus,
-			time.Duration(0), // Connection time not available here
-			cacheTime,
-			nil, // No errors at this point
-		)
-
-		return processCachedData(cachedData, config, cachedServers, logger)
-	}
-
-	// Handle cache-only mode with no cached servers
-	if cacheOnly && len(cachedData) == 0 {
-		logger.Warn("⚠️ Cache-only mode requested but no servers are cached", map[string]interface{}{
-			"requested_servers": len(servers),
-			"servers":           servers,
-		})
-
-		// Return empty result with no connections
-		result.CacheUsed = false
-		result.CacheOnlyMode = true
-		result.Error = fmt.Errorf("cache-only mode requested but no servers are cached")
-
-		// Emit comprehensive cache event for cache-only failure
-		cacheTime := time.Since(cacheStartTime)
-		var errors []string
-		if result.Error != nil {
-			errors = []string{result.Error.Error()}
-		}
-		EmitComprehensiveCacheEvent(
-			tracers,
-			"cache_only_no_data",
-			configPath,
-			servers,
-			result,
-			serverStatus,
-			time.Duration(0),
-			cacheTime,
-			errors,
-		)
-
-		return result, result.Error
+		return processCachedData(ctx, llm, cachedData, config, servers, configPath, tracers, logger)
 	}
 
 	// Fallback to fresh connections
@@ -524,17 +457,21 @@ func GetCachedOrFreshConnection(
 	return result, nil
 }
 
-// processCachedData processes cached entries WITHOUT creating fresh connections
-// In cache-only mode, we use the cached data directly without connecting to servers
+// processCachedData processes cached entries and creates connections to servers
+// Even when using cached tool definitions, we still connect to servers for execution
 func processCachedData(
+	ctx context.Context,
+	llm llmtypes.Model,
 	cachedData map[string]*CacheEntry,
 	config *mcpclient.MCPConfig,
 	servers []string,
+	configPath string,
+	tracers []observability.Tracer,
 	logger utils.ExtendedLogger,
 ) (*CachedConnectionResult, error) {
 
 	result := &CachedConnectionResult{
-		Clients:      make(map[string]mcpclient.ClientInterface), // Empty - no connections in cache-only mode
+		Clients:      make(map[string]mcpclient.ClientInterface), // Will be populated with actual connections
 		ToolToServer: make(map[string]string),
 		Prompts:      make(map[string][]mcp.Prompt),
 		Resources:    make(map[string][]mcp.Resource),
@@ -611,10 +548,44 @@ func processCachedData(
 		}
 	}
 
-	logger.Info("🎯 Cache-only processing complete", map[string]interface{}{
+	// Now create actual connections to servers even though we're using cached tool definitions
+	logger.Info("🔄 Creating actual connections to servers (using cached tool definitions)", map[string]interface{}{
+		"servers": servers,
+	})
+
+	// Create connections using the original connection logic
+	clients, _, _, _, prompts, resources, _, err := performOriginalConnectionLogic(ctx, llm, strings.Join(servers, ","), configPath, "cached-connection", tracers, logger)
+	if err != nil {
+		logger.Warn("⚠️ Failed to create connections, but continuing with cached data", map[string]interface{}{
+			"error": err.Error(),
+		})
+		// Continue with cached data even if connections fail
+	} else {
+		// Use the actual connections
+		result.Clients = clients
+		// Merge discovered prompts and resources with cached ones
+		for serverName, serverPrompts := range prompts {
+			if existing, exists := result.Prompts[serverName]; exists {
+				// Merge prompts (cached + fresh)
+				result.Prompts[serverName] = append(existing, serverPrompts...)
+			} else {
+				result.Prompts[serverName] = serverPrompts
+			}
+		}
+		for serverName, serverResources := range resources {
+			if existing, exists := result.Resources[serverName]; exists {
+				// Merge resources (cached + fresh)
+				result.Resources[serverName] = append(existing, serverResources...)
+			} else {
+				result.Resources[serverName] = serverResources
+			}
+		}
+	}
+
+	logger.Info("✅ Cached data processing complete with connections", map[string]interface{}{
 		"cached_servers": len(cachedData),
 		"total_tools":    len(result.Tools),
-		"connections":    0, // No connections created in cache-only mode
+		"connections":    len(result.Clients), // Actual connections created
 	})
 
 	return result, nil

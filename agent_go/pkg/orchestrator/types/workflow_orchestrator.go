@@ -190,10 +190,12 @@ func NewWorkflowOrchestrator(
 	tracer observability.Tracer,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
+	toolCategories map[string]string, // NEW: tool category map
 ) (*WorkflowOrchestrator, error) {
 
 	// Create base orchestrator
@@ -207,11 +209,13 @@ func NewWorkflowOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		selectedTools, // NEW: Pass through
-		llmConfig,     // LLM configuration
+		selectedTools,        // NEW: Pass through
+		useCodeExecutionMode, // NEW: Pass through
+		llmConfig,            // LLM configuration
 		maxTurns,
 		customTools,
 		customToolExecutors,
+		toolCategories, // NEW: Pass category map
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
@@ -272,7 +276,8 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
-		wo.GetSelectedTools(), // NEW: Pass selected tools
+		wo.GetSelectedTools(),        // NEW: Pass selected tools
+		wo.GetUseCodeExecutionMode(), // NEW: Pass code execution mode
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),
@@ -281,6 +286,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetContextAwareBridge(),
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
+		wo.ToolCategories, // NEW: Pass category map
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -359,7 +365,7 @@ func (wo *WorkflowOrchestrator) getWorkflowID() string {
 // createTodoExecutionOrchestrator creates and configures the TodoExecutionOrchestrator
 func (wo *WorkflowOrchestrator) createTodoExecutionOrchestrator() (orchestrator.Orchestrator, error) {
 	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_execution.NewTodoExecutionOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
+	agent, err := todo_execution.NewTodoExecutionOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetUseCodeExecutionMode(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors, wo.ToolCategories)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create todo execution orchestrator: %w", err)
 	}

@@ -112,47 +112,50 @@ type PresetLLMConfig struct {
 
 // PresetQuery represents a preset query in the database
 type PresetQuery struct {
-	ID              string          `json:"id" db:"id"`
-	Label           string          `json:"label" db:"label"`
-	Query           string          `json:"query" db:"query"`
-	SelectedServers string          `json:"selected_servers" db:"selected_servers"` // JSON array
-	SelectedTools   string          `json:"selected_tools" db:"selected_tools"`     // JSON array of "server:tool" format
-	SelectedFolder  sql.NullString  `json:"selected_folder" db:"selected_folder"`   // Single folder path
-	AgentMode       string          `json:"agent_mode" db:"agent_mode"`             // Agent mode: simple, ReAct, orchestrator, workflow
-	LLMConfig       json.RawMessage `json:"llm_config" db:"llm_config"`             // JSON configuration for LLM settings
-	IsPredefined    bool            `json:"is_predefined" db:"is_predefined"`
-	CreatedAt       time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at" db:"updated_at"`
-	CreatedBy       string          `json:"created_by" db:"created_by"`
+	ID                   string          `json:"id" db:"id"`
+	Label                string          `json:"label" db:"label"`
+	Query                string          `json:"query" db:"query"`
+	SelectedServers      string          `json:"selected_servers" db:"selected_servers"`               // JSON array
+	SelectedTools        string          `json:"selected_tools" db:"selected_tools"`                   // JSON array of "server:tool" format
+	SelectedFolder       sql.NullString  `json:"selected_folder" db:"selected_folder"`                 // Single folder path
+	AgentMode            string          `json:"agent_mode" db:"agent_mode"`                           // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig            json.RawMessage `json:"llm_config" db:"llm_config"`                           // JSON configuration for LLM settings
+	UseCodeExecutionMode bool            `json:"use_code_execution_mode" db:"use_code_execution_mode"` // MCP code execution mode
+	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
+	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
+	CreatedBy            string          `json:"created_by" db:"created_by"`
 }
 
 // MarshalJSON implements json.Marshaler for PresetQuery to handle sql.NullString properly
 func (p PresetQuery) MarshalJSON() ([]byte, error) {
 	result := struct {
-		ID              string          `json:"id"`
-		Label           string          `json:"label"`
-		Query           string          `json:"query"`
-		SelectedServers string          `json:"selected_servers"`
-		SelectedTools   string          `json:"selected_tools"`
-		SelectedFolder  *string         `json:"selected_folder,omitempty"`
-		AgentMode       string          `json:"agent_mode"`
-		LLMConfig       json.RawMessage `json:"llm_config"`
-		IsPredefined    bool            `json:"is_predefined"`
-		CreatedAt       time.Time       `json:"created_at"`
-		UpdatedAt       time.Time       `json:"updated_at"`
-		CreatedBy       string          `json:"created_by"`
+		ID                   string          `json:"id"`
+		Label                string          `json:"label"`
+		Query                string          `json:"query"`
+		SelectedServers      string          `json:"selected_servers"`
+		SelectedTools        string          `json:"selected_tools"`
+		SelectedFolder       *string         `json:"selected_folder,omitempty"`
+		AgentMode            string          `json:"agent_mode"`
+		LLMConfig            json.RawMessage `json:"llm_config"`
+		UseCodeExecutionMode bool            `json:"use_code_execution_mode"`
+		IsPredefined         bool            `json:"is_predefined"`
+		CreatedAt            time.Time       `json:"created_at"`
+		UpdatedAt            time.Time       `json:"updated_at"`
+		CreatedBy            string          `json:"created_by"`
 	}{
-		ID:              p.ID,
-		Label:           p.Label,
-		Query:           p.Query,
-		SelectedServers: p.SelectedServers,
-		SelectedTools:   p.SelectedTools,
-		AgentMode:       p.AgentMode,
-		LLMConfig:       p.LLMConfig,
-		IsPredefined:    p.IsPredefined,
-		CreatedAt:       p.CreatedAt,
-		UpdatedAt:       p.UpdatedAt,
-		CreatedBy:       p.CreatedBy,
+		ID:                   p.ID,
+		Label:                p.Label,
+		Query:                p.Query,
+		SelectedServers:      p.SelectedServers,
+		SelectedTools:        p.SelectedTools,
+		AgentMode:            p.AgentMode,
+		LLMConfig:            p.LLMConfig,
+		UseCodeExecutionMode: p.UseCodeExecutionMode,
+		IsPredefined:         p.IsPredefined,
+		CreatedAt:            p.CreatedAt,
+		UpdatedAt:            p.UpdatedAt,
+		CreatedBy:            p.CreatedBy,
 	}
 
 	// Convert sql.NullString to *string
@@ -165,14 +168,15 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 
 // CreatePresetQueryRequest represents a request to create a new preset query
 type CreatePresetQueryRequest struct {
-	Label           string           `json:"label"`
-	Query           string           `json:"query"`
-	SelectedServers []string         `json:"selected_servers,omitempty"`
-	SelectedTools   []string         `json:"selected_tools,omitempty"`  // Array of "server:tool" strings
-	SelectedFolder  string           `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
-	AgentMode       string           `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
-	LLMConfig       *PresetLLMConfig `json:"llm_config,omitempty"`      // LLM configuration for this preset
-	IsPredefined    bool             `json:"is_predefined,omitempty"`
+	Label                string           `json:"label"`
+	Query                string           `json:"query"`
+	SelectedServers      []string         `json:"selected_servers,omitempty"`
+	SelectedTools        []string         `json:"selected_tools,omitempty"`          // Array of "server:tool" strings
+	SelectedFolder       string           `json:"selected_folder,omitempty"`         // Single folder path - required for orchestrator/workflow
+	AgentMode            string           `json:"agent_mode,omitempty"`              // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig            *PresetLLMConfig `json:"llm_config,omitempty"`              // LLM configuration for this preset
+	UseCodeExecutionMode bool             `json:"use_code_execution_mode,omitempty"` // MCP code execution mode
+	IsPredefined         bool             `json:"is_predefined,omitempty"`
 }
 
 // Validate validates the CreatePresetQueryRequest
@@ -230,13 +234,14 @@ func (r *CreatePresetQueryRequest) Validate() error {
 
 // UpdatePresetQueryRequest represents a request to update a preset query
 type UpdatePresetQueryRequest struct {
-	Label           string           `json:"label,omitempty"`
-	Query           string           `json:"query,omitempty"`
-	SelectedServers []string         `json:"selected_servers,omitempty"`
-	SelectedTools   []string         `json:"selected_tools,omitempty"`  // Array of "server:tool" strings
-	SelectedFolder  string           `json:"selected_folder,omitempty"` // Single folder path - required for orchestrator/workflow
-	AgentMode       string           `json:"agent_mode,omitempty"`      // Agent mode: simple, ReAct, orchestrator, workflow
-	LLMConfig       *PresetLLMConfig `json:"llm_config,omitempty"`      // LLM configuration for this preset
+	Label                string           `json:"label,omitempty"`
+	Query                string           `json:"query,omitempty"`
+	SelectedServers      []string         `json:"selected_servers,omitempty"`
+	SelectedTools        []string         `json:"selected_tools,omitempty"`          // Array of "server:tool" strings
+	SelectedFolder       string           `json:"selected_folder,omitempty"`         // Single folder path - required for orchestrator/workflow
+	AgentMode            string           `json:"agent_mode,omitempty"`              // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig            *PresetLLMConfig `json:"llm_config,omitempty"`              // LLM configuration for this preset
+	UseCodeExecutionMode *bool            `json:"use_code_execution_mode,omitempty"` // MCP code execution mode (pointer to allow false value)
 }
 
 // Validate validates the UpdatePresetQueryRequest

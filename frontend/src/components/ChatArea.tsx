@@ -4,7 +4,7 @@ import { agentApi } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
 import { EXECUTION_MODES } from '../services/api-types'
 import { EventModeProvider } from './events'
-import { ChatInput } from './ChatInput'
+import { ChatInput, type ChatInputRef } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
@@ -39,6 +39,9 @@ export interface ChatAreaRef {
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   onNewChat
 }, ref) => {
+  // Ref for ChatInput to get code execution mode
+  const chatInputRef = useRef<ChatInputRef>(null)
+  
   // Store subscriptions
   const { 
     agentMode, 
@@ -1272,6 +1275,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         'hasAllToolsMarkers': currentPresetTools?.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
       });
       
+      // Get code execution mode: prefer preset value, fallback to ChatInput ref (only for chat mode with simple agent)
+      const activePreset = selectedWorkflowPreset ? getActivePreset('workflow') : getActivePreset('chat')
+      const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
+      const chatInputUseCodeExecutionMode = agentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
+      const useCodeExecutionMode = presetUseCodeExecutionMode !== undefined ? presetUseCodeExecutionMode : chatInputUseCodeExecutionMode
+      
       // Submit query to backend
       const response = await agentApi.startQuery({
         query: enhancedQuery,
@@ -1284,6 +1293,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         llm_config: llmConfig,
         preset_query_id: selectedWorkflowPreset || undefined,
         orchestrator_execution_mode: agentMode === 'orchestrator' ? orchestratorExecutionMode : undefined,
+        use_code_execution_mode: useCodeExecutionMode || undefined,
       })
 
       if (response.status === 'started' || response.status === 'workflow_started') {
@@ -1529,6 +1539,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       {/* Input Area - Completely isolated from event updates */}
       {!chatSessionId && (
         <ChatInput
+          ref={chatInputRef}
           onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}

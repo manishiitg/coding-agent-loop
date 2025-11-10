@@ -301,6 +301,11 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 	return workspaceTools
 }
 
+// GetToolCategory returns the category name for workspace tools
+func GetWorkspaceToolCategory() string {
+	return "workspace"
+}
+
 // CreateWorkspaceToolExecutors creates the execution functions for workspace tools
 func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))

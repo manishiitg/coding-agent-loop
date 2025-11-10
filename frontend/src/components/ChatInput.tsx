@@ -1,9 +1,10 @@
-import React, { useRef, useCallback, useMemo, useState } from 'react'
+import React, { useRef, useCallback, useMemo, useState, useImperativeHandle, forwardRef, useEffect } from 'react'
 import { Send, Loader2, Zap, Square, Plus } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { Checkbox } from './ui/checkbox'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
@@ -21,12 +22,16 @@ interface ChatInputProps {
   onNewChat: () => void
 }
 
+export interface ChatInputRef {
+  getCodeExecutionMode: () => boolean
+}
+
 // Completely isolated input component that doesn't re-render when events change
-export const ChatInput = React.memo<ChatInputProps>(({
+const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   onSubmit,
   onStopStreaming,
   onNewChat
-}) => {
+}, ref) => {
   // Store subscriptions
   const {
     agentMode,
@@ -43,6 +48,14 @@ export const ChatInput = React.memo<ChatInputProps>(({
   
   // Local state for input to prevent global re-renders on every keystroke
   const [localQuery, setLocalQuery] = useState('')
+  
+  // Code execution mode state (only for chat mode) - enabled by default
+  const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(true)
+  
+  // Expose code execution mode via ref
+  useImperativeHandle(ref, () => ({
+    getCodeExecutionMode: () => useCodeExecutionMode
+  }), [useCodeExecutionMode])
   
   const { selectedModeCategory } = useModeStore()
   
@@ -85,6 +98,28 @@ export const ChatInput = React.memo<ChatInputProps>(({
   
   // Check if a preset is active for the current mode
   const chatActivePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+  
+  // Sync localQuery with preset query when preset is selected in chat mode
+  useEffect(() => {
+    // Only sync in chat mode
+    if (selectedModeCategory === 'chat') {
+      const activePresetId = activePresetIds['chat']
+      
+      if (activePresetId) {
+        // Find the preset
+        const preset = customPresets.find(p => p.id === activePresetId) || 
+                      predefinedPresets.find(p => p.id === activePresetId)
+        
+        if (preset && preset.query) {
+          // Sync localQuery with preset query
+          setLocalQuery(preset.query)
+        }
+      } else {
+        // No preset active, clear localQuery
+        setLocalQuery('')
+      }
+    }
+  }, [selectedModeCategory, activePresetIds, customPresets, predefinedPresets])
   
   const isRequiredFolderSelected = useMemo(() => {
     if (agentMode !== 'orchestrator' && agentMode !== 'workflow') return true; // No validation needed for other modes
@@ -672,26 +707,50 @@ export const ChatInput = React.memo<ChatInputProps>(({
                 
                 {/* Agent Mode Selector - Only for Chat Mode */}
                 {selectedModeCategory === 'chat' && (
-                  <div className="flex items-center gap-1">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={() => setAgentMode('simple')}
-                          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                            agentMode === 'simple'
-                              ? 'agent-mode-selected'
-                              : 'agent-mode-unselected'
-                          }`}
-                        >
-                          <Zap className="w-3 h-3 inline mr-1" />
-                          Simple
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Simple mode - Ctrl+1</p>
-                      </TooltipContent>
-                    </Tooltip>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => setAgentMode('simple')}
+                            className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                              agentMode === 'simple'
+                                ? 'agent-mode-selected'
+                                : 'agent-mode-unselected'
+                            }`}
+                          >
+                            <Zap className="w-3 h-3 inline mr-1" />
+                            Simple
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Simple mode - Ctrl+1</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {/* Code Execution Mode Checkbox */}
+                    <div className="flex items-center gap-1.5">
+                      <Checkbox
+                        id="code-execution-mode"
+                        checked={useCodeExecutionMode}
+                        onCheckedChange={(checked) => setUseCodeExecutionMode(checked === true)}
+                        disabled={isStreaming}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <label
+                            htmlFor="code-execution-mode"
+                            className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none"
+                          >
+                            MCP Code Execution
+                          </label>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Enable MCP code execution mode: MCP tools accessed via generated Go code</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                   </div>
                 )}
                 
@@ -812,4 +871,6 @@ export const ChatInput = React.memo<ChatInputProps>(({
   )
 })
 
-ChatInput.displayName = 'ChatInput'
+ChatInputComponent.displayName = 'ChatInput'
+
+export const ChatInput = React.memo(ChatInputComponent)

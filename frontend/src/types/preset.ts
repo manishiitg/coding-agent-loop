@@ -11,6 +11,7 @@ export interface CustomPreset {
   agentMode?: 'simple' | 'orchestrator' | 'workflow';
   selectedFolder?: PlannerFile; // Single folder
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
+  useCodeExecutionMode?: boolean; // MCP code execution mode
 }
 
 export interface PredefinedPreset {
@@ -22,4 +23,5 @@ export interface PredefinedPreset {
   agentMode?: 'simple' | 'orchestrator' | 'workflow';
   selectedFolder?: PlannerFile;
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
+  useCodeExecutionMode?: boolean; // MCP code execution mode
 }

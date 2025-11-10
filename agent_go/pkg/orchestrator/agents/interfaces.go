@@ -62,7 +62,6 @@ type OrchestratorAgentConfig struct {
 	MCPConfigPath string   `json:"mcp_config_path" validate:"required"`
 	ToolChoice    string   `json:"tool_choice" validate:"required"`
 	MaxTurns      int      `json:"max_turns" validate:"required"`
-	CacheOnly     bool     `json:"cache_only,omitempty"`
 
 	// Required settings
 	MaxRetries int `json:"max_retries" validate:"required"`
@@ -83,6 +82,10 @@ type OrchestratorAgentConfig struct {
 	// Structured output configuration
 	StructuredOutputSchema string `json:"structured_output_schema,omitempty"`
 	StructuredOutputType   string `json:"structured_output_type,omitempty"` // "plan", "steps", "custom"
+
+	// Code execution mode: When enabled, only virtual tools are added to LLM
+	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

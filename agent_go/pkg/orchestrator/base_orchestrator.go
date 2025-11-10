@@ -54,21 +54,23 @@ type BaseOrchestrator struct {
 	// Workspace tools for file operations
 	WorkspaceTools         []llmtypes.Tool
 	WorkspaceToolExecutors map[string]interface{}
+	ToolCategories         map[string]string // Tool name to category mapping
 
 	// Orchestrator type and configuration
 	orchestratorType OrchestratorType
 	startTime        time.Time
 
 	// Common configuration shared between orchestrators
-	provider        string
-	model           string
-	mcpConfigPath   string
-	temperature     float64
-	agentMode       string
-	selectedServers []string
-	selectedTools   []string   // Selected tools in "server:tool" format
-	llmConfig       *LLMConfig // LLM configuration
-	maxTurns        int        // Maximum turns for the orchestrator
+	provider             string
+	model                string
+	mcpConfigPath        string
+	temperature          float64
+	agentMode            string
+	selectedServers      []string
+	selectedTools        []string   // Selected tools in "server:tool" format
+	useCodeExecutionMode bool       // MCP code execution mode
+	llmConfig            *LLMConfig // LLM configuration
+	maxTurns             int        // Maximum turns for the orchestrator
 
 	// Optional simple state (for workflow orchestrators)
 	objective     string
@@ -87,10 +89,12 @@ func NewBaseOrchestrator(
 	agentMode string,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	llmConfig *LLMConfig,
 	maxTurns int,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
+	toolCategories map[string]string, // NEW: tool category map
 ) (*BaseOrchestrator, error) {
 
 	// Create context-aware event bridge that wraps the main event bridge
@@ -101,18 +105,20 @@ func NewBaseOrchestrator(
 		logger:                 logger,
 		WorkspaceTools:         customTools,
 		WorkspaceToolExecutors: customToolExecutors,
+		ToolCategories:         toolCategories, // NEW: store category map
 		orchestratorType:       orchestratorType,
 		startTime:              time.Now(),
 		// Common configuration
-		provider:        provider,
-		model:           model,
-		mcpConfigPath:   mcpConfigPath,
-		temperature:     temperature,
-		agentMode:       agentMode,
-		selectedServers: selectedServers,
-		selectedTools:   selectedTools, // NEW field
-		llmConfig:       llmConfig,
-		maxTurns:        maxTurns,
+		provider:             provider,
+		model:                model,
+		mcpConfigPath:        mcpConfigPath,
+		temperature:          temperature,
+		agentMode:            agentMode,
+		selectedServers:      selectedServers,
+		selectedTools:        selectedTools,        // NEW field
+		useCodeExecutionMode: useCodeExecutionMode, // NEW field
+		llmConfig:            llmConfig,
+		maxTurns:             maxTurns,
 	}, nil
 }
 
@@ -269,6 +275,11 @@ func (bo *BaseOrchestrator) GetSelectedServers() []string {
 // GetSelectedTools returns the selected tools
 func (bo *BaseOrchestrator) GetSelectedTools() []string {
 	return bo.selectedTools
+}
+
+// GetUseCodeExecutionMode returns the code execution mode setting
+func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
+	return bo.useCodeExecutionMode
 }
 
 // GetLLMConfig returns the LLM configuration
@@ -539,9 +550,9 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.MCPConfigPath = bo.GetMCPConfigPath()
 	config.MaxTurns = maxTurns
 	config.ToolChoice = "auto"
-	config.CacheOnly = false // Allow fresh connections when cache is not available
 	config.ServerNames = bo.GetSelectedServers()
-	config.SelectedTools = bo.GetSelectedTools() // NEW field
+	config.SelectedTools = bo.GetSelectedTools()               // NEW field
+	config.UseCodeExecutionMode = bo.GetUseCodeExecutionMode() // NEW field
 	config.Mode = agents.AgentMode(bo.GetAgentMode())
 	config.OutputFormat = outputFormat
 	config.MaxRetries = 3
@@ -632,11 +643,19 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+					// Get tool category from stored map (defaults to "custom" if not found)
+					toolCategory := "custom"
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+						}
+					}
 					mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
+						toolCategory,
 					)
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
@@ -645,6 +664,17 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 		}
 
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	return agent, nil
@@ -742,6 +772,17 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 		}
 
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	return agent, nil
@@ -837,11 +878,19 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+					// Get tool category from stored map (defaults to "custom" if not found)
+					toolCategory := "custom"
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+						}
+					}
 					mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
+						toolCategory,
 					)
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
@@ -850,6 +899,17 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 		}
 
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	// Processors are now stored in BaseOrchestratorAgent, agent can use them directly

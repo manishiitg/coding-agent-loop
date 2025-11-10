@@ -90,7 +90,6 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 		tmpConfigPath, // Use temp merged config path
 		nil,           // No tracers for server operations
 		api.logger,
-		false, // Default CacheOnly = false for server operations
 	)
 	if err != nil {
 		return &ToolStatus{

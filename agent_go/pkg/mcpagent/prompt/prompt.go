@@ -42,13 +42,7 @@ Large tool outputs (>1000 chars) are automatically saved to files. Use virtual t
 - 'read_large_output': Read specific characters from saved files
 - 'search_large_output': Search for patterns in saved files  
 - 'query_large_output': Execute jq queries on JSON files
-</virtual_tools>
-
-<constraints>
-- Execute tools one at a time, waiting for results
-- If tools fail, explain issues and suggest alternatives
-- Respect security limits and knowledge boundaries
-</constraints>`
+</virtual_tools>`
 
 // PromptsSectionTemplate is the template for the prompts section with purpose instructions
 const PromptsSectionTemplate = `
@@ -91,4 +85,5 @@ const (
 	ResourcesListPlaceholder       = "{{RESOURCES_LIST}}"
 	CurrentDatePlaceholder         = "{{CURRENT_DATE}}"
 	CurrentTimePlaceholder         = "{{CURRENT_TIME}}"
+	ToolStructurePlaceholder       = "{{TOOL_STRUCTURE}}"
 )

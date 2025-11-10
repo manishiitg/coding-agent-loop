@@ -12,25 +12,28 @@ import (
 
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, logger utils.ExtendedLogger) string {
-	// Build prompts section with previews (only if discoverPrompt is true)
+// toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
+func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger utils.ExtendedLogger) string {
+	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
+	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
 	var promptsSection string
-	if discoverPrompt {
+	if discoverPrompt && !useCodeExecutionMode {
 		promptsSection = buildPromptsSectionWithPreviews(prompts, logger)
 	} else {
-		promptsSection = "" // Empty prompts section when discovery is disabled
+		promptsSection = "" // Empty prompts section when discovery is disabled or in code execution mode
 	}
 
-	// Build resources section (only if discoverResource is true)
+	// Build resources section (only if discoverResource is true and NOT in code execution mode)
+	// In code execution mode, resources are not accessible via get_resource
 	var resourcesSection string
-	if discoverResource {
+	if discoverResource && !useCodeExecutionMode {
 		resourcesSection = buildResourcesSection(resources)
 	} else {
-		resourcesSection = "" // Empty resources section when discovery is disabled
+		resourcesSection = "" // Empty resources section when discovery is disabled or in code execution mode
 	}
 
 	// Build virtual tools section
-	virtualToolsSection := buildVirtualToolsSection()
+	virtualToolsSection := buildVirtualToolsSection(useCodeExecutionMode)
 
 	// Get current date and time
 	now := time.Now()
@@ -47,6 +50,160 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	prompt = strings.ReplaceAll(prompt, VirtualToolsSectionPlaceholder, virtualToolsSection)
 	prompt = strings.ReplaceAll(prompt, CurrentDatePlaceholder, currentDate)
 	prompt = strings.ReplaceAll(prompt, CurrentTimePlaceholder, currentTime)
+
+	// Note: {{TOOL_STRUCTURE}} placeholder will be replaced later in code execution mode
+	// after the tool_usage section is replaced, so it appears in the right location
+
+	// In code execution mode, update core_principles and tool_usage section and remove large output handling
+	if useCodeExecutionMode {
+		// Replace core_principles section for code execution mode
+		codeExecutionCorePrinciples := `<core_principles>
+When answering questions:
+1. **Think** about what information/actions are needed
+2. **Write code** to gather information and perform actions
+3. **Provide helpful responses** based on execution results
+</core_principles>`
+		prompt = strings.ReplaceAll(prompt, `<core_principles>
+When answering questions:
+1. **Think** about what information/actions are needed
+2. **Use tools** to gather information
+3. **Provide helpful responses** based on tool results
+</core_principles>`, codeExecutionCorePrinciples)
+
+		// Replace tool_usage section with code execution mode guidance
+		// The {{TOOL_STRUCTURE}} placeholder will be replaced after this
+		codeExecutionToolUsage := `<code_usage>
+**CODE EXECUTION MODE - Access MCP Servers via Go Code:**
+
+{{TOOL_STRUCTURE}}
+
+**📋 Workflow:**
+1. **Review** available code packages in the structure above
+2. **Discover code FIRST**: Use discover_code_files to get exact function signatures before writing any code
+3. **Write** Go code using write_code that imports and calls the discovered functions
+4. **Execute** and get results
+
+**⚠️ CRITICAL - Code Requirements:**
+- ✅ **MUST return a string** (use fmt.Sprintf() or strings.Builder)
+- ❌ **DO NOT use fmt.Println()** - output will NOT be captured
+- ❌ **DO NOT write to os.Stdout** - return a string instead
+
+**🔧 Type Flexibility Guidelines:**
+- ✅ **Prefer interface{} over strict types** when possible for better flexibility
+- ✅ Use interface{} for function parameters when exact type isn't critical
+- ✅ Use interface{} for variables handling dynamic or unknown data structures
+- ✅ Only use strict types when type safety is explicitly required
+- 💡 **Example**: var data interface{} instead of var data map[string]string when structure may vary
+- 💡 **Example**: func process(data interface{}) instead of func process(data map[string]string) for flexibility
+
+**💡 You Can Write Logic:**
+- Use **if/else** to make decisions based on results
+- Call **multiple functions** in sequence
+- **Combine different servers** in one code block
+- Use **loops** to process data
+
+**Basic Example:**
+  func execute() string {
+      ctx := context.Background()
+      // Use codeexec.CallCustomTool() directly - no package imports needed
+      params := map[string]interface{}{
+          "document_id": "doc123",
+      }
+      output, err := codeexec.CallCustomTool(ctx, "get_document", params)
+      if err != nil {
+          return fmt.Sprintf("Error: %%v", err)
+      }
+      return fmt.Sprintf("Result: %%s", output)
+  }
+
+**Example with Multiple Functions:**
+  func execute() string {
+      ctx := context.Background()
+      var result strings.Builder
+      
+      // Call first function using codeexec
+      params1 := map[string]interface{}{}
+      data, err := codeexec.CallCustomTool(ctx, "get_costs", params1)
+      if err != nil {
+          return fmt.Sprintf("Error: %%v", err)
+      }
+      result.WriteString(fmt.Sprintf("Costs: %%s\n", data))
+      
+      // Call second function based on result
+      if strings.Contains(data, "high") {
+          params2 := map[string]interface{}{
+              "channel": "alerts",
+              "text": "High costs detected",
+          }
+          alert, _ := codeexec.CallCustomTool(ctx, "send_message", params2)
+          result.WriteString(fmt.Sprintf("Alert: %%s\n", alert))
+      }
+      
+      return result.String()
+  }
+
+**Tool Call Pattern:**
+  // Use codeexec.CallCustomTool() for custom tools
+  codeexec.CallCustomTool(ctx, "tool_name", map[string]interface{}{"param": "value"})
+  
+  // Use codeexec.CallMCPTool() for MCP server tools
+  codeexec.CallMCPTool(ctx, "tool_name", map[string]interface{}{"param": "value"})
+  
+  // Use codeexec.CallVirtualTool() for virtual tools (workspace, human, etc.)
+  codeexec.CallVirtualTool(ctx, "tool_name", map[string]interface{}{"param": "value"})
+  
+  // The system will automatically route to the correct registry
+
+**🔧 Error Recovery:**
+Build errors? Fix and retry with write_code - check imports, types, syntax
+</code_usage>`
+		prompt = strings.ReplaceAll(prompt, `<tool_usage>
+**Guidelines:**
+- Use tools when they can help answer the question
+- Execute tools one at a time, waiting for results
+- Use virtual tools for detailed prompts/resources when relevant
+- Provide clear responses based on tool results
+
+**Best Practices:**
+- Use virtual tools to access detailed knowledge when relevant
+- **If a tool call fails, retry with different arguments or parameters**
+- **Try alternative approaches when tools return errors or unexpected results**
+- **Modify search terms, file paths, or query parameters to overcome failures**
+</tool_usage>`, codeExecutionToolUsage)
+
+		// Replace {{TOOL_STRUCTURE}} placeholder in the code execution tool usage section
+		// This happens after the tool_usage replacement so the placeholder is in the right place
+		if toolStructureJSON != "" {
+			toolStructureSection := "\n\n<available_code>\n" +
+				"**AVAILABLE CODE FILES AND FUNCTIONS:**\n\n" +
+				"The following code files and functions are available for use in your Go code. This structure shows all servers, custom tools, and their functions:\n\n" +
+				"```json\n" +
+				toolStructureJSON + "\n" +
+				"```\n\n" +
+				"**How to use:**\n" +
+				"- Each server has a package name (e.g., \"aws_tools\", \"google_sheets_tools\")\n" +
+				"- Each function has a name (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
+				"- Import the package and call the function in your Go code\n" +
+				"</available_code>\n"
+			prompt = strings.ReplaceAll(prompt, ToolStructurePlaceholder, toolStructureSection)
+		} else {
+			// Remove placeholder if no structure available
+			prompt = strings.ReplaceAll(prompt, ToolStructurePlaceholder, "")
+		}
+
+		// Remove large output handling section (not available in code execution mode)
+		prompt = strings.ReplaceAll(prompt, `
+LARGE TOOL OUTPUT HANDLING:
+Large tool outputs (>1000 chars) are automatically saved to files. Use virtual tools to process them:
+- 'read_large_output': Read specific characters from saved files
+- 'search_large_output': Search for patterns in saved files  
+- 'query_large_output': Execute jq queries on JSON files
+`, "")
+
+		// Also remove the <virtual_tools> wrapper tags in code execution mode
+		prompt = strings.ReplaceAll(prompt, "<virtual_tools>", "")
+		prompt = strings.ReplaceAll(prompt, "</virtual_tools>", "")
+	}
 
 	return prompt
 }
@@ -182,6 +339,17 @@ func buildResourcesSection(resources map[string][]mcp.Resource) string {
 }
 
 // buildVirtualToolsSection builds the virtual tools section
-func buildVirtualToolsSection() string {
+func buildVirtualToolsSection(useCodeExecutionMode bool) string {
+	if useCodeExecutionMode {
+		// Code execution mode: Show simplified virtual tools section
+		return `🔧 AVAILABLE FUNCTIONS:
+
+- **discover_code_files** - Get Go source code for a specific function
+  Usage: discover_code_files(server_name="aws", tool_name="GetDocument")
+  
+- **write_code** - Write and execute Go code
+  Imports: Use "mcp-agent/agent_go/generated/{package}_tools"
+  Must return a string (not print to stdout)`
+	}
 	return VirtualToolsSectionTemplate
 }

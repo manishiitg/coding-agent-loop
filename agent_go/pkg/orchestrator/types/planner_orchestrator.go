@@ -149,10 +149,12 @@ func NewPlannerOrchestrator(
 	selectedServers []string,
 	selectedOptions *PlannerSelectedOptions,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
+	toolCategories map[string]string, // NEW: tool category map
 ) (*PlannerOrchestrator, error) {
 
 	// Create base orchestrator
@@ -166,11 +168,13 @@ func NewPlannerOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		selectedTools, // NEW: Pass through
+		selectedTools,        // NEW: Pass through
+		useCodeExecutionMode, // NEW: Pass through
 		llmConfig,
 		maxTurns,
 		customTools,
 		customToolExecutors,
+		toolCategories, // NEW: Pass category map
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)

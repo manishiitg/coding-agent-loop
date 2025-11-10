@@ -115,4 +115,6 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(streamingTracerCmd)
 	TestingCmd.AddCommand(contextCancellationTestCmd)
 	TestingCmd.AddCommand(bufioScannerBugTestCmd)
+	TestingCmd.AddCommand(codegenTestCmd)
+	TestingCmd.AddCommand(codeExecutionTestCmd)
 }

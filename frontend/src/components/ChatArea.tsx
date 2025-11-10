@@ -14,7 +14,6 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { WORKFLOW_PHASES } from '../constants/workflow'
 import { OrchestratorExplanation } from './OrchestratorExplanation'
 import { WorkflowExplanation } from './WorkflowExplanation'
-import GuidanceFloatingIcon from './GuidanceFloatingIcon'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
@@ -257,11 +256,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Filter toasts to only include types supported by ToastContainer
   const filteredToasts = toasts.filter((toast: { type: string }) => toast.type === 'success' || toast.type === 'info') as Array<{id: string, message: string, type: 'success' | 'info'}>
   
-  // Handle guidance change (simplified - just log for now)
-  const handleGuidanceChange = useCallback(() => {
-    // Guidance updated
-  }, [])
-  
   // Handle mode switch dialog confirmation
   const handleModeSwitchConfirm = () => {
     if (pendingModeSwitch) {
@@ -303,11 +297,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Selected preset folder state
   const lastEventIndexRef = useRef<number>(-1)
   const totalEventsRef = useRef<number>(0)
-
-  // Toast wrapper for components that only support limited types
-  const addToastLimited = useCallback((message: string, type: 'success' | 'info') => {
-    addToast(message, type)
-  }, [addToast])
 
   // Immediate scroll handler for better responsiveness
   const handleScroll = useCallback(() => {
@@ -1549,15 +1538,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         toasts={filteredToasts} 
         onRemoveToast={removeToast} 
       />
-      
-      {/* Floating Guidance Icon - Only show for Deep Search/workflow modes when streaming */}
-      {(agentMode === 'orchestrator' || agentMode === 'workflow') && !chatSessionId && isStreaming && (
-        <GuidanceFloatingIcon 
-          sessionId={sessionId}
-          onGuidanceChange={handleGuidanceChange}
-          onAddToast={addToastLimited}
-        />
-      )}
     </div>
   )
 })

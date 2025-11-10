@@ -111,7 +111,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		a.Tracers = []observability.Tracer{observability.NoopTracer{}}
 	}
 	if a.MaxTurns <= 0 {
-		a.MaxTurns = 50
+		a.MaxTurns = 25
 	}
 
 	// Use the passed context for cancellation checks (not the agent's internal context)
@@ -1199,7 +1199,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		Role: llmtypes.ChatMessageTypeHuman,
 		Parts: []llmtypes.ContentPart{
 			llmtypes.TextContent{
-				Text: "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.",
+				Text: "You are out of turns, you need to generate a final answer now. Please provide your final answer based on what you have accomplished so far.",
 			},
 		},
 	}

@@ -123,8 +123,23 @@ func (tva *TodoValidationAgent) ExecuteStructured(ctx context.Context, templateV
 		return userMessage
 	}
 
-	// Use the base orchestrator agent's ExecuteStructured method with system prompt (overwrite=true to replace default MCP prompt with agent-specific prompt)
-	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessor[ValidationResponse](tva.BaseOrchestratorAgent, ctx, templateVars, inputProcessor, conversationHistory, schema, systemPrompt, true)
+	// Define tool name and description for structured output via tool calls
+	toolName := "submit_validation_result"
+	toolDescription := "Submit the validation analysis result for the step execution. This tool should be called with the structured validation response containing whether the success criteria was met, execution status, reasoning, and feedback."
+
+	// Use the base orchestrator agent's ExecuteStructuredWithInputProcessorViaTool method with system prompt (overwrite=true to replace default MCP prompt with agent-specific prompt)
+	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessorViaTool[ValidationResponse](
+		tva.BaseOrchestratorAgent,
+		ctx,
+		templateVars,
+		inputProcessor,
+		conversationHistory,
+		schema,
+		systemPrompt,
+		true,
+		toolName,
+		toolDescription,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -181,15 +196,62 @@ func (tva *TodoValidationAgent) validationSystemPromptProcessor(templateVars map
 
 ## 🔍 VALIDATION PROCESS
 
-**General Validation Steps:**
-1. **Review Execution History**: Analyze conversation for evidence of completion
-2. **Check Success Criteria**: Verify if the success criteria was met
-3. **Analyze Tool Usage**: Check which tools were used and their results
-4. **Assess Evidence**: Identify what worked and what didn't
+**CRITICAL VALIDATION PRINCIPLE**: Be STRICT and CONSERVATIVE. Only mark as successful if there is CLEAR, CONCRETE EVIDENCE that ALL parts of the success criteria were met. If there is ANY doubt, uncertainty, or missing evidence, mark as FAILED.
+
+**Detailed Validation Steps:**
+
+1. **Analyze Conversation History Structure**:
+   - Review ALL messages in the execution conversation history
+   - Identify ALL tool calls made by the execution agent
+   - Check ALL tool responses for success/failure indicators
+   - Look for error messages, exceptions, or failure indicators in tool responses
+   - Verify the conversation shows a complete execution flow (not just partial attempts)
+
+2. **Verify Each Part of Success Criteria**:
+   - Break down the success criteria into individual requirements
+   - For EACH requirement, find SPECIFIC evidence in the conversation history:
+     - Tool calls that accomplished the requirement
+     - Tool responses that show the requirement was met
+     - Specific outputs, results, or confirmations
+   - If ANY requirement lacks clear evidence, mark as FAILED
+
+3. **Check for Errors and Failures**:
+   - Look for tool call failures (error responses, exceptions, timeouts)
+   - Check for error messages in tool responses
+   - Identify incomplete tool calls (calls without responses)
+   - Look for execution agent statements indicating problems, failures, or inability to complete
+   - Check for any "failed", "error", "exception", "timeout", "not found" indicators
+
+4. **Analyze Tool Usage and Results**:
+   - Verify tools were used appropriately for the task
+   - Check tool responses contain expected data/results
+   - Verify tool outputs match what success criteria requires
+   - Look for tool responses that indicate partial completion or missing data
+
+5. **Assess Evidence Quality**:
+   - Evidence must be CONCRETE and SPECIFIC (not vague or inferred)
+   - Evidence must come from ACTUAL tool responses (not just agent claims)
+   - Evidence must directly support the success criteria requirements
+   - If evidence is missing, ambiguous, or insufficient, mark as FAILED
 
 **Decision Criteria:**
-- ✅ **PASS**: Success criteria met with sufficient evidence
-- ❌ **FAIL**: Success criteria not met or insufficient evidence
+- ✅ **PASS**: ALL parts of success criteria met with CLEAR, CONCRETE evidence from conversation history - NO errors or failures detected
+- ❌ **FAIL**: ANY of the following:
+  - Success criteria not fully met
+  - Missing evidence for any part of success criteria
+  - Tool call failures or errors detected
+  - Incomplete execution (missing tool responses, partial completion)
+  - Execution agent reported failures or problems
+  - Insufficient or ambiguous evidence
+
+**RED FLAGS (Mark as FAILED if you see):**
+- Any tool call failures, errors, or exceptions in tool responses
+- Execution agent mentions failures, being stuck, or inability to complete
+- Missing tool responses (tool calls without corresponding responses)
+- Tool responses contain error messages, "not found", "failed", "timeout", etc.
+- Success criteria requires specific outcomes that are not clearly demonstrated in tool responses
+- Execution conversation shows incomplete or partial completion
+- Agent claims success but tool responses don't support the claims
 
 ## 🔄 LOOP CONDITION CHECK MODE (When Applicable)
 
@@ -211,9 +273,11 @@ func (tva *TodoValidationAgent) validationSystemPromptProcessor(templateVars map
 
 ## 📤 OUTPUT FORMAT
 
-**RETURN STRUCTURED JSON RESPONSE ONLY**
+**USE THE 'submit_validation_result' TOOL TO SUBMIT YOUR VALIDATION ANALYSIS**
 
-The response should be a JSON object with:
+You MUST call the 'submit_validation_result' tool with your validation analysis. Do NOT return JSON directly in your response - use the tool instead.
+
+The tool accepts a structured object with:
 - is_success_criteria_met: boolean - Whether the success criteria was met based on execution evidence
 - execution_status: string - Overall status (COMPLETED/PARTIAL/FAILED/INCOMPLETE)
 - reasoning: string - Detailed reasoning for the validation decision
@@ -242,17 +306,17 @@ The response should be a JSON object with:
 }
 ` + "```" + `
 
-**Note**: Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion. Return structured JSON response only.`
+**CRITICAL**: You MUST call the 'submit_validation_result' tool with your validation analysis. The tool will be available to you - use it to submit your structured validation response. Do NOT return JSON directly in your text response. Focus on the step execution conversation analysis. Check if the execution conversation provides sufficient evidence that the success criteria was met. Analyze tool usage and execution results to verify completion.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("validationSystemPrompt").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing validation system prompt template: %w", err)
+		return fmt.Sprintf("Error parsing validation system prompt template: %v", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing validation system prompt template: %w", err)
+		return fmt.Sprintf("Error executing validation system prompt template: %v", err)
 	}
 
 	return result.String()
@@ -300,7 +364,16 @@ func (tva *TodoValidationAgent) validationUserMessageProcessor(templateVars map[
 - **Success Criteria**: Use the success criteria above to verify completion
 - **Context Output**: Verify if the context output file was created as specified
 
-## 📝 **EXECUTION CONVERSATION TO VALIDATE**
+## 📝 **EXECUTION CONVERSATION HISTORY TO VALIDATE**
+
+**IMPORTANT**: The conversation history below contains the ACTUAL execution flow. Analyze it carefully:
+
+- **Tool Calls**: Look for all tool calls made by the execution agent
+- **Tool Responses**: Check each tool response for success/failure indicators
+- **Errors**: Identify any error messages, exceptions, or failures
+- **Evidence**: Find specific evidence for each part of the success criteria
+- **Completeness**: Verify the execution was complete (not partial or interrupted)
+
 {{.ExecutionOutput}}
 
 {{if .HasLoopCondition}}
@@ -310,9 +383,15 @@ This step is in **LOOP CONDITION CHECK MODE** - you are checking the LOOP CONDIT
 
 **Loop Condition**: {{.LoopCondition}}
 
-**Your Task**: Evaluate if the LOOP CONDITION is met based on the execution results.
+**Your Task**: Evaluate if the LOOP CONDITION is met based on the execution conversation history.
 
-Follow the validation process in the system prompt, focusing on loop condition evaluation. Return loop_condition_met and loop_reasoning in your structured JSON response.
+**CRITICAL**: Analyze the ACTUAL conversation history above:
+1. Review ALL tool calls and responses in the conversation
+2. Check for specific evidence that the loop condition is met
+3. Look for errors or failures that indicate the condition is NOT met
+4. Verify tool responses show the condition is satisfied (not just agent claims)
+
+Follow the validation process in the system prompt, focusing on loop condition evaluation. Call the 'submit_validation_result' tool with your validation results, including loop_condition_met and loop_reasoning fields.
 {{else}}
 ## 🧠 **YOUR TASK**
 
@@ -320,18 +399,50 @@ Validate if the step "{{.StepTitle}}" was completed successfully by checking if 
 
 **Success Criteria**: {{.StepSuccessCriteria}}
 
-Follow the validation process in the system prompt. Analyze the execution conversation history and return a structured JSON response with validation results.
+**CRITICAL INSTRUCTIONS:**
+
+1. **Analyze the Conversation History Above**:
+   - Review EVERY message in the execution conversation history
+   - Identify ALL tool calls and their corresponding responses
+   - Check for errors, failures, or incomplete executions
+   - Find SPECIFIC evidence for each part of the success criteria
+
+2. **Verify Each Part of Success Criteria**:
+   - Break down: "{{.StepSuccessCriteria}}" into individual requirements
+   - For EACH requirement, find concrete evidence in tool responses
+   - If ANY requirement lacks clear evidence, mark as FAILED
+
+3. **Check for Failures**:
+   - Look for tool call failures or errors in tool responses
+   - Check for execution agent statements indicating problems
+   - Identify incomplete tool calls (calls without responses)
+   - Look for error messages, exceptions, or failure indicators
+
+4. **Be STRICT**:
+   - Only mark as successful if ALL parts of success criteria have CLEAR evidence
+   - Evidence must come from ACTUAL tool responses, not just agent claims
+   - If in doubt or evidence is missing, mark as FAILED
+
+**Validation Checklist:**
+- [ ] All tool calls have corresponding responses
+- [ ] No tool call failures or errors detected
+- [ ] Each part of success criteria has specific evidence in tool responses
+- [ ] Execution agent did not report any failures or problems
+- [ ] Tool responses demonstrate success criteria outcomes clearly
+- [ ] No incomplete or partial execution detected
+
+Follow the validation process in the system prompt. Analyze the execution conversation history CAREFULLY and call the 'submit_validation_result' tool with your validation results.
 {{end}}`
 
 	// Parse and execute the template
 	tmpl, err := template.New("validationUserMessage").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing validation user message template: %w", err)
+		return fmt.Sprintf("Error parsing validation user message template: %v", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing validation user message template: %w", err)
+		return fmt.Sprintf("Error executing validation user message template: %v", err)
 	}
 
 	return result.String()

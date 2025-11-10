@@ -10,10 +10,7 @@ export interface BlockingHumanFeedbackEvent {
   yes_no_only?: boolean
   yes_label?: string
   no_label?: string
-  three_choice_mode?: boolean
-  option1_label?: string
-  option2_label?: string
-  option3_label?: string
+  options?: string[] // Array of option labels for multiple choice
 }
 
 interface BlockingHumanFeedbackDisplayProps {
@@ -44,12 +41,10 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const question = event.data.question || 'Do you want to continue?'
   const context = event.data.context || ''
   const yesNoOnly = event.data.yes_no_only || false
-  const threeChoiceMode = event.data.three_choice_mode || false
+  const options = event.data.options || []
+  const hasMultipleOptions = options.length > 0
   const yesLabel = event.data.yes_label || 'Approve'
   const noLabel = event.data.no_label || 'Reject'
-  const option1Label = event.data.option1_label || 'Option 1'
-  const option2Label = event.data.option2_label || 'Option 2'
-  const option3Label = event.data.option3_label || 'Option 3'
 
   const handleSubmitFeedback = async () => {
     if (event.data.request_id && feedback.trim() && onSubmitFeedback) {
@@ -135,12 +130,13 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     }
   }
 
-  const handleOption1 = async () => {
+  const handleOption = async (index: number) => {
     if (event.data.request_id && onSubmitFeedback) {
       setIsSubmittingFeedback(true)
       try {
-        await onSubmitFeedback(event.data.request_id, "option1")
-        setSubmittedFeedback("option1")
+        const optionValue = `option${index}`
+        await onSubmitFeedback(event.data.request_id, optionValue)
+        setSubmittedFeedback(options[index] || optionValue)
         setHasSubmitted(true)
         
         // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
@@ -151,53 +147,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
           }, 100)
         }
       } catch (error) {
-        console.error('Failed to select option 1:', error)
-      } finally {
-        setIsSubmittingFeedback(false)
-      }
-    }
-  }
-
-  const handleOption2 = async () => {
-    if (event.data.request_id && onSubmitFeedback) {
-      setIsSubmittingFeedback(true)
-      try {
-        await onSubmitFeedback(event.data.request_id, "option2")
-        setSubmittedFeedback("option2")
-        setHasSubmitted(true)
-        
-        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
-        if (onFeedbackSubmitted) {
-          // Use setTimeout to ensure the UI has updated before scrolling
-          setTimeout(() => {
-            onFeedbackSubmitted()
-          }, 100)
-        }
-      } catch (error) {
-        console.error('Failed to select option 2:', error)
-      } finally {
-        setIsSubmittingFeedback(false)
-      }
-    }
-  }
-
-  const handleOption3 = async () => {
-    if (event.data.request_id && onSubmitFeedback) {
-      setIsSubmittingFeedback(true)
-      try {
-        await onSubmitFeedback(event.data.request_id, "option3")
-        setSubmittedFeedback("option3")
-        setHasSubmitted(true)
-        
-        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
-        if (onFeedbackSubmitted) {
-          // Use setTimeout to ensure the UI has updated before scrolling
-          setTimeout(() => {
-            onFeedbackSubmitted()
-          }, 100)
-        }
-      } catch (error) {
-        console.error('Failed to select option 3:', error)
+        console.error(`Failed to select option ${index}:`, error)
       } finally {
         setIsSubmittingFeedback(false)
       }
@@ -283,8 +233,8 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
             </div>
           )}
           
-          {/* Feedback Input - hide when yesNoOnly is true or threeChoiceMode is true */}
-          {!yesNoOnly && !threeChoiceMode && (
+          {/* Feedback Input - hide when yesNoOnly is true or hasMultipleOptions is true */}
+          {!yesNoOnly && !hasMultipleOptions && (
             <div className="mb-4">
               <label htmlFor="feedback-input" className="block text-xs font-medium text-yellow-900 dark:text-yellow-100 mb-1">
                 Your feedback:
@@ -305,31 +255,33 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
           )}
 
           {/* Action Buttons */}
-          <div className="flex justify-end gap-2">
-            {threeChoiceMode ? (
-              // Three-choice mode - show three buttons
+          <div className="flex justify-end gap-2 flex-wrap">
+            {hasMultipleOptions ? (
+              // Multiple-choice mode - show buttons dynamically from options array
               <>
-                <button
-                  onClick={handleOption1}
-                  disabled={isApproving || isSubmittingFeedback}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-xs font-medium rounded transition-colors"
-                >
-                  {isSubmittingFeedback ? '⏳ Processing...' : option1Label}
-                </button>
-                <button
-                  onClick={handleOption2}
-                  disabled={isApproving || isSubmittingFeedback}
-                  className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400 text-white text-xs font-medium rounded transition-colors"
-                >
-                  {isSubmittingFeedback ? '⏳ Processing...' : option2Label}
-                </button>
-                <button
-                  onClick={handleOption3}
-                  disabled={isApproving || isSubmittingFeedback}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
-                >
-                  {isSubmittingFeedback ? '⏳ Processing...' : option3Label}
-                </button>
+                {options.map((optionLabel, index) => {
+                  // Use different colors for variety
+                  const colorClasses = [
+                    'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400',
+                    'bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400',
+                    'bg-green-600 hover:bg-green-700 disabled:bg-green-400',
+                    'bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400',
+                    'bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400',
+                    'bg-pink-600 hover:bg-pink-700 disabled:bg-pink-400',
+                  ]
+                  const colorClass = colorClasses[index % colorClasses.length] || 'bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400'
+                  
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => handleOption(index)}
+                      disabled={isApproving || isSubmittingFeedback}
+                      className={`px-4 py-2 ${colorClass} text-white text-xs font-medium rounded transition-colors`}
+                    >
+                      {isSubmittingFeedback ? '⏳ Processing...' : optionLabel}
+                    </button>
+                  )
+                })}
               </>
             ) : yesNoOnly ? (
               // Yes/No only mode - show two buttons

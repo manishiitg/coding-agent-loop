@@ -60,7 +60,7 @@ func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templ
 		"properties": {
 			"objective": {
 				"type": "string",
-				"description": "The templated objective with {{VARIABLE_NAME}} placeholders replacing hard-coded values"
+				"description": "The EXACT original objective text provided by the user, with ONLY hard-coded values replaced by {{VARIABLE_NAME}} placeholders. Preserve all original wording, punctuation, structure, and formatting exactly as given."
 			},
 			"variables": {
 				"type": "array",
@@ -187,7 +187,7 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 1. Generate UPPER_SNAKE_CASE variable name
 2. Keep original value
 3. Add description of what it represents
-4. Replace in objective with {{"{{"}}VARIABLE_NAME{{"}}"}}
+4. Replace ONLY the hard-coded value in objective with {{"{{"}}VARIABLE_NAME{{"}}"}} - preserve ALL other text exactly
 
 ## 📝 OUTPUT FORMAT
 
@@ -195,7 +195,7 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 
 ` + "```json" + `
 {
-  "objective": "Deploy Spring Boot app to AWS account {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} from GitHub {{"{{"}}GITHUB_REPO_URL{{"}}"}}",
+  "objective": "Deploy the Spring Boot application to AWS account {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} from GitHub repository {{"{{"}}GITHUB_REPO_URL{{"}}"}}",
   "variables": [
     {
       "name": "AWS_ACCOUNT_ID",
@@ -212,6 +212,8 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 }
 ` + "```" + `
 
+**IMPORTANT**: The "objective" field above shows EXACT text preservation - notice "the Spring Boot application" and "from GitHub repository" are preserved exactly as in the original, with ONLY the values replaced.
+
 ## 📤 YOUR TASKS
 
 **ALL YOUR DATA COMES FROM THE OBJECTIVE TEXT SHOWN ABOVE - DO NOT SEARCH FILES**
@@ -220,7 +222,7 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 2. **Analyze the OBJECTIVE text above** - find all hard-coded values (URLs, IDs, credentials, resource names, etc.)
 3. **For each hard-coded value**, create a variable (or use the user-provided variable name if they specified it)
 4. **Create variable definitions** with name, value, description
-5. **Generate templated objective** with {{"{{"}}VARIABLES{{"}}"}} replacing the original values
+5. **Generate templated objective** - use the EXACT original text, replacing ONLY hard-coded values with {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders
 6. **Create JSON file** at {{.WorkspacePath}}/variables/variables.json (create directory if needed)
 7. **Output the complete JSON** in your response so the orchestrator can parse it
 
@@ -228,11 +230,18 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 
 1. **User-mentioned variables take PRIORITY** - if user explicitly lists variables, use those FIRST with exact names and values
 2. **Every hard-coded VALUE** must become a variable (or skip if already covered by user-mentioned variables)
-3. **Preserve the objective structure** - only replace values with {{"{{"}}VARS{{"}}"}}
+3. **EXACT TEXT PRESERVATION** - The objective field MUST be the EXACT original text word-for-word, with ONLY hard-coded values replaced by {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders. Preserve:
+   - All original wording exactly as written
+   - All punctuation and formatting
+   - All sentence structure and order
+   - All capitalization
+   - All spacing and line breaks
+   - Everything else unchanged
 4. **Use descriptive variable names** - UPPER_SNAKE_CASE, descriptive (or user-provided names)
 5. **Provide clear descriptions** - what does this variable represent?
 6. **Write JSON to**: {{.WorkspacePath}}/variables/variables.json ONLY
 7. **DO NOT** search the entire workspace or create files elsewhere
+8. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 `
@@ -303,16 +312,23 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 1. Generate UPPER_SNAKE_CASE variable name
 2. Keep original value
 3. Add description of what it represents
-4. Replace in objective with {{"{{"}}VARIABLE_NAME{{"}}"}}
+4. Replace ONLY the hard-coded value in objective with {{"{{"}}VARIABLE_NAME{{"}}"}} - preserve ALL other text exactly
 
 ## 🔑 CRITICAL RULES
 
 1. **User-mentioned variables take PRIORITY** - if user explicitly lists variables, use those FIRST with exact names and values
 2. **Every hard-coded VALUE** must become a variable (or skip if already covered by user-mentioned variables)
-3. **Preserve the objective structure** - only replace values with {{"{{"}}VARS{{"}}"}}
+3. **EXACT TEXT PRESERVATION** - The objective field MUST be the EXACT original text word-for-word, with ONLY hard-coded values replaced by {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders. Preserve:
+   - All original wording exactly as written
+   - All punctuation and formatting
+   - All sentence structure and order
+   - All capitalization
+   - All spacing and line breaks
+   - Everything else unchanged
 4. **Use descriptive variable names** - UPPER_SNAKE_CASE, descriptive (or user-provided names)
 5. **Provide clear descriptions** - what does this variable represent?
 6. **DO NOT** search the entire workspace or create files - use structured output tool instead
+7. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -322,6 +338,47 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 - Call submit_variable_extraction_response tool with structured JSON data when extraction is complete
 - Do NOT read/write files, include markdown formatting, or output JSON in text - just call the tool with structured data
 - The tool expects a JSON object with: objective (string), variables (array), extraction_date (ISO 8601 string)
+
+## 📝 EXAMPLE - EXACT TEXT PRESERVATION
+
+**Original Objective:**
+"Deploy the Spring Boot application to AWS account 123456789012 in region us-east-1. The app should connect to database mydb-prod on port 3306."
+
+**Correct Output (EXACT preservation with only values replaced):**
+` + "```json" + `
+{
+  "objective": "Deploy the Spring Boot application to AWS account {{AWS_ACCOUNT_ID}} in region {{AWS_REGION}}. The app should connect to database {{DATABASE_NAME}} on port {{DATABASE_PORT}}.",
+  "variables": [
+    {
+      "name": "AWS_ACCOUNT_ID",
+      "value": "123456789012",
+      "description": "AWS account number for deployment"
+    },
+    {
+      "name": "AWS_REGION",
+      "value": "us-east-1",
+      "description": "AWS region for deployment"
+    },
+    {
+      "name": "DATABASE_NAME",
+      "value": "mydb-prod",
+      "description": "Database name to connect to"
+    },
+    {
+      "name": "DATABASE_PORT",
+      "value": "3306",
+      "description": "Database port number"
+    }
+  ],
+  "extraction_date": "2025-01-27T14:30:25Z"
+}
+` + "```" + `
+
+**WRONG (rephrased or modified):**
+- "Deploy Spring Boot app to AWS account {{AWS_ACCOUNT_ID}}..." (changed "the Spring Boot application" to "Spring Boot app")
+- "Deploy the Spring Boot application to AWS account {{AWS_ACCOUNT_ID}} in the {{AWS_REGION}} region..." (added "the" before region)
+
+**Remember**: The objective field must be IDENTICAL to the original, with ONLY values replaced by placeholders.
 `
 
 	// Parse and execute the template

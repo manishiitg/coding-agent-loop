@@ -336,10 +336,19 @@ func ToolResultAsString(result *mcp.CallToolResult, logger utils.ExtendedLogger)
 	joined := strings.Join(parts, "\n")
 
 	// Debug logging
-	logger.Infof("[DEBUG] ToolResultAsString - IsError: %v, Content: %s", result.IsError, joined)
+	logger.Infof("[DEBUG] ToolResultAsString - IsError: %v, Content length: %d, Content: %s", result.IsError, len(joined), joined)
 
 	// If it's already marked as an error, return the error message
 	if result.IsError {
+		// If content is empty, provide a more helpful error message
+		if joined == "" {
+			logger.Warnf("[DEBUG] ToolResultAsString - Error result has empty content, Content array length: %d", len(result.Content))
+			// Try to extract error from content types that might not have been processed
+			for i, content := range result.Content {
+				logger.Warnf("[DEBUG] ToolResultAsString - Content[%d] type: %T, value: %+v", i, content, content)
+			}
+			return "Tool call failed with error: (no error details available - error result had empty content)"
+		}
 		return fmt.Sprintf("Tool call failed with error: %s", joined)
 	}
 

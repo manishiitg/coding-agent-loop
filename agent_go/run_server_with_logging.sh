@@ -148,6 +148,8 @@ echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console
 # Using 'tee' to capture output to file while also displaying on console
+# With yaegi interpreter, no binary build needed - just run directly
+echo "🚀 Starting server with 'go run'..."
 go run main.go server \
     --log-level debug \
     --debug \

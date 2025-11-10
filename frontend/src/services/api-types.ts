@@ -51,6 +51,9 @@ export interface AgentQueryRequest {
   preset_query_id?: string
   // Orchestrator execution mode selection
   orchestrator_execution_mode?: OrchestratorExecutionMode
+  // Code execution mode: When enabled, only virtual tools are added to LLM
+  // MCP tools are accessed via generated Go code using discover_code_files and write_code
+  use_code_execution_mode?: boolean
 }
 
 export interface AgentQueryResponse {
@@ -469,6 +472,7 @@ export interface PresetQuery {
   selected_folder?: string; // Single folder path (nullable)
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
+  use_code_execution_mode?: string; // JSON string (boolean as string from DB)
   is_predefined: boolean;
   created_at: string;
   updated_at: string;
@@ -483,6 +487,7 @@ export interface CreatePresetQueryRequest {
   selected_folder?: string; // Single folder path
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
+  use_code_execution_mode?: boolean; // MCP code execution mode
   is_predefined?: boolean;
 }
 
@@ -494,6 +499,7 @@ export interface UpdatePresetQueryRequest {
   selected_folder?: string; // Single folder path
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
+  use_code_execution_mode?: boolean; // MCP code execution mode
 }
 
 export interface ListPresetQueriesResponse {

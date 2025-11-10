@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/mcpcache/codegen"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
 	"mcp-agent/agent_go/internal/llmtypes"
@@ -240,12 +241,35 @@ func (cm *CacheManager) Invalidate(cacheKey string) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
+	// Get server name from cache entry before deleting
+	var serverName string
+	if entry, exists := cm.cache[cacheKey]; exists {
+		serverName = entry.ServerName
+	}
+
 	delete(cm.cache, cacheKey)
 
 	// Remove from filesystem
 	cacheFile := cm.getCacheFilePath(cacheKey)
 	if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove cache file %s: %w", cacheFile, err)
+	}
+
+	// Remove generated Go files for this server
+	if serverName != "" {
+		generatedDir := cm.getGeneratedDir()
+		packageName := codegen.GetPackageName(serverName)
+		packageDir := filepath.Join(generatedDir, packageName)
+		if err := os.RemoveAll(packageDir); err != nil && !os.IsNotExist(err) {
+			cm.logger.Warnf("Failed to remove generated Go files for server %s: %v", serverName, err)
+		} else {
+			cm.logger.Debugf("Removed generated Go files for server: %s", serverName)
+		}
+
+		// Regenerate index file
+		if err := codegen.GenerateIndexFile(generatedDir, cm.logger); err != nil {
+			cm.logger.Warnf("Failed to regenerate index file: %v", err)
+		}
 	}
 
 	cm.logger.Debugf("Invalidated cache entry: %s", cacheKey)
@@ -277,7 +301,22 @@ func (cm *CacheManager) InvalidateByServer(configPath, serverName string) error 
 		}
 	}
 
+	// Remove generated Go files for this server
 	if len(keysToRemove) > 0 {
+		generatedDir := cm.getGeneratedDir()
+		packageName := codegen.GetPackageName(serverName)
+		packageDir := filepath.Join(generatedDir, packageName)
+		if err := os.RemoveAll(packageDir); err != nil && !os.IsNotExist(err) {
+			cm.logger.Warnf("Failed to remove generated Go files for server %s: %v", serverName, err)
+		} else {
+			cm.logger.Debugf("Removed generated Go files for server: %s", serverName)
+		}
+
+		// Regenerate index file
+		if err := codegen.GenerateIndexFile(generatedDir, cm.logger); err != nil {
+			cm.logger.Warnf("Failed to regenerate index file: %v", err)
+		}
+
 		cm.logger.Infof("Invalidated %d cache entries for server %s", len(keysToRemove), serverName)
 	}
 
@@ -430,6 +469,18 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 	}
 
 	cm.logger.Debugf("Saved cache entry to file: %s", cacheFile)
+
+	// Generate Go code for tools
+	generatedDir := cm.getGeneratedDir()
+	entryForCodeGen := &codegen.CacheEntryForCodeGen{
+		ServerName: entry.ServerName,
+		Tools:      entry.Tools,
+	}
+	if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger); err != nil {
+		cm.logger.Warnf("Failed to generate Go code for server %s: %v", entry.ServerName, err)
+		// Don't fail cache save if code generation fails
+	}
+
 	return nil
 }
 
@@ -500,6 +551,23 @@ func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
 // getCacheFilePath returns the filesystem path for a cache key
 func (cm *CacheManager) getCacheFilePath(cacheKey string) string {
 	return filepath.Join(cm.cacheDir, fmt.Sprintf("%s.json", cacheKey))
+}
+
+// getGeneratedDir returns the path to the generated/ directory
+func (cm *CacheManager) getGeneratedDir() string {
+	// Use environment variable if set, otherwise default to agent_go/generated
+	generatedDir := os.Getenv("MCP_GENERATED_DIR")
+	if generatedDir == "" {
+		// Default to agent_go/generated directory
+		generatedDir = filepath.Join(".", "generated")
+	}
+	// Ensure directory exists
+	if err := os.MkdirAll(generatedDir, 0755); err != nil {
+		if cm.logger != nil {
+			cm.logger.Warnf("Failed to create generated directory %s: %v", generatedDir, err)
+		}
+	}
+	return generatedDir
 }
 
 // clearCacheDirectory removes all files from the cache directory

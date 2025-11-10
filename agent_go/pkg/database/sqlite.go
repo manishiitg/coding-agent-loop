@@ -31,16 +31,17 @@ func validateWhereClause(whereClause string) error {
 
 // validateUpdateFields ensures UPDATE field names are from a whitelist
 var allowedUpdateFields = map[string]bool{
-	"label":            true,
-	"query":            true,
-	"selected_servers": true,
-	"selected_tools":   true,
-	"selected_folder":  true,
-	"agent_mode":       true,
-	"llm_config":       true,
-	"workflow_status":  true,
-	"selected_options": true,
-	"updated_at":       true,
+	"label":                   true,
+	"query":                   true,
+	"selected_servers":        true,
+	"selected_tools":          true,
+	"selected_folder":         true,
+	"agent_mode":              true,
+	"llm_config":              true,
+	"use_code_execution_mode": true,
+	"workflow_status":         true,
+	"selected_options":        true,
+	"updated_at":              true,
 }
 
 func validateUpdateField(field string) bool {
@@ -539,10 +540,16 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 		agentMode = AgentModeSimple // Use constant for default
 	}
 
+	// Convert use_code_execution_mode boolean to INTEGER (0/1) for SQLite
+	useCodeExecutionModeInt := 0
+	if req.UseCodeExecutionMode {
+		useCodeExecutionModeInt = 1
+	}
+
 	query := `
-		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, is_predefined, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
 	`
 
 	var preset PresetQuery
@@ -550,8 +557,9 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
-	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, req.IsPredefined, "user").Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	var returnedUseCodeExecutionModeInt int
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, useCodeExecutionModeInt, req.IsPredefined, "user").Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &returnedUseCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -566,6 +574,8 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	} else {
 		preset.LLMConfig = json.RawMessage("null")
 	}
+	// Convert INTEGER to boolean
+	preset.UseCodeExecutionMode = returnedUseCodeExecutionModeInt != 0
 
 	return &preset, nil
 }
@@ -573,7 +583,7 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 // GetPresetQuery retrieves a preset query by ID
 func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		WHERE id = ?
 	`
@@ -583,8 +593,9 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
+	var useCodeExecutionModeInt int
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -601,6 +612,9 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	} else {
 		preset.LLMConfig = nil
 	}
+	// Convert INTEGER to boolean
+	preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
+
 	return &preset, nil
 }
 
@@ -669,6 +683,16 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 		args = append(args, string(llmConfigBytes))
 	}
 
+	if req.UseCodeExecutionMode != nil {
+		// Convert boolean to INTEGER (0/1) for SQLite
+		useCodeExecutionModeInt := 0
+		if *req.UseCodeExecutionMode {
+			useCodeExecutionModeInt = 1
+		}
+		updateFields = append(updateFields, "use_code_execution_mode = ?")
+		args = append(args, useCodeExecutionModeInt)
+	}
+
 	if len(updateFields) == 0 {
 		return nil, fmt.Errorf("no fields to update")
 	}
@@ -688,7 +712,7 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 		UPDATE preset_queries
 		SET %s
 		WHERE id = ?
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
 	`, strings.Join(updateFields, ", "))
 
 	var preset PresetQuery
@@ -696,8 +720,9 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
+	var useCodeExecutionModeInt int
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -714,6 +739,9 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 	} else {
 		preset.LLMConfig = nil
 	}
+	// Convert INTEGER to boolean
+	preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
+
 	return &preset, nil
 }
 
@@ -750,7 +778,7 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 
 	// Get presets
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
@@ -769,8 +797,9 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 		var selectedToolsStr string
 		var selectedFolderStr sql.NullString
 		var llmConfigNullStr sql.NullString
+		var useCodeExecutionModeInt int
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
@@ -784,6 +813,8 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 			preset.LLMConfig = json.RawMessage("null")
 		}
 		preset.SelectedFolder = selectedFolderStr
+		// Convert INTEGER to boolean
+		preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
 		presets = append(presets, preset)
 	}
 

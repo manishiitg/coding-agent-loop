@@ -48,6 +48,7 @@ func NewTodoExecutionOrchestrator(
 	agentMode string,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	mcpConfigPath string,
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -56,6 +57,7 @@ func NewTodoExecutionOrchestrator(
 	eventBridge mcpagent.AgentEventListener,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
+	toolCategories map[string]string, // NEW: tool category map
 ) (*TodoExecutionOrchestrator, error) {
 
 	// Create base workflow orchestrator
@@ -69,11 +71,13 @@ func NewTodoExecutionOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		selectedTools, // Pass through actual selected tools
-		llmConfig,     // llmConfig passed from caller
+		selectedTools,        // Pass through actual selected tools
+		useCodeExecutionMode, // NEW: Pass code execution mode
+		llmConfig,            // llmConfig passed from caller
 		maxTurns,
 		customTools,
 		customToolExecutors,
+		toolCategories, // NEW: Pass category map
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)

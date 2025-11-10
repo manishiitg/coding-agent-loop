@@ -132,6 +132,7 @@ func NewBaseAgent(
 	instructions string,
 	serverNames []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	mode AgentMode,
 	tracer observability.Tracer,
 	traceID observability.TraceID,
@@ -142,7 +143,6 @@ func NewBaseAgent(
 	maxTurns int,
 	provider string,
 	logger utils.ExtendedLogger,
-	cacheOnly bool,
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -158,7 +158,6 @@ func NewBaseAgent(
 		mcpagent.WithToolChoice(toolChoice),
 		mcpagent.WithMaxTurns(maxTurns),
 		mcpagent.WithProvider(internalLLM.Provider(provider)),
-		mcpagent.WithCacheOnly(cacheOnly),
 	}
 
 	// Add selected servers for "all tools" mode determination
@@ -169,6 +168,12 @@ func NewBaseAgent(
 	// Add selected tools if provided
 	if len(selectedTools) > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(selectedTools))
+	}
+
+	// Add code execution mode if enabled
+	if useCodeExecutionMode {
+		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
+		logger.Infof("🔧 Code execution mode enabled for %s agent - MCP tools will be accessed via generated Go code", agentType)
 	}
 
 	// Enable smart routing for all agents

@@ -16,20 +16,9 @@ import (
 func (a *Agent) shouldUseSmartRouting() bool {
 	logger := a.Logger
 
-	// In cache-only mode, count unique servers from tool-to-server mapping; otherwise use active clients count
-	var serverCount int
-	if a.CacheOnly {
-		// Count unique servers from tool-to-server mapping
-		serverSet := make(map[string]bool)
-		for _, serverName := range a.toolToServer {
-			serverSet[serverName] = true
-		}
-		serverCount = len(serverSet)
-		logger.Infof("🔧 DEBUG: shouldUseSmartRouting - Cache-only mode: toolToServer entries=%d, unique servers=%d", len(a.toolToServer), serverCount)
-	} else {
-		serverCount = len(a.Clients) // Use active clients count
-		logger.Infof("🔧 DEBUG: shouldUseSmartRouting - Active mode: Clients count=%d", serverCount)
-	}
+	// Use active clients count
+	serverCount := len(a.Clients)
+	logger.Infof("🔧 DEBUG: shouldUseSmartRouting - Active mode: Clients count=%d", serverCount)
 
 	result := a.EnableSmartRouting &&
 		len(a.Tools) > a.SmartRoutingThreshold.MaxTools &&
@@ -63,16 +52,8 @@ func (a *Agent) buildConversationContext(messages []llmtypes.MessageContent) str
 	return contextBuilder.String()
 }
 
-// Helper function to get server count based on cache mode
+// Helper function to get server count
 func (a *Agent) getServerCount() int {
-	if a.CacheOnly {
-		// Count unique servers from tool-to-server mapping
-		serverSet := make(map[string]bool)
-		for _, serverName := range a.toolToServer {
-			serverSet[serverName] = true
-		}
-		return len(serverSet)
-	}
 	return len(a.Clients) // Use active clients count
 }
 
@@ -216,22 +197,10 @@ func (a *Agent) buildServerSelectionPrompt(conversationContext string) string {
 	var serverList strings.Builder
 	serverList.WriteString("AVAILABLE MCP SERVERS:\n")
 
-	// In cache-only mode, get unique servers from tool-to-server mapping; otherwise use active clients
+	// Build list from active clients
 	var serversToIterate []string
-	if a.CacheOnly {
-		// Get unique servers from tool-to-server mapping
-		serverSet := make(map[string]bool)
-		for _, serverName := range a.toolToServer {
-			serverSet[serverName] = true
-		}
-		for serverName := range serverSet {
-			serversToIterate = append(serversToIterate, serverName)
-		}
-	} else {
-		// Build list from active clients
-		for serverName := range a.Clients {
-			serversToIterate = append(serversToIterate, serverName)
-		}
+	for serverName := range a.Clients {
+		serversToIterate = append(serversToIterate, serverName)
 	}
 
 	for _, serverName := range serversToIterate {
@@ -571,7 +540,7 @@ func (a *Agent) parseTextServerResponse(response string) ([]string, error) {
 
 // Filter tools by server
 func (a *Agent) filterToolsByServers(relevantServers []string) []llmtypes.Tool {
-		var filteredTools []llmtypes.Tool
+	var filteredTools []llmtypes.Tool
 
 	for _, tool := range a.Tools {
 		// Check if this is a custom tool (no server mapping)

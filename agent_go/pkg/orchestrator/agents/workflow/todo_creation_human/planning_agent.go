@@ -3,6 +3,7 @@ package todo_creation_human
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -166,6 +167,17 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 
 	result, updatedHistory, err := agents.ExecuteStructuredWithInputProcessorViaTool[PlanningResponse](hctppa.BaseOrchestratorAgent, ctx, templateVars, inputProcessor, conversationHistory, schema, systemPrompt, false, toolName, toolDescription)
 	if err != nil {
+		// Check if this is a non-structured response error (text response instead of structured output)
+		// IMPORTANT: Return the error directly without wrapping, so runPlanningPhase can detect it
+		if agents.IsNonStructuredResponseError(err) {
+			// Return the original NonStructuredResponseError with UpdatedHistory so runPlanningPhase can handle it
+			// Don't wrap it - wrapping breaks the error type check
+			var nonStructuredErr *agents.NonStructuredResponseError
+			if errors.As(err, &nonStructuredErr) {
+				return nil, nonStructuredErr.UpdatedHistory, err
+			}
+			return nil, updatedHistory, err
+		}
 		return nil, nil, err
 	}
 
@@ -236,9 +248,8 @@ Available variables:
 - **Why?** Plans must work across dev/staging/prod environments without modification
 
 {{end}}
-## 🔧 MCP TOOLS AND CAPABILITIES
 
-**MCP Tools Available**: You have access to MCP servers and their tools. Review available tools to understand capabilities, but don't execute them unless critical for plan structure. Focus on planning strategy, not execution details.
+
 
 ## 📋 PLANNING GUIDELINES
 - **Comprehensive Scope**: Create complete plan to achieve objective
@@ -329,7 +340,7 @@ Available variables:
 
 ## 🔧 MCP TOOLS AND CAPABILITIES
 
-**MCP Tools Available**: You have access to MCP servers and their tools (for reference only). Don't execute tools in update mode - focus on text updates based on feedback.
+**MCP Tools Available**: You have access to MCP servers and their tools.
 
 ## 🤖 MULTI-AGENT COORDINATION
 

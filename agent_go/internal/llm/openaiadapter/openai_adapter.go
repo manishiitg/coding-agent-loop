@@ -48,7 +48,7 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 	}
 
 	// Convert messages from llmtypes format to OpenAI format
-	openaiMessages := convertMessages(messages)
+	openaiMessages := convertMessages(messages, o.logger)
 
 	// Build ChatCompletionNewParams from options
 	params := openai.ChatCompletionNewParams{
@@ -56,9 +56,17 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 		Messages: openaiMessages,
 	}
 
-	// Set temperature
-	if opts.Temperature > 0 {
+	// Set temperature - some models (gpt-5, o1, o3, o4) only support default temperature (1.0)
+	// Check if model has temperature restrictions
+	if opts.Temperature > 0 && !hasTemperatureRestrictions(modelID) {
 		params.Temperature = param.NewOpt(opts.Temperature)
+	} else if opts.Temperature > 0 && hasTemperatureRestrictions(modelID) {
+		// Model has temperature restrictions - use default (1.0) or omit
+		// For models that only support default, we omit the parameter to let OpenAI use default
+		if o.logger != nil {
+			o.logger.Warnf("Model %s only supports default temperature (1.0), omitting temperature parameter", modelID)
+		}
+		// Don't set temperature - OpenAI will use default
 	}
 
 	// Note: max_tokens is omitted - OpenAI API will use model defaults
@@ -106,16 +114,39 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 	return convertResponse(result), nil
 }
 
+// hasTemperatureRestrictions checks if a model only supports default temperature (1.0)
+// Models like gpt-5, gpt-5-mini, o1, o3, o4 only support the default temperature value
+func hasTemperatureRestrictions(modelID string) bool {
+	modelIDLower := strings.ToLower(modelID)
+	restrictedModels := []string{
+		"gpt-5",
+		"gpt-5-mini",
+		"o1",
+		"o1-mini",
+		"o1-preview",
+		"o3",
+		"o3-mini",
+		"o4",
+		"o4-mini",
+	}
+
+	for _, restricted := range restrictedModels {
+		if strings.Contains(modelIDLower, restricted) {
+			return true
+		}
+	}
+	return false
+}
+
 // convertMessages converts llmtypes messages to OpenAI message format
-func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatCompletionMessageParamUnion {
+func convertMessages(langMessages []llmtypes.MessageContent, logger utils.ExtendedLogger) []openai.ChatCompletionMessageParamUnion {
 	openaiMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(langMessages))
 
 	for _, msg := range langMessages {
 		// Extract content parts
 		var contentParts []string
 		var imageParts []llmtypes.ImageContent
-		var toolCallID string
-		var toolResponseContent string
+		var toolResponses []llmtypes.ToolCallResponse // Support multiple tool responses
 		var toolCalls []llmtypes.ToolCall
 
 		for _, part := range msg.Parts {
@@ -125,9 +156,8 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 			case llmtypes.ImageContent:
 				imageParts = append(imageParts, p)
 			case llmtypes.ToolCallResponse:
-				// Tool response - extract tool call ID and content (use raw content as string)
-				toolCallID = p.ToolCallID
-				toolResponseContent = p.Content
+				// Collect all tool responses (a message can have multiple tool responses)
+				toolResponses = append(toolResponses, p)
 			case llmtypes.ToolCall:
 				// Tool call in assistant message
 				toolCalls = append(toolCalls, p)
@@ -152,14 +182,14 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 			if len(imageParts) > 0 {
 				// Build content array with text and image parts
 				contentPartsArray := make([]openai.ChatCompletionContentPartUnionParam, 0)
-				
+
 				// Add text parts
 				for _, text := range contentParts {
 					if text != "" {
 						contentPartsArray = append(contentPartsArray, openai.TextContentPart(text))
 					}
 				}
-				
+
 				// Add image parts
 				for _, img := range imageParts {
 					imagePart := createImageContentPart(img)
@@ -167,7 +197,7 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 						contentPartsArray = append(contentPartsArray, *imagePart)
 					}
 				}
-				
+
 				// Only add message if there's content
 				if len(contentPartsArray) > 0 {
 					openaiMessages = append(openaiMessages, openai.UserMessage(contentPartsArray))
@@ -231,9 +261,28 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 			}
 		case string(llmtypes.ChatMessageTypeTool):
 			// Tool message - handle tool responses
-			if toolCallID != "" {
-				// Use raw content directly (can be JSON string or plain text)
-				openaiMessages = append(openaiMessages, openai.ToolMessage(toolResponseContent, toolCallID))
+			// A single message can contain multiple tool responses, each needs to be a separate tool message
+			if len(toolResponses) > 0 {
+				for _, toolResp := range toolResponses {
+					if toolResp.ToolCallID == "" {
+						// Skip tool responses without a tool call ID (invalid)
+						if logger != nil {
+							logger.Warnf("⚠️ Skipping tool response with empty ToolCallID - Name: %s, Content length: %d", toolResp.Name, len(toolResp.Content))
+						}
+						continue
+					}
+					// Use raw content directly (can be JSON string or plain text)
+					// OpenAI allows empty content for tool responses
+					openaiMessages = append(openaiMessages, openai.ToolMessage(toolResp.Content, toolResp.ToolCallID))
+					if logger != nil {
+						logger.Debugf("✅ Added tool message - ToolCallID: %s, Name: %s, Content length: %d", toolResp.ToolCallID, toolResp.Name, len(toolResp.Content))
+					}
+				}
+			} else {
+				// No tool responses found in a tool message - this is unusual
+				if logger != nil {
+					logger.Warnf("⚠️ Tool message has no ToolCallResponse parts - skipping message")
+				}
 			}
 		default:
 			// Default to user message - can have text and/or images
@@ -241,14 +290,14 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 			if len(imageParts) > 0 {
 				// Build content array with text and image parts
 				contentPartsArray := make([]openai.ChatCompletionContentPartUnionParam, 0)
-				
+
 				// Add text parts
 				for _, text := range contentParts {
 					if text != "" {
 						contentPartsArray = append(contentPartsArray, openai.TextContentPart(text))
 					}
 				}
-				
+
 				// Add image parts
 				for _, img := range imageParts {
 					imagePart := createImageContentPart(img)
@@ -256,7 +305,7 @@ func convertMessages(langMessages []llmtypes.MessageContent) []openai.ChatComple
 						contentPartsArray = append(contentPartsArray, *imagePart)
 					}
 				}
-				
+
 				// Only add message if there's content
 				if len(contentPartsArray) > 0 {
 					openaiMessages = append(openaiMessages, openai.UserMessage(contentPartsArray))
@@ -317,10 +366,14 @@ func convertTools(llmTools []llmtypes.Tool) []openai.ChatCompletionToolUnionPara
 			if tool.Function.Parameters.Type != "" {
 				paramsMap["type"] = tool.Function.Parameters.Type
 			}
-			if tool.Function.Parameters.Properties != nil {
+			// Only add properties if they exist and are not empty
+			// OpenAI requires that if type is "object", properties must either be omitted or have at least one property
+			// IMPORTANT: Check for nil first, then check length - len(nil map) returns 0 in Go
+			if tool.Function.Parameters.Properties != nil && len(tool.Function.Parameters.Properties) > 0 {
 				paramsMap["properties"] = tool.Function.Parameters.Properties
 			}
-			if tool.Function.Parameters.Required != nil {
+			// Only add required if they exist and are not empty
+			if tool.Function.Parameters.Required != nil && len(tool.Function.Parameters.Required) > 0 {
 				paramsMap["required"] = tool.Function.Parameters.Required
 			}
 			if tool.Function.Parameters.AdditionalProperties != nil {
@@ -334,6 +387,27 @@ func convertTools(llmTools []llmtypes.Tool) []openai.ChatCompletionToolUnionPara
 					paramsMap[k] = v
 				}
 			}
+
+			// CRITICAL FIX: OpenAI API has conflicting requirements:
+			// 1. If type is "object", properties field MUST be present
+			// 2. But empty properties: {} is rejected
+			// Solution: For empty schemas, provide a minimal valid schema with a dummy optional property
+			// This satisfies OpenAI's requirement while being functionally equivalent to empty
+			if paramsMap["type"] == "object" {
+				if _, hasProperties := paramsMap["properties"]; !hasProperties {
+					// Empty object schema - OpenAI requires properties to be present
+					// Add a dummy optional property that will never be used
+					// This is a workaround for OpenAI's API limitation
+					paramsMap["properties"] = map[string]interface{}{
+						"_": map[string]interface{}{
+							"type":        "string",
+							"description": "Unused parameter (required by OpenAI API for empty schemas)",
+						},
+					}
+					// Don't add "_" to required array - it's optional
+				}
+			}
+
 			parameters = shared.FunctionParameters(paramsMap)
 		}
 

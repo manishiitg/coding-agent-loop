@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -15,6 +16,33 @@ import (
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
 )
+
+// NonStructuredResponseError represents a case where the agent returned a text response
+// instead of structured output. This should be handled by displaying the text to the user
+// and asking for further feedback.
+type NonStructuredResponseError struct {
+	TextResponse   string
+	UpdatedHistory []llmtypes.MessageContent
+	OriginalError  error
+}
+
+func (e *NonStructuredResponseError) Error() string {
+	if e.OriginalError != nil {
+		return e.OriginalError.Error()
+	}
+	return fmt.Sprintf("non-structured response received: %s", e.TextResponse)
+}
+
+// Unwrap returns the original error for error unwrapping
+func (e *NonStructuredResponseError) Unwrap() error {
+	return e.OriginalError
+}
+
+// IsNonStructuredResponseError checks if an error is a NonStructuredResponseError
+func IsNonStructuredResponseError(err error) bool {
+	var nonStructuredErr *NonStructuredResponseError
+	return errors.As(err, &nonStructuredErr)
+}
 
 // OrchestratorContext holds context information for event emission
 // Removed: OrchestratorContext and related context-specific fields are now handled by the context-aware bridge.
@@ -217,11 +245,8 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 			conversationalInput = "LLM returned empty response (no tool call detected)"
 		}
 		resultStr = fmt.Sprintf("Conversational input detected (not structured output): %s", conversationalInput)
-		finalErr = fmt.Errorf("conversational input detected - LLM response: %s", conversationalInput)
-		// Emit event and return
-		boa.emitAgentEndEventWithStructuredResponse(ctx, templateVars, resultStr, nil, finalErr, duration)
-		var zero T
-		return zero, updatedHistory, finalErr
+		// Don't create finalErr here - let it fall through to create NonStructuredResponseError below
+		// Don't emit event here - it will be emitted at line 272, but we'll return NonStructuredResponseError before that
 	} else {
 		// Marshal structured response to JSON for both Result field and StructuredResponse map
 		resultBytes, marshalErr := json.Marshal(result.StructuredResult)
@@ -243,6 +268,26 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 		}
 	}
 
+	// Only emit event if we're not returning a NonStructuredResponseError (which will be handled below)
+	// For non-structured responses, we'll return the error before emitting the event
+	if !result.HasStructuredOutput {
+		// Return NonStructuredResponseError immediately - don't emit event here
+		// The event will be emitted by the caller if needed
+		var zero T
+		conversationalInput := result.TextResponse
+		if conversationalInput == "" {
+			conversationalInput = "LLM returned empty response (no tool call detected)"
+		}
+		// Return a special error type that includes the text response and updated history
+		// This allows callers to handle non-structured responses gracefully by displaying
+		// the text to the user and asking for further feedback
+		return zero, updatedHistory, &NonStructuredResponseError{
+			TextResponse:   conversationalInput,
+			UpdatedHistory: updatedHistory,
+			OriginalError:  fmt.Errorf("conversational input detected - LLM response: %s", conversationalInput),
+		}
+	}
+
 	boa.emitAgentEndEventWithStructuredResponse(ctx, templateVars, resultStr, structuredResponse, finalErr, duration)
 
 	if err != nil {
@@ -250,15 +295,7 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 		return zero, nil, fmt.Errorf("structured execution failed: %w", err)
 	}
 
-	if !result.HasStructuredOutput {
-		var zero T
-		conversationalInput := result.TextResponse
-		if conversationalInput == "" {
-			conversationalInput = "LLM returned empty response (no tool call detected)"
-		}
-		return zero, updatedHistory, fmt.Errorf("conversational input detected - LLM response: %s", conversationalInput)
-	}
-
+	// NonStructuredResponseError is already handled above (line 273), so we can proceed to return the result
 	return result.StructuredResult, updatedHistory, nil
 }
 

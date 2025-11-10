@@ -2,6 +2,7 @@ package todo_creation_human
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -53,7 +54,8 @@ func NewVariableExtractionAgent(
 }
 
 // ExecuteStructured executes the variable extraction agent and returns structured JSON output
-func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*VariablesManifest, []llmtypes.MessageContent, error) {
+// userMessage: The user message to send (e.g., "Extract variables..." for first attempt, or human feedback for revisions)
+func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string) (*VariablesManifest, []llmtypes.MessageContent, error) {
 	// Define the JSON schema for variable extraction
 	schema := `{
 		"type": "object",
@@ -94,15 +96,11 @@ func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templ
 	// Generate system prompt using the processor
 	systemPrompt := variableExtractionSystemPromptProcessor(templateVars)
 
-	// Create an input processor that returns the extraction instruction only on first attempt
-	// If conversation history exists (e.g., human feedback), use empty string to avoid duplicate instructions
+	// Create an input processor that returns the user message
+	// In first attempt: userMessage is "Extract variables..."
+	// In revision attempts: userMessage is human feedback
 	inputProcessor := func(map[string]string) string {
-		// If there's already conversation history (e.g., from human feedback), don't add the generic instruction
-		// The human feedback or previous messages should be sufficient context
-		if len(conversationHistory) > 0 {
-			return "" // Empty message - conversation history already has the context
-		}
-		return "Extract variables from the objective and call submit_variable_extraction_response tool with the structured output."
+		return userMessage
 	}
 
 	// Use ExecuteStructuredWithInputProcessorViaTool with generics
@@ -122,6 +120,17 @@ func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templ
 		toolDescription,
 	)
 	if err != nil {
+		// Check if this is a non-structured response error (text response instead of structured output)
+		// IMPORTANT: Return the error directly without wrapping, so the controller can detect it
+		if agents.IsNonStructuredResponseError(err) {
+			// Return the original NonStructuredResponseError with UpdatedHistory so the controller can handle it
+			// Don't wrap it - wrapping breaks the error type check
+			var nonStructuredErr *agents.NonStructuredResponseError
+			if errors.As(err, &nonStructuredErr) {
+				return nil, nonStructuredErr.UpdatedHistory, err
+			}
+			return nil, updatedHistory, err
+		}
 		return nil, nil, err
 	}
 

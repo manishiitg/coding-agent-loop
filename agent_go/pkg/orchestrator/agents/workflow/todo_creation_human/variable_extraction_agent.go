@@ -94,8 +94,14 @@ func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templ
 	// Generate system prompt using the processor
 	systemPrompt := variableExtractionSystemPromptProcessor(templateVars)
 
-	// Create a simple input processor that returns the extraction instruction
+	// Create an input processor that returns the extraction instruction only on first attempt
+	// If conversation history exists (e.g., human feedback), use empty string to avoid duplicate instructions
 	inputProcessor := func(map[string]string) string {
+		// If there's already conversation history (e.g., from human feedback), don't add the generic instruction
+		// The human feedback or previous messages should be sufficient context
+		if len(conversationHistory) > 0 {
+			return "" // Empty message - conversation history already has the context
+		}
 		return "Extract variables from the objective and call submit_variable_extraction_response tool with the structured output."
 	}
 
@@ -347,7 +353,7 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 **Correct Output (EXACT preservation with only values replaced):**
 ` + "```json" + `
 {
-  "objective": "Deploy the Spring Boot application to AWS account {{AWS_ACCOUNT_ID}} in region {{AWS_REGION}}. The app should connect to database {{DATABASE_NAME}} on port {{DATABASE_PORT}}.",
+  "objective": "Deploy the Spring Boot application to AWS account {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} in region {{"{{"}}AWS_REGION{{"}}"}}. The app should connect to database {{"{{"}}DATABASE_NAME{{"}}"}} on port {{"{{"}}DATABASE_PORT{{"}}"}}.",
   "variables": [
     {
       "name": "AWS_ACCOUNT_ID",
@@ -375,8 +381,8 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 ` + "```" + `
 
 **WRONG (rephrased or modified):**
-- "Deploy Spring Boot app to AWS account {{AWS_ACCOUNT_ID}}..." (changed "the Spring Boot application" to "Spring Boot app")
-- "Deploy the Spring Boot application to AWS account {{AWS_ACCOUNT_ID}} in the {{AWS_REGION}} region..." (added "the" before region)
+- "Deploy Spring Boot app to AWS account {{"{{"}}AWS_ACCOUNT_ID{{"}}"}}..." (changed "the Spring Boot application" to "Spring Boot app")
+- "Deploy the Spring Boot application to AWS account {{"{{"}}AWS_ACCOUNT_ID{{"}}"}} in the {{"{{"}}AWS_REGION{{"}}"}} region..." (added "the" before region)
 
 **Remember**: The objective field must be IDENTICAL to the original, with ONLY values replaced by placeholders.
 `

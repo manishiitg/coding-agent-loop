@@ -1191,7 +1191,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	logger.Infof("[AGENT TRACE] AskWithHistory: max turns (%d) reached, giving agent final chance to provide answer.", a.MaxTurns)
 
 	// Emit max turns reached event
-	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", string(a.AgentMode), time.Since(conversationStartTime))
+	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.AgentMode), time.Since(conversationStartTime))
 	a.EmitTypedEvent(ctx, maxTurnsEvent)
 
 	// Add a user message asking for final answer

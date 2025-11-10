@@ -211,8 +211,13 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 		resultStr = "Error: " + err.Error()
 		finalErr = err
 	} else if !result.HasStructuredOutput {
-		resultStr = "Conversational input detected (not structured output)"
-		finalErr = fmt.Errorf("conversational input detected: %s", result.TextResponse)
+		// Return the actual conversational input from the LLM
+		conversationalInput := result.TextResponse
+		if conversationalInput == "" {
+			conversationalInput = "LLM returned empty response (no tool call detected)"
+		}
+		resultStr = fmt.Sprintf("Conversational input detected (not structured output): %s", conversationalInput)
+		finalErr = fmt.Errorf("conversational input detected - LLM response: %s", conversationalInput)
 		// Emit event and return
 		boa.emitAgentEndEventWithStructuredResponse(ctx, templateVars, resultStr, nil, finalErr, duration)
 		var zero T
@@ -247,7 +252,11 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 
 	if !result.HasStructuredOutput {
 		var zero T
-		return zero, updatedHistory, fmt.Errorf("conversational input detected: %s", result.TextResponse)
+		conversationalInput := result.TextResponse
+		if conversationalInput == "" {
+			conversationalInput = "LLM returned empty response (no tool call detected)"
+		}
+		return zero, updatedHistory, fmt.Errorf("conversational input detected - LLM response: %s", conversationalInput)
 	}
 
 	return result.StructuredResult, updatedHistory, nil

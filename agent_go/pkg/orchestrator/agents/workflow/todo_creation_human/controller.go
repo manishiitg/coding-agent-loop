@@ -1413,10 +1413,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 							loopConditionMet = true
 
 							// Run success learning when loop completes successfully (before breaking)
-							// FAST MODE: Skip learning agents entirely
+							// FAST MODE & LEARNING DISABLED: Skip learning agents entirely
 							isFastExecuteStep := hcpo.IsFastExecuteStep(i)
-							hcpo.GetLogger().Infof("🔍 DEBUG: Step %d (loop) - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v", i+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, isFastExecuteStep)
-							if !isFastExecuteStep {
+							isLearningDisabled := hcpo.GetLearningDetailLevel() == "none"
+							hcpo.GetLogger().Infof("🔍 DEBUG: Step %d (loop) - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v", i+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, isFastExecuteStep, isLearningDisabled)
+							if !isFastExecuteStep && !isLearningDisabled {
 								// Success Learning Agent - analyze what worked well and update plan.json
 								// Loop condition met means step completed successfully
 								hcpo.GetLogger().Infof("🧠 Running success learning analysis for step %d (loop completed)", i+1)
@@ -1437,7 +1438,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 									}
 								}
 							} else {
-								hcpo.GetLogger().Infof("⚡ Fast mode: Skipping learning agents for step %d", i+1)
+								if isFastExecuteStep {
+									hcpo.GetLogger().Infof("⚡ Fast mode: Skipping learning agents for step %d", i+1)
+								} else if isLearningDisabled {
+									hcpo.GetLogger().Infof("⏭️ Learning disabled: Skipping learning agents for step %d", i+1)
+								}
 							}
 
 							break // Exit retry loop, will exit main loop at top
@@ -1465,11 +1470,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 						}
 					}
 
-					// FAST MODE: Skip learning agents entirely
+					// FAST MODE & LEARNING DISABLED: Skip learning agents entirely
 					isFastExecuteStep := hcpo.IsFastExecuteStep(i)
-					hcpo.GetLogger().Infof("🔍 DEBUG: Step %d - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v", i+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, isFastExecuteStep)
-					if isFastExecuteStep {
-						hcpo.GetLogger().Infof("⚡ Fast mode: Skipping learning agents for step %d", i+1)
+					isLearningDisabled := hcpo.GetLearningDetailLevel() == "none"
+					hcpo.GetLogger().Infof("🔍 DEBUG: Step %d - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v", i+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, isFastExecuteStep, isLearningDisabled)
+					if isFastExecuteStep || isLearningDisabled {
+						if isFastExecuteStep {
+							hcpo.GetLogger().Infof("⚡ Fast mode: Skipping learning agents for step %d", i+1)
+						} else if isLearningDisabled {
+							hcpo.GetLogger().Infof("⏭️ Learning disabled: Skipping learning agents for step %d", i+1)
+						}
 					} else {
 						// Run appropriate learning phase based on validation result
 						if validationResponse.IsSuccessCriteriaMet {
@@ -1881,14 +1891,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatVariableValues() strin
 
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse) (string, error) {
-	hcpo.GetLogger().Infof("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
-
 	// Use stored learning detail level preference (set once before execution starts)
 	learningDetailLevel := hcpo.GetLearningDetailLevel()
 	if learningDetailLevel == "" {
 		hcpo.GetLogger().Warnf("⚠️ Learning detail level not set, defaulting to 'general'")
 		learningDetailLevel = "general"
 	}
+
+	// Skip learning if "none" is selected
+	if learningDetailLevel == "none" {
+		hcpo.GetLogger().Infof("⏭️ Skipping success learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps)
+		return "", nil
+	}
+
+	hcpo.GetLogger().Infof("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
 
 	// Create success learning agent
 	// Resolve variables in step title before using in agent name
@@ -1948,14 +1964,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 
 // runFailureLearningPhase analyzes failed executions to provide refined task descriptions for retry
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse) (string, string, error) {
-	hcpo.GetLogger().Infof("🧠 Starting failure learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
-
 	// Use stored learning detail level preference (set once before execution starts)
 	learningDetailLevel := hcpo.GetLearningDetailLevel()
 	if learningDetailLevel == "" {
 		hcpo.GetLogger().Warnf("⚠️ Learning detail level not set, defaulting to 'general'")
 		learningDetailLevel = "general"
 	}
+
+	// Skip learning if "none" is selected
+	if learningDetailLevel == "none" {
+		hcpo.GetLogger().Infof("⏭️ Skipping failure learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps)
+		return "", "", nil
+	}
+
+	hcpo.GetLogger().Infof("🧠 Starting failure learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
 
 	// Create failure learning agent
 	// Resolve variables in step title before using in agent name
@@ -2191,7 +2213,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestHumanFeedback(ctx con
 }
 
 // requestLearningDetailLevel asks user to choose the level of detail for learning analysis
-// Returns: ("exact" for exact MCP tools with args, "general" for general patterns, error)
+// Returns: ("exact" for exact MCP tools with args, "general" for general patterns, "none" to skip learning, error)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) requestLearningDetailLevel(ctx context.Context, stepNumber, totalSteps int, stepTitle string, isSuccess bool) (string, error) {
 	learningType := "failure"
 	if isSuccess {
@@ -2215,6 +2237,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestLearningDetailLevel(c
 		contextMsg = fmt.Sprintf("%s\n\n**Choose the level of detail for learning analysis (applies to all %d steps):**\n", stepTitle, totalSteps)
 		contextMsg += "\n- **Exact MCP Tools**: Extract exact tool calls with complete argument JSON"
 		contextMsg += "\n- **General Patterns**: Extract high-level approaches and paths to success"
+		contextMsg += "\n- **No Learnings Required**: Skip all learning agents and learning integration"
 		question = "How detailed should the learning analysis be for all steps?"
 	} else {
 		// Asking for specific step
@@ -2222,13 +2245,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestLearningDetailLevel(c
 		contextMsg += "\n\n**Choose the level of detail for learning analysis:**\n"
 		contextMsg += "\n- **Exact MCP Tools**: Extract exact tool calls with complete argument JSON"
 		contextMsg += "\n- **General Patterns**: Extract high-level approaches and paths to success"
+		contextMsg += "\n- **No Learnings Required**: Skip all learning agents and learning integration"
 		question = fmt.Sprintf("How detailed should the %s learning analysis be for step %d?", learningType, stepNumber)
 	}
 
-	// Use multiple-choice feedback with 2 options
+	// Use multiple-choice feedback with 3 options
 	learningOptions := []string{
 		"Exact MCP Tools",
 		"General Patterns",
+		"No Learnings Required",
 	}
 	choice, err := hcpo.RequestMultipleChoiceFeedback(
 		ctx,
@@ -2252,6 +2277,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestLearningDetailLevel(c
 	} else if choice == "option1" {
 		hcpo.GetLogger().Infof("✅ User selected: General Patterns")
 		return "general", nil
+	} else if choice == "option2" {
+		hcpo.GetLogger().Infof("✅ User selected: No Learnings Required")
+		return "none", nil
 	}
 
 	// Default to general if unclear
@@ -2527,11 +2555,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteEnhancedPlanCache(ctx 
 // runLearningIntegrationPhase enhances existing plan.json with success/failure patterns from learnings files
 // Uses caching to avoid re-running integration when no new learnings are detected
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runLearningIntegrationPhase(ctx context.Context, existingPlan *PlanningResponse) (*PlanningResponse, error) {
-	hcpo.GetLogger().Infof("🧠 Starting learning integration phase")
-
 	if existingPlan == nil {
 		return nil, fmt.Errorf("existing plan is nil - cannot enhance without plan")
 	}
+
+	// Skip learning integration if "none" is selected
+	if hcpo.GetLearningDetailLevel() == "none" {
+		hcpo.GetLogger().Infof("⏭️ Skipping learning integration phase (learning disabled)")
+		return existingPlan, nil
+	}
+
+	hcpo.GetLogger().Infof("🧠 Starting learning integration phase")
 
 	// Check cache first
 	cachePath := fmt.Sprintf("%s/planning/plan_learnings.json", hcpo.GetWorkspacePath())

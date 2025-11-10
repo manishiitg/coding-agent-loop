@@ -72,6 +72,7 @@ planner-docs/
 planner-docs/*
 
 agent_go/service-account.json
+agent_go/service_account.json
 
 # Gitleaks reports and cache
 gitleaks-report.json

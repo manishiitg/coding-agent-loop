@@ -24,7 +24,6 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	ValidationFeedback      string
 	PreviousIterationOutput string // Previous loop iteration execution output (for loop steps)
 	LearningAgentOutput     string // Combined success/failure patterns and learning insights
-	PreviousHumanFeedback   string
 	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
 	HasLoop                 string // "true" or "false" as string
@@ -56,132 +55,32 @@ func NewHumanControlledTodoPlannerExecutionAgent(config *agents.OrchestratorAgen
 
 // Execute implements the OrchestratorAgent interface
 func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	// Extract workspace path from template variables
-	// Human-controlled execution agent - executes plan directly without iteration complexity
-	workspacePath := templateVars["WorkspacePath"]
+	// Generate system prompt and user message separately
+	systemPrompt := hctpea.executionSystemPromptProcessor(templateVars)
+	userMessage := hctpea.executionUserMessageProcessor(templateVars)
 
-	// Prepare template variables
-	executionTemplateVars := map[string]string{
-		"StepTitle":               templateVars["StepTitle"],
-		"StepDescription":         templateVars["StepDescription"],
-		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
-		"StepContextDependencies": templateVars["StepContextDependencies"],
-		"StepContextOutput":       templateVars["StepContextOutput"],
-		"WorkspacePath":           workspacePath,
-		"ValidationFeedback":      templateVars["ValidationFeedback"],
-		"PreviousIterationOutput": templateVars["PreviousIterationOutput"], // Previous loop iteration execution output
-		"LearningAgentOutput":     templateVars["LearningAgentOutput"],
-		"PreviousHumanFeedback":   templateVars["PreviousHumanFeedback"], // Human feedback from previous iteration
-		"VariableNames":           templateVars["VariableNames"],         // May be empty if no variables
-		"VariableValues":          templateVars["VariableValues"],        // May be empty if no variables
-		"HasLoop":                 templateVars["HasLoop"],               // May be empty or "false" if no loop
-		"LoopCondition":           templateVars["LoopCondition"],         // May be empty if no loop
-		"LoopDescription":         templateVars["LoopDescription"],       // May be empty if no loop
-		"CurrentIteration":        templateVars["CurrentIteration"],      // May be empty if no loop
-		"MaxIterations":           templateVars["MaxIterations"],         // May be empty if no loop
+	// Create a simple input processor that returns the user message
+	inputProcessor := func(map[string]string) string {
+		return userMessage
 	}
 
-	// Create template data for validation
-	templateData := HumanControlledTodoPlannerExecutionTemplate{
-		StepTitle:               executionTemplateVars["StepTitle"],
-		StepDescription:         executionTemplateVars["StepDescription"],
-		StepSuccessCriteria:     executionTemplateVars["StepSuccessCriteria"],
-		StepContextDependencies: executionTemplateVars["StepContextDependencies"],
-		StepContextOutput:       executionTemplateVars["StepContextOutput"],
-		WorkspacePath:           executionTemplateVars["WorkspacePath"],
-		ValidationFeedback:      executionTemplateVars["ValidationFeedback"],
-		PreviousIterationOutput: executionTemplateVars["PreviousIterationOutput"],
-		LearningAgentOutput:     executionTemplateVars["LearningAgentOutput"],
-		PreviousHumanFeedback:   executionTemplateVars["PreviousHumanFeedback"],
-		VariableNames:           executionTemplateVars["VariableNames"],
-		VariableValues:          executionTemplateVars["VariableValues"],
-		HasLoop:                 executionTemplateVars["HasLoop"],
-		LoopCondition:           executionTemplateVars["LoopCondition"],
-		LoopDescription:         executionTemplateVars["LoopDescription"],
-		CurrentIteration:        executionTemplateVars["CurrentIteration"],
-		MaxIterations:           executionTemplateVars["MaxIterations"],
-	}
-
-	// Execute using template validation - no conversation history needed, all context in template variables
-	return hctpea.ExecuteWithTemplateValidation(ctx, executionTemplateVars, hctpea.humanControlledExecutionInputProcessor, []llmtypes.MessageContent{}, templateData, "", false)
+	// Use ExecuteWithTemplateValidation with system prompt (overwrite=true to replace default MCP prompt with agent-specific prompt)
+	return hctpea.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, nil, systemPrompt, true)
 }
 
-// humanControlledExecutionInputProcessor processes inputs specifically for human-controlled plan execution
-func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecutionInputProcessor(templateVars map[string]string) string {
-	// Create template data
-	templateData := HumanControlledTodoPlannerExecutionTemplate{
-		StepTitle:               templateVars["StepTitle"],
-		StepDescription:         templateVars["StepDescription"],
-		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
-		StepContextDependencies: templateVars["StepContextDependencies"],
-		StepContextOutput:       templateVars["StepContextOutput"],
-		WorkspacePath:           templateVars["WorkspacePath"],
-		ValidationFeedback:      templateVars["ValidationFeedback"],
-		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
-		LearningAgentOutput:     templateVars["LearningAgentOutput"],
-		PreviousHumanFeedback:   templateVars["PreviousHumanFeedback"],
-		VariableNames:           templateVars["VariableNames"],
-		VariableValues:          templateVars["VariableValues"],
-		HasLoop:                 templateVars["HasLoop"],
-		LoopCondition:           templateVars["LoopCondition"],
-		LoopDescription:         templateVars["LoopDescription"],
-		CurrentIteration:        templateVars["CurrentIteration"],
-		MaxIterations:           templateVars["MaxIterations"],
-	}
+// executionSystemPromptProcessor generates the system prompt for execution agent
+func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptProcessor(templateVars map[string]string) string {
+	workspacePath := templateVars["WorkspacePath"]
+	hasLoop := templateVars["HasLoop"] == "true"
+	stepContextOutput := templateVars["StepContextOutput"]
 
-	// Define the template
-	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
-
-**CURRENT STEP**: {{.StepTitle}}
-**STEP DESCRIPTION**: {{.StepDescription}}
-**WORKSPACE**: {{.WorkspacePath}}
-
-{{if .VariableNames}}
-## 📋 AVAILABLE VARIABLES
-
-**Variable Names and Descriptions:**
-{{.VariableNames}}
-
-{{if .VariableValues}}
-**Variable Values (for reference):**
-{{.VariableValues}}
-{{end}}
-
-**Important**: Variables have been resolved in step descriptions above. Use these variable names/values as reference when executing the step.
-{{end}}
+	// Define the system prompt template
+	templateStr := `# Execution Agent
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Execution Agent
 - **Responsibility**: Execute a single step from the plan using MCP tools
 - **Mode**: Single step execution
-
-{{if eq .HasLoop "true"}}
-## 🔄 LOOP MODE ACTIVE
-
-**This step is executing in LOOP MODE** - you will execute this step repeatedly until the loop condition is met.
-
-**Loop Condition**: {{.LoopCondition}}
-{{if .LoopDescription}}
-**Loop Description**: {{.LoopDescription}}
-{{end}}
-
-**Current Status**:
-- **Current Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
-- **Max Iterations**: {{.MaxIterations}}
-
-**Your Task in Loop Mode**:
-- Execute the step as described below
-- Work towards meeting the loop condition: "{{.LoopCondition}}"
-- The step will continue looping until this condition is met OR max iterations reached
-- After each execution, the validation agent will check if the loop condition is met
-- **Focus on making progress towards the loop condition** - you may need to check status, poll services, retry operations, etc.
-- **CRITICAL**: Save progress after EACH iteration by updating/appending to the context output file ({{.StepContextOutput}}) - don't wait until the loop completes. Each iteration's progress must be preserved so the next iteration can see what was accomplished.
-
-**Important**: 
-- The loop condition ({{.LoopCondition}}) is the same as the success criteria
-- Once the loop condition is met, the step will exit the loop and be marked as completed
-- Continue executing until the condition is satisfied
-{{end}}
 
 ## 📁 FILE PERMISSIONS (Execution Agent)
 
@@ -219,61 +118,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 - "read_file returned 245 lines from config.json"
 - "Created {{.WorkspacePath}}/step_1_results.md with 10 database URLs"
 
-{{if .LearningAgentOutput}}
-## 🧠 LEARNING AGENT OUTPUT
-
-**Learning Agent Analysis**: {{.LearningAgentOutput}}
-
-**Important**: The learning agent has analyzed previous executions and provided this guidance. Use this analysis to improve your execution approach, including success patterns to follow and failure patterns to avoid.
-{{end}}
-
-{{if .PreviousIterationOutput}}
-## 🔄 PREVIOUS LOOP ITERATION EXECUTION OUTPUT
-
-{{.PreviousIterationOutput}}
-
-**Important**: This is the execution output from the previous loop iteration. Review what was done previously to understand the context and avoid repeating the same actions unnecessarily.
-{{end}}
-
-{{if .ValidationFeedback}}
-## ⚠️ VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT
-
-{{.ValidationFeedback}}
-
-**Important**: This is feedback from the validation of your previous attempt. Please address the issues mentioned above and improve your execution approach based on this feedback.
-{{end}}
-
-{{if .PreviousHumanFeedback}}
-## 💬 HUMAN FEEDBACK FOR THIS STEP
-
-{{.PreviousHumanFeedback}}
-
-**Important**: This is human feedback specifically for this step execution. Please carefully review this feedback and adjust your execution approach accordingly.
-{{end}}
-
-**Note**: All context is provided through template variables above. Use the template variables for all necessary information.
-
-## 🎯 CURRENT STEP EXECUTION
-
-**Step - {{.StepTitle}}**
-**Description**: {{.StepDescription}}
-
-### 📋 Complete Step Information
-**Success Criteria**: {{.StepSuccessCriteria}}
-**Context Dependencies**: {{.StepContextDependencies}}
-**Context Output**: {{.StepContextOutput}}
-
-### 🔍 Step Context Analysis
-**Success Criteria**: Use the success criteria above to verify completion
-**Context Dependencies**: Check context dependencies for files from previous steps
-{{if eq .HasLoop "true"}}
-**Context Output**: Update or append to the context output file ({{.StepContextOutput}}) after each iteration to preserve progress
-{{else}}
-**Context Output**: Create the context output file specified above for other agents
-{{end}}
-
-**Your Task**: Execute this specific step using the available MCP tools. Use the complete step information above, including success criteria, context dependencies, and context output requirements.
-
 ## 🔍 EXECUTION GUIDELINES
 
 1. **Read Context**: Check context dependencies for files from previous steps
@@ -282,6 +126,9 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) humanControlledExecution
 4. **Verify Completion**: Check if success criteria is met
 5. **Create Output**: Generate context output file for next steps (if specified)
 6. **Document Results**: Provide clear summary of what was accomplished
+{{if .HasLoop}}
+7. **Save Progress After Each Iteration**: Update or append to the context output file ({{.StepContextOutput}}) after each iteration to preserve progress
+{{end}}
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -301,7 +148,7 @@ Provide a clear execution summary in your response:
 - Created/modified: [any files]
 
 **Success Criteria Check**: 
-- Criteria: {{.StepSuccessCriteria}}
+- Criteria: [Success criteria from step]
 - Met: [Yes/No with evidence]
 
 **Context Output**: 
@@ -340,14 +187,149 @@ Provide a clear execution summary in your response:
 **Note**: Focus on executing the step completely using MCP tools. Read workspace files for context. Return results in your response. The validation agent will document and verify your execution.`
 
 	// Parse and execute the template
-	tmpl, err := template.New("execution").Parse(templateStr)
+	tmpl, err := template.New("executionSystemPrompt").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing execution template: %v", err)
+		return fmt.Sprintf("Error parsing execution system prompt template: %v", err)
+	}
+
+	var result strings.Builder
+	err = tmpl.Execute(&result, map[string]interface{}{
+		"WorkspacePath":     workspacePath,
+		"HasLoop":           hasLoop,
+		"StepContextOutput": stepContextOutput,
+	})
+	if err != nil {
+		return fmt.Sprintf("Error executing execution system prompt template: %v", err)
+	}
+
+	return result.String()
+}
+
+// executionUserMessageProcessor generates the user message for execution agent
+func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProcessor(templateVars map[string]string) string {
+	// Create template data
+	templateData := HumanControlledTodoPlannerExecutionTemplate{
+		StepTitle:               templateVars["StepTitle"],
+		StepDescription:         templateVars["StepDescription"],
+		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
+		StepContextDependencies: templateVars["StepContextDependencies"],
+		StepContextOutput:       templateVars["StepContextOutput"],
+		WorkspacePath:           templateVars["WorkspacePath"],
+		ValidationFeedback:      templateVars["ValidationFeedback"],
+		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
+		LearningAgentOutput:     templateVars["LearningAgentOutput"],
+		VariableNames:           templateVars["VariableNames"],
+		VariableValues:          templateVars["VariableValues"],
+		HasLoop:                 templateVars["HasLoop"],
+		LoopCondition:           templateVars["LoopCondition"],
+		LoopDescription:         templateVars["LoopDescription"],
+		CurrentIteration:        templateVars["CurrentIteration"],
+		MaxIterations:           templateVars["MaxIterations"],
+	}
+
+	// Define the user message template
+	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
+
+**CURRENT STEP**: {{.StepTitle}}
+**STEP DESCRIPTION**: {{.StepDescription}}
+**WORKSPACE**: {{.WorkspacePath}}
+
+{{if .VariableNames}}
+## 📋 AVAILABLE VARIABLES
+
+**Variable Names and Descriptions:**
+{{.VariableNames}}
+
+{{if .VariableValues}}
+**Variable Values (for reference):**
+{{.VariableValues}}
+{{end}}
+
+**Important**: Variables have been resolved in step descriptions above. Use these variable names/values as reference when executing the step.
+{{end}}
+
+{{if eq .HasLoop "true"}}
+## 🔄 LOOP MODE ACTIVE
+
+**This step is executing in LOOP MODE** - you will execute this step repeatedly until the loop condition is met.
+
+**Loop Condition**: {{.LoopCondition}}
+{{if .LoopDescription}}
+**Loop Description**: {{.LoopDescription}}
+{{end}}
+
+**Current Status**:
+- **Current Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
+- **Max Iterations**: {{.MaxIterations}}
+
+**Your Task in Loop Mode**:
+- Execute the step as described below
+- Work towards meeting the loop condition: "{{.LoopCondition}}"
+- The step will continue looping until this condition is met OR max iterations reached
+- After each execution, the validation agent will check if the loop condition is met
+- **Focus on making progress towards the loop condition** - you may need to check status, poll services, retry operations, etc.
+- **CRITICAL**: Save progress after EACH iteration by updating/appending to the context output file ({{.StepContextOutput}}) - don't wait until the loop completes. Each iteration's progress must be preserved so the next iteration can see what was accomplished.
+
+**Important**: 
+- The loop condition ({{.LoopCondition}}) is the same as the success criteria
+- Once the loop condition is met, the step will exit the loop and be marked as completed
+- Continue executing until the condition is satisfied
+{{end}}
+
+{{if .LearningAgentOutput}}
+## 🧠 LEARNING AGENT OUTPUT
+
+**Learning Agent Analysis**: {{.LearningAgentOutput}}
+
+**Important**: The learning agent has analyzed previous executions and provided this guidance. Use this analysis to improve your execution approach, including success patterns to follow and failure patterns to avoid.
+{{end}}
+
+{{if .PreviousIterationOutput}}
+## 🔄 PREVIOUS LOOP ITERATION EXECUTION OUTPUT
+
+{{.PreviousIterationOutput}}
+
+**Important**: This is the execution output from the previous loop iteration. Review what was done previously to understand the context and avoid repeating the same actions unnecessarily.
+{{end}}
+
+{{if .ValidationFeedback}}
+## ⚠️ VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT
+
+{{.ValidationFeedback}}
+
+**Important**: This is feedback from the validation of your previous attempt. Please address the issues mentioned above and improve your execution approach based on this feedback.
+{{end}}
+
+## 🎯 CURRENT STEP EXECUTION
+
+**Step - {{.StepTitle}}**
+**Description**: {{.StepDescription}}
+
+### 📋 Complete Step Information
+**Success Criteria**: {{.StepSuccessCriteria}}
+**Context Dependencies**: {{.StepContextDependencies}}
+**Context Output**: {{.StepContextOutput}}
+
+### 🔍 Step Context Analysis
+**Success Criteria**: Use the success criteria above to verify completion
+**Context Dependencies**: Check context dependencies for files from previous steps
+{{if eq .HasLoop "true"}}
+**Context Output**: Update or append to the context output file ({{.StepContextOutput}}) after each iteration to preserve progress
+{{else}}
+**Context Output**: Create the context output file specified above for other agents
+{{end}}
+
+**Your Task**: Execute this specific step using the available MCP tools. Use the complete step information above, including success criteria, context dependencies, and context output requirements.`
+
+	// Parse and execute the template
+	tmpl, err := template.New("executionUserMessage").Parse(templateStr)
+	if err != nil {
+		return fmt.Sprintf("Error parsing execution user message template: %v", err)
 	}
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing execution template: %v", err)
+		return fmt.Sprintf("Error executing execution user message template: %v", err)
 	}
 
 	return result.String()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -388,13 +389,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 		// Request human decision: use existing plan, create new plan, or update existing plan
 		requestID := fmt.Sprintf("existing_plan_decision_%d", time.Now().UnixNano())
-		planChoice, err := hcpo.RequestThreeChoiceFeedback(
+		planOptions := []string{
+			"Use Existing Plan",    // Option 0: Use existing plan as-is
+			"Create New Plan",      // Option 1: Delete everything and create new plan
+			"Update Existing Plan", // Option 2: Create new plan but keep existing artifacts
+		}
+		planChoice, err := hcpo.RequestMultipleChoiceFeedback(
 			ctx,
 			requestID,
 			"Found existing plan.json. What would you like to do?",
-			"Use Existing Plan",    // Option 1: Use existing plan as-is
-			"Create New Plan",      // Option 2: Delete everything and create new plan
-			"Update Existing Plan", // Option 3: Create new plan but keep existing artifacts
+			planOptions,
 			fmt.Sprintf("Plan location: %s\nFound %d steps", planPath, len(existingPlan.Steps)),
 			hcpo.getSessionID(),
 			hcpo.getWorkflowID(),
@@ -402,11 +406,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		if err != nil {
 			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing plan: %w", err)
 			// Default to using existing plan
-			planChoice = "option1"
+			planChoice = "option0"
 		}
 
 		switch planChoice {
-		case "option1":
+		case "option0":
 			// Use existing plan - directly use the parsed JSON (no approval needed since user explicitly chose to use it)
 			// Note: breakdownSteps and event emission already done before the switch statement
 			hcpo.GetLogger().Infof("✅ User chose to use existing plan, proceeding directly to learning integration")
@@ -418,7 +422,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			// Keep planExists = true to prevent planning phase from running
 			// The planning phase is skipped when approvedPlan is already set
 
-		case "option2":
+		case "option1":
 			// Create new plan - cleanup everything and create fresh plan
 			hcpo.GetLogger().Infof("🔄 User chose to create new plan, cleaning up existing plan and related files")
 			// Clean up existing plan and all related execution artifacts
@@ -429,7 +433,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			}
 			planExists = false
 
-		case "option3":
+		case "option2":
 			// Update existing plan - create new plan but keep artifacts (no cleanup)
 			hcpo.GetLogger().Infof("🔄 User chose to update existing plan, creating new plan but keeping existing artifacts")
 
@@ -609,10 +613,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				earlyProgress = nil // Default to start fresh
 			} else {
 				switch choice {
-				case "option1": // Keep old progress (try to match)
+				case "option0": // Keep old progress (try to match)
 					hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
 					// Keep earlyProgress as-is, will be handled later
-				case "option2": // Delete old progress and start fresh
+				case "option1": // Delete old progress and start fresh
 					hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
 					// Initialize fresh progress with new total steps
 					if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
@@ -691,11 +695,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				existingProgress = nil // Default to start fresh
 			} else {
 				switch choice {
-				case "option1": // Keep old progress (try to match)
+				case "option0": // Keep old progress (try to match)
 					hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
 					// Keep existingProgress as-is, continue processing below
 					// Note: Step matching logic may not work perfectly, but we'll try
-				case "option2": // Delete old progress and start fresh
+				case "option1": // Delete old progress and start fresh
 					hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
 					// Initialize fresh progress with new total steps
 					if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
@@ -777,21 +781,26 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				lastCompletedStepNumber := max(existingProgress.CompletedStepIndices) + 1 // Convert to 1-based
 
 				requestID := fmt.Sprintf("resume_progress_%d", time.Now().UnixNano())
-				choice, err := hcpo.RequestThreeChoiceFeedback(
+				resumeOptions := []string{
+					fmt.Sprintf("Resume from Step %d", nextIncompleteStep),
+					"Start from Beginning",
+					fmt.Sprintf("Fast Execute (0 to Step %d)", lastCompletedStepNumber),
+					"Fast Execute all steps",
+					fmt.Sprintf("Fast Resume From Step %d", nextIncompleteStep),
+				}
+				choice, err := hcpo.RequestMultipleChoiceFeedback(
 					ctx,
 					requestID,
 					fmt.Sprintf("Found existing progress: %d/%d steps completed. How would you like to proceed?",
 						len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps),
-					fmt.Sprintf("Resume from Step %d", nextIncompleteStep),
-					"Start from Beginning",
-					fmt.Sprintf("Fast Execute (0 to Step %d)", lastCompletedStepNumber),
+					resumeOptions,
 					fmt.Sprintf("Last updated: %s", existingProgress.LastUpdated.Format("2006-01-02 15:04:05")),
 					hcpo.getSessionID(),
 					hcpo.getWorkflowID(),
 				)
 				if err != nil {
 					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for resuming: %w", err)
-					choice = "option1" // Default to resume
+					choice = "option0" // Default to resume
 				}
 
 				// Track fast execute mode
@@ -799,10 +808,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				fastExecuteEndStep := -1
 
 				switch choice {
-				case "option1": // Resume from next incomplete step
+				case "option0": // Resume from next incomplete step
 					startFromStep = nextIncompleteStep - 1 // Convert back to 0-based
 					hcpo.GetLogger().Infof("✅ User chose to resume from step %d", nextIncompleteStep)
-				case "option2": // Start from beginning (normal execution)
+				case "option1": // Start from beginning (normal execution)
 					hcpo.GetLogger().Infof("🔄 User chose to start from beginning, will reset progress and cleanup execution artifacts")
 					// Delete existing progress
 					if err := hcpo.deleteStepProgress(ctx); err != nil {
@@ -825,8 +834,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					// Note: learnings/ folder is preserved - deleted manually only
 					existingProgress = nil
 					startFromStep = 0
-				case "option3": // Fast execute completed steps
-					hcpo.GetLogger().Infof("⚡ User chose fast execute mode for completed steps")
+				case "option2": // Fast execute completed steps (0 to lastCompletedStepNumber)
+					hcpo.GetLogger().Infof("⚡ User chose fast execute mode for completed steps (0 to %d)", lastCompletedStepNumber)
 
 					// Clean up execution artifacts for steps that will be re-executed
 					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
@@ -851,6 +860,39 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					}
 					existingProgress.CompletedStepIndices = newCompletedIndices
 					hcpo.GetLogger().Infof("⚡ Will fast execute steps 0 to %d, then continue with normal execution from step %d", fastExecuteEndStep, nextIncompleteStep)
+				case "option3": // Fast execute all steps
+					hcpo.GetLogger().Infof("⚡ User chose fast execute mode for all steps")
+
+					// Clean up execution artifacts for all steps
+					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+					} else {
+						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory for fast re-execution")
+					}
+
+					fastExecuteMode = true
+					fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute all steps
+					startFromStep = 0
+					// Clear all completed indices to re-execute everything
+					existingProgress.CompletedStepIndices = []int{}
+					hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", fastExecuteEndStep)
+				case "option4": // Fast resume from next incomplete step
+					hcpo.GetLogger().Infof("⚡ User chose fast resume mode from step %d", nextIncompleteStep)
+
+					// Note: No cleanup needed - we're just skipping learning/validation/human feedback for ALL steps
+					// Fast execute ALL steps (0 to end) - this ensures any step that gets executed runs in fast mode
+
+					fastExecuteMode = true
+					// Fast execute ALL steps (0 to last step) - this covers all steps
+					// Completed steps will be skipped, but if any step executes, it will be in fast mode
+					fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute ALL steps (0 to end)
+					startFromStep = nextIncompleteStep - 1       // Start from next incomplete step (0-based)
+
+					// Keep all completed indices as-is - we're not re-executing completed steps
+					// The execution loop will skip completed steps anyway, but fast execute mode will apply
+					// to ALL steps (0 to end) if they get executed
+					hcpo.GetLogger().Infof("⚡ Will fast execute ALL steps (0 to %d), starting execution from step %d (1-based: %d)", fastExecuteEndStep, startFromStep, nextIncompleteStep)
 				}
 
 				// Store fast execute mode for use in execution loop
@@ -1079,14 +1121,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		// Initialize variables for step execution
 		maxRetryAttempts := 3
 		var executionConversationHistory []llmtypes.MessageContent // Only used for learning agents after execution
-		var humanFeedback string
 		stepCompleted := false
 
 		// Outer loop: Handle re-execution with human feedback
 		for !stepCompleted {
-			// Save human feedback for template variables before resetting
-			previousHumanFeedback := humanFeedback
-			humanFeedback = "" // Reset for next iteration
 
 			// Prepare template variables for this specific step with individual fields
 			// RESOLVE VARIABLES: Replace {{VARS}} with actual values for execution
@@ -1145,13 +1183,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				templateVars["VariableValues"] = variableValues
 			}
 
-			// Add human feedback to template variables if provided
-			if previousHumanFeedback != "" {
-				templateVars["PreviousHumanFeedback"] = previousHumanFeedback
-			} else {
-				templateVars["PreviousHumanFeedback"] = ""
-			}
-
 			// Validate loop condition is provided when has_loop is true
 			if step.HasLoop {
 				if step.LoopCondition == "" {
@@ -1207,9 +1238,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 						hcpo.GetLogger().Errorf("❌ Step %d reached max iterations (%d) without meeting loop condition, requesting human intervention", i+1, step.MaxIterations)
 						// Request human intervention immediately, skip validation
 						var err error
-						var feedback string
 						var approved bool
-						approved, feedback, err = hcpo.requestHumanFeedback(ctx, i+1, len(breakdownSteps),
+						approved, _, err = hcpo.requestHumanFeedback(ctx, i+1, len(breakdownSteps),
 							fmt.Sprintf("Loop reached max iterations (%d) without meeting condition: %s", step.MaxIterations, step.LoopCondition))
 						if err != nil {
 							hcpo.GetLogger().Warnf("⚠️ Human feedback request failed: %w", err)
@@ -1227,9 +1257,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 							loopConditionMet = true // Mark condition as met so loop exits
 							break                   // Exit main loop
 						} else {
-							// User rejected - store feedback for re-execution
-							hcpo.GetLogger().Infof("🔄 User rejected approval, will re-execute step %d with feedback", i+1)
-							humanFeedback = feedback
+							// User rejected - will re-execute step
+							hcpo.GetLogger().Infof("🔄 User rejected approval, will re-execute step %d", i+1)
 							break // Exit main loop; outer loop will re-execute since stepCompleted is still false
 						}
 					}
@@ -1292,7 +1321,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					// Create execution agent for this step
 					// Resolve variables in step title before using in agent name
 					resolvedTitle := hcpo.resolveVariables(step.Title)
-					agentName := fmt.Sprintf("execution-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
+					sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
+					agentName := fmt.Sprintf("step-%d-%s", i+1, sanitizedTitle)
 					// Add loop iteration to agent name if in loop mode
 					if step.HasLoop && loopIterationCount > 0 {
 						agentName = fmt.Sprintf("%s-loop-%d", agentName, loopIterationCount)
@@ -1303,8 +1333,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					}
 
 					// Execute this specific step - no conversation history needed, all context in template variables
-					// Capture returned conversation history only for learning agents
-					_, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+					// Capture execution result and conversation history (conversation history for learning agents)
+					var executionResult string
+					executionResult, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
 					if err != nil {
 						hcpo.GetLogger().Warnf("⚠️ Step %d execution failed (attempt %d): %v", i+1, retryAttempt, err)
 						if retryAttempt >= maxRetryAttempts {
@@ -1319,8 +1350,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					// Always validate step execution
 					hcpo.GetLogger().Infof("🔍 Validating step %d execution (attempt %d)", i+1, retryAttempt)
 
-					// Reuse resolved title from execution agent (already resolved above)
-					validationAgentName := fmt.Sprintf("validation-agent-step-%d-%s", i+1, strings.ReplaceAll(resolvedTitle, " ", "-"))
+					// Reuse sanitized title from execution agent (already computed above)
+					validationAgentName := fmt.Sprintf("step-%d-%s", i+1, sanitizedTitle)
 					// Add loop iteration to validation agent name if in loop mode
 					if step.HasLoop && loopIterationCount > 0 {
 						validationAgentName = fmt.Sprintf("%s-loop-%d", validationAgentName, loopIterationCount)
@@ -1412,8 +1443,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 							break // Exit retry loop, will exit main loop at top
 						} else {
 							hcpo.GetLogger().Infof("🔄 Step %d loop condition not met yet (iteration %d/%d), continuing loop", i+1, loopIterationCount, step.MaxIterations)
-							// Capture execution and validation outputs for next iteration
-							previousIterationExecutionOutput = shared.FormatConversationHistory(executionConversationHistory)
+							// Capture execution result (final response) and validation outputs for next iteration
+							previousIterationExecutionOutput = executionResult
 							validationOutputParts := []string{}
 							if validationResponse.Reasoning != "" {
 								validationOutputParts = append(validationOutputParts, fmt.Sprintf("**Reasoning**: %s", validationResponse.Reasoning))
@@ -1536,12 +1567,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			// FAST MODE: Skip human feedback and auto-approve
 			// NORMAL MODE & LOOP MODE: Always request human feedback before moving to next step
 			isFastExecuteStep := hcpo.IsFastExecuteStep(i)
-			hcpo.GetLogger().Infof("🔍 DEBUG: Step %d human feedback check - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v", i+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, isFastExecuteStep)
+			hcpo.GetLogger().Infof("🔍 DEBUG: Step %d human feedback check - fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v", i+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, i, isFastExecuteStep)
 			var approved bool
 			var feedback string
 
+			// In fast execute mode, always auto-approve without human feedback
 			if isFastExecuteStep {
-				hcpo.GetLogger().Infof("⚡ Fast mode: Auto-approving step %d without human feedback", i+1)
+				hcpo.GetLogger().Infof("⚡ Fast mode: Auto-approving step %d without human feedback (stepIndex=%d <= fastExecuteEndStep=%d)", i+1, i, hcpo.fastExecuteEndStep)
 				approved = true
 				feedback = "" // No feedback in fast mode
 			} else {
@@ -1772,6 +1804,46 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveVariables(text string
 	return resolved
 }
 
+// sanitizeTitleForAgentName sanitizes a step title for use in agent names
+// - Removes step number prefixes (e.g., "Step 4:", "Step 5 -", "Step 3.")
+// - Removes/replaces special characters (colons, slashes, etc.)
+// - Normalizes whitespace and converts to lowercase
+// - Removes multiple consecutive dashes
+func (hcpo *HumanControlledTodoPlannerOrchestrator) sanitizeTitleForAgentName(title string) string {
+	sanitized := strings.TrimSpace(title)
+
+	// Remove step number prefixes (case-insensitive)
+	// Matches: "Step N:", "Step N -", "Step N.", "Step N ", etc.
+	stepNumberPattern := regexp.MustCompile(`(?i)^step\s+\d+\s*[:.\-]*\s*`)
+	sanitized = stepNumberPattern.ReplaceAllString(sanitized, "")
+
+	// Replace spaces with dashes
+	sanitized = strings.ReplaceAll(sanitized, " ", "-")
+
+	// Remove or replace special characters that aren't safe for agent names
+	// Keep: letters, numbers, dashes, underscores
+	// Remove: colons, slashes, backslashes, pipes, etc.
+	specialCharPattern := regexp.MustCompile(`[^a-zA-Z0-9\-_]`)
+	sanitized = specialCharPattern.ReplaceAllString(sanitized, "-")
+
+	// Normalize multiple consecutive dashes to single dash
+	multiDashPattern := regexp.MustCompile(`-+`)
+	sanitized = multiDashPattern.ReplaceAllString(sanitized, "-")
+
+	// Remove leading/trailing dashes
+	sanitized = strings.Trim(sanitized, "-")
+
+	// Convert to lowercase for consistency
+	sanitized = strings.ToLower(sanitized)
+
+	// Ensure we have something left (fallback if everything was removed)
+	if sanitized == "" {
+		sanitized = "step"
+	}
+
+	return sanitized
+}
+
 // formatVariableNames formats the variables manifest into a human-readable string for agent prompts
 func (hcpo *HumanControlledTodoPlannerOrchestrator) formatVariableNames() string {
 	if hcpo.variablesManifest == nil || len(hcpo.variablesManifest.Variables) == 0 {
@@ -1821,12 +1893,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// Create success learning agent
 	// Resolve variables in step title before using in agent name
 	resolvedTitle := hcpo.resolveVariables(step.Title)
+	sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
 	// Include learning mode in agent name (exact or general)
 	learningMode := "general"
 	if learningDetailLevel == "exact" {
 		learningMode = "exact"
 	}
-	successLearningAgentName := fmt.Sprintf("success-learning-agent-step-%d-%s-%s", stepNumber, strings.ReplaceAll(resolvedTitle, " ", "-"), learningMode)
+	successLearningAgentName := fmt.Sprintf("step-%d-%s-%s", stepNumber, sanitizedTitle, learningMode)
 	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", stepNumber, 1, successLearningAgentName)
 	if err != nil {
 		return "", fmt.Errorf("failed to create success learning agent: %w", err)
@@ -1887,12 +1960,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// Create failure learning agent
 	// Resolve variables in step title before using in agent name
 	resolvedTitle := hcpo.resolveVariables(step.Title)
+	sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
 	// Include learning mode in agent name (exact or general)
 	learningMode := "general"
 	if learningDetailLevel == "exact" {
 		learningMode = "exact"
 	}
-	failureLearningAgentName := fmt.Sprintf("failure-learning-agent-step-%d-%s-%s", stepNumber, strings.ReplaceAll(resolvedTitle, " ", "-"), learningMode)
+	failureLearningAgentName := fmt.Sprintf("step-%d-%s-%s", stepNumber, sanitizedTitle, learningMode)
 	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", stepNumber, 1, failureLearningAgentName)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create failure learning agent: %w", err)
@@ -2073,14 +2147,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) handlePlanChange(ctx context
 	contextMsg += "- **Option 1**: Keep old progress (try to match steps, may not work perfectly)\n"
 	contextMsg += "- **Option 2**: Delete old progress and start completely fresh"
 
-	// Use three-choice feedback with empty third option (only 2 options)
-	choice, err := hcpo.RequestThreeChoiceFeedback(
+	// Use multiple-choice feedback with 2 options
+	planChangeOptions := []string{
+		"Keep Old Progress",                 // Option 0: Try to match steps
+		"Delete Old Progress & Start Fresh", // Option 1: Delete and start fresh
+	}
+	choice, err := hcpo.RequestMultipleChoiceFeedback(
 		ctx,
 		requestID,
 		fmt.Sprintf("Plan changed from %d steps to %d steps. How would you like to proceed?", oldProgress.TotalSteps, newTotalSteps),
-		"Keep Old Progress",                 // Option 1: Try to match steps
-		"Delete Old Progress & Start Fresh", // Option 2: Delete and start fresh
-		"",                                  // Option 3: Empty (not used)
+		planChangeOptions,
 		contextMsg,
 		hcpo.getSessionID(),
 		hcpo.getWorkflowID(),
@@ -2149,14 +2225,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestLearningDetailLevel(c
 		question = fmt.Sprintf("How detailed should the %s learning analysis be for step %d?", learningType, stepNumber)
 	}
 
-	// Use three-choice feedback with only two options (option3 will be empty but that's ok)
-	choice, err := hcpo.RequestThreeChoiceFeedback(
+	// Use multiple-choice feedback with 2 options
+	learningOptions := []string{
+		"Exact MCP Tools",
+		"General Patterns",
+	}
+	choice, err := hcpo.RequestMultipleChoiceFeedback(
 		ctx,
 		requestID,
 		question,
-		"Exact MCP Tools",
-		"General Patterns",
-		"", // Empty third option
+		learningOptions,
 		contextMsg,
 		hcpo.getSessionID(),
 		hcpo.getWorkflowID(),
@@ -2168,10 +2246,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestLearningDetailLevel(c
 	}
 
 	// Map response to our internal values
-	if choice == "option1" {
+	if choice == "option0" {
 		hcpo.GetLogger().Infof("✅ User selected: Exact MCP Tools")
 		return "exact", nil
-	} else if choice == "option2" {
+	} else if choice == "option1" {
 		hcpo.GetLogger().Infof("✅ User selected: General Patterns")
 		return "general", nil
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1212,47 +1213,35 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	return false, nil
 }
 
-// RequestThreeChoiceFeedback requests three-choice feedback from user
-// Returns: (choice string, error) where choice is "option1", "option2", or "option3"
-func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
+// RequestMultipleChoiceFeedback requests multiple-choice feedback from user
+// Returns: (choice string, error) where choice is "option0", "option1", "option2", etc. (0-based index)
+func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	ctx context.Context,
 	requestID string,
 	question string,
-	option1Label string,
-	option2Label string,
-	option3Label string,
+	options []string,
 	context string,
 	sessionID string,
 	workflowID string,
 ) (string, error) {
-	bo.GetLogger().Infof("🤔 Requesting three-choice feedback: %s", question)
+	bo.GetLogger().Infof("🤔 Requesting multiple-choice feedback: %s (%d options)", question, len(options))
 
-	// Set default labels if not provided
-	if option1Label == "" {
-		option1Label = "Option 1"
-	}
-	if option2Label == "" {
-		option2Label = "Option 2"
-	}
-	if option3Label == "" {
-		option3Label = "Option 3"
+	if len(options) == 0 {
+		return "", fmt.Errorf("at least one option is required")
 	}
 
-	// Emit human feedback request event with three-choice mode
+	// Emit human feedback request event with multiple-choice mode
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Question:        question,
-		AllowFeedback:   false, // No textarea in three-choice mode
-		ThreeChoiceMode: true,  // Enable three-choice mode
-		Option1Label:    option1Label,
-		Option2Label:    option2Label,
-		Option3Label:    option3Label,
-		Context:         context,
-		SessionID:       sessionID,
-		WorkflowID:      workflowID,
-		RequestID:       requestID,
+		Question:      question,
+		AllowFeedback: false, // No textarea in multiple-choice mode
+		Options:       options,
+		Context:       context,
+		SessionID:     sessionID,
+		WorkflowID:    workflowID,
+		RequestID:     requestID,
 	}
 
 	// Emit the event
@@ -1263,7 +1252,7 @@ func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
 	}
 
 	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit three-choice feedback event: %w", err)
+		bo.GetLogger().Warnf("⚠️ Failed to emit multiple-choice feedback event: %w", err)
 	}
 
 	// Wait for response
@@ -1272,7 +1261,7 @@ func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for three-choice response...")
+	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for multiple-choice response...")
 
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
 	if err != nil {
@@ -1281,16 +1270,23 @@ func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
 
 	bo.GetLogger().Infof("▶️ Orchestrator resumed with response: %s", response)
 
-	// Parse response: should be "option1", "option2", or "option3"
+	// Parse response: should be "option0", "option1", "option2", etc. (0-based)
 	response = strings.TrimSpace(response)
-	if response == "option1" || response == "option2" || response == "option3" {
-		bo.GetLogger().Infof("✅ User selected: %s", response)
-		return response, nil
+
+	// Validate response format (option0, option1, option2, etc.)
+	if strings.HasPrefix(response, "option") {
+		// Extract index from "option0", "option1", etc.
+		indexStr := strings.TrimPrefix(response, "option")
+		index, err := strconv.Atoi(indexStr)
+		if err == nil && index >= 0 && index < len(options) {
+			bo.GetLogger().Infof("✅ User selected: %s (option %d: %s)", response, index, options[index])
+			return response, nil
+		}
 	}
 
-	// Default to option1 if response is unclear
-	bo.GetLogger().Warnf("⚠️ Unexpected response format: %s, defaulting to option1", response)
-	return "option1", nil
+	// Default to option0 if response is unclear
+	bo.GetLogger().Warnf("⚠️ Unexpected response format: %s, defaulting to option0", response)
+	return "option0", nil
 }
 
 // WriteWorkspaceFile writes content to a file in the workspace using MCP tools

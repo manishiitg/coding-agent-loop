@@ -96,10 +96,27 @@ func (e *TodoStepsExtractedEvent) GetEventType() events.EventType {
 	return events.TodoStepsExtracted
 }
 
+// Variable represents a single variable definition
+type Variable struct {
+	Name        string `json:"name"`        // e.g., "AWS_ACCOUNT_ID"
+	Value       string `json:"value"`       // Original value from objective
+	Description string `json:"description"` // e.g., "AWS account number for deployment"
+}
+
+// VariablesManifest contains all extracted variables
+type VariablesManifest struct {
+	Objective      string     `json:"objective"` // Templated objective with {{VARS}}
+	Variables      []Variable `json:"variables"` // List of variables
+	ExtractionDate string     `json:"extraction_date"`
+}
+
 // TodoExecutionOrchestrator manages the multi-agent todo execution process
 type TodoExecutionOrchestrator struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
+	// Variable management
+	variablesManifest *VariablesManifest // Extracted variables
+	variableValues    map[string]string  // Runtime variable values
 }
 
 // NewTodoExecutionOrchestrator creates a new multi-agent todo execution orchestrator
@@ -164,6 +181,12 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 	runWorkspacePath := filepath.Join(workspacePath, "runs", selectedRunFolder)
 	teo.SetWorkspacePath(runWorkspacePath)
 
+	// Load variables from variables.json if it exists (optional - variables may not exist)
+	if err := teo.loadVariableValues(ctx, workspacePath); err != nil {
+		teo.GetLogger().Infof("⚠️ Could not load variables (this is optional): %v", err)
+		// Continue execution even if variables don't exist
+	}
+
 	// Read todo_final.json directly from workspace root
 	teo.GetLogger().Infof("📖 Reading todo_final.json from workspace root")
 	todoFinalJSONPath := filepath.Join(workspacePath, "todo_final.json")
@@ -187,19 +210,20 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 			maxIterations = 10 // Default max iterations
 		}
 
+		// Resolve variables in step fields
 		steps[i] = TodoStep{
-			Title:               step.Title,
-			Description:         step.Description,
-			SuccessCriteria:     step.SuccessCriteria,
-			WhyThisStep:         step.WhyThisStep,
-			ContextDependencies: step.ContextDependencies,
-			ContextOutput:       string(step.ContextOutput), // Convert FlexibleContextOutput to string
+			Title:               teo.resolveVariables(step.Title),
+			Description:         teo.resolveVariables(step.Description),
+			SuccessCriteria:     teo.resolveVariables(step.SuccessCriteria),
+			WhyThisStep:         teo.resolveVariables(step.WhyThisStep),
+			ContextDependencies: teo.resolveVariablesArray(step.ContextDependencies),
+			ContextOutput:       teo.resolveVariables(string(step.ContextOutput)), // Convert FlexibleContextOutput to string
 			SuccessPatterns:     step.SuccessPatterns,
 			FailurePatterns:     step.FailurePatterns,
 			HasLoop:             step.HasLoop,
-			LoopCondition:       step.LoopCondition,
+			LoopCondition:       teo.resolveVariables(step.LoopCondition),
 			MaxIterations:       maxIterations,
-			LoopDescription:     step.LoopDescription,
+			LoopDescription:     teo.resolveVariables(step.LoopDescription),
 		}
 	}
 
@@ -379,7 +403,6 @@ func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context,
 		"StepTitle":               step.Title,
 		"StepDescription":         step.Description,
 		"StepSuccessCriteria":     step.SuccessCriteria,
-		"StepWhyThisStep":         step.WhyThisStep,
 		"StepContextDependencies": strings.Join(step.ContextDependencies, ", "),
 		"StepContextOutput":       step.ContextOutput,
 		"StepSuccessPatterns":     strings.Join(step.SuccessPatterns, "\n- "),
@@ -393,6 +416,14 @@ func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context,
 		"LoopDescription":         step.LoopDescription,
 		"CurrentIteration":        fmt.Sprintf("%d", currentIteration),
 		"MaxIterations":           fmt.Sprintf("%d", maxIterations),
+	}
+
+	// Add variable names and values if variables exist
+	if variableNames := teo.formatVariableNames(); variableNames != "" {
+		templateVars["VariableNames"] = variableNames
+	}
+	if variableValues := teo.formatVariableValues(); variableValues != "" {
+		templateVars["VariableValues"] = variableValues
 	}
 
 	executionResult, conversationHistory, err := executionAgent.Execute(ctx, templateVars, nil)
@@ -693,6 +724,94 @@ func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Co
 	} else {
 		teo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
 	}
+}
+
+// loadVariableValues loads runtime variable values from variables.json
+func (teo *TodoExecutionOrchestrator) loadVariableValues(ctx context.Context, workspacePath string) error {
+	// Load variable values from variables.json
+	variablesPath := filepath.Join(workspacePath, "variables", "variables.json")
+	variablesContent, err := teo.ReadWorkspaceFile(ctx, variablesPath)
+	if err != nil {
+		return fmt.Errorf("variables.json not found (this is optional): %w", err)
+	}
+
+	// Parse variables.json to get current values
+	var manifest VariablesManifest
+	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
+		return fmt.Errorf("failed to parse variables.json: %w", err)
+	}
+
+	// Store manifest and load values into the variableValues map
+	teo.variablesManifest = &manifest
+	teo.variableValues = make(map[string]string)
+	for _, variable := range manifest.Variables {
+		teo.variableValues[variable.Name] = variable.Value
+	}
+
+	teo.GetLogger().Infof("✅ Loaded variable values from variables.json: %d variables", len(teo.variableValues))
+	return nil
+}
+
+// resolveVariables replaces {{VARIABLE}} placeholders with actual values
+func (teo *TodoExecutionOrchestrator) resolveVariables(text string) string {
+	if teo.variableValues == nil {
+		return text // No variables to resolve
+	}
+
+	resolved := text
+	for varName, varValue := range teo.variableValues {
+		placeholder := fmt.Sprintf("{{%s}}", varName)
+		resolved = strings.ReplaceAll(resolved, placeholder, varValue)
+	}
+	return resolved
+}
+
+// resolveVariablesArray resolves variables in an array of strings
+func (teo *TodoExecutionOrchestrator) resolveVariablesArray(arr []string) []string {
+	if teo.variableValues == nil {
+		return arr // No variables to resolve
+	}
+
+	resolved := make([]string, len(arr))
+	for i, item := range arr {
+		resolved[i] = teo.resolveVariables(item)
+	}
+	return resolved
+}
+
+// formatVariableNames formats the variables manifest into a human-readable string for agent prompts
+func (teo *TodoExecutionOrchestrator) formatVariableNames() string {
+	if teo.variablesManifest == nil || len(teo.variablesManifest.Variables) == 0 {
+		return "" // No variables to format
+	}
+
+	var builder strings.Builder
+	builder.WriteString("\n")
+	for _, variable := range teo.variablesManifest.Variables {
+		builder.WriteString(fmt.Sprintf("- {{%s}} - %s\n", variable.Name, variable.Description))
+	}
+	return builder.String()
+}
+
+// formatVariableValues formats the variables manifest with their actual values for agent prompts
+func (teo *TodoExecutionOrchestrator) formatVariableValues() string {
+	if teo.variablesManifest == nil || len(teo.variablesManifest.Variables) == 0 {
+		return "" // No variables to format
+	}
+
+	var builder strings.Builder
+	builder.WriteString("\n")
+	for _, variable := range teo.variablesManifest.Variables {
+		// Get the actual resolved value from variableValues map if available
+		actualValue := variable.Value
+		if teo.variableValues != nil {
+			if resolvedValue, exists := teo.variableValues[variable.Name]; exists {
+				actualValue = resolvedValue
+			}
+		}
+		builder.WriteString(fmt.Sprintf("- {{%s}} = %s - %s\n", variable.Name, actualValue, variable.Description))
+	}
+	return builder.String()
 }
 
 // requestStepsApproval requests human approval for extracted steps before execution

@@ -40,9 +40,79 @@ func NewTodoExecutionAgent(config *agents.OrchestratorAgentConfig, logger utils.
 	}
 }
 
-// todoExecutionInputProcessor processes inputs specifically for single step execution
-func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[string]string) string {
+// executionSystemPromptProcessor generates the system prompt for execution agent
+func (tea *TodoExecutionAgent) executionSystemPromptProcessor(templateVars map[string]string) string {
+	workspacePath := templateVars["WorkspacePath"]
+	hasLoop := templateVars["HasLoop"] == "true"
+	loopCondition := templateVars["LoopCondition"]
+	stepContextOutput := templateVars["StepContextOutput"]
 
+	// Define the system prompt template
+	templateStr := `# Execution Agent
+
+## 🤖 AGENT IDENTITY
+- **Role**: Todo Execution Agent
+- **Responsibility**: Execute a single step from the plan using MCP tools
+- **Mode**: Single step execution
+
+## 📁 FILE PERMISSIONS
+
+**WRITE:**
+- {{.WorkspacePath}}/outputs/* (any files created during execution, if needed)
+
+**EXECUTION FOCUS:**
+- Execute the step using MCP tools
+- Create files in outputs/ only if required by the step
+- No need to create summary or documentation files
+- The orchestrator will capture your execution results
+
+## EXECUTION STRATEGY
+1. **Check Context Dependencies**: Ensure prerequisites are satisfied before starting
+2. **Follow Success Patterns Exactly**: These are validated approaches that worked before
+3. **Avoid All Failure Patterns**: These approaches have failed and should not be used
+4. **Execute the Step**: Use proven tools and approaches from Success Patterns
+{{if .HasLoop}}
+5. **Work Towards Loop Condition**: Focus on making progress towards "{{.LoopCondition}}"
+6. **Save Progress After Each Iteration**: Update/append to context output file ({{.StepContextOutput}}) after each iteration
+{{else}}
+5. **Produce Context Output**: Ensure this step produces what subsequent steps need
+6. **Verify Success Criteria**: Confirm all criteria are met before completion
+{{end}}
+
+` + GetTodoExecutionMemoryRequirements() + `
+
+**IMPORTANT**: 
+- The workspace path has been pre-configured to use the correct run folder
+- Focus on executing the step using MCP tools
+- You don't need to create summary or documentation files
+{{if .HasLoop}}
+- **CRITICAL**: Save progress after EACH iteration - don't wait until the loop completes
+{{end}}
+
+Focus on executing this step effectively using proven approaches and avoiding failed patterns.`
+
+	// Parse and execute the template
+	tmpl, err := template.New("executionSystemPrompt").Parse(templateStr)
+	if err != nil {
+		return fmt.Sprintf("Error parsing execution system prompt template: %v", err)
+	}
+
+	var result strings.Builder
+	err = tmpl.Execute(&result, map[string]interface{}{
+		"WorkspacePath":     workspacePath,
+		"HasLoop":           hasLoop,
+		"LoopCondition":     loopCondition,
+		"StepContextOutput": stepContextOutput,
+	})
+	if err != nil {
+		return fmt.Sprintf("Error executing execution system prompt template: %v", err)
+	}
+
+	return result.String()
+}
+
+// executionUserMessageProcessor generates the user message for execution agent
+func (tea *TodoExecutionAgent) executionUserMessageProcessor(templateVars map[string]string) string {
 	// Check if this is a loop step
 	hasLoop := templateVars["HasLoop"] == "true"
 	loopCondition := templateVars["LoopCondition"]
@@ -51,17 +121,28 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 	maxIterations := templateVars["MaxIterations"]
 	previousIterationOutput := templateVars["PreviousIterationOutput"]
 
-	// Define the template for single step execution
+	// Define the user message template
 	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
 
 **STEP**: {{.StepNumber}}/{{.TotalSteps}}
 **TITLE**: {{.StepTitle}}
 **OBJECTIVE**: {{.StepDescription}}
 
-## STEP DETAILS
+{{if .VariableNames}}
+## 📋 AVAILABLE VARIABLES
 
-**Why This Step:**
-{{.StepWhyThisStep}}
+**Variable Names and Descriptions:**
+{{.VariableNames}}
+
+{{if .VariableValues}}
+**Variable Values (for reference):**
+{{.VariableValues}}
+{{end}}
+
+**Important**: Variables have been resolved in step descriptions above. Use these variable names/values as reference when executing the step.
+{{end}}
+
+## STEP DETAILS
 
 **Success Criteria:**
 {{.StepSuccessCriteria}}
@@ -121,50 +202,12 @@ func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[stri
 {{.PreviousIterationOutput}}
 
 **Important**: This is the execution output from the previous loop iteration. Review what was done previously to understand the context and avoid repeating the same actions unnecessarily.
-{{end}}
-
-## 🤖 AGENT IDENTITY
-- **Role**: Todo Execution Agent
-
-## 📁 FILE PERMISSIONS
-**WRITE:**
-- {{.WorkspacePath}}/outputs/* (any files created during execution, if needed)
-
-**EXECUTION FOCUS:**
-- Execute the step using MCP tools
-- Create files in outputs/ only if required by the step
-- No need to create summary or documentation files
-- The orchestrator will capture your execution results
-
-## EXECUTION STRATEGY
-1. **Check Context Dependencies**: Ensure prerequisites are satisfied before starting
-2. **Follow Success Patterns Exactly**: These are validated approaches that worked before
-3. **Avoid All Failure Patterns**: These approaches have failed and should not be used
-4. **Execute the Step**: Use proven tools and approaches from Success Patterns
-{{if .HasLoop}}
-5. **Work Towards Loop Condition**: Focus on making progress towards "{{.LoopCondition}}"
-6. **Save Progress After Each Iteration**: Update/append to context output file ({{.StepContextOutput}}) after each iteration
-{{else}}
-5. **Produce Context Output**: Ensure this step produces what subsequent steps need
-6. **Verify Success Criteria**: Confirm all criteria are met before completion
-{{end}}
-
-` + GetTodoExecutionMemoryRequirements() + `
-
-**IMPORTANT**: 
-- The workspace path has been pre-configured to use the correct run folder
-- Focus on executing the step using MCP tools
-- You don't need to create summary or documentation files
-{{if .HasLoop}}
-- **CRITICAL**: Save progress after EACH iteration - don't wait until the loop completes
-{{end}}
-
-Focus on executing this step effectively using proven approaches and avoiding failed patterns.`
+{{end}}`
 
 	// Parse and execute the template
-	tmpl, err := template.New("todoExecution").Parse(templateStr)
+	tmpl, err := template.New("executionUserMessage").Parse(templateStr)
 	if err != nil {
-		return fmt.Sprintf("Error parsing template: %w", err)
+		return fmt.Sprintf("Error parsing execution user message template: %v", err)
 	}
 
 	var result strings.Builder
@@ -173,31 +216,45 @@ Focus on executing this step effectively using proven approaches and avoiding fa
 		"TotalSteps":              templateVars["TotalSteps"],
 		"StepTitle":               templateVars["StepTitle"],
 		"StepDescription":         templateVars["StepDescription"],
-		"StepWhyThisStep":         templateVars["StepWhyThisStep"],
 		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"StepContextOutput":       templateVars["StepContextOutput"],
 		"StepSuccessPatterns":     templateVars["StepSuccessPatterns"],
 		"StepFailurePatterns":     templateVars["StepFailurePatterns"],
 		"PreviousFeedback":        templateVars["PreviousFeedback"],
-		"WorkspacePath":           templateVars["WorkspacePath"],
-		"RunOption":               templateVars["RunOption"],
 		"HasLoop":                 hasLoop,
 		"LoopCondition":           loopCondition,
 		"LoopDescription":         loopDescription,
 		"CurrentIteration":        currentIteration,
 		"MaxIterations":           maxIterations,
 		"PreviousIterationOutput": previousIterationOutput,
+		"VariableNames":           templateVars["VariableNames"],
+		"VariableValues":          templateVars["VariableValues"],
 	})
 	if err != nil {
-		return fmt.Sprintf("Error executing template: %w", err)
+		return fmt.Sprintf("Error executing execution user message template: %v", err)
 	}
 
 	return result.String()
 }
 
-// Execute processes the todo execution request using the input processor
+// todoExecutionInputProcessor processes inputs specifically for single step execution
+// This is kept for backward compatibility but now just returns the user message
+func (tea *TodoExecutionAgent) todoExecutionInputProcessor(templateVars map[string]string) string {
+	return tea.executionUserMessageProcessor(templateVars)
+}
+
+// Execute processes the todo execution request using separate system prompt and user message
 func (tea *TodoExecutionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	// Use the base orchestrator agent's Execute method with our custom input processor
-	return tea.BaseOrchestratorAgent.ExecuteWithInputProcessor(ctx, templateVars, tea.todoExecutionInputProcessor, conversationHistory)
+	// Generate system prompt and user message separately
+	systemPrompt := tea.executionSystemPromptProcessor(templateVars)
+	userMessage := tea.executionUserMessageProcessor(templateVars)
+
+	// Create a simple input processor that returns the user message
+	inputProcessor := func(map[string]string) string {
+		return userMessage
+	}
+
+	// Use ExecuteWithTemplateValidation with system prompt (overwrite=true to replace default MCP prompt with agent-specific prompt)
+	return tea.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, nil, systemPrompt, true)
 }

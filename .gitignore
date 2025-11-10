@@ -52,6 +52,7 @@ agent_go/orchestrator
 agent_go/server
 agent_go/fileserver
 agent_go/mcpagent-test
+agent_go/mcp-agent-server
 
 # External example build outputs
 external_example/api/server

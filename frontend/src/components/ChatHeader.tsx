@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Workflow, Settings, ExternalLink } from 'lucide-react'
+import { MessageCircle, Workflow, Settings, ExternalLink, Trash2 } from 'lucide-react'
 import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -44,14 +44,15 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   sessionState,
   onModeSelect
 }) => {
-  const { selectedModeCategory } = useModeStore()
+  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore()
   const enabledServers = useMCPStore(state => state.enabledServers)
   
   // Use the new global preset store
   const { 
     customPresets, 
     addPreset, 
-    updatePreset
+    updatePreset,
+    deletePreset
   } = usePresetManagement()
   
   const { 
@@ -115,6 +116,19 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       console.error('Failed to save preset:', error)
     }
   }, [editingPreset, updatePreset, addPreset, handlePresetClick])
+
+  const handleDeletePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (confirm('Are you sure you want to delete this workflow preset? This action cannot be undone.')) {
+      try {
+        await deletePreset(presetId)
+        setShowPresetDropdown(false)
+      } catch (error) {
+        console.error('Failed to delete preset:', error)
+        alert('Failed to delete workflow preset. Please try again.')
+      }
+    }
+  }, [deletePreset])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -359,21 +373,34 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                                     </div>
                                   </button>
                                   
-                                  {/* Edit button - only show for custom presets that are currently selected */}
-                                  {customPresets.some(cp => cp.id === preset.id) && 
-                                   isPresetActive(preset.id, selectedModeCategory as 'chat' | 'workflow') && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        setEditingPreset(preset as CustomPreset)
-                                        setShowPresetModal(true)
-                                        setShowPresetDropdown(false)
-                                      }}
-                                      className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                                      title="Edit preset"
-                                    >
-                                      <Settings className="w-3 h-3" />
-                                    </button>
+                                  {/* Edit/Delete buttons - only show for custom presets */}
+                                  {customPresets.some(cp => cp.id === preset.id) && (
+                                    <div className="flex gap-1">
+                                      {isPresetActive(preset.id, selectedModeCategory as 'chat' | 'workflow') && (
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setEditingPreset(preset as CustomPreset)
+                                            setShowPresetModal(true)
+                                            setShowPresetDropdown(false)
+                                          }}
+                                          className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                                          title="Edit preset"
+                                        >
+                                          <Settings className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                      {/* Delete button - show for all custom presets, especially workflow ones */}
+                                      {(selectedModeCategory === 'workflow' || preset.agentMode === 'workflow') && (
+                                        <button
+                                          onClick={(e) => handleDeletePreset(preset.id, e)}
+                                          className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                                          title="Delete workflow preset"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               ))}
@@ -434,7 +461,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         editingPreset={editingPreset}
         availableServers={enabledServers}
         hideAgentModeSelection={!!editingPreset}
-        fixedAgentMode={editingPreset?.agentMode}
+        fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : undefined)}
       />
       
       {/* API Samples Dialog */}

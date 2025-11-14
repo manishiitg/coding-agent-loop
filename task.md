@@ -34,9 +34,5 @@ g) add references as extra agent
 h) should we conditional llm, manually to change flow? like during scrapping. if here is a logout or wrong password there is a critical error.
 
 
-fix ui for workflow creating 1. when we create it should select workflow only 2. select foldering isvery difficult 3. option to create new folder also 4. no option to delete workflow 5. when in workflow we should show only the workflow folder and downloads/
-
-
-
 
 the prompts we have, have variable issue which we get to know later when we run. 

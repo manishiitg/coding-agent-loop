@@ -13,8 +13,6 @@ export const getModeIcon = (category: ModeCategory, className?: string) => {
   switch (category) {
     case 'chat':
       return <MessageCircle className={defaultClassName} />
-    case 'deep-research':
-      return <Search className={defaultClassName} />
     case 'workflow':
       return <Workflow className={defaultClassName} />
     default:
@@ -31,8 +29,6 @@ export const getModeName = (category: ModeCategory) => {
   switch (category) {
     case 'chat':
       return 'Chat Mode'
-    case 'deep-research':
-      return 'Deep Research Mode'
     case 'workflow':
       return 'Workflow Mode'
     default:
@@ -49,8 +45,6 @@ export const getModeDescription = (category: ModeCategory) => {
   switch (category) {
     case 'chat':
       return 'Quick conversations with AI'
-    case 'deep-research':
-      return 'Multi-step analysis with long-term memory'
     case 'workflow':
       return 'Todo-based execution with human verification'
     default:

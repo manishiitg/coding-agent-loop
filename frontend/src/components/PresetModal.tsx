@@ -9,6 +9,7 @@ import { ToolSelectionSection } from './ToolSelectionSection';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
+import { useModeStore } from '../stores/useModeStore';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
 import type { LLMOption } from '../types/llm';
 
@@ -46,8 +47,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const availableLLMs = useLLMStore(state => state.availableLLMs);
   const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
   const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
+  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
 
   // Calculate effective agent mode that always honors fixedAgentMode when provided
+  // This ensures workflow presets only show Workflow/ folders in the folder selection dialog
   const effectiveAgentMode = fixedAgentMode || agentMode;
 
   // LLM selection handler - updates local preset LLM config
@@ -89,7 +92,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setQuery('');
       setSelectedServers([]);
       setSelectedTools([]); // NEW
-      setAgentMode(fixedAgentMode || 'simple');
+      // Default to current mode if no fixedAgentMode is provided
+      const defaultMode = fixedAgentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : 'simple');
+      setAgentMode(defaultMode);
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
       setLlmConfig({
@@ -97,12 +102,23 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       });
     }
-  }, [editingPreset, fixedAgentMode, primaryConfig]);
+  }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
   const handleSelectFolders = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    // Estimate dialog height (max-h-80 = 320px + some padding)
+    const estimatedDialogHeight = 320;
+    const spaceAbove = rect.top + window.scrollY;
+    
+    // Always try to position above the button so contents are visible
+    // Fallback to below only if there's not enough space above
+    const minSpaceNeeded = 200; // Minimum space needed above
+    const shouldPositionAbove = spaceAbove >= minSpaceNeeded;
+    
     setFolderDialogPosition({
-      top: rect.bottom + window.scrollY,
+      top: shouldPositionAbove 
+        ? rect.top + window.scrollY - estimatedDialogHeight 
+        : rect.bottom + window.scrollY,
       left: rect.left + window.scrollX
     });
     setShowFolderDialog(true);
@@ -386,7 +402,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           onSelectFolder={handleFolderSelect}
           searchQuery=""
           position={folderDialogPosition}
-          agentMode={effectiveAgentMode}
+          agentMode={effectiveAgentMode as 'simple' | 'workflow'}
         />
       </Card>
     </div>

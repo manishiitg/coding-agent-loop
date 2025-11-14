@@ -12,7 +12,7 @@ interface PresetQueriesProps {
   setCurrentQuery: (query: string) => void;
   isStreaming: boolean;
   availableServers?: string[];
-  onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'workflow') => void;
+  onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'workflow') => void;
   onPresetFolderSelect?: (folderPath?: string) => void;
   triggerAddPreset?: boolean;
   onAddPresetTriggered?: () => void;
@@ -52,7 +52,7 @@ interface PresetQueriesProps {
   const [currentPredefinedPresetId, setCurrentPredefinedPresetId] = useState<string>('');
   const [tempSelectedServers, setTempSelectedServers] = useState<string[]>([]);
 
-  const handlePresetClick = (query: string, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'ReAct' | 'workflow', selectedFolder?: PlannerFile) => {
+  const handlePresetClick = (query: string, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile) => {
     // Find the preset object to pass to applyPreset
     const preset = [...customPresets, ...predefinedPresets].find(p => p.id === presetQueryId)
     
@@ -117,7 +117,7 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
     if (editingPreset) {
       await updatePreset(editingPreset.id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig);
       // Call the callback to refresh workflow presets when a preset is updated

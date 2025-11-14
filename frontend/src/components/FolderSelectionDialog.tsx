@@ -11,14 +11,14 @@ interface FolderSelectionDialogProps {
   onSelectFolder: (folder: PlannerFile) => void
   searchQuery: string
   position: { top: number; left: number }
-  agentMode?: 'simple' | 'ReAct' | 'workflow' // Add agent mode to filter folders
+  agentMode?: 'simple' | 'workflow' // Add agent mode to filter folders
 }
 
 export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
   isOpen,
   onClose,
   onSelectFolder,
-  searchQuery,
+  searchQuery: initialSearchQuery,
   position,
   agentMode
 }) => {
@@ -28,14 +28,38 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [showCreateFolderDialog, setShowCreateFolderDialog] = useState(false)
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
+  const [searchQuery, setSearchQuery] = useState(initialSearchQuery || '')
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // Focus search input when dialog opens
+  useEffect(() => {
+    if (isOpen && searchInputRef.current) {
+      // Small delay to ensure dialog is rendered
+      setTimeout(() => {
+        searchInputRef.current?.focus()
+      }, 100)
+    }
+  }, [isOpen])
+
+  // Reset search when dialog closes
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchQuery('')
+    }
+  }, [isOpen])
 
   // Keyboard shortcuts
   useEffect(() => {
     if (!isOpen) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Don't intercept if user is typing in search input
+      if (event.target === searchInputRef.current) {
+        return
+      }
+
       if (event.key === 'Escape') {
         event.preventDefault()
         // Don't close main dialog if create folder dialog is open
@@ -63,16 +87,12 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
   // Get the appropriate parent path for folder creation based on agent mode
   const getParentPathForCreation = useCallback((): string => {
-    if (!agentMode || agentMode === 'simple' || agentMode === 'ReAct') {
+    if (!agentMode || agentMode === 'simple') {
       return '' // Root level for simple modes
     }
     
     if (agentMode === 'workflow') {
       return 'Workflow'
-    }
-    
-    if (false) { // Orchestrator mode removed
-      return 'Tasks'
     }
     
     return ''
@@ -115,8 +135,8 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
   // Filter folders based on agent mode while maintaining hierarchy
   const filterFoldersByAgentMode = useCallback((files: PlannerFile[]): PlannerFile[] => {
-    if (!agentMode || agentMode === 'simple' || agentMode === 'ReAct') {
-      // For simple and ReAct modes, show all folders
+    if (!agentMode || agentMode === 'simple') {
+      // For simple mode, show all folders
       return files
     }
 
@@ -276,7 +296,18 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     
     const allFolders = flattenFolders(agentModeFilteredFiles)
     
+    // For workflow mode, ensure we only search within Workflow/ folders
+    const workflowPrefix = agentMode === 'workflow' ? 'workflow/' : null
+    
     const filtered = allFolders.filter(folder => {
+      // For workflow mode, explicitly check that folder is within Workflow/
+      if (workflowPrefix) {
+        const folderPathLower = folder.filepath.toLowerCase()
+        if (!folderPathLower.startsWith(workflowPrefix)) {
+          return false
+        }
+      }
+      
       // Filter by filepath with fuzzy matching (like VS Code) - folders only
       const filepath = folder.filepath.toLowerCase()
       
@@ -454,7 +485,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
   // Get display name for folder based on agent mode
   const getDisplayName = (folder: PlannerFile): string => {
-    if (!agentMode || agentMode === 'simple' || agentMode === 'ReAct') {
+    if (!agentMode || agentMode === 'simple') {
       return folder.filepath
     }
     
@@ -533,31 +564,50 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     <React.Fragment>
     <div
       ref={dialogRef}
-      className="fixed z-50 bg-background border border-border rounded-lg shadow-lg max-w-md w-full max-h-80 overflow-hidden"
+      className="fixed z-50 bg-background border border-border rounded-lg shadow-lg max-w-md w-full overflow-hidden flex flex-col"
       style={{
         top: position.top,
-        left: position.left
+        left: position.left,
+        maxHeight: '420px'
       }}
     >
       {/* Header */}
       <div className="px-3 py-2 border-b border-border bg-secondary">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Search className="w-4 h-4" />
-          <span>
-            {agentMode === 'workflow' ? 'Select Workflow Folder' : 'Select folder'}
-          </span>
-          {searchQuery && (
-            <span className="text-muted-foreground">• {filteredFolders.length} folders</span>
-          )}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Search className="w-4 h-4" />
+            <span>
+              {agentMode === 'workflow' ? 'Select Workflow Folder' : 'Select folder'}
+            </span>
+          </div>
+          {/* Create New Folder Button in Header */}
+          <button
+            onClick={handleCreateFolderClick}
+            disabled={isCreatingFolder}
+            className="flex items-center gap-1.5 px-2 py-1 text-xs bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Create new folder"
+          >
+            <FolderPlus className="w-3 h-3" />
+            <span>New Folder</span>
+          </button>
         </div>
+        
+        {/* Search Input */}
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={agentMode === 'workflow' ? 'Search folders in Workflow/...' : 'Search folders...'}
+            className="w-full pl-7 pr-2 py-1.5 text-sm bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+        </div>
+        
         {agentMode === 'workflow' && (
           <p className="text-xs text-muted-foreground mt-1">
             Showing folders inside Workflow/
-          </p>
-        )}
-        {false && ( // Orchestrator mode removed
-          <p className="text-xs text-muted-foreground mt-1">
-            Showing folders inside Tasks/
           </p>
         )}
       </div>
@@ -565,7 +615,8 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
       {/* Folder List */}
       <div
         ref={listRef}
-        className="overflow-y-auto max-h-64"
+        className="overflow-y-auto"
+        style={{ maxHeight: '280px' }}
       >
         {filteredFolders.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm">
@@ -606,24 +657,13 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
       {/* Footer */}
       <div className="px-3 py-2 border-t border-border bg-secondary">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-muted-foreground">↑↓ to navigate • → to expand folders</span>
-          <span className="text-xs text-muted-foreground">Enter to select • Esc to close</span>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">↑↓ to navigate • → to expand • Enter to select</span>
+          <span className="text-xs text-muted-foreground">Esc to close</span>
         </div>
-        
-        {/* Create New Folder Button */}
-        <button
-          onClick={handleCreateFolderClick}
-          disabled={isCreatingFolder}
-          className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <FolderPlus className="w-3 h-3" />
-          <span>Create New Folder</span>
-        </button>
-        
         {agentMode === 'workflow' && (
           <p className="text-xs text-muted-foreground mt-1 text-center">
-            Will be created in {agentMode === 'workflow' ? 'Workflow/' : 'Tasks/'}
+            New folders will be created in Workflow/
           </p>
         )}
       </div>

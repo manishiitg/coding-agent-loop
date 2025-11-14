@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Search, Workflow, Plus, Folder, Check } from 'lucide-react'
+import { Workflow, Plus, Folder, Check, Trash2 } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 import { useModeStore } from '../stores/useModeStore'
 import PresetModal from './PresetModal'
@@ -23,7 +23,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   modeCategory,
   setCurrentQuery
 }) => {
-  const { addPreset } = usePresetManagement()
+  const { addPreset, deletePreset, customPresets } = usePresetManagement()
   const { getPresetsForMode } = usePresetApplication()
   const { getAgentModeFromCategory } = useModeStore()
   const { enabledServers } = useMCPStore()
@@ -122,6 +122,27 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     }
   }
 
+  const handleDeletePreset = async (presetId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (confirm('Are you sure you want to delete this workflow preset? This action cannot be undone.')) {
+      try {
+        await deletePreset(presetId)
+        // If the deleted preset was selected, clear the selection
+        if (selectedPresetId === presetId) {
+          setSelectedPresetId(null)
+        }
+      } catch (error) {
+        console.error('Failed to delete preset:', error)
+        alert('Failed to delete workflow preset. Please try again.')
+      }
+    }
+  }
+
+  // Check if a preset is a custom preset (can be deleted)
+  const isCustomPreset = (presetId: string): boolean => {
+    return customPresets.some(cp => cp.id === presetId)
+  }
+
   if (!isOpen) return null
 
   const getModeIcon = () => {
@@ -186,18 +207,20 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
           ) : (
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {presets.map((preset) => (
-                <button
+                <div
                   key={preset.id}
-                  onClick={() => handlePresetSelect(preset.id)}
-                  className={`w-full text-left p-4 rounded-lg border transition-colors ${
+                  className={`relative w-full text-left p-4 rounded-lg border transition-colors ${
                     selectedPresetId === preset.id
                       ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                       : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                  <button
+                    onClick={() => handlePresetSelect(preset.id)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
                         selectedPresetId === preset.id
                           ? 'border-blue-500 bg-blue-500'
                           : 'border-gray-300 dark:border-gray-600'
@@ -206,20 +229,30 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
                           <Check className="w-2.5 h-2.5 text-white" />
                         )}
                       </div>
-                      <div>
-                        <div className="font-medium text-gray-900 dark:text-white">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-gray-900 dark:text-white text-left">
                           {preset.label}
                         </div>
-                        <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                        <div className="text-sm text-gray-600 dark:text-gray-400 mt-1 text-left">
                           {preset.query.length > 100 ? `${preset.query.substring(0, 100)}...` : preset.query}
                         </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-left">
                           {preset.selectedFolder ? `Folder: ${preset.selectedFolder.filepath}` : 'No folder selected'}
                         </div>
                       </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                  {/* Delete button for custom presets */}
+                  {isCustomPreset(preset.id) && (
+                    <button
+                      onClick={(e) => handleDeletePreset(preset.id, e)}
+                      className="absolute top-2 right-2 p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                      title="Delete workflow preset"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           )}

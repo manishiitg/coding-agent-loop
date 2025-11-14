@@ -100,11 +100,11 @@ func resizeImage(imageData []byte, mimeType string, maxDimension int) ([]byte, s
 	if origWidth > origHeight {
 		// Landscape: width is the limiting factor
 		newWidth = maxDimension
-		newHeight = (origHeight * maxDimension) / origWidth
+		newHeight = int((int64(origHeight) * int64(maxDimension)) / int64(origWidth))
 	} else {
 		// Portrait or square: height is the limiting factor
 		newHeight = maxDimension
-		newWidth = (origWidth * maxDimension) / origHeight
+		newWidth = int((int64(origWidth) * int64(maxDimension)) / int64(origHeight))
 	}
 
 	// Create new image with calculated dimensions
@@ -417,7 +417,7 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/planner-docs). When writing scripts to shell commands, use absolute paths (base path: /app/planner-docs, e.g., '/app/planner-docs/script.py'). Returns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
+			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/planner-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/planner-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/planner-docs' (e.g., '/app/planner-docs/script.py', '/app/planner-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -432,7 +432,7 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 					},
 					"working_directory": map[string]interface{}{
 						"type":        "string",
-						"description": "Relative directory path within workspace to execute command (default: root of workspace)",
+						"description": "Relative directory path within workspace to execute command (default: root of workspace). Example: 'scripts' resolves to '/app/planner-docs/scripts'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
 					},
 					"timeout": map[string]interface{}{
 						"type":        "integer",
@@ -1111,18 +1111,21 @@ func handleDeleteWorkspaceFile(ctx context.Context, args map[string]interface{})
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
-	// Format the response
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("🗑️ **File Deleted: `%s`**\n\n", filepath))
-
+	// Return structured JSON for frontend parsing
+	resultJSON := map[string]interface{}{
+		"filepath": filepath,
+		"deleted":  true,
+	}
 	if commitMessage != "" {
-		result.WriteString(fmt.Sprintf("**Commit Message**: %s\n", commitMessage))
+		resultJSON["commit_message"] = commitMessage
 	}
 
-	result.WriteString("**Status**: File permanently deleted from workspace")
-	result.WriteString("\n\n⚠️ **Warning**: This action cannot be undone. The file has been permanently removed.")
+	jsonBytes, err := json.Marshal(resultJSON)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal result: %w", err)
+	}
 
-	return result.String(), nil
+	return string(jsonBytes), nil
 }
 
 // handleMoveWorkspaceFile handles the move_workspace_file tool execution

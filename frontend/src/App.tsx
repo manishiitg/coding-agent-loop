@@ -5,8 +5,8 @@ import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
-import { resetSessionId } from "./services/api";
-import type { ActiveSessionInfo } from "./services/api-types";
+import { resetSessionId, agentApi } from "./services/api";
+import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
@@ -55,6 +55,8 @@ function App() {
     loadingFileContent,
     showFileContent,
     setShowFileContent,
+    setFileContent,
+    setLoadingFileContent,
     showRevisionsModal,
     setShowRevisionsModal,
     isEditMode,
@@ -69,6 +71,8 @@ function App() {
   const [commitMessage, setCommitMessage] = useState('')
   const [showCommitDialog, setShowCommitDialog] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [isRestoring, setIsRestoring] = useState(false)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
   
   const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
 
@@ -136,6 +140,79 @@ function App() {
       // Keep dialog open on error
     }
   }
+
+  // Handle restore version
+  const handleRestoreVersion = useCallback(async (version: FileVersion) => {
+    if (!selectedFile) {
+      setRestoreError('No file selected')
+      return
+    }
+
+    setIsRestoring(true)
+    setRestoreError(null)
+
+    try {
+      // Call restore API
+      const response = await agentApi.restoreFileVersion(
+        selectedFile.path,
+        version.commit_hash,
+        `Restore to version ${version.commit_hash.substring(0, 8)}: ${version.commit_message}`
+      )
+
+      if (response.success) {
+        // Reload file content after successful restore
+        setLoadingFileContent(true)
+        try {
+          const contentResponse = await agentApi.getPlannerFileContent(selectedFile.path)
+          if (contentResponse.success && contentResponse.data) {
+            let processedContent = contentResponse.data.content
+            
+            // Process the content to convert escaped newlines to actual newlines
+            processedContent = processedContent
+              .replace(/\\n/g, '\n')
+              .replace(/\\t/g, '\t')
+              .replace(/\\r/g, '\r')
+            
+            // Check if this is a JSON file
+            const extensionIsJson = selectedFile.path.toLowerCase().endsWith('.json')
+            const contentIsJson = isValidJSON(processedContent)
+            
+            if (extensionIsJson || contentIsJson) {
+              try {
+                const parsed = JSON.parse(processedContent)
+                processedContent = JSON.stringify(parsed, null, 2)
+              } catch {
+                // Keep original content if JSON parsing fails
+              }
+            }
+            
+            setFileContent(processedContent)
+            
+            // Exit edit mode if we were in it
+            if (isEditMode) {
+              setIsEditMode(false)
+              setEditedContent('')
+            }
+          }
+        } catch (err) {
+          console.error('Failed to reload file content after restore:', err)
+          // Still close modal even if reload fails
+        } finally {
+          setLoadingFileContent(false)
+        }
+
+        // Close modal on success
+        setShowRevisionsModal(false)
+      } else {
+        setRestoreError(response.message || 'Failed to restore file version')
+      }
+    } catch (error) {
+      console.error('Failed to restore file version:', error)
+      setRestoreError(error instanceof Error ? error.message : 'Failed to restore file version')
+    } finally {
+      setIsRestoring(false)
+    }
+  }, [selectedFile, isEditMode, setIsEditMode, setEditedContent, setFileContent, setLoadingFileContent, setShowRevisionsModal])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -254,9 +331,9 @@ function App() {
     setChatSessionId(''); // Clear chat session ID to exit historical mode
     setChatSessionTitle('');
     
-    // Preserve active preset for workflow and deep-research modes, clear for other modes
-    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'deep-research') {
-      // For workflow and deep-research modes, preserve the active preset
+    // Preserve active preset for workflow mode, clear for other modes
+    if (selectedModeCategory === 'workflow') {
+      // For workflow mode, preserve the active preset
       const { getActivePreset } = useGlobalPresetStore.getState()
       const activePreset = getActivePreset(selectedModeCategory)
       if (activePreset) {
@@ -283,8 +360,8 @@ function App() {
     // Clear the requiresNewChat flag after successful new chat initialization
     useAppStore.getState().clearRequiresNewChat();
     
-    // Re-apply active preset for workflow and deep-research modes after chat reset
-    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'deep-research') {
+    // Re-apply active preset for workflow mode after chat reset
+    if (selectedModeCategory === 'workflow') {
       const { getActivePreset } = useGlobalPresetStore.getState()
       const activePreset = getActivePreset(selectedModeCategory)
       if (activePreset) {
@@ -334,10 +411,9 @@ function App() {
         event.preventDefault()
         setAgentMode('simple')
       }
-      // Ctrl/Cmd + 3 for Deep Search agent mode
+      // Ctrl/Cmd + 3 removed (orchestrator mode removed)
       if ((event.ctrlKey || event.metaKey) && event.key === '3') {
         event.preventDefault()
-        setAgentMode('orchestrator')
       }
       // Ctrl/Cmd + 4 for Workflow agent mode
       if ((event.ctrlKey || event.metaKey) && event.key === '4') {
@@ -638,13 +714,39 @@ function App() {
         {/* File Revisions Modal */}
         <FileRevisionsModal
           isOpen={showRevisionsModal}
-          onClose={() => setShowRevisionsModal(false)}
-          filepath={selectedFile?.path || ''}
-          onRestoreVersion={() => {
-            // TODO: Implement version restoration
+          onClose={() => {
             setShowRevisionsModal(false)
+            setRestoreError(null)
           }}
+          filepath={selectedFile?.path || ''}
+          onRestoreVersion={handleRestoreVersion}
         />
+        
+        {/* Restore Error Toast */}
+        {restoreError && (
+          <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 flex items-center gap-3 max-w-md">
+            <div className="flex-1">
+              <p className="font-medium">Restore Failed</p>
+              <p className="text-sm text-red-100">{restoreError}</p>
+            </div>
+            <button
+              onClick={() => setRestoreError(null)}
+              className="text-white hover:text-red-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+        
+        {/* Restore Loading Overlay */}
+        {isRestoring && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 flex flex-col items-center gap-4">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+              <p className="text-gray-900 dark:text-gray-100">Restoring file version...</p>
+            </div>
+          </div>
+        )}
       </ThemeProvider>
     </QueryClientProvider>
   );

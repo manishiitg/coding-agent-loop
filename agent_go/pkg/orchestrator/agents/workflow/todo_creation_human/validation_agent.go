@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 
 	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
@@ -170,18 +171,31 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 
 // validationSystemPromptProcessor generates the system prompt for validation agent
 func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptProcessor(templateVars map[string]string, hasLoopCondition bool) string {
+	// Get current date and time
+	now := time.Now()
+	currentDate := now.Format("2006-01-02")
+	currentTime := now.Format("15:04:05")
+
 	// Create template data with loop condition flag
 	type SystemPromptTemplate struct {
 		WorkspacePath    string
 		HasLoopCondition bool
+		CurrentDate      string
+		CurrentTime      string
 	}
 	templateData := SystemPromptTemplate{
 		WorkspacePath:    templateVars["WorkspacePath"],
 		HasLoopCondition: hasLoopCondition,
+		CurrentDate:      currentDate,
+		CurrentTime:      currentTime,
 	}
 
 	// Define the system prompt template
 	templateStr := `# Validation Agent
+
+## 📅 **CURRENT SESSION INFORMATION**
+**Date**: {{.CurrentDate}}
+**Time**: {{.CurrentTime}}
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Validation Agent

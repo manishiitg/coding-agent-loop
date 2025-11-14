@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 
 	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
@@ -21,6 +22,7 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	StepContextDependencies string
 	StepContextOutput       string
 	WorkspacePath           string
+	LearningsPath           string // Learnings folder path for reading learning files and Python scripts
 	ValidationFeedback      string
 	PreviousIterationOutput string // Previous loop iteration execution output (for loop steps)
 	LearningAgentOutput     string // Combined success/failure patterns and learning insights
@@ -71,39 +73,38 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) Execute(ctx context.Cont
 // executionSystemPromptProcessor generates the system prompt for execution agent
 func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
+	learningsPath := templateVars["LearningsPath"]
 	hasLoop := templateVars["HasLoop"] == "true"
 	stepContextOutput := templateVars["StepContextOutput"]
 
+	// Get current date and time
+	now := time.Now()
+	currentDate := now.Format("2006-01-02")
+	currentTime := now.Format("15:04:05")
+
 	// Define the system prompt template
 	templateStr := `# Execution Agent
+
+## 📅 **CURRENT SESSION INFORMATION**
+**Date**: {{.CurrentDate}}
+**Time**: {{.CurrentTime}}
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Execution Agent
 - **Responsibility**: Execute a single step from the plan using MCP tools
 - **Mode**: Single step execution
 
-## 📁 FILE PERMISSIONS (Execution Agent)
+## 📁 FILE PERMISSIONS
 
-**READ:**
-- Context files from previous steps (as specified in Context Dependencies) - paths are relative to {{.WorkspacePath}}
-- Any workspace files needed for task execution - paths must be relative to {{.WorkspacePath}}
+**READ (ORDER MATTERS):**
+1. **FIRST**: Learning files/scripts from {{.LearningsPath}}/ (auto-discover by name matching - see EXECUTION GUIDELINES)
+2. **SECOND**: Context files from previous steps ({{.WorkspacePath}}/step_X_results.md)
+3. **THIRD**: Workspace files as needed (paths relative to {{.WorkspacePath}})
 
 **WRITE:**
-- **ONLY** context output files in {{.WorkspacePath}} folder
-- When "Context Output" field specifies "step_X_results.md", write to: {{.WorkspacePath}}/step_X_results.md
-- **ABSOLUTELY NO** writing to any other folders or locations outside {{.WorkspacePath}}
-- **ABSOLUTELY NO** validation reports or documentation files (validation agent handles those)
-- **ABSOLUTELY NO** writing to workspace root or any directory outside {{.WorkspacePath}}
-
-**RESTRICTIONS:**
-- Focus on executing the task using MCP tools
-- Read workspace files for context as needed (paths relative to {{.WorkspacePath}})
-- Create context output file ONLY in {{.WorkspacePath}} if specified in step
-- Return execution results in your response
-- No documentation or report writing (validation agent handles that)
-- **CRITICAL**: ALL file paths must be relative to {{.WorkspacePath}} - NEVER write outside this workspace path
-- **CRITICAL**: If Context Output is "step_X_results.md", the full path is {{.WorkspacePath}}/step_X_results.md
-- **CRITICAL**: NEVER use absolute paths or write to directories outside {{.WorkspacePath}}
+- **ONLY** context output files in {{.WorkspacePath}}/ (e.g., {{.WorkspacePath}}/step_X_results.md)
+- **NO** writing outside {{.WorkspacePath}} or to workspace root
+- **NO** validation reports (validation agent handles those)
 
 ## 📝 EVIDENCE COLLECTION (When to Gather Evidence)
 
@@ -120,71 +121,68 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 
 ## 🔍 EXECUTION GUIDELINES
 
-1. **Read Context**: Check context dependencies for files from previous steps
-2. **Use Learning Insights**: If learning agent output is provided, follow success patterns and avoid failure patterns
-3. **Use MCP Tools**: Select appropriate tools to accomplish the step objective
-4. **Verify Completion**: Check if success criteria is met
-5. **Create Output**: Generate context output file for next steps (if specified)
-6. **Document Results**: Provide clear summary of what was accomplished
-{{if .HasLoop}}
-7. **Save Progress After Each Iteration**: Update or append to the context output file ({{.StepContextOutput}}) after each iteration to preserve progress
-{{end}}
+**⚠️ CRITICAL PRIORITY ORDER: CURRENT STEP DESCRIPTION ALWAYS TAKES PRECEDENCE ⚠️**
 
-` + GetTodoCreationHumanMemoryRequirements() + `
+**The current step description is the PRIMARY source of truth. Learnings are GUIDANCE only - adapt them to match the current step requirements.**
+
+1. **FIRST - Understand Current Step Requirements** (MANDATORY):
+   - **Read and understand the CURRENT step description, success criteria, and context dependencies**
+   - **This is your PRIMARY source of truth** - what needs to be accomplished RIGHT NOW
+   - **If step description differs from learnings, FOLLOW THE STEP DESCRIPTION**
+   - Identify what tools/scripts might be needed based on the current step requirements
+
+2. **SECOND - Auto-Discover Learning Files and Scripts** (GUIDANCE - NOT STRICT RULES):
+   - **After understanding current step**, discover relevant learning files and scripts:
+     1. **List all learning files**: Use list_workspace_files to discover all files in {{.LearningsPath}}/ (max_depth: 1)
+     2. **Match files by name similarity**: 
+        - Look for files whose names contain keywords from the step title/description
+        - Files typically named: *{keyword}_learning.md, general_learnings.md, or similar patterns
+        - Match based on step title words, not exact matches (e.g., "Deploy Application" matches "Deploy_application_learning.md", "deployment_learning.md", etc.)
+     3. **List all scripts**: Use list_workspace_files to discover all Python scripts in {{.LearningsPath}}/scripts/ (max_depth: 1)
+     4. **Match scripts by name similarity**:
+        - Look for scripts whose names contain keywords from the step title/description
+        - Scripts typically named: *{keyword}_script.py or similar patterns
+        - Match based on step title words (e.g., "Deploy Application" matches "Deploy_application_script.py", "deployment_script.py", etc.)
+     5. **Read discovered files**: Read ALL relevant learning files and scripts using read_workspace_file tool
+     6. **Dynamic discovery**: If you encounter problems during execution, list and read additional learning files/scripts that might be relevant based on the problem context
+   - **PURPOSE**: These files contain patterns from previous executions - use them as GUIDANCE, not strict rules
+   - **Discovery strategy**: Use name-based matching (keywords, partial matches) rather than exact matches - be flexible in finding relevant files
+   - **Optional - Learning Agent Output**: If Learning Agent Output section contains "Source: learnings/{filename} - " patterns, prioritize reading those specific files first, then continue with auto-discovery
+
+3. **Read Context**: Check context dependencies for files from previous steps (read from {{.WorkspacePath}} folder)
+
+4. **Adapt Learning Insights to Current Step** (GUIDANCE - ADAPT TO MATCH STEP DESCRIPTION):
+   - **CRITICAL**: If current step description differs from learnings, FOLLOW THE STEP DESCRIPTION
+   - **Use learnings as starting point**, but adapt them to match current step requirements:
+     - Adapt success patterns from learnings to match current step description
+     - Avoid failure patterns mentioned in learnings (still relevant)
+     - **Modify tool calls and arguments** from learnings to match current step requirements (don't use exact copies if step description differs)
+     - Adapt Python scripts from learnings to match current step needs (modify as needed)
+   - **If step description is similar to learnings**: You can follow learnings more closely
+   - **If step description differs significantly**: Prioritize step description, use learnings only as general guidance
+
+5. **Use MCP Tools**: Select appropriate tools to accomplish the CURRENT step objective (as described in step description), using learnings as guidance
+
+6. **Adapt Discovered Scripts**: Adapt Python scripts from {{.LearningsPath}}/scripts/ to match current step requirements - modify them as needed rather than using exact copies
+
+7. **Verify Completion**: Check if success criteria (from CURRENT step description) is met
+
+8. **Create Output**: Generate context output file for next steps (if specified)
+
+9. **Document Results**: Provide clear summary of what was accomplished
+{{if .HasLoop}}
+7. **Save Progress After Each Iteration**: Update or append to the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) after each iteration to preserve progress
+{{end}}
 
 ## 📤 Output Format
 
-Provide a clear execution summary in your response:
+Provide a clear execution summary in your response with:
+- **Status**: [COMPLETED/FAILED/IN_PROGRESS]
+- **Actions Taken**: List tools used and results
+- **Success Criteria Check**: Whether criteria was met with evidence
+- **Context Output**: Path to any context file created (if applicable)
 
----
-
-**Step Execution Summary**
-
-**Status**: [COMPLETED/FAILED/IN_PROGRESS]
-
-**Actions Taken**:
-- Used [MCP Server].[Tool] with [arguments]
-- Result: [what happened]
-- Created/modified: [any files]
-
-**Success Criteria Check**: 
-- Criteria: [Success criteria from step]
-- Met: [Yes/No with evidence]
-
-**Context Output**: 
-- [Path to context file created, if applicable]
-
----
-
-**Example Output:**
-
-**Step 1/5 Execution Summary**
-
-**Status**: COMPLETED
-
-**Actions Taken**:
-- Used fileserver.read_file with path="{{.WorkspacePath}}/config/database.json" to read database configuration
-- Result: Successfully read 245 lines, found 3 database connection strings
-- Used grep.search with pattern="mongodb://.*" to extract MongoDB URLs
-- Result: Found 3 MongoDB URLs on lines 45, 78, 123
-- Used fileserver.write_file with path="{{.WorkspacePath}}/step_1_database_urls.md" to save results
-- Result: Created context output file with extracted database URLs and connection details
-
-**Success Criteria Check**: 
-- Criteria: Extract all database URLs from configuration files and save to context file
-- Met: Yes - Found 3 MongoDB URLs and saved to {{.WorkspacePath}}/step_1_database_urls.md
-
-**Context Output**: 
-- {{.WorkspacePath}}/step_1_database_urls.md
-
-**IMPORTANT PATH GUIDELINES:**
-- When Context Output field says "step_1_results.md", the FULL path is: {{.WorkspacePath}}/step_1_results.md
-- When reading context dependencies like "step_1_results.md", the FULL path is: {{.WorkspacePath}}/step_1_results.md
-- ALWAYS use {{.WorkspacePath}} as the base - NEVER write outside this path
-
----
-
-**Note**: Focus on executing the step completely using MCP tools. Read workspace files for context. Return results in your response. The validation agent will document and verify your execution.`
+Return results in your response. The validation agent will document and verify your execution.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("executionSystemPrompt").Parse(templateStr)
@@ -195,8 +193,11 @@ Provide a clear execution summary in your response:
 	var result strings.Builder
 	err = tmpl.Execute(&result, map[string]interface{}{
 		"WorkspacePath":     workspacePath,
+		"LearningsPath":     learningsPath,
 		"HasLoop":           hasLoop,
 		"StepContextOutput": stepContextOutput,
+		"CurrentDate":       currentDate,
+		"CurrentTime":       currentTime,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution system prompt template: %v", err)
@@ -215,6 +216,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 		StepContextDependencies: templateVars["StepContextDependencies"],
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
+		LearningsPath:           templateVars["LearningsPath"],
 		ValidationFeedback:      templateVars["ValidationFeedback"],
 		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
 		LearningAgentOutput:     templateVars["LearningAgentOutput"],
@@ -229,6 +231,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 
 	// Define the user message template
 	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
+
+**⚠️ CRITICAL FIRST STEP**: Before executing, you MUST auto-discover and read ALL relevant learning files and scripts from {{.LearningsPath}}/ folder. See EXECUTION GUIDELINES section in system prompt for detailed instructions.
 
 **CURRENT STEP**: {{.StepTitle}}
 **STEP DESCRIPTION**: {{.StepDescription}}
@@ -268,7 +272,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 - The step will continue looping until this condition is met OR max iterations reached
 - After each execution, the validation agent will check if the loop condition is met
 - **Focus on making progress towards the loop condition** - you may need to check status, poll services, retry operations, etc.
-- **CRITICAL**: Save progress after EACH iteration by updating/appending to the context output file ({{.StepContextOutput}}) - don't wait until the loop completes. Each iteration's progress must be preserved so the next iteration can see what was accomplished.
+- **CRITICAL**: Save progress after EACH iteration by updating/appending to the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) - don't wait until the loop completes. Each iteration's progress must be preserved so the next iteration can see what was accomplished.
 
 **Important**: 
 - The loop condition ({{.LoopCondition}}) is the same as the success criteria
@@ -281,7 +285,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 
 **Learning Agent Analysis**: {{.LearningAgentOutput}}
 
-**Important**: The learning agent has analyzed previous executions and provided this guidance. Use this analysis to improve your execution approach, including success patterns to follow and failure patterns to avoid.
+**Note**: This section contains learning insights from previous executions. Use this as additional context, but you should still auto-discover and read learning files directly from the learnings/ folder as described in the execution guidelines.
 {{end}}
 
 {{if .PreviousIterationOutput}}
@@ -312,14 +316,22 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 
 ### 🔍 Step Context Analysis
 **Success Criteria**: Use the success criteria above to verify completion
-**Context Dependencies**: Check context dependencies for files from previous steps
+**Context Dependencies**: After reading learnings (step 1 below), check context dependencies for files from previous steps (read from {{.WorkspacePath}} folder)
 {{if eq .HasLoop "true"}}
-**Context Output**: Update or append to the context output file ({{.StepContextOutput}}) after each iteration to preserve progress
+**Context Output**: Update or append to the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) after each iteration to preserve progress
 {{else}}
-**Context Output**: Create the context output file specified above for other agents
+**Context Output**: Create the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) specified above for other agents
 {{end}}
 
-**Your Task**: Execute this specific step using the available MCP tools. Use the complete step information above, including success criteria, context dependencies, and context output requirements.`
+**Your Task**: 
+1. **FIRST**: Understand the CURRENT step description, success criteria, and requirements (this is your PRIMARY source of truth)
+2. **SECOND**: Auto-discover and read relevant learning files and scripts from {{.LearningsPath}}/ folder (see EXECUTION GUIDELINES in system prompt) - use these as GUIDANCE, not strict rules
+3. **THIRD**: Read context dependencies from previous steps (if any)
+4. **FOURTH**: Execute this specific step using the available MCP tools:
+   - **PRIORITY**: Follow the CURRENT step description above
+   - **GUIDANCE**: Use learnings to inform your approach, but adapt them to match current step requirements
+   - **IF STEP DESCRIPTION DIFFERS FROM LEARNINGS**: Follow the step description, adapt learnings as needed
+   - Use the complete step information above, including success criteria, context dependencies, and context output requirements.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("executionUserMessage").Parse(templateStr)

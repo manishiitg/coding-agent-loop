@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
 
-export type ModeCategory = 'chat' | 'deep-research' | 'workflow' | null
+export type ModeCategory = 'chat' | 'workflow' | null
 
 interface ModeState {
   // Core mode selection
@@ -11,14 +11,13 @@ interface ModeState {
   
   // Preset tracking per category
   lastSelectedPreset: {
-    'deep-research': string | null
     'workflow': string | null
   }
   
   // Actions
   setModeCategory: (category: ModeCategory) => void
   completeInitialSetup: () => void
-  setLastPreset: (category: 'deep-research' | 'workflow', presetId: string | null) => void
+  setLastPreset: (category: 'workflow', presetId: string | null) => void
   resetModeSelection: () => void
   
   // Helpers
@@ -34,7 +33,6 @@ export const useModeStore = create<ModeState>()(
         selectedModeCategory: null,
         hasCompletedInitialSetup: false,
         lastSelectedPreset: {
-          'deep-research': null,
           'workflow': null
         },
 
@@ -61,7 +59,6 @@ export const useModeStore = create<ModeState>()(
             selectedModeCategory: null,
             hasCompletedInitialSetup: false,
             lastSelectedPreset: {
-              'deep-research': null,
               'workflow': null
             }
           })
@@ -72,8 +69,6 @@ export const useModeStore = create<ModeState>()(
           switch (agentMode) {
             case 'simple':
               return 'chat'
-            case 'orchestrator':
-              return 'deep-research'
             case 'workflow':
               return 'workflow'
             default:
@@ -85,8 +80,6 @@ export const useModeStore = create<ModeState>()(
           switch (category) {
             case 'chat':
               return 'simple' // Default to simple for chat mode
-            case 'deep-research':
-              return 'orchestrator'
             case 'workflow':
               return 'workflow'
             default:

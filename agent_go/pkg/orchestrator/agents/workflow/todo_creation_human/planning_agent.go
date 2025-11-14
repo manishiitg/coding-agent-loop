@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 
 	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
@@ -57,19 +58,45 @@ func (f FlexibleContextOutput) String() string {
 	return string(f)
 }
 
+// AgentLLMConfig represents LLM configuration for an agent
+type AgentLLMConfig struct {
+	Provider string `json:"provider,omitempty"` // e.g., "openai", "bedrock", "openrouter", "vertex"
+	ModelID  string `json:"model_id,omitempty"` // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+}
+
+// AgentConfigs represents per-agent configuration for a step
+type AgentConfigs struct {
+	ExecutionLLM                  *AgentLLMConfig `json:"execution_llm,omitempty"`
+	ValidationLLM                 *AgentLLMConfig `json:"validation_llm,omitempty"`
+	LearningLLM                   *AgentLLMConfig `json:"learning_llm,omitempty"`
+	ExecutionMaxTurns             *int            `json:"execution_max_turns,omitempty"`               // default: 25
+	ValidationMaxTurns            *int            `json:"validation_max_turns,omitempty"`              // default: 25
+	LearningMaxTurns              *int            `json:"learning_max_turns,omitempty"`                // default: 25
+	DisableValidation             bool            `json:"disable_validation,omitempty"`                // skip validation entirely
+	DisableLearning               bool            `json:"disable_learning,omitempty"`                  // disable learning for this step
+	LearningAfterLoopIteration    bool            `json:"learning_after_loop_iteration,omitempty"`     // run learning after each loop iteration
+	LearningDetailLevel           string          `json:"learning_detail_level,omitempty"`             // "exact", "general", or "none" (default: "general")
+	SelectedServers               []string        `json:"selected_servers,omitempty"`                  // step-level MCP server selection (subset of preset servers)
+	SelectedTools                 []string        `json:"selected_tools,omitempty"`                    // step-level tool selection (format: "server:tool" or "server:*" for all tools)
+	EnabledCustomToolCategories   []string        `json:"enabled_custom_tool_categories,omitempty"`    // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
+	EnabledCustomTools            []string        `json:"enabled_custom_tools,omitempty"`              // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnableLargeOutputVirtualTools *bool           `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
+}
+
 // PlanStep represents a step in the planning output
 type PlanStep struct {
-	Title               string                `json:"title"`
-	Description         string                `json:"description"`
-	SuccessCriteria     string                `json:"success_criteria"`
-	ContextDependencies []string              `json:"context_dependencies"`
-	ContextOutput       FlexibleContextOutput `json:"context_output"`             // Use flexible type to handle string or array
-	SuccessPatterns     []string              `json:"success_patterns,omitempty"` // what worked (includes tools)
-	FailurePatterns     []string              `json:"failure_patterns,omitempty"` // what failed (includes tools to avoid)
-	HasLoop             bool                  `json:"has_loop"`                   // true if step needs to loop
-	LoopCondition       string                `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
-	MaxIterations       int                   `json:"max_iterations,omitempty"`   // max iterations (default: 10)
-	LoopDescription     string                `json:"loop_description,omitempty"` // human-readable explanation
+	Title                    string                `json:"title"`
+	Description              string                `json:"description"`
+	SuccessCriteria          string                `json:"success_criteria"`
+	WhyThisStep              string                `json:"why_this_step,omitempty"` // Optional explanation of why this step is needed
+	ContextDependencies      []string              `json:"context_dependencies"`
+	ContextOutput            FlexibleContextOutput `json:"context_output"`                        // Use flexible type to handle string or array
+	LearningFilesToReference []string              `json:"learning_files_to_reference,omitempty"` // learning files to read for context (execution agent reads full files)
+	HasLoop                  bool                  `json:"has_loop"`                              // true if step needs to loop
+	LoopCondition            string                `json:"loop_condition"`                        // condition description (same as success criteria) - REQUIRED when has_loop=true
+	MaxIterations            int                   `json:"max_iterations,omitempty"`              // max iterations (default: 10)
+	LoopDescription          string                `json:"loop_description,omitempty"`            // human-readable explanation
+	// AgentConfigs removed - now stored separately in step_config.json
 }
 
 // PlanningResponse represents the structured response from planning
@@ -125,7 +152,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 						},
 						"context_output": {
 							"type": "string",
-							"description": "What context file this step will create for subsequent steps - e.g., 'step_1_results.md'. Can be string or array (will be converted)."
+							"description": "What context file this step will create for subsequent steps - e.g., 'step_1_results.md'. IMPORTANT: Execution agents work ONLY in the execution folder, so context output files will be written to the execution folder. Can be string or array (will be converted)."
 						},
 						"has_loop": {
 							"type": "boolean",
@@ -219,16 +246,47 @@ func planningSystemPromptProcessor(templateVars map[string]string) string {
 
 // planningSystemPromptProcessorForCreate generates system prompt for creating a new plan
 func planningSystemPromptProcessorForCreate(templateVars map[string]string) string {
+	// Get current date and time
+	now := time.Now()
+	currentDate := now.Format("2006-01-02")
+	currentTime := now.Format("15:04:05")
+
+	// Calculate execution workspace path (execution folder only)
+	executionWorkspacePath := fmt.Sprintf("%s/execution", templateVars["WorkspacePath"])
+
 	templateData := map[string]string{
-		"Objective":     templateVars["Objective"],
-		"WorkspacePath": templateVars["WorkspacePath"],
-		"VariableNames": templateVars["VariableNames"],
+		"Objective":              templateVars["Objective"],
+		"WorkspacePath":          templateVars["WorkspacePath"],
+		"ExecutionWorkspacePath": executionWorkspacePath,
+		"VariableNames":          templateVars["VariableNames"],
+		"CurrentDate":            currentDate,
+		"CurrentTime":            currentTime,
 	}
 
-	templateStr := `## 🤖 AGENT IDENTITY
+	templateStr := `## 📅 **CURRENT SESSION INFORMATION**
+**Date**: {{.CurrentDate}}
+**Time**: {{.CurrentTime}}
+
+## 🤖 AGENT IDENTITY
 - **Role**: Planning Agent (Create Mode)
 - **Responsibility**: Generate a comprehensive structured plan in JSON format to execute the objective
 - **Output Format**: Structured JSON (not markdown, not files)
+
+## 📁 FILE PERMISSIONS (Planning Agent)
+
+**READ (Only if explicitly required for context):**
+- **BY DEFAULT**: Do NOT read any files - plan based on the objective alone
+- You may read files from the main workspace ONLY if explicitly instructed or necessary for planning
+- **NEVER read from {{.ExecutionWorkspacePath}} folder** - that folder is exclusively for execution agents
+- Reading files is optional and should be done sparingly - only when essential for understanding context
+
+**NO WRITE PERMISSIONS:**
+- **ABSOLUTELY NO file writing** - This agent does NOT write any files
+- Output is ONLY via the 'submit_planning_response' tool with structured JSON
+- Do NOT create, modify, or write any files to the workspace
+- Do NOT write plan.json or any other files - the system handles file persistence
+
+**CRITICAL**: Your only output method is calling the 'submit_planning_response' tool with structured JSON data. Never write files.
 
 ## 🎯 OBJECTIVE
 
@@ -261,9 +319,11 @@ Available variables:
 
 ## 🤖 MULTI-AGENT COORDINATION
 - **Each step executed by different agent**: Steps share context via files
-- **Context Dependencies**: Specify context files needed from previous steps (use empty array [] if none)
-- **Context Output**: Specify context file to create for subsequent steps
+- **Execution Folder Limitation**: Execution agents work ONLY in {{.ExecutionWorkspacePath}} folder - all context output files must be written there
+- **Context Dependencies**: Specify context files needed from previous steps (use empty array [] if none). Note: Execution agents will read these files from the execution folder.
+- **Context Output**: Specify context file to create for subsequent steps (e.g., 'step_1_results.md'). Execution agents will write these files to {{.ExecutionWorkspacePath}} folder only.
 - **Use relative paths only** - NEVER use absolute paths
+- **Important**: You are the planning agent - do NOT read from {{.ExecutionWorkspacePath}}. Your job is to plan, not to read execution artifacts.
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -271,7 +331,9 @@ Available variables:
 
 **CRITICAL**: 
 - Call submit_planning_response tool with structured JSON data when plan is complete
-- Do NOT read/write files, include success_patterns/failure_patterns, or add markdown formatting - just pure JSON
+- **NEVER write files** - output is ONLY via the submit_planning_response tool
+- Do NOT include success_patterns/failure_patterns, or add markdown formatting - just pure JSON
+- You may read files if needed for context, but writing files is strictly prohibited
 `
 
 	tmpl, err := template.New("human_controlled_planning_create").Parse(templateStr)
@@ -289,18 +351,50 @@ Available variables:
 
 // planningSystemPromptProcessorForUpdate generates system prompt for updating an existing plan
 func planningSystemPromptProcessorForUpdate(templateVars map[string]string) string {
+	// Get current date and time
+	now := time.Now()
+	currentDate := now.Format("2006-01-02")
+	currentTime := now.Format("15:04:05")
+
+	// Calculate execution workspace path (execution folder only)
+	executionWorkspacePath := fmt.Sprintf("%s/execution", templateVars["WorkspacePath"])
+
 	templateData := map[string]string{
-		"Objective":        templateVars["Objective"],
-		"WorkspacePath":    templateVars["WorkspacePath"],
-		"ExistingPlanJSON": templateVars["ExistingPlanJSON"],
-		"VariableNames":    templateVars["VariableNames"],
+		"Objective":              templateVars["Objective"],
+		"WorkspacePath":          templateVars["WorkspacePath"],
+		"ExecutionWorkspacePath": executionWorkspacePath,
+		"ExistingPlanJSON":       templateVars["ExistingPlanJSON"],
+		"VariableNames":          templateVars["VariableNames"],
+		"CurrentDate":            currentDate,
+		"CurrentTime":            currentTime,
 	}
 
-	templateStr := `## 🤖 AGENT IDENTITY
+	templateStr := `## 📅 **CURRENT SESSION INFORMATION**
+**Date**: {{.CurrentDate}}
+**Time**: {{.CurrentTime}}
+
+## 🤖 AGENT IDENTITY
 - **Role**: Planning Agent (Update Mode)
 - **Responsibility**: Update an existing structured plan in JSON format based on human feedback
 - **Output Format**: Structured JSON (not markdown, not files)
 - **Mode**: UPDATE EXISTING PLAN - Make intelligent updates based on human feedback
+
+## 📁 FILE PERMISSIONS (Planning Agent)
+
+**READ (Only if explicitly required for context):**
+- **BY DEFAULT**: Do NOT read any files - plan based on the objective and existing plan provided above
+- You may read files from the main workspace ONLY if explicitly instructed or necessary for planning
+- **NEVER read from {{.ExecutionWorkspacePath}} folder** - that folder is exclusively for execution agents
+- Reading files is optional and should be done sparingly - only when essential for understanding context
+- **Note**: The existing plan content is already provided in the prompt above (ExistingPlanJSON) - you do NOT need to read plan.json
+
+**NO WRITE PERMISSIONS:**
+- **ABSOLUTELY NO file writing** - This agent does NOT write any files
+- Output is ONLY via the 'submit_planning_response' tool with structured JSON
+- Do NOT create, modify, or write any files to the workspace
+- Do NOT write plan.json or any other files - the system handles file persistence
+
+**CRITICAL**: Your only output method is calling the 'submit_planning_response' tool with structured JSON data. Never write files.
 
 ## 🎯 OBJECTIVE
 
@@ -338,14 +432,13 @@ Available variables:
 - **Preserve Variables**: Keep all variable placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) exactly as they appear - critical for multi-environment support
 - **Use Judgment**: Make changes that make sense. Don't hesitate to make substantial changes if feedback suggests fundamental issues, or targeted adjustments for minor feedback
 
-## 🔧 MCP TOOLS AND CAPABILITIES
-
-**MCP Tools Available**: You have access to MCP servers and their tools.
-
 ## 🤖 MULTI-AGENT COORDINATION
 
-- **Context Dependencies**: Update context dependencies/outputs as needed based on feedback. Maintain logical consistency - if you restructure steps, update dependency chain accordingly
+- **Execution Folder Limitation**: Execution agents work ONLY in {{.ExecutionWorkspacePath}} folder - all context output files must be written there
+- **Context Dependencies**: Update context dependencies/outputs as needed based on feedback. Maintain logical consistency - if you restructure steps, update dependency chain accordingly. Note: Execution agents will read these files from the execution folder.
+- **Context Output**: Execution agents will write these files to {{.ExecutionWorkspacePath}} folder only.
 - **Use relative paths only** - NEVER use absolute paths
+- **Important**: You are the planning agent - do NOT read from {{.ExecutionWorkspacePath}}. Your job is to plan, not to read execution artifacts.
 
 ` + GetTodoCreationHumanMemoryRequirements() + `
 
@@ -353,8 +446,9 @@ Available variables:
 
 **CRITICAL**: 
 - Call submit_planning_response tool with updated structured JSON data when done
+- **NEVER write files** - output is ONLY via the submit_planning_response tool
 - Do NOT read plan.json from workspace (plan content is in ExistingPlanJSON above)
-- Do NOT read/write files, include success_patterns/failure_patterns, or add markdown formatting - just pure JSON
+- You may read other files if needed for context, but writing files is strictly prohibited
 `
 
 	tmpl, err := template.New("human_controlled_planning_update").Parse(templateStr)

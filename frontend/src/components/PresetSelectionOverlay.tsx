@@ -45,7 +45,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   }
 
   const handleConfirm = () => {
-    if (selectedPresetId && (modeCategory === 'deep-research' || modeCategory === 'workflow')) {
+    if (selectedPresetId && modeCategory === 'workflow') {
       // Find the selected preset
       const selectedPreset = presets.find(preset => preset.id === selectedPresetId)
       
@@ -77,12 +77,12 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     query: string, 
     selectedServers?: string[], 
     selectedTools?: string[],
-    _agentMode?: 'simple' | 'orchestrator' | 'workflow', 
+    _agentMode?: 'simple' | 'workflow', 
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig
   ) => {
     // Set the agent mode based on the mode category
-    const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'orchestrator' | 'workflow'
+    const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'workflow'
     
     // Debug: Log the server selection (development only)
     if (process.env.NODE_ENV === 'development') {
@@ -112,7 +112,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       }
       
       // Automatically confirm the selection - let parent handle preset application
-      if (modeCategory === 'deep-research' || modeCategory === 'workflow') {
+      if (modeCategory === 'workflow') {
         onPresetSelected(newPreset.id)
         onClose()
       }
@@ -126,8 +126,6 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
 
   const getModeIcon = () => {
     switch (modeCategory) {
-      case 'deep-research':
-        return <Search className="w-8 h-8 text-blue-600" />
       case 'workflow':
         return <Workflow className="w-8 h-8 text-blue-600" />
       default:
@@ -137,8 +135,6 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
 
   const getModeTitle = () => {
     switch (modeCategory) {
-      case 'deep-research':
-        return 'Deep Research Mode'
       case 'workflow':
         return 'Workflow Mode'
       default:
@@ -148,8 +144,6 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
 
   const getModeDescription = () => {
     switch (modeCategory) {
-      case 'deep-research':
-        return 'Select a research preset to organize your analysis projects'
       case 'workflow':
         return 'Select a workflow preset to organize your task execution'
       default:
@@ -267,7 +261,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         editingPreset={null}
         availableServers={enabledServers}
         hideAgentModeSelection={true}
-        fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'orchestrator' | 'workflow'}
+        fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'workflow'}
       />
     </div>
   )

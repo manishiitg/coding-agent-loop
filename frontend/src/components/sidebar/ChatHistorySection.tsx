@@ -88,9 +88,9 @@ export default function ChatHistorySection({
 
     switch (selectedModeCategory) {
       case 'chat':
-        // Show all sessions where agentMode is 'simple' or 'ReAct'
+        // Show all sessions where agentMode is 'simple'
         return sessions.filter(session => 
-          session.agent_mode === 'simple' || session.agent_mode === 'ReAct'
+          session.agent_mode === 'simple'
         )
       
       case 'workflow': {
@@ -185,8 +185,6 @@ export default function ChatHistorySection({
     switch (agentMode.toLowerCase()) {
       case 'simple':
         return 'Simple'
-      case 'react':
-        return 'ReAct'
       case 'workflow':
         return 'Workflow'
       default:

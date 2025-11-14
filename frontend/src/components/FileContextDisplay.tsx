@@ -10,7 +10,7 @@ interface FileContextDisplayProps {
   files: FileContextItem[]
   onRemoveFile: (path: string) => void
   onClearAll: () => void
-  agentMode: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+  agentMode: 'simple' | 'workflow'
   isRequiredFolderSelected: boolean
 }
 
@@ -21,18 +21,17 @@ export default function FileContextDisplay({ files, onRemoveFile, onClearAll, ag
 
   return (
     <div className={`border rounded px-1.5 py-0.5 mb-1 ${
-      (agentMode === 'orchestrator' || agentMode === 'workflow') && !isRequiredFolderSelected
+      agentMode === 'workflow' && !isRequiredFolderSelected
         ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800'
         : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
     }`}>
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className={`text-xs font-medium ${
-          (agentMode === 'orchestrator' || agentMode === 'workflow') && !isRequiredFolderSelected
+          agentMode === 'workflow' && !isRequiredFolderSelected
             ? 'text-orange-600 dark:text-orange-400'
             : 'text-gray-600 dark:text-gray-400'
         }`}>
-          {agentMode === 'orchestrator' && !isRequiredFolderSelected ? '📁 Context (Select Tasks folder):' : 
-           agentMode === 'workflow' && !isRequiredFolderSelected ? '📁 Context (Select Workflow folder):' : '📁 Context:'}
+          {agentMode === 'workflow' && !isRequiredFolderSelected ? '📁 Context (Select Workflow folder):' : '📁 Context:'}
         </span>
         {files.map((file, index) => (
           <div key={file.path} className="flex items-center gap-0.5">

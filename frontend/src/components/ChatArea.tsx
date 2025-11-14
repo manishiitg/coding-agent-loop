@@ -65,7 +65,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     if (agentMode === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
-    // For simple/ReAct modes, use manually selected servers
+    // For simple mode, use manually selected servers
     return selectedServers
   }, [agentMode, currentPresetServers, selectedServers])
   
@@ -173,7 +173,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
   }
 
-  // Handle mode switching with preset selection for Deep Research/Workflow
+  // Handle mode switching with preset selection for Workflow
   const handleModeSwitchWithPreset = (category: 'chat' | 'workflow') => {
     if (category === 'chat') {
       // Chat mode doesn't need preset selection
@@ -657,11 +657,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             // Process workflow-specific events
             if (agentMode === 'workflow') {
               // Handle todo list generation from workflow agent
-              if (event.type === 'orchestrator_agent_end') {
-                const agentEvent = event.data?.orchestrator_agent_end
-                if (agentEvent?.agent_type === 'todo_planner') {
-
-                  const result = agentEvent.result || ''
+              // Note: orchestrator events removed, using agent_end events instead
+              if (event.type === 'agent_end') {
+                const agentEvent = event.data?.agent_end
+                if (agentEvent && (agentEvent as { agent_type?: string })?.agent_type === 'todo_planner') {
+                  const result = (agentEvent as { result?: string })?.result || ''
                   if (result) {
                     // Only reset to PRE_VERIFICATION if workflow hasn't been approved yet
                     // This prevents resetting the phase after user approval
@@ -704,7 +704,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             return event.type === 'workflow_end' ||
                    event.type === 'request_human_feedback'
           } else {
-            // For simple and ReAct modes, check standard completion events
+            // For simple mode, check standard completion events
             return event.type === 'unified_completion' ||
                    event.type === 'agent_end' ||
                    event.type === 'conversation_end' || 
@@ -761,8 +761,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             if (agentMode === 'workflow') {
               // For workflow mode, check workflow-specific errors
               hasError = completionEvents.some((event: PollingEvent) => 
-                event.type === 'orchestrator_error' || 
-                event.type === 'agent_error'
+                event.type === 'agent_error' || 
+                event.type === 'workflow_error'
               )
             } else {
               // For simple mode, check standard errors

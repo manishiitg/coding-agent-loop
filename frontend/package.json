@@ -22,9 +22,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.1.11",
     "@tanstack/react-query": "^5.81.5",
-    "@tanstack/react-virtual": "^3.13.12",
     "@types/node": "^24.0.10",
-    "@types/react-window": "^2.0.0",
     "ajv": "^8.17.1",
     "axios": "^1.10.0",
     "class-variance-authority": "^0.7.1",
@@ -37,7 +35,6 @@
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^15.5.0",
-    "react-window": "^2.1.1",
     "tailwind-merge": "^2.6.0",
     "zustand": "^5.0.8"
   },

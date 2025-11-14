@@ -23,10 +23,13 @@ func mapToParameters(paramsMap map[string]interface{}) *llmtypes.Parameters {
 	if typ, ok := paramsMap["type"].(string); ok {
 		params.Type = typ
 	}
-	if properties, ok := paramsMap["properties"].(map[string]interface{}); ok {
+	// Only set properties if they exist and are not empty
+	// OpenAI requires that if type is "object", properties must either be omitted or have at least one property
+	if properties, ok := paramsMap["properties"].(map[string]interface{}); ok && len(properties) > 0 {
 		params.Properties = properties
 	}
-	if required, ok := paramsMap["required"].([]interface{}); ok {
+	// Only set required if they exist and are not empty
+	if required, ok := paramsMap["required"].([]interface{}); ok && len(required) > 0 {
 		requiredStr := make([]string, 0, len(required))
 		for _, r := range required {
 			if s, ok := r.(string); ok {
@@ -162,9 +165,31 @@ func NormalizeLLMTools(tools []llmtypes.Tool) {
 				fmt.Printf("[TOOL_NORMALIZE] Fixed tool %s: %d -> %d missing items\n", toolName, beforeFix, afterFix)
 			}
 
+			// Clean up empty properties and required arrays (OpenAI rejects empty properties)
+			// Remove empty properties map - OpenAI requires properties to either be omitted or have at least one property
+			if props, ok := paramsMap["properties"].(map[string]interface{}); ok && len(props) == 0 {
+				delete(paramsMap, "properties")
+			}
+			// Remove empty required array
+			if req, ok := paramsMap["required"].([]interface{}); ok && len(req) == 0 {
+				delete(paramsMap, "required")
+			}
+
 			// CRITICAL: Convert normalized map back to Parameters struct
 			// This ensures the structure is preserved when llmtypes processes it
-			tools[i].Function.Parameters = mapToParameters(paramsMap)
+			normalizedParams := mapToParameters(paramsMap)
+
+			// Final safety check: ensure Properties and Required are nil if empty (not empty maps/arrays)
+			if normalizedParams != nil {
+				if normalizedParams.Properties != nil && len(normalizedParams.Properties) == 0 {
+					normalizedParams.Properties = nil
+				}
+				if normalizedParams.Required != nil && len(normalizedParams.Required) == 0 {
+					normalizedParams.Required = nil
+				}
+			}
+
+			tools[i].Function.Parameters = normalizedParams
 		}
 	}
 	if totalMissing > 0 {
@@ -207,18 +232,17 @@ func ToolsAsLLM(mcpTools []mcp.Tool) ([]llmtypes.Tool, error) {
 		}
 
 		// Only add properties if they exist and are not empty
+		// OpenAI requires that if type is "object", properties must either be omitted or have at least one property
 		if len(tool.InputSchema.Properties) > 0 {
 			schema["properties"] = tool.InputSchema.Properties
-		} else {
-			schema["properties"] = map[string]interface{}{}
 		}
+		// Don't add empty properties map - OpenAI rejects it
 
 		// Only add required if they exist and are not empty
 		if len(tool.InputSchema.Required) > 0 {
 			schema["required"] = tool.InputSchema.Required
-		} else {
-			schema["required"] = []string{}
 		}
+		// Don't add empty required array
 
 		// Add additional properties restriction for better validation
 		schema["additionalProperties"] = false
@@ -251,18 +275,17 @@ func ToolDetailsAsLLM(toolDetails []ToolDetail) ([]llmtypes.Tool, error) {
 		}
 
 		// Only add properties if they exist and are not empty
+		// OpenAI requires that if type is "object", properties must either be omitted or have at least one property
 		if len(toolDetail.Parameters) > 0 {
 			schema["properties"] = toolDetail.Parameters
-		} else {
-			schema["properties"] = map[string]interface{}{}
 		}
+		// Don't add empty properties map - OpenAI rejects it
 
 		// Only add required if they exist and are not empty
 		if len(toolDetail.Required) > 0 {
 			schema["required"] = toolDetail.Required
-		} else {
-			schema["required"] = []string{}
 		}
+		// Don't add empty required array
 
 		// Add additional properties restriction for better validation
 		schema["additionalProperties"] = false

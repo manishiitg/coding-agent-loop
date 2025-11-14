@@ -109,6 +109,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(maxTokensFlexibilityCmd)
 	TestingCmd.AddCommand(llmToolCallTestCmd)
 	TestingCmd.AddCommand(openaiToolCallTestCmd)
+	TestingCmd.AddCommand(openaiEmptyParamsTestCmd)
 	TestingCmd.AddCommand(openaiMultiTurnToolTestCmd)
 	TestingCmd.AddCommand(genaiMultiTurnToolTestCmd)
 	TestingCmd.AddCommand(bedrockMultiTurnToolTestCmd)

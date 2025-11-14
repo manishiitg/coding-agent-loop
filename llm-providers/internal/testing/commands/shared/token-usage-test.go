@@ -169,11 +169,12 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 		testLLMTokenUsage(gpt41LLM, messages)
 	}
 
-	// Test 2: OpenAI o3-mini for complex reasoning query
+	// Test 2: OpenAI gpt-4o-mini for complex reasoning query
+	// Note: gpt-4o-mini does not support reasoning tokens (only o3/o3-mini models do)
 	fmt.Printf("\n🧪 TEST: OpenAI gpt-4o-mini (Complex Reasoning Query)\n")
 	fmt.Printf("======================================================\n")
 
-	o3Config := llmproviders.Config{
+	gpt4oConfig := llmproviders.Config{
 		Provider:     llmproviders.ProviderOpenAI,
 		ModelID:      "gpt-4o-mini",
 		Temperature:  0.7,
@@ -182,7 +183,7 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 		Logger:       logger,
 	}
 
-	o3LLM, err := llmproviders.InitializeLLM(o3Config)
+	gpt4oLLM, err := llmproviders.InitializeLLM(gpt4oConfig)
 	if err != nil {
 		fmt.Printf("❌ Error creating OpenAI gpt-4o-mini LLM: %v\n", err)
 		fmt.Printf("⏭️  Skipping OpenAI gpt-4o-mini test\n")
@@ -198,8 +199,11 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 			},
 		}
 
-		testLLMTokenUsage(o3LLM, complexMessages)
+		testLLMTokenUsage(gpt4oLLM, complexMessages)
 	}
+
+	// Note: For testing reasoning tokens, use o3-mini or o3 models
+	// The dedicated openai-token-usage test includes o3-mini testing
 }
 
 // testBedrock runs Bedrock token usage tests

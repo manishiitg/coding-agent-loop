@@ -341,12 +341,47 @@ func (o *OpenAIAdapter) generateContentStreaming(ctx context.Context, modelID st
 			TotalTokensCap:      &totalTokens,
 		}
 
-		// Handle OpenRouter cache tokens if available
+		// Initialize Additional map for cache tokens and other metadata
+		if choice.GenerationInfo.Additional == nil {
+			choice.GenerationInfo.Additional = make(map[string]interface{})
+		}
+
+		// Extract cache tokens if available (for both native OpenAI and OpenRouter)
+		var cachedTokens int
 		if isOpenRouter {
-			if choice.GenerationInfo.Additional == nil {
-				choice.GenerationInfo.Additional = make(map[string]interface{})
+			// For OpenRouter, use JSON marshaling to parse with our typed struct
+			if usageJSON, err := json.Marshal(*usage); err == nil {
+				var openRouterUsage OpenRouterUsageResponse
+				if err := json.Unmarshal(usageJSON, &openRouterUsage); err == nil {
+					if openRouterUsage.PromptTokensDetails != nil {
+						cachedTokens = openRouterUsage.PromptTokensDetails.CachedTokens
+					}
+				}
 			}
-			// Note: OpenRouter cache tokens would need to be extracted from usage details if available
+		} else {
+			// For native OpenAI requests, extract cache tokens directly from SDK struct
+			if usage.PromptTokensDetails.CachedTokens > 0 {
+				cachedTokens = int(usage.PromptTokensDetails.CachedTokens)
+			}
+		}
+
+		// Set cache tokens if found
+		if cachedTokens > 0 {
+			choice.GenerationInfo.CachedContentTokens = &cachedTokens
+			if usage.PromptTokens > 0 {
+				cacheDiscount := float64(cachedTokens) / float64(usage.PromptTokens)
+				choice.GenerationInfo.CacheDiscount = &cacheDiscount
+			}
+			choice.GenerationInfo.Additional["cached_tokens"] = cachedTokens
+			choice.GenerationInfo.Additional["cache_tokens"] = cachedTokens
+		} else {
+			choice.GenerationInfo.Additional["cached_tokens"] = 0
+		}
+
+		// Handle reasoning tokens for o3 models (if available)
+		if usage.CompletionTokensDetails.ReasoningTokens > 0 {
+			reasoningTokens := int(usage.CompletionTokensDetails.ReasoningTokens)
+			choice.GenerationInfo.ReasoningTokens = &reasoningTokens
 		}
 	}
 
@@ -740,10 +775,11 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 		}
 	}
 
-	// Extract cache tokens for OpenRouter using proper struct
+	// Extract cache tokens for all OpenAI requests (native OpenAI and OpenRouter)
 	var cachedTokens int
 	if isOpenRouter {
-		// Marshal the Usage struct to parse with our typed struct
+		// For OpenRouter, use JSON marshaling to parse with our typed struct
+		// (OpenRouter may have slightly different response format)
 		if usageJSON, err := json.Marshal(result.Usage); err == nil {
 			if logger != nil {
 				logger.Infof("[OPENROUTER DEBUG] Raw Usage struct: %s", string(usageJSON))
@@ -784,6 +820,15 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 		if logger != nil {
 			if detailsJSON, err := json.Marshal(result.Usage.CompletionTokensDetails); err == nil {
 				logger.Infof("[OPENROUTER DEBUG] CompletionTokensDetails: %s", string(detailsJSON))
+			}
+		}
+	} else {
+		// For native OpenAI requests, extract cache tokens directly from SDK struct
+		// The SDK provides PromptTokensDetails.CachedTokens field
+		if result.Usage.PromptTokensDetails.CachedTokens > 0 {
+			cachedTokens = int(result.Usage.PromptTokensDetails.CachedTokens)
+			if logger != nil {
+				logger.Infof("[OPENAI DEBUG] Found cached_tokens: %d (from PromptTokensDetails)", cachedTokens)
 			}
 		}
 	}
@@ -841,11 +886,9 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 			TotalTokensCap:      &totalTokens,
 		}
 
-		// Initialize Additional map for OpenRouter cache tokens
-		if isOpenRouter {
-			if langChoice.GenerationInfo.Additional == nil {
-				langChoice.GenerationInfo.Additional = make(map[string]interface{})
-			}
+		// Initialize Additional map for cache tokens and other metadata
+		if langChoice.GenerationInfo.Additional == nil {
+			langChoice.GenerationInfo.Additional = make(map[string]interface{})
 		}
 
 		// Handle reasoning tokens for o3 models (if available)
@@ -855,8 +898,8 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 			langChoice.GenerationInfo.ReasoningTokens = &reasoningTokens
 		}
 
-		// Extract OpenRouter cache tokens if available
-		if isOpenRouter && cachedTokens > 0 {
+		// Extract cache tokens if available (for both native OpenAI and OpenRouter)
+		if cachedTokens > 0 {
 			// Set cached tokens in GenerationInfo
 			langChoice.GenerationInfo.CachedContentTokens = &cachedTokens
 
@@ -871,14 +914,23 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 			langChoice.GenerationInfo.Additional["cache_tokens"] = cachedTokens
 
 			if logger != nil {
-				logger.Infof("[OPENROUTER DEBUG] Extracted cache tokens: %d (discount: %.2f%%)",
-					cachedTokens, *langChoice.GenerationInfo.CacheDiscount*100)
+				if isOpenRouter {
+					logger.Infof("[OPENROUTER DEBUG] Extracted cache tokens: %d (discount: %.2f%%)",
+						cachedTokens, *langChoice.GenerationInfo.CacheDiscount*100)
+				} else {
+					logger.Infof("[OPENAI DEBUG] Extracted cache tokens: %d (discount: %.2f%%)",
+						cachedTokens, *langChoice.GenerationInfo.CacheDiscount*100)
+				}
 			}
-		} else if isOpenRouter {
+		} else {
 			// Store 0 cached tokens for debugging
 			langChoice.GenerationInfo.Additional["cached_tokens"] = 0
 			if logger != nil {
-				logger.Infof("[OPENROUTER DEBUG] No cache tokens found (cached_tokens: 0)")
+				if isOpenRouter {
+					logger.Infof("[OPENROUTER DEBUG] No cache tokens found (cached_tokens: 0)")
+				} else {
+					logger.Infof("[OPENAI DEBUG] No cache tokens found (cached_tokens: 0)")
+				}
 			}
 		}
 
@@ -911,6 +963,134 @@ func (o *OpenAIAdapter) Call(ctx context.Context, prompt string, options ...llmt
 	}
 
 	return resp.Choices[0].Content, nil
+}
+
+// GenerateEmbeddings implements the llmtypes.EmbeddingModel interface
+// Input can be a single string or a slice of strings
+func (o *OpenAIAdapter) GenerateEmbeddings(ctx context.Context, input interface{}, options ...llmtypes.EmbeddingOption) (*llmtypes.EmbeddingResponse, error) {
+	// Parse embedding options
+	opts := &llmtypes.EmbeddingOptions{
+		Model: "text-embedding-3-small", // Default model
+	}
+	for _, opt := range options {
+		opt(opts)
+	}
+
+	// Use provided model or default
+	modelID := opts.Model
+	if modelID == "" {
+		modelID = "text-embedding-3-small"
+	}
+
+	// Convert input to OpenAI input union format
+	var inputUnion openai.EmbeddingNewParamsInputUnion
+	switch v := input.(type) {
+	case string:
+		// Validate single string input
+		if strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("input cannot be empty")
+		}
+		// Single string input
+		inputUnion = openai.EmbeddingNewParamsInputUnion{
+			OfString: param.NewOpt(v),
+		}
+	case []string:
+		// Array of strings input
+		if len(v) == 0 {
+			return nil, fmt.Errorf("input cannot be empty")
+		}
+		// Validate that no string in the array is empty
+		for i, text := range v {
+			if strings.TrimSpace(text) == "" {
+				return nil, fmt.Errorf("input at index %d cannot be empty", i)
+			}
+		}
+		if len(v) == 1 {
+			// Single string in array - use OfString for consistency
+			inputUnion = openai.EmbeddingNewParamsInputUnion{
+				OfString: param.NewOpt(v[0]),
+			}
+		} else {
+			// Multiple strings
+			inputUnion = openai.EmbeddingNewParamsInputUnion{
+				OfArrayOfStrings: v,
+			}
+		}
+	default:
+		return nil, fmt.Errorf("input must be a string or []string, got %T", input)
+	}
+
+	// Build OpenAI embedding request parameters
+	params := openai.EmbeddingNewParams{
+		Model: openai.EmbeddingModel(modelID),
+		Input: inputUnion,
+	}
+
+	// Add dimensions if specified (only for text-embedding-3 models)
+	if opts.Dimensions != nil {
+		params.Dimensions = param.NewOpt(int64(*opts.Dimensions))
+	}
+
+	// Log input details if logger is available
+	if o.logger != nil {
+		inputCount := 1
+		if str, ok := input.([]string); ok {
+			inputCount = len(str)
+		}
+		o.logger.Debugf("OpenAI GenerateEmbeddings INPUT - model: %s, input_count: %d, dimensions: %v",
+			modelID, inputCount, opts.Dimensions)
+	}
+
+	// Call OpenAI Embeddings API
+	result, err := o.client.Embeddings.New(ctx, params)
+	if err != nil {
+		if o.logger != nil {
+			o.logger.Errorf("OpenAI GenerateEmbeddings ERROR - model: %s, error: %v", modelID, err)
+		}
+		return nil, fmt.Errorf("openai generate embeddings: %w", err)
+	}
+
+	// Convert response from OpenAI format to llmtypes format
+	return convertEmbeddingResponse(result, modelID), nil
+}
+
+// convertEmbeddingResponse converts OpenAI embedding response to llmtypes EmbeddingResponse
+func convertEmbeddingResponse(result *openai.CreateEmbeddingResponse, modelID string) *llmtypes.EmbeddingResponse {
+	if result == nil {
+		return &llmtypes.EmbeddingResponse{
+			Embeddings: []llmtypes.Embedding{},
+			Model:      modelID,
+		}
+	}
+
+	embeddings := make([]llmtypes.Embedding, 0, len(result.Data))
+	for _, item := range result.Data {
+		// Convert []float64 to []float32 (OpenAI SDK returns float64, but we use float32)
+		embedding32 := make([]float32, len(item.Embedding))
+		for i, v := range item.Embedding {
+			embedding32[i] = float32(v)
+		}
+
+		embeddings = append(embeddings, llmtypes.Embedding{
+			Index:     int(item.Index),
+			Embedding: embedding32,
+			Object:    string(item.Object),
+		})
+	}
+
+	response := &llmtypes.EmbeddingResponse{
+		Embeddings: embeddings,
+		Model:      result.Model,
+		Object:     string(result.Object),
+	}
+
+	// Add usage information
+	response.Usage = &llmtypes.EmbeddingUsage{
+		PromptTokens: int(result.Usage.PromptTokens),
+		TotalTokens:  int(result.Usage.TotalTokens),
+	}
+
+	return response
 }
 
 // convertArgumentsToString converts function arguments to JSON string

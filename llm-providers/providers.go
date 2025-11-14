@@ -85,6 +85,142 @@ func InitializeLLM(config Config) (llmtypes.Model, error) {
 	return NewProviderAwareLLM(llm, config.Provider, config.ModelID, config.EventEmitter, config.TraceID, config.Logger), nil
 }
 
+// InitializeEmbeddingModel creates and initializes an embedding model based on the provider configuration
+// Supported providers: OpenAI, OpenRouter, Vertex AI, Bedrock
+func InitializeEmbeddingModel(config Config) (llmtypes.EmbeddingModel, error) {
+	var embeddingModel llmtypes.EmbeddingModel
+	var err error
+
+	switch config.Provider {
+	case ProviderOpenAI:
+		embeddingModel, err = initializeOpenAIEmbedding(config)
+	case ProviderOpenRouter:
+		// OpenRouter uses OpenAI-compatible API, so we can use OpenAI adapter
+		embeddingModel, err = initializeOpenAIEmbedding(config)
+	case ProviderVertex:
+		embeddingModel, err = initializeVertexEmbedding(config)
+	case ProviderBedrock:
+		embeddingModel, err = initializeBedrockEmbedding(config)
+	default:
+		return nil, fmt.Errorf("embedding generation not supported for provider: %s. Supported providers: openai, openrouter, vertex, bedrock", config.Provider)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return embeddingModel, nil
+}
+
+// initializeOpenAIEmbedding creates and configures an OpenAI embedding model instance
+func initializeOpenAIEmbedding(config Config) (llmtypes.EmbeddingModel, error) {
+	// Check for API key
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is required for OpenAI embedding provider")
+	}
+
+	// Set default embedding model if not specified
+	modelID := config.ModelID
+	if modelID == "" {
+		modelID = "text-embedding-3-small"
+	}
+
+	// Create OpenAI client using official SDK
+	client := openaisdk.NewClient(
+		option.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
+	)
+
+	// Create OpenAI adapter (it implements both Model and EmbeddingModel interfaces)
+	logger := config.Logger
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
+
+	embeddingModel := openaiadapter.NewOpenAIAdapter(&client, modelID, logger)
+
+	logger.Infof("Initialized OpenAI Embedding Model - model_id: %s", modelID)
+	return embeddingModel, nil
+}
+
+// initializeVertexEmbedding creates and configures a Vertex AI embedding model instance
+func initializeVertexEmbedding(config Config) (llmtypes.EmbeddingModel, error) {
+	// Set default embedding model if not specified
+	modelID := config.ModelID
+	if modelID == "" {
+		modelID = "text-embedding-004" // Latest Vertex AI embedding model
+	}
+
+	logger := config.Logger
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
+
+	logger.Infof("Initializing Vertex AI Embedding Model - model_id: %s", modelID)
+
+	// Check for API key from environment
+	apiKey := os.Getenv("VERTEX_API_KEY")
+	if apiKey == "" {
+		// Try alternative environment variable names
+		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required for Vertex AI embedding models")
+	}
+
+	// Use provided context or use background context
+	ctx := config.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Create Google GenAI client with API key authentication
+	// Using BackendGeminiAPI for Gemini Developer API
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GenAI client: %w", err)
+	}
+
+	// Create Vertex adapter (it implements both Model and EmbeddingModel interfaces)
+	embeddingModel := vertexadapter.NewGoogleGenAIAdapter(client, modelID, logger)
+
+	logger.Infof("Initialized Vertex AI Embedding Model - model_id: %s", modelID)
+	return embeddingModel, nil
+}
+
+// initializeBedrockEmbedding creates and configures a Bedrock embedding model instance
+func initializeBedrockEmbedding(config Config) (llmtypes.EmbeddingModel, error) {
+	// Set default embedding model if not specified
+	modelID := config.ModelID
+	if modelID == "" {
+		modelID = "amazon.titan-embed-text-v1" // Default Bedrock embedding model
+	}
+
+	logger := config.Logger
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
+
+	logger.Infof("Initializing Bedrock Embedding Model - model_id: %s", modelID)
+
+	// Create AWS config
+	cfg, err := awsconfig.LoadDefaultConfig(config.Context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	// Create Bedrock runtime client
+	client := bedrockruntime.NewFromConfig(cfg)
+
+	// Create Bedrock adapter (it implements both Model and EmbeddingModel interfaces)
+	embeddingModel := bedrockadapter.NewBedrockAdapter(client, modelID, logger)
+
+	logger.Infof("Initialized Bedrock Embedding Model - model_id: %s", modelID)
+	return embeddingModel, nil
+}
+
 // initializeBedrockWithFallback creates a Bedrock LLM with fallback models for rate limiting
 func initializeBedrockWithFallback(config Config) (llmtypes.Model, error) {
 	// Try primary model first

@@ -287,3 +287,33 @@ func NewParameters(paramsMap map[string]interface{}) *Parameters {
 	}
 	return params
 }
+
+// Embedding represents a single embedding vector with metadata
+type Embedding struct {
+	Index     int       `json:"index"`            // Index of the embedding in the batch
+	Embedding []float32 `json:"embedding"`        // The embedding vector
+	Object    string    `json:"object,omitempty"` // Object type (usually "embedding")
+}
+
+// EmbeddingUsage represents token usage information for embedding generation
+type EmbeddingUsage struct {
+	PromptTokens int `json:"prompt_tokens"` // Number of tokens in the input
+	TotalTokens  int `json:"total_tokens"`  // Total tokens used
+}
+
+// EmbeddingResponse represents the response from an embedding generation request
+type EmbeddingResponse struct {
+	Embeddings []Embedding     `json:"embeddings"`       // Array of embeddings
+	Model      string          `json:"model"`            // Model used for generation
+	Usage      *EmbeddingUsage `json:"usage,omitempty"`  // Token usage information
+	Object     string          `json:"object,omitempty"` // Object type (usually "list")
+}
+
+// EmbeddingOptions holds all options for embedding generation
+type EmbeddingOptions struct {
+	Model      string // Model ID (e.g., "text-embedding-3-small")
+	Dimensions *int   // Optional dimensions parameter (for text-embedding-3 models)
+}
+
+// EmbeddingOption is a function type for setting embedding options
+type EmbeddingOption func(*EmbeddingOptions)

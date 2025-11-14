@@ -15,6 +15,186 @@ import (
 	"llm-providers/llmtypes"
 )
 
+// RunEmbeddingTest runs embedding generation tests
+func RunEmbeddingTest(embeddingModel llmtypes.EmbeddingModel, modelID string) {
+	log.Printf("🚀 Testing %s (embedding generation)", modelID)
+
+	ctx := context.Background()
+
+	// Test 1: Single text embedding
+	log.Printf("\n📝 Test 1: Single text embedding")
+	testSingleEmbedding(ctx, embeddingModel, modelID, "Hello, world!")
+
+	// Test 2: Batch embeddings (multiple texts)
+	log.Printf("\n📝 Test 2: Batch embeddings")
+	testBatchEmbeddings(ctx, embeddingModel, modelID, []string{
+		"The quick brown fox jumps over the lazy dog",
+		"Machine learning is a subset of artificial intelligence",
+		"Natural language processing enables computers to understand human language",
+	})
+
+	// Test 3: Embedding with custom dimensions (for text-embedding-3 models)
+	log.Printf("\n📝 Test 3: Custom dimensions")
+	testEmbeddingWithDimensions(ctx, embeddingModel, modelID, "Test text for dimension reduction", 512)
+
+	// Test 4: Empty input validation
+	log.Printf("\n📝 Test 4: Empty input validation")
+	testEmptyInput(ctx, embeddingModel)
+
+	// Test 5: Long text embedding
+	log.Printf("\n📝 Test 5: Long text embedding")
+	longText := strings.Repeat("This is a test sentence. ", 100)
+	testSingleEmbedding(ctx, embeddingModel, modelID, longText)
+
+	log.Printf("\n✅ All embedding tests completed!")
+}
+
+func testSingleEmbedding(ctx context.Context, embeddingModel llmtypes.EmbeddingModel, modelID string, text string) {
+	startTime := time.Now()
+	resp, err := embeddingModel.GenerateEmbeddings(ctx, text, llmtypes.WithEmbeddingModel(modelID))
+	duration := time.Since(startTime)
+
+	if err != nil {
+		log.Printf("❌ Error generating embedding: %v", err)
+		return
+	}
+
+	if len(resp.Embeddings) == 0 {
+		log.Printf("❌ No embeddings returned")
+		return
+	}
+
+	embedding := resp.Embeddings[0]
+	log.Printf("✅ Generated embedding in %v", duration)
+	log.Printf("   Model: %s", resp.Model)
+	log.Printf("   Embedding dimensions: %d", len(embedding.Embedding))
+	log.Printf("   Embedding index: %d", embedding.Index)
+	if resp.Usage != nil {
+		log.Printf("   Token usage - Prompt: %d, Total: %d", resp.Usage.PromptTokens, resp.Usage.TotalTokens)
+	}
+
+	// Validate embedding vector
+	if len(embedding.Embedding) == 0 {
+		log.Printf("❌ Embedding vector is empty")
+		return
+	}
+
+	// Check if dimensions match expected
+	expectedDims := 1536 // Default for most models
+	if strings.Contains(modelID, "text-embedding-3-large") {
+		expectedDims = 3072
+	} else if strings.Contains(modelID, "text-embedding-ada-002") {
+		expectedDims = 1536
+	} else if strings.Contains(modelID, "text-embedding-004") {
+		expectedDims = 768 // Vertex AI text-embedding-004 default dimensions
+	} else if strings.Contains(modelID, "text-embedding-preview") || strings.Contains(modelID, "text-multilingual-embedding") {
+		expectedDims = 768 // Vertex AI preview models
+	} else if strings.Contains(modelID, "embedding-001") {
+		expectedDims = 768 // Older Vertex AI embedding model
+	} else if strings.Contains(modelID, "titan-embed-text-v1") {
+		expectedDims = 1536 // Amazon Titan v1 default dimensions
+	} else if strings.Contains(modelID, "titan-embed-text-v2") {
+		expectedDims = 1024 // Amazon Titan v2 default dimensions
+	}
+
+	if len(embedding.Embedding) != expectedDims {
+		log.Printf("⚠️  Warning: Expected %d dimensions, got %d", expectedDims, len(embedding.Embedding))
+	} else {
+		log.Printf("✅ Embedding dimensions match expected: %d", expectedDims)
+	}
+}
+
+func testBatchEmbeddings(ctx context.Context, embeddingModel llmtypes.EmbeddingModel, modelID string, texts []string) {
+	startTime := time.Now()
+	resp, err := embeddingModel.GenerateEmbeddings(ctx, texts, llmtypes.WithEmbeddingModel(modelID))
+	duration := time.Since(startTime)
+
+	if err != nil {
+		log.Printf("❌ Error generating batch embeddings: %v", err)
+		return
+	}
+
+	if len(resp.Embeddings) != len(texts) {
+		log.Printf("❌ Expected %d embeddings, got %d", len(texts), len(resp.Embeddings))
+		return
+	}
+
+	log.Printf("✅ Generated %d embeddings in %v", len(resp.Embeddings), duration)
+	log.Printf("   Model: %s", resp.Model)
+	if resp.Usage != nil {
+		log.Printf("   Token usage - Prompt: %d, Total: %d", resp.Usage.PromptTokens, resp.Usage.TotalTokens)
+	}
+
+	// Validate each embedding
+	for i, embedding := range resp.Embeddings {
+		if len(embedding.Embedding) == 0 {
+			log.Printf("❌ Embedding %d is empty", i)
+			return
+		}
+		if embedding.Index != i {
+			log.Printf("⚠️  Warning: Embedding index mismatch - expected %d, got %d", i, embedding.Index)
+		}
+		log.Printf("   Embedding %d: %d dimensions", i, len(embedding.Embedding))
+	}
+
+	log.Printf("✅ All batch embeddings validated")
+}
+
+func testEmbeddingWithDimensions(ctx context.Context, embeddingModel llmtypes.EmbeddingModel, modelID string, text string, dimensions int) {
+	// Test dimensions for models that support it
+	// OpenAI: text-embedding-3 models
+	// Vertex AI: text-embedding-004 and newer models
+	// Bedrock: titan-embed-text-v2 (v1 doesn't support custom dimensions)
+	supportsDimensions := strings.Contains(modelID, "text-embedding-3") ||
+		strings.Contains(modelID, "text-embedding-004") ||
+		strings.Contains(modelID, "text-embedding-preview") ||
+		strings.Contains(modelID, "text-multilingual-embedding") ||
+		strings.Contains(modelID, "titan-embed-text-v2")
+
+	if !supportsDimensions {
+		log.Printf("⏭️  Skipping dimensions test (only supported for text-embedding-3, text-embedding-004+, and titan-embed-text-v2 models)")
+		return
+	}
+
+	startTime := time.Now()
+	resp, err := embeddingModel.GenerateEmbeddings(ctx, text,
+		llmtypes.WithEmbeddingModel(modelID),
+		llmtypes.WithDimensions(dimensions),
+	)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		log.Printf("❌ Error generating embedding with dimensions: %v", err)
+		return
+	}
+
+	if len(resp.Embeddings) == 0 {
+		log.Printf("❌ No embeddings returned")
+		return
+	}
+
+	embedding := resp.Embeddings[0]
+	log.Printf("✅ Generated embedding with custom dimensions in %v", duration)
+	log.Printf("   Model: %s", resp.Model)
+	log.Printf("   Requested dimensions: %d", dimensions)
+	log.Printf("   Actual dimensions: %d", len(embedding.Embedding))
+
+	if len(embedding.Embedding) != dimensions {
+		log.Printf("⚠️  Warning: Expected %d dimensions, got %d", dimensions, len(embedding.Embedding))
+	} else {
+		log.Printf("✅ Dimensions match requested: %d", dimensions)
+	}
+}
+
+func testEmptyInput(ctx context.Context, embeddingModel llmtypes.EmbeddingModel) {
+	_, err := embeddingModel.GenerateEmbeddings(ctx, "")
+	if err == nil {
+		log.Printf("❌ Expected error for empty input, but got none")
+		return
+	}
+	log.Printf("✅ Empty input correctly rejected: %v", err)
+}
+
 // validateRequiredToolArguments validates that all required arguments are present in a tool call
 // Returns error if validation fails, nil if successful
 // modelID is used to detect Bedrock models (which have a known limitation with required params)

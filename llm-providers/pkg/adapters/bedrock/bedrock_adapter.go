@@ -1069,35 +1069,35 @@ func (b *BedrockAdapter) logErrorDetailsConverse(modelID string, messages []llmt
 		switch awsHTTPStatusCode {
 		case 400:
 			errorInfo["error_classification"] = "bad_request"
-			b.logger.Warnf("🔄 Validation error - Check request parameters")
+			b.logger.Debugf("🔄 Validation error - Check request parameters")
 			classified = true
 		case 401:
 			errorInfo["error_classification"] = "unauthorized"
-			b.logger.Warnf("🔄 401 Unauthorized error - Check AWS credentials and permissions")
+			b.logger.Debugf("🔄 401 Unauthorized error - Check AWS credentials and permissions")
 			classified = true
 		case 403:
 			errorInfo["error_classification"] = "access_denied"
-			b.logger.Warnf("🔄 403 Access Denied error - Check AWS credentials and permissions")
+			b.logger.Debugf("🔄 403 Access Denied error - Check AWS credentials and permissions")
 			classified = true
 		case 429:
 			errorInfo["error_classification"] = "rate_limit"
-			b.logger.Warnf("🔄 429 Rate Limit/Throttling error detected, will trigger fallback mechanism")
+			b.logger.Debugf("🔄 429 Rate Limit/Throttling error detected, will trigger fallback mechanism")
 			classified = true
 		case 500:
 			errorInfo["error_classification"] = "server_error"
-			b.logger.Warnf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
+			b.logger.Debugf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
 			classified = true
 		case 502:
 			errorInfo["error_classification"] = "bad_gateway"
-			b.logger.Warnf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
+			b.logger.Debugf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
 			classified = true
 		case 503:
 			errorInfo["error_classification"] = "service_unavailable"
-			b.logger.Warnf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
+			b.logger.Debugf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
 			classified = true
 		case 504:
 			errorInfo["error_classification"] = "gateway_timeout"
-			b.logger.Warnf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
+			b.logger.Debugf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
 			classified = true
 		}
 	}
@@ -1108,27 +1108,27 @@ func (b *BedrockAdapter) logErrorDetailsConverse(modelID string, messages []llmt
 			switch awsErrCode {
 			case "AccessDeniedException", "AccessDenied":
 				errorInfo["error_classification"] = "access_denied"
-				b.logger.Warnf("🔄 Access Denied error - Check AWS credentials and permissions")
+				b.logger.Debugf("🔄 Access Denied error - Check AWS credentials and permissions")
 				classified = true
 			case "ValidationException", "InvalidParameterException":
 				errorInfo["error_classification"] = "validation_error"
-				b.logger.Warnf("🔄 Validation error - Check request parameters")
+				b.logger.Debugf("🔄 Validation error - Check request parameters")
 				classified = true
 			case "ThrottlingException", "TooManyRequestsException":
 				errorInfo["error_classification"] = "rate_limit"
-				b.logger.Warnf("🔄 Rate Limit/Throttling error detected, will trigger fallback mechanism")
+				b.logger.Debugf("🔄 Rate Limit/Throttling error detected, will trigger fallback mechanism")
 				classified = true
 			case "ModelNotReadyException", "ModelStreamErrorException":
 				errorInfo["error_classification"] = "model_error"
-				b.logger.Warnf("🔄 Model Error - Model may not be ready or encountered an error")
+				b.logger.Debugf("🔄 Model Error - Model may not be ready or encountered an error")
 				classified = true
 			case "InternalServerException":
 				errorInfo["error_classification"] = "server_error"
-				b.logger.Warnf("🔄 Internal Server Error detected, will trigger fallback mechanism")
+				b.logger.Debugf("🔄 Internal Server Error detected, will trigger fallback mechanism")
 				classified = true
 			case "ServiceQuotaExceededException":
 				errorInfo["error_classification"] = "quota_exceeded"
-				b.logger.Warnf("🔄 Service Quota Exceeded - Check AWS service limits")
+				b.logger.Debugf("🔄 Service Quota Exceeded - Check AWS service limits")
 				classified = true
 			}
 		}
@@ -1137,25 +1137,25 @@ func (b *BedrockAdapter) logErrorDetailsConverse(modelID string, messages []llmt
 		if !classified {
 			if strings.Contains(errMsg, "AccessDenied") || strings.Contains(errMsg, "access denied") || strings.Contains(errMsg, "403") {
 				errorInfo["error_classification"] = "access_denied"
-				b.logger.Warnf("🔄 Access Denied error - Check AWS credentials and permissions")
+				b.logger.Debugf("🔄 Access Denied error - Check AWS credentials and permissions")
 			} else if strings.Contains(errMsg, "ValidationException") || strings.Contains(errMsg, "validation") || strings.Contains(errMsg, "400") {
 				errorInfo["error_classification"] = "validation_error"
-				b.logger.Warnf("🔄 Validation error - Check request parameters")
+				b.logger.Debugf("🔄 Validation error - Check request parameters")
 			} else if strings.Contains(errMsg, "ThrottlingException") || strings.Contains(errMsg, "throttl") || strings.Contains(errMsg, "429") {
 				errorInfo["error_classification"] = "rate_limit"
-				b.logger.Warnf("🔄 Rate Limit/Throttling error detected, will trigger fallback mechanism")
+				b.logger.Debugf("🔄 Rate Limit/Throttling error detected, will trigger fallback mechanism")
 			} else if strings.Contains(errMsg, "500") || strings.Contains(errMsg, "internal server error") {
 				errorInfo["error_classification"] = "server_error"
-				b.logger.Warnf("🔄 Internal Server Error detected, will trigger fallback mechanism")
+				b.logger.Debugf("🔄 Internal Server Error detected, will trigger fallback mechanism")
 			} else if strings.Contains(errMsg, "503") || strings.Contains(errMsg, "service unavailable") {
 				errorInfo["error_classification"] = "service_unavailable"
-				b.logger.Warnf("🔄 Service Unavailable error detected, will trigger fallback mechanism")
+				b.logger.Debugf("🔄 Service Unavailable error detected, will trigger fallback mechanism")
 			} else if strings.Contains(errMsg, "502") || strings.Contains(errMsg, "bad gateway") {
 				errorInfo["error_classification"] = "bad_gateway"
-				b.logger.Warnf("🔄 Bad Gateway error detected, will trigger fallback mechanism")
+				b.logger.Debugf("🔄 Bad Gateway error detected, will trigger fallback mechanism")
 			} else if strings.Contains(errMsg, "504") || strings.Contains(errMsg, "gateway timeout") {
 				errorInfo["error_classification"] = "gateway_timeout"
-				b.logger.Warnf("🔄 Gateway Timeout error detected, will trigger fallback mechanism")
+				b.logger.Debugf("🔄 Gateway Timeout error detected, will trigger fallback mechanism")
 			}
 		}
 	}

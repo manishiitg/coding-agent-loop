@@ -75,7 +75,7 @@ func runVertexAnthropic(cmd *cobra.Command, args []string) {
 	if vertexAnthropicTestFlags.imagePath != "" || vertexAnthropicTestFlags.imageURL != "" {
 		if err := RunVertexAnthropicImageTest(modelID, vertexAnthropicTestFlags.imagePath, vertexAnthropicTestFlags.imageURL); err != nil {
 			fmt.Printf("❌ Vertex Anthropic image test failed: %v\n", err)
-			logger.Fatalf("❌ Vertex Anthropic image test failed: %v", err)
+			logger.Errorf("❌ Vertex Anthropic image test failed: %v", err)
 		}
 		fmt.Println("✅ Vertex Anthropic image test completed successfully!")
 		return
@@ -83,7 +83,7 @@ func runVertexAnthropic(cmd *cobra.Command, args []string) {
 
 	if err := RunVertexAnthropicTestWithModel(modelID); err != nil {
 		fmt.Printf("❌ Vertex Anthropic test failed: %v\n", err)
-		logger.Fatalf("❌ Vertex Anthropic test failed: %v", err)
+		logger.Errorf("❌ Vertex Anthropic test failed: %v", err)
 	}
 
 	fmt.Println("✅ Vertex Anthropic test completed successfully!")
@@ -92,7 +92,7 @@ func runVertexAnthropic(cmd *cobra.Command, args []string) {
 // RunVertexAnthropicTestWithModel tests the Vertex AI Anthropic adapter with a specific model
 func RunVertexAnthropicTestWithModel(modelID string) error {
 	logger := testing.GetTestLogger()
-	logger.Info("🧪 Testing Vertex AI Anthropic Integration")
+	logger.Infof("🧪 Testing Vertex AI Anthropic Integration")
 
 	// Check required environment variables
 	projectID := os.Getenv("VERTEX_PROJECT_ID")
@@ -122,10 +122,10 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 		return fmt.Errorf("failed to initialize Vertex Anthropic LLM: %w", err)
 	}
 
-	logger.Info("✅ Vertex AI Anthropic LLM initialized successfully")
+	logger.Infof("✅ Vertex AI Anthropic LLM initialized successfully")
 
 	// Test 1: Simple text generation
-	logger.Info("📝 Test 1: Simple text generation")
+	logger.Infof("📝 Test 1: Simple text generation")
 	messages := []llmtypes.MessageContent{
 		{
 			Role: llmtypes.ChatMessageTypeHuman,
@@ -147,7 +147,7 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 	logger.Infof("✅ Test 1 passed - Response: %s", response.Choices[0].Content[:min(100, len(response.Choices[0].Content))])
 
 	// Test 2: Streaming
-	logger.Info("📝 Test 2: Streaming response")
+	logger.Infof("📝 Test 2: Streaming response")
 	streamedText := ""
 	streamingFunc := func(chunk llmtypes.StreamChunk) {
 		if chunk.Type == llmtypes.StreamChunkTypeContent {
@@ -178,7 +178,7 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 		len(streamedText), response2.Choices[0].Content)
 
 	// Test 3: Tool calling (comprehensive test)
-	logger.Info("📝 Test 3: Tool calling")
+	logger.Infof("📝 Test 3: Tool calling")
 	tools := []llmtypes.Tool{
 		{
 			Type: "function",
@@ -232,7 +232,7 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 
 	response3, err := llmInstance.GenerateContent(ctx, messages3, llmtypes.WithTools(tools))
 	if err != nil {
-		logger.Warnf("Test 3 failed (tool calling may not be fully supported): %v", err)
+		logger.Debugf("Test 3 failed (tool calling may not be fully supported): %v", err)
 	} else {
 		logger.Debugf("Test 3 response - Choices: %d", len(response3.Choices))
 		if len(response3.Choices) > 0 {
@@ -252,7 +252,7 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 
 				// Test 3b: Tool response handling - Full flow matching agent behavior
 				// This reproduces exactly what happens in conversation.go (AskWithHistory)
-				logger.Info("📝 Test 3b: Tool response handling (reproducing agent flow)")
+				logger.Infof("📝 Test 3b: Tool response handling (reproducing agent flow)")
 
 				// Step 1: Build full conversation matching agent behavior
 				// Agent separates text content and tool calls into different messages (conversation.go lines 553-575)
@@ -315,14 +315,14 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 
 				response3b, err := llmInstance.GenerateContent(ctx, fullMessages, llmtypes.WithTools(tools))
 				if err != nil {
-					logger.Warnf("Test 3b failed: %v", err)
+					logger.Debugf("Test 3b failed: %v", err)
 				} else {
 					if len(response3b.Choices) > 0 && response3b.Choices[0].Content != "" {
 						logger.Infof("✅ Test 3b passed - Final response: %s", response3b.Choices[0].Content[:min(200, len(response3b.Choices[0].Content))])
 
 						// Test 3c: Verify multi-tool call handling
 						if toolCallsCount >= 2 {
-							logger.Info("📝 Test 3c: Multi-tool call verification")
+							logger.Infof("📝 Test 3c: Multi-tool call verification")
 							logger.Infof("  ✅ Multiple tool calls detected: %d", toolCallsCount)
 
 							// Verify all tool calls have proper IDs and arguments
@@ -330,15 +330,15 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 							toolNames := make(map[string]bool)
 							for i, tc := range response3.Choices[0].ToolCalls {
 								if tc.ID == "" {
-									logger.Warnf("  ⚠️ Tool call %d has empty ID", i+1)
+									logger.Debugf("  ⚠️ Tool call %d has empty ID", i+1)
 									allToolCallsValid = false
 								}
 								if tc.FunctionCall == nil {
-									logger.Warnf("  ⚠️ Tool call %d has nil FunctionCall", i+1)
+									logger.Debugf("  ⚠️ Tool call %d has nil FunctionCall", i+1)
 									allToolCallsValid = false
 								} else {
 									if tc.FunctionCall.Name == "" {
-										logger.Warnf("  ⚠️ Tool call %d has empty function name", i+1)
+										logger.Debugf("  ⚠️ Tool call %d has empty function name", i+1)
 										allToolCallsValid = false
 									} else {
 										toolNames[tc.FunctionCall.Name] = true
@@ -350,18 +350,18 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 							if allToolCallsValid && len(toolNames) == toolCallsCount {
 								logger.Infof("✅ Test 3c passed - All %d tool calls are valid with unique names: %v", toolCallsCount, getKeys(toolNames))
 							} else {
-								logger.Warnf("⚠️ Test 3c: Some tool calls are invalid or have duplicate names")
+								logger.Debugf("⚠️ Test 3c: Some tool calls are invalid or have duplicate names")
 							}
 
 							// Verify all tool results were processed correctly
 							if len(toolResponseParts) == toolCallsCount {
 								logger.Infof("✅ Test 3c passed - All %d tool results were combined into single message", toolCallsCount)
 							} else {
-								logger.Warnf("⚠️ Test 3c: Tool result count mismatch - expected %d, got %d", toolCallsCount, len(toolResponseParts))
+								logger.Debugf("⚠️ Test 3c: Tool result count mismatch - expected %d, got %d", toolCallsCount, len(toolResponseParts))
 							}
 						}
 					} else {
-						logger.Warnf("⚠️ Test 3b: No final response received")
+						logger.Debugf("⚠️ Test 3b: No final response received")
 					}
 				}
 			} else {
@@ -370,17 +370,17 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 					logger.Infof("⚠️ Test 3: Empty content - this is expected when tool calls are made. Checking for tool calls...")
 					logger.Debugf("ToolCalls pointer: %v, ToolCalls count: %d", choice.ToolCalls, toolCallsCount)
 				} else {
-					logger.Warnf("⚠️ Test 3: No tool calls in response (model may have chosen not to use tools)")
+					logger.Debugf("⚠️ Test 3: No tool calls in response (model may have chosen not to use tools)")
 					logger.Infof("Response content: %s", choice.Content[:min(200, len(choice.Content))])
 				}
 			}
 		} else {
-			logger.Warnf("⚠️ Test 3: No choices in response")
+			logger.Debugf("⚠️ Test 3: No choices in response")
 		}
 	}
 
 	// Test 4: Parallel tool calls - explicit test
-	logger.Info("📝 Test 4: Parallel tool calls (explicit test)")
+	logger.Infof("📝 Test 4: Parallel tool calls (explicit test)")
 	tools4 := []llmtypes.Tool{
 		{
 			Type: "function",
@@ -446,7 +446,7 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 
 	response4, err := llmInstance.GenerateContent(ctx, messages4, llmtypes.WithTools(tools4))
 	if err != nil {
-		logger.Warnf("Test 4 failed (parallel tool calling): %v", err)
+		logger.Debugf("Test 4 failed (parallel tool calling): %v", err)
 	} else {
 		if len(response4.Choices) > 0 {
 			choice4 := response4.Choices[0]
@@ -475,7 +475,7 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 				for _, id := range toolCallIDs {
 					if idMap[id] {
 						allUnique = false
-						logger.Warnf("  ⚠️ Duplicate tool call ID detected: %s", id)
+						logger.Debugf("  ⚠️ Duplicate tool call ID detected: %s", id)
 						break
 					}
 					idMap[id] = true
@@ -484,19 +484,19 @@ func RunVertexAnthropicTestWithModel(modelID string) error {
 				if allUnique {
 					logger.Infof("✅ Test 4 passed - All %d tool call IDs are unique", parallelToolCallsCount)
 				} else {
-					logger.Warnf("⚠️ Test 4: Some tool call IDs are duplicates")
+					logger.Debugf("⚠️ Test 4: Some tool call IDs are duplicates")
 				}
 
 				logger.Infof("✅ Test 4 passed - Parallel tool calls verified: %v", toolNames)
 			} else if parallelToolCallsCount == 1 {
-				logger.Warnf("⚠️ Test 4: Only 1 tool call detected (expected 2+ for parallel test)")
+				logger.Debugf("⚠️ Test 4: Only 1 tool call detected (expected 2+ for parallel test)")
 			} else {
-				logger.Warnf("⚠️ Test 4: No parallel tool calls detected")
+				logger.Debugf("⚠️ Test 4: No parallel tool calls detected")
 			}
 		}
 	}
 
-	logger.Info("✅ All Vertex AI Anthropic tests completed successfully!")
+	logger.Infof("✅ All Vertex AI Anthropic tests completed successfully!")
 	return nil
 }
 
@@ -512,7 +512,7 @@ func getKeys(m map[string]bool) []string {
 // RunVertexAnthropicImageTest tests image input with Vertex AI Anthropic models
 func RunVertexAnthropicImageTest(modelID, imagePath, imageURL string) error {
 	logger := testing.GetTestLogger()
-	logger.Info("🧪 Testing Vertex AI Anthropic Integration with Image Input")
+	logger.Infof("🧪 Testing Vertex AI Anthropic Integration with Image Input")
 
 	// Check required environment variables
 	projectID := os.Getenv("VERTEX_PROJECT_ID")
@@ -540,7 +540,7 @@ func RunVertexAnthropicImageTest(modelID, imagePath, imageURL string) error {
 		return fmt.Errorf("failed to initialize Vertex Anthropic LLM: %w", err)
 	}
 
-	logger.Info("✅ Vertex AI Anthropic LLM initialized successfully")
+	logger.Infof("✅ Vertex AI Anthropic LLM initialized successfully")
 
 	// Prepare image content
 	var imageParts []llmtypes.ContentPart
@@ -613,7 +613,7 @@ func RunVertexAnthropicImageTest(modelID, imagePath, imageURL string) error {
 		},
 	}
 
-	logger.Info("📝 Testing image input with Vertex AI Anthropic")
+	logger.Infof("📝 Testing image input with Vertex AI Anthropic")
 
 	// Test with streaming
 	var streamedText strings.Builder

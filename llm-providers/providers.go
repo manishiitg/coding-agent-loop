@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -1188,14 +1189,14 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 
 		// 🆕 SERVER ERROR DETECTION AND LOGGING
 		if strings.Contains(err.Error(), "502") || strings.Contains(err.Error(), "Provider returned error") {
-			p.logger.Warnf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
-			p.logger.Warnf("🔄 Server error details - provider: %s, model: %s, error: %s", string(p.provider), p.modelID, err.Error())
+			p.logger.Debugf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
+			p.logger.Debugf("🔄 Server error details - provider: %s, model: %s, error: %s", string(p.provider), p.modelID, err.Error())
 		} else if strings.Contains(err.Error(), "503") {
-			p.logger.Warnf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
+			p.logger.Debugf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
 		} else if strings.Contains(err.Error(), "504") {
-			p.logger.Warnf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
+			p.logger.Debugf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
 		} else if strings.Contains(err.Error(), "500") {
-			p.logger.Warnf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
+			p.logger.Debugf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
 		}
 
 		// Log the messages that were sent to help debug
@@ -2055,20 +2056,72 @@ func validateVertexAPIKey(apiKey string, modelID string) (bool, string, error) {
 // noopLoggerImpl is a no-op logger implementation for validation functions
 type noopLoggerImpl struct{}
 
-func (n *noopLoggerImpl) Infof(format string, v ...any)                        {}
-func (n *noopLoggerImpl) Errorf(format string, v ...any)                       {}
-func (n *noopLoggerImpl) Info(args ...interface{})                             {}
-func (n *noopLoggerImpl) Error(args ...interface{})                            {}
-func (n *noopLoggerImpl) Debug(args ...interface{})                            {}
-func (n *noopLoggerImpl) Debugf(format string, args ...interface{})            {}
-func (n *noopLoggerImpl) Warn(args ...interface{})                             {}
-func (n *noopLoggerImpl) Warnf(format string, args ...interface{})             {}
-func (n *noopLoggerImpl) Fatal(args ...interface{})                            {}
-func (n *noopLoggerImpl) Fatalf(format string, args ...interface{})            {}
-func (n *noopLoggerImpl) WithField(key string, value interface{}) interface{}  { return nil }
-func (n *noopLoggerImpl) WithFields(fields map[string]interface{}) interface{} { return nil }
-func (n *noopLoggerImpl) WithError(err error) interface{}                      { return nil }
-func (n *noopLoggerImpl) Close() error                                         { return nil }
+func (n *noopLoggerImpl) Infof(format string, v ...any)             {}
+func (n *noopLoggerImpl) Errorf(format string, v ...any)            {}
+func (n *noopLoggerImpl) Debugf(format string, args ...interface{}) {}
+
+// DefaultLogger is a simple logger implementation that writes to stdout or a file
+type DefaultLogger struct {
+	output *os.File
+	level  string
+}
+
+// NewDefaultLogger creates a new default logger instance
+// If logFile is empty, logs to stdout. If logFile is provided, logs to that file.
+// level can be "info" or "debug" - debug level enables Debugf output
+func NewDefaultLogger(logFile string, level string) (interfaces.Logger, error) {
+	var output *os.File
+	var err error
+
+	if logFile == "" {
+		// Use stdout
+		output = os.Stdout
+	} else {
+		// Create log directory if it doesn't exist
+		logDir := filepath.Dir(logFile)
+		if logDir != "." && logDir != "" {
+			if err := os.MkdirAll(logDir, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create log directory: %w", err)
+			}
+		}
+
+		// Open log file
+		output, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open log file: %w", err)
+		}
+	}
+
+	// Validate level
+	if level != "info" && level != "debug" {
+		level = "info" // Default to info if invalid
+	}
+
+	return &DefaultLogger{
+		output: output,
+		level:  level,
+	}, nil
+}
+
+// Infof logs an info message
+func (l *DefaultLogger) Infof(format string, v ...any) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	fmt.Fprintf(l.output, "[%s] [INFO] %s\n", timestamp, fmt.Sprintf(format, v...))
+}
+
+// Errorf logs an error message
+func (l *DefaultLogger) Errorf(format string, v ...any) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	fmt.Fprintf(l.output, "[%s] [ERROR] %s\n", timestamp, fmt.Sprintf(format, v...))
+}
+
+// Debugf logs a debug message (only if level is "debug")
+func (l *DefaultLogger) Debugf(format string, args ...interface{}) {
+	if l.level == "debug" {
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		fmt.Fprintf(l.output, "[%s] [DEBUG] %s\n", timestamp, fmt.Sprintf(format, args...))
+	}
+}
 
 // validateBedrockCredentials validates AWS Bedrock credentials and region
 func validateBedrockCredentials(modelID string) (bool, string, error) {

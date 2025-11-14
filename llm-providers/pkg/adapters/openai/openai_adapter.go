@@ -80,7 +80,7 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 		// Model has temperature restrictions - use default (1.0) or omit
 		// For models that only support default, we omit the parameter to let OpenAI use default
 		if o.logger != nil {
-			o.logger.Warnf("Model %s only supports default temperature (1.0), omitting temperature parameter", modelID)
+			o.logger.Debugf("Model %s only supports default temperature (1.0), omitting temperature parameter", modelID)
 		}
 		// Don't set temperature - OpenAI will use default
 	}
@@ -543,7 +543,7 @@ func convertMessages(langMessages []llmtypes.MessageContent, logger interfaces.L
 					if toolResp.ToolCallID == "" {
 						// Skip tool responses without a tool call ID (invalid)
 						if logger != nil {
-							logger.Warnf("⚠️ Skipping tool response with empty ToolCallID - Name: %s, Content length: %d", toolResp.Name, len(toolResp.Content))
+							logger.Debugf("⚠️ Skipping tool response with empty ToolCallID - Name: %s, Content length: %d", toolResp.Name, len(toolResp.Content))
 						}
 						continue
 					}
@@ -557,7 +557,7 @@ func convertMessages(langMessages []llmtypes.MessageContent, logger interfaces.L
 			} else {
 				// No tool responses found in a tool message - this is unusual
 				if logger != nil {
-					logger.Warnf("⚠️ Tool message has no ToolCallResponse parts - skipping message")
+					logger.Debugf("⚠️ Tool message has no ToolCallResponse parts - skipping message")
 				}
 			}
 		default:
@@ -800,7 +800,7 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 				}
 			} else {
 				if logger != nil {
-					logger.Warnf("[OPENROUTER DEBUG] Failed to parse usage with typed struct: %v, falling back to map", err)
+					logger.Debugf("[OPENROUTER DEBUG] Failed to parse usage with typed struct: %v, falling back to map", err)
 					// Fallback to map-based parsing for backwards compatibility
 					var usageMap map[string]interface{}
 					if fallbackErr := json.Unmarshal(usageJSON, &usageMap); fallbackErr == nil {
@@ -1199,22 +1199,22 @@ func (o *OpenAIAdapter) logErrorDetails(modelID string, messages []llmtypes.Mess
 		switch apiErr.StatusCode {
 		case 401:
 			errorInfo["error_classification"] = "unauthorized"
-			o.logger.Warnf("🔄 401 Unauthorized error - Invalid API key or authentication failed")
+			o.logger.Debugf("🔄 401 Unauthorized error - Invalid API key or authentication failed")
 		case 429:
 			errorInfo["error_classification"] = "rate_limit"
-			o.logger.Warnf("🔄 429 Rate Limit error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 429 Rate Limit error detected, will trigger fallback mechanism")
 		case 500:
 			errorInfo["error_classification"] = "server_error"
-			o.logger.Warnf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
 		case 502:
 			errorInfo["error_classification"] = "bad_gateway"
-			o.logger.Warnf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
 		case 503:
 			errorInfo["error_classification"] = "service_unavailable"
-			o.logger.Warnf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
 		case 504:
 			errorInfo["error_classification"] = "gateway_timeout"
-			o.logger.Warnf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
 		default:
 			errorInfo["error_classification"] = "unknown"
 		}
@@ -1223,22 +1223,22 @@ func (o *OpenAIAdapter) logErrorDetails(modelID string, messages []llmtypes.Mess
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "502") || strings.Contains(errMsg, "bad gateway") {
 			errorInfo["error_classification"] = "bad_gateway"
-			o.logger.Warnf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 502 Bad Gateway error detected, will trigger fallback mechanism")
 		} else if strings.Contains(errMsg, "503") || strings.Contains(errMsg, "service unavailable") {
 			errorInfo["error_classification"] = "service_unavailable"
-			o.logger.Warnf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 503 Service Unavailable error detected, will trigger fallback mechanism")
 		} else if strings.Contains(errMsg, "504") || strings.Contains(errMsg, "gateway timeout") {
 			errorInfo["error_classification"] = "gateway_timeout"
-			o.logger.Warnf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 504 Gateway Timeout error detected, will trigger fallback mechanism")
 		} else if strings.Contains(errMsg, "500") || strings.Contains(errMsg, "internal server error") {
 			errorInfo["error_classification"] = "server_error"
-			o.logger.Warnf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 500 Internal Server Error detected, will trigger fallback mechanism")
 		} else if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "rate limit") {
 			errorInfo["error_classification"] = "rate_limit"
-			o.logger.Warnf("🔄 429 Rate Limit error detected, will trigger fallback mechanism")
+			o.logger.Debugf("🔄 429 Rate Limit error detected, will trigger fallback mechanism")
 		} else if strings.Contains(errMsg, "401") || strings.Contains(errMsg, "unauthorized") {
 			errorInfo["error_classification"] = "unauthorized"
-			o.logger.Warnf("🔄 401 Unauthorized error - Invalid API key or authentication failed")
+			o.logger.Debugf("🔄 401 Unauthorized error - Invalid API key or authentication failed")
 		}
 	}
 

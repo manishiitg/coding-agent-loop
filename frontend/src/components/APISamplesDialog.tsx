@@ -66,13 +66,12 @@ export const APISamplesDialog: React.FC<APISamplesDialogProps> = ({ isOpen, onCl
   
   if (!isOpen) return null
   
-  const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+  const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
   
   // Get mode-specific examples
   const getModeIcon = (mode: string) => {
     switch (mode) {
       case 'chat': return <MessageCircle className="w-4 h-4 text-blue-600" />
-      case 'deep-research': return <Search className="w-4 h-4 text-green-600" />
       case 'workflow': return <Workflow className="w-4 h-4 text-purple-600" />
       default: return <MessageCircle className="w-4 h-4 text-blue-600" />
     }
@@ -81,7 +80,6 @@ export const APISamplesDialog: React.FC<APISamplesDialogProps> = ({ isOpen, onCl
   const getModeName = (mode: string) => {
     switch (mode) {
       case 'chat': return 'Chat Mode'
-      case 'deep-research': return 'Deep Research Mode'
       case 'workflow': return 'Workflow Mode'
       default: return 'Chat Mode'
     }
@@ -119,27 +117,6 @@ curl -X POST http://localhost:8000/api/external/execute \\
           { id: 'post-verification', title: 'Execution & Review', description: 'Execute approved todo list' }
         ]
       }
-    } else if (selectedModeCategory === 'deep-research') {
-      return {
-        executeExample: `# Execute deep research preset
-curl -X POST http://localhost:8000/api/external/execute \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "preset_id": "${presetId}",
-    "options": {
-      "execution_mode": "sequential"
-    }
-  }'`,
-        executeResponse: `{
-  "session_id": "session-uuid-123",
-  "observer_id": "observer-uuid-456", 
-  "status": "started",
-  "message": "Deep research execution started",
-  "agent_mode": "orchestrator",
-  "preset_label": "${presetLabel}"
-}`,
-        phases: []
-      }
     } else {
       return {
         executeExample: `# Execute chat preset
@@ -173,7 +150,7 @@ curl "http://localhost:8000/api/observer/observer-uuid-456/events?since=15"`
   "events": [
     {
       "id": "event-1",
-      "type": "${selectedModeCategory === 'workflow' ? 'workflow_start' : selectedModeCategory === 'deep-research' ? 'orchestrator_start' : 'conversation_start'}",
+      "type": "${selectedModeCategory === 'workflow' ? 'workflow_start' : 'conversation_start'}",
       "timestamp": "2025-01-27T10:30:00Z",
       "data": {
         "session_id": "session-uuid-123"${selectedModeCategory === 'workflow' ? ',\n        "phase": "pre-verification"' : ''}
@@ -209,11 +186,11 @@ curl -X POST http://localhost:8000/api/external/cancel \\
 
   const completeWorkflowExample = `#!/bin/bash
 
-# 1. Connect to ${selectedModeCategory === 'workflow' ? 'workflow' : selectedModeCategory === 'deep-research' ? 'deep research' : 'chat'} preset
-echo "🚀 Starting ${selectedModeCategory === 'workflow' ? 'workflow' : selectedModeCategory === 'deep-research' ? 'deep research' : 'chat'} connection..."
+# 1. Connect to ${selectedModeCategory === 'workflow' ? 'workflow' : 'chat'} preset
+echo "🚀 Starting ${selectedModeCategory === 'workflow' ? 'workflow' : 'chat'} connection..."
 RESPONSE=$(curl -s -X POST http://localhost:8000/api/external/execute \\
   -H "Content-Type: application/json" \\
-  -d '{"preset_id": "${activePreset?.id || 'your-preset-id'}"${selectedModeCategory === 'workflow' ? ',\n    "execution_phase": "post-verification",\n    "options": {\n      "run_management": "create_new_runs_always",\n      "execution_strategy": "sequential_execution"\n    }' : selectedModeCategory === 'deep-research' ? ',\n    "options": {\n      "execution_mode": "sequential"\n    }' : ''}}')
+  -d '{"preset_id": "${activePreset?.id || 'your-preset-id'}"${selectedModeCategory === 'workflow' ? ',\n    "execution_phase": "post-verification",\n    "options": {\n      "run_management": "create_new_runs_always",\n      "execution_strategy": "sequential_execution"\n    }' : ''}}')
 
 # Extract IDs
 SESSION_ID=$(echo $RESPONSE | jq -r '.session_id')
@@ -247,7 +224,7 @@ while true; do
   sleep 2
 done
 
-echo "🎉 ${selectedModeCategory === 'workflow' ? 'Workflow' : selectedModeCategory === 'deep-research' ? 'Deep research' : 'Chat'} connection finished!"`
+echo "🎉 ${selectedModeCategory === 'workflow' ? 'Workflow' : 'Chat'} connection finished!"`
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -303,7 +280,7 @@ echo "🎉 ${selectedModeCategory === 'workflow' ? 'Workflow' : selectedModeCate
                 </h3>
               </div>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                Start a {selectedModeCategory === 'workflow' ? 'workflow' : selectedModeCategory === 'deep-research' ? 'deep research' : 'chat'} connection and get session_id + observer_id for tracking.
+                Start a {selectedModeCategory === 'workflow' ? 'workflow' : 'chat'} connection and get session_id + observer_id for tracking.
                 {selectedModeCategory === 'workflow' && ' Workflow mode supports execution phases.'}
               </p>
               
@@ -322,45 +299,22 @@ echo "🎉 ${selectedModeCategory === 'workflow' ? 'Workflow' : selectedModeCate
                   <CodeBlock language="json">{examples.executeResponse}</CodeBlock>
                 </div>
 
-                {/* Deep Research Options */}
-                {selectedModeCategory === 'deep-research' && (
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Available Options:
-                    </h4>
-                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
-                      <div className="text-sm text-gray-700 dark:text-gray-300 mb-2">
-                        <strong>execution_mode:</strong> Controls how agents execute
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs rounded">
-                          sequential
-                        </span>
-                        <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded">
-                          parallel
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                      <h5 className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-1">
-                        💡 Deep Research Options
-                      </h5>
-                      <p className="text-xs text-blue-800 dark:text-blue-200 mb-2">
-                        You can pass execution options directly in the API call or configure them in the UI.
-                      </p>
-                      <div className="text-xs text-blue-800 dark:text-blue-200">
-                        <strong>Available Options:</strong>
-                        <ul className="mt-1 ml-4 space-y-1">
-                          <li>• <strong>execution_mode:</strong> "sequential" (default), "parallel"</li>
-                        </ul>
-                        <div className="mt-2 p-2 bg-blue-100 dark:bg-blue-800/30 rounded">
-                          <strong>Default:</strong> "sequential" execution
+                  {selectedModeCategory === 'workflow' && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Available Options:
+                      </h4>
+                      <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+                        <div className="text-sm text-gray-700 dark:text-gray-300 mb-2">
+                          <strong>Workflow Options:</strong>
+                        </div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                          <div>• <strong>run_management:</strong> "create_new_runs_always" (default)</div>
+                          <div>• <strong>execution_strategy:</strong> "sequential_execution" (default)</div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* Workflow phases */}
                 {selectedModeCategory === 'workflow' && examples.phases.length > 0 && (
@@ -480,7 +434,7 @@ echo "🎉 ${selectedModeCategory === 'workflow' ? 'Workflow' : selectedModeCate
                 </h3>
               </div>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                A complete bash script showing the full {selectedModeCategory === 'workflow' ? 'workflow' : selectedModeCategory === 'deep-research' ? 'deep research' : 'chat'} connection from start to completion.
+                A complete bash script showing the full {selectedModeCategory === 'workflow' ? 'workflow' : 'chat'} connection from start to completion.
                 {selectedModeCategory === 'workflow' && ' Uses default options: "Create New Runs Always" and "Sequential Execution".'}
               </p>
               
@@ -500,9 +454,6 @@ echo "🎉 ${selectedModeCategory === 'workflow' ? 'Workflow' : selectedModeCate
                 )}
                 {selectedModeCategory === 'workflow' && (
                   <li>• <strong>options</strong>: Pass run_management and execution_strategy in API call or use UI defaults</li>
-                )}
-                {selectedModeCategory === 'deep-research' && (
-                  <li>• <strong>options</strong>: Pass execution_mode (sequential/parallel) in API call or use UI defaults</li>
                 )}
                 <li>• <strong>Events</strong>: Real-time updates including tool calls, LLM responses, and completion status</li>
                 <li>• <strong>Cancellation</strong>: Graceful shutdown that saves current state</li>

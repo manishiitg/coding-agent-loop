@@ -121,6 +121,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.Provider,
 		boa.logger,
 		boa.config.CacheOnly,
+		boa.config.EnableLargeOutputVirtualTools, // NEW: Pass large output virtual tools setting
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)

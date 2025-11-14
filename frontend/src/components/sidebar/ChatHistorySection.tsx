@@ -31,7 +31,7 @@ export default function ChatHistorySection({
   
   // Track active preset for current category to trigger reloads
   const activePresetForCategory = useMemo(() => {
-    if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
+    if (selectedModeCategory === 'workflow') {
       const preset = getActivePreset(selectedModeCategory)
       return preset?.id || null
     }
@@ -77,7 +77,7 @@ export default function ChatHistorySection({
   }, [activeSessions])
 
   // Helper function to get the active preset query ID for a category
-  const getBackendPresetQueryId = useCallback((category: 'deep-research' | 'workflow') => {
+  const getBackendPresetQueryId = useCallback((category: 'workflow') => {
     const preset = getActivePreset(category)
     return preset?.id || null
   }, [getActivePreset])
@@ -88,22 +88,10 @@ export default function ChatHistorySection({
 
     switch (selectedModeCategory) {
       case 'chat':
-        // Show all sessions where agentMode is 'simple' or 'ReAct'
+        // Show all sessions where agentMode is 'simple'
         return sessions.filter(session => 
-          session.agent_mode === 'simple' || session.agent_mode === 'ReAct'
+          session.agent_mode === 'simple'
         )
-      
-      case 'deep-research': {
-        // Show sessions filtered by active preset (orchestrator category)
-        const backendPresetQueryId = getBackendPresetQueryId('deep-research')
-        if (backendPresetQueryId) {
-          return sessions.filter(session => 
-            session.agent_mode === 'orchestrator' && 
-            session.preset_query_id === backendPresetQueryId
-          )
-        }
-        return sessions.filter(session => session.agent_mode === 'orchestrator')
-      }
       
       case 'workflow': {
         // Show sessions filtered by active preset (workflow category)
@@ -129,7 +117,7 @@ export default function ChatHistorySection({
     try {
       // Use server-side filtering when an active preset is selected
       let response
-      if (selectedModeCategory === 'deep-research' || selectedModeCategory === 'workflow') {
+      if (selectedModeCategory === 'workflow') {
         const activePresetQueryId = activePresetForCategory
         response = await agentApi.getChatSessions(100, 0, activePresetQueryId || undefined) // server filters by preset
       } else {
@@ -197,10 +185,6 @@ export default function ChatHistorySection({
     switch (agentMode.toLowerCase()) {
       case 'simple':
         return 'Simple'
-      case 'react':
-        return 'ReAct'
-      case 'orchestrator':
-        return 'Deep Research'
       case 'workflow':
         return 'Workflow'
       default:

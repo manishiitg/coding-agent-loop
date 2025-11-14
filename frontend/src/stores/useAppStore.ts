@@ -55,7 +55,7 @@ export const useAppStore = create<AppState>()(
     persist(
       (set, get) => ({
         // Initial state
-        agentMode: 'ReAct',
+        agentMode: 'simple',
         requiresNewChat: false,
         chatFileContext: [],
         currentQuery: '',

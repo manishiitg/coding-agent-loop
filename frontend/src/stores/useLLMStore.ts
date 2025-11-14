@@ -294,8 +294,8 @@ export const useLLMStore = create<LLMState>()(
               request.api_key = apiKey
             }
             
-            // Add model ID for Bedrock and Vertex validation
-            if ((provider === 'bedrock' || provider === 'vertex') && modelId) {
+            // Add model ID for all providers when validating
+            if (modelId) {
               request.model_id = modelId
             }
             

@@ -1,5 +1,5 @@
 import React from 'react'
-import { MessageCircle, Search, Workflow, Lightbulb } from 'lucide-react'
+import { MessageCircle, Workflow, Lightbulb } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 
 export interface ModeInfo {
@@ -20,20 +20,7 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
       'Instant responses to questions',
       'Natural conversation flow',
       'Memory across the chat session',
-      'Choose between Simple or ReAct reasoning'
-    ],
-    examples: [],
-    tips: []
-  },
-  'deep-research': {
-    icon: <Search className="w-16 h-16 text-blue-500" />,
-    title: 'Deep Research Mode',
-    description: 'Advanced planning and execution for comprehensive analysis',
-    features: [
-      'Multi-step planning and execution',
-      'Long-term memory and context retention',
-      'Comprehensive analysis and reporting',
-      'Requires Tasks/ folder for organization'
+      'Simple reasoning mode'
     ],
     examples: [],
     tips: []

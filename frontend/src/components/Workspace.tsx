@@ -1,5 +1,5 @@
-import { useEffect, useCallback, useRef, useMemo } from 'react'
-import { Plus, Upload, FolderPlus, ChevronDown } from 'lucide-react'
+import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
+import { Plus, Upload, FolderPlus, ChevronDown, Filter } from 'lucide-react'
 import { agentApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
@@ -12,6 +12,8 @@ import ConfirmationDialog from './ui/ConfirmationDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores'
+import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
+import { useModeStore } from '../stores/useModeStore'
 
 interface WorkspaceProps {
   minimized: boolean
@@ -27,6 +29,35 @@ export default function Workspace({
     chatFileContext,
     addFileToContext
   } = useAppStore()
+
+  // Get active workflow preset to filter workspace to selected folder
+  // Subscribe directly to store state to make it reactive
+  const { selectedModeCategory } = useModeStore()
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const customPresets = useGlobalPresetStore(state => state.customPresets)
+  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
+  
+  const activeWorkflowPreset = useMemo(() => {
+    if (selectedModeCategory === 'workflow' && activePresetId) {
+      // Check custom presets first
+      const customPreset = customPresets.find(p => p.id === activePresetId)
+      if (customPreset) return customPreset
+      
+      // Check predefined presets
+      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
+      if (predefinedPreset) return predefinedPreset
+    }
+    return null
+  }, [selectedModeCategory, activePresetId, customPresets, predefinedPresets])
+
+  // State for including Downloads/ folder in the filter
+  // Reset when workflow preset changes or when switching to chat mode
+  const [includeDownloadsFolder, setIncludeDownloadsFolder] = useState(false)
+
+  // Reset Downloads folder toggle when workflow preset changes or mode changes
+  useEffect(() => {
+    setIncludeDownloadsFolder(false)
+  }, [activeWorkflowPreset?.id, selectedModeCategory])
 
   const {
     files,
@@ -127,6 +158,105 @@ export default function Workspace({
     }
   }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile])
   
+  // Filter files to show only the workflow folder when a workflow preset is selected
+  // This function collects all files/folders that are within the workflow folder path
+  // Optionally includes Downloads/ folder if includeDownloads is true
+  const filterToWorkflowFolder = useCallback((files: PlannerFile[], parentFolderPath: string, includeDownloads: boolean = false): PlannerFile[] => {
+    // Normalize paths for comparison (remove leading/trailing slashes, lowercase)
+    const normalizePath = (path: string) => path.toLowerCase().replace(/^\/+|\/+$/g, '')
+    const targetPath = normalizePath(parentFolderPath)
+    const downloadsPath = normalizePath('Downloads')
+    
+    // Recursively collect all files within the workflow folder (and optionally Downloads/)
+    const collectWorkflowFiles = (fileList: PlannerFile[]): PlannerFile[] => {
+      const result: PlannerFile[] = []
+      
+      for (const file of fileList) {
+        const filePath = normalizePath(file.filepath)
+        
+        // Check if this is the workflow folder itself
+        if (filePath === targetPath) {
+          // Found the workflow folder - include it with all its children
+          result.push({
+            ...file,
+            children: file.children ? collectWorkflowFiles(file.children) : []
+          })
+        }
+        // Check if this is the Downloads/ folder (if including downloads)
+        else if (includeDownloads && filePath === downloadsPath) {
+          // Found the Downloads folder - include it with all its children
+          result.push({
+            ...file,
+            children: file.children ? collectWorkflowFiles(file.children) : []
+          })
+        }
+        // Check if this file/folder is within the workflow folder
+        else if (filePath.startsWith(targetPath + '/')) {
+          // This is a child of the workflow folder
+          if (file.type === 'folder') {
+            result.push({
+              ...file,
+              children: file.children ? collectWorkflowFiles(file.children) : []
+            })
+          } else {
+            result.push(file)
+          }
+        }
+        // Check if this file/folder is within Downloads/ folder (if including downloads)
+        else if (includeDownloads && filePath.startsWith(downloadsPath + '/')) {
+          // This is a child of the Downloads folder
+          if (file.type === 'folder') {
+            result.push({
+              ...file,
+              children: file.children ? collectWorkflowFiles(file.children) : []
+            })
+          } else {
+            result.push(file)
+          }
+        }
+        // If this is a folder, search its children for workflow folder or Downloads/
+        else if (file.type === 'folder' && file.children) {
+          const found = collectWorkflowFiles(file.children)
+          if (found.length > 0) {
+            // Found workflow folder or Downloads/ in children - include parent folder with filtered children
+            result.push({
+              ...file,
+              children: found
+            })
+          }
+        }
+      }
+      
+      return result
+    }
+    
+    return collectWorkflowFiles(files)
+  }, [])
+
+  // Get workflow folder path from selected workflow folder in the preset
+  // The selectedFolder.filepath is the folder path stored in the database
+  // We'll use this directly to filter the workspace
+  const workflowFolderPath = useMemo(() => {
+    if (activeWorkflowPreset?.selectedFolder?.filepath) {
+      const filepath = activeWorkflowPreset.selectedFolder.filepath
+      // The filepath from the database is the folder path (e.g., "Workflow/MyProject/" or "Workflow/MyProject")
+      // If it ends with a file (has extension), get the parent folder
+      const parts = filepath.split('/').filter(Boolean)
+      if (parts.length > 0) {
+        const lastPart = parts[parts.length - 1]
+        const isFile = lastPart.includes('.')
+        if (isFile && parts.length > 1) {
+          // It's a file, get its parent folder
+          return parts.slice(0, -1).join('/')
+        } else {
+          // It's already a folder - use it directly
+          return parts.join('/')
+        }
+      }
+    }
+    return null
+  }, [activeWorkflowPreset])
+
   // Simple filter: show all folders, filter only files
   const filterFiles = (files: PlannerFile[], query: string): PlannerFile[] => {
     if (!query.trim()) return files
@@ -154,8 +284,85 @@ export default function Workspace({
     return filterRecursive(files)
   }
   
-  // Get filtered files
-  const filteredFiles = filterFiles(files, searchQuery)
+  // Get filtered files - first filter to workflow folder if preset is active, then apply search
+  const filteredFiles = useMemo(() => {
+    let result = files
+    
+    // Only filter if we're in workflow mode and have a workflow folder path
+    // When in chat mode, show all files regardless of preset
+    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+      // Debug logging
+      const presetLabel = activeWorkflowPreset?.label
+      const presetFolderPath = activeWorkflowPreset?.selectedFolder?.filepath
+      console.log('[WORKSPACE] Filtering to workflow folder:', workflowFolderPath)
+      console.log('[WORKSPACE] Active preset:', presetLabel)
+      console.log('[WORKSPACE] Selected folder from preset:', presetFolderPath)
+      console.log('[WORKSPACE] Total files before filter:', files.length)
+      if (files.length > 0) {
+        console.log('[WORKSPACE] Sample file paths:', files.slice(0, 5).map(f => ({ path: f.filepath, type: f.type })))
+      }
+      
+      result = filterToWorkflowFolder(files, workflowFolderPath, includeDownloadsFolder)
+      
+      console.log('[WORKSPACE] Files after filter:', result.length)
+      if (result.length > 0) {
+        console.log('[WORKSPACE] Filtered file paths:', result.map(f => ({ path: f.filepath, type: f.type })))
+      } else {
+        console.warn('[WORKSPACE] No files found after filtering! This might indicate a path mismatch.')
+      }
+      
+      // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
+      const adjustFilePaths = (fileList: PlannerFile[]): PlannerFile[] => {
+        return fileList.map(file => {
+          let adjustedFilepath = file.filepath
+          
+          // Normalize paths for comparison
+          const normalizePath = (path: string) => path.toLowerCase().replace(/^\/+|\/+$/g, '')
+          const filePathNormalized = normalizePath(file.filepath)
+          const workflowPathNormalized = normalizePath(workflowFolderPath)
+          
+          // Remove the workflow folder path prefix to show it as root
+          if (filePathNormalized === workflowPathNormalized || filePathNormalized.startsWith(workflowPathNormalized + '/')) {
+            // This file is within the workflow folder
+            if (filePathNormalized === workflowPathNormalized) {
+              // This is the workflow folder itself - show just the folder name
+              const folderParts = workflowFolderPath.split('/').filter(Boolean)
+              adjustedFilepath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : file.filepath
+            } else {
+              // Remove the workflow folder path prefix
+              const remaining = file.filepath.slice(workflowFolderPath.length)
+              // Remove leading slash if present
+              adjustedFilepath = remaining.startsWith('/') ? remaining.slice(1) : remaining
+              // If empty after removal, use the folder name
+              if (!adjustedFilepath) {
+                const folderParts = workflowFolderPath.split('/').filter(Boolean)
+                adjustedFilepath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : file.filepath
+              }
+            }
+          }
+          
+          if (file.type === 'folder') {
+            return {
+              ...file,
+              filepath: adjustedFilepath,
+              children: file.children ? adjustFilePaths(file.children) : []
+            }
+          }
+          return {
+            ...file,
+            filepath: adjustedFilepath
+          }
+        })
+      }
+      
+      result = adjustFilePaths(result)
+    }
+    
+    // Apply search filter
+    result = filterFiles(result, searchQuery)
+    
+    return result
+  }, [files, workflowFolderPath, filterToWorkflowFolder, searchQuery, activeWorkflowPreset, includeDownloadsFolder, selectedModeCategory])
   
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -572,8 +779,38 @@ export default function Workspace({
           </div>
         )}
         
-        {/* Search/Filter Input */}
-        {!minimized && (
+        {/* Workflow Filter Banner - Only show in workflow mode */}
+        {!minimized && selectedModeCategory === 'workflow' && workflowFolderPath && (
+          <div className="mb-2 px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <Filter className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                <span className="text-xs text-blue-900 dark:text-blue-100 truncate">
+                  Filters workspace as per workflow
+                </span>
+                {activeWorkflowPreset?.label && (
+                  <span className="text-xs text-blue-700 dark:text-blue-300 flex-shrink-0">
+                    ({activeWorkflowPreset.label})
+                  </span>
+                )}
+              </div>
+              <label className="flex items-center gap-1.5 cursor-pointer flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={includeDownloadsFolder}
+                  onChange={(e) => setIncludeDownloadsFolder(e.target.checked)}
+                  className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                />
+                <span className="text-xs text-blue-800 dark:text-blue-200 whitespace-nowrap">
+                  Downloads/
+                </span>
+              </label>
+            </div>
+          </div>
+        )}
+        
+        {/* Search/Filter Input - Hidden when workflow folder is filtered in workflow mode */}
+        {!minimized && (selectedModeCategory !== 'workflow' || !workflowFolderPath) && (
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

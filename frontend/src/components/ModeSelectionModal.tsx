@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { MessageCircle, Search, Workflow, ArrowRight, Info } from 'lucide-react'
+import { MessageCircle, Workflow, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -103,19 +103,6 @@ const ModeCard: React.FC<ModeCardProps> = ({
                     <p className="mb-2">Perfect for quick questions and conversations. Choose between:</p>
                     <ul className="list-disc list-inside space-y-1">
                       <li><strong>Simple:</strong> Direct answers without reasoning</li>
-                      <li><strong>ReAct:</strong> Step-by-step reasoning with memory</li>
-                    </ul>
-                  </div>
-                )}
-                {category === 'deep-research' && (
-                  <div>
-                    <p className="font-semibold mb-2">Deep Research Mode</p>
-                    <p className="mb-2">For complex analysis that may take hours. Features:</p>
-                    <ul className="list-disc list-inside space-y-1">
-                      <li>Multi-step planning and execution</li>
-                      <li>Long-term memory and context</li>
-                      <li>Requires Tasks/ folder for organization</li>
-                      <li>Creates detailed research reports</li>
                     </ul>
                   </div>
                 )}
@@ -150,7 +137,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
   
   // State for preset selection
   const [showPresetSelection, setShowPresetSelection] = useState(false)
-  const [pendingModeCategory, setPendingModeCategory] = useState<'deep-research' | 'workflow' | null>(null)
+  const [pendingModeCategory, setPendingModeCategory] = useState<'workflow' | null>(null)
 
   const handleModeSelect = (category: ModeCategory) => {
     if (!category) return
@@ -158,18 +145,15 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
     if (category === 'chat') {
       // Chat mode doesn't need preset selection
       // Clear any active presets when switching to chat mode
-      useGlobalPresetStore.getState().clearActivePreset('deep-research')
       useGlobalPresetStore.getState().clearActivePreset('workflow')
       useAppStore.getState().setModeCategory(category)
       completeInitialSetup()
       onClose()
     } else {
-      // Deep Research or Workflow mode - always show preset selection when switching between modes
+      // Workflow mode - always show preset selection when switching modes
       // Clear the current mode's preset first
       const currentModeCategory = useModeStore.getState().selectedModeCategory
-      if (currentModeCategory === 'deep-research') {
-        useGlobalPresetStore.getState().clearActivePreset('deep-research')
-      } else if (currentModeCategory === 'workflow') {
+      if (currentModeCategory === 'workflow') {
         useGlobalPresetStore.getState().clearActivePreset('workflow')
       }
       
@@ -261,17 +245,6 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               features={getModeInfoForModal('chat').features}
               exampleQueries={getModeInfoForModal('chat').examples}
               onSelect={() => handleModeSelect('chat')}
-            />
-
-            {/* Deep Research Mode */}
-            <ModeCard
-              category="deep-research"
-              title="Deep Research Mode"
-              description="Multi-step analysis with long-term memory. Ideal for complex research, detailed analysis, and comprehensive reports."
-              icon={<Search className="w-5 h-5 text-blue-600" />}
-              features={getModeInfoForModal('deep-research').features}
-              exampleQueries={getModeInfoForModal('deep-research').examples}
-              onSelect={() => handleModeSelect('deep-research')}
             />
 
             {/* Workflow Mode */}

@@ -93,8 +93,13 @@ func (vea *VariableExtractionAgent) ExecuteStructured(ctx context.Context, templ
 		"required": ["objective", "variables", "extraction_date"]
 	}`
 
-	// Generate system prompt using the processor
-	systemPrompt := variableExtractionSystemPromptProcessor(templateVars)
+	// Generate system prompt using the appropriate processor (UPDATE mode if ExistingVariablesJSON is present)
+	var systemPrompt string
+	if templateVars["ExistingVariablesJSON"] != "" {
+		systemPrompt = variableExtractionSystemPromptProcessorForUpdate(templateVars)
+	} else {
+		systemPrompt = variableExtractionSystemPromptProcessor(templateVars)
+	}
 
 	// Create an input processor that returns the user message
 	// In first attempt: userMessage is "Extract variables..."
@@ -405,6 +410,103 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
 		return fmt.Sprintf("Error executing variable extraction system prompt template: %v", err)
+	}
+
+	return result.String()
+}
+
+// variableExtractionSystemPromptProcessorForUpdate generates system prompt for updating existing variables
+func variableExtractionSystemPromptProcessorForUpdate(templateVars map[string]string) string {
+	templateData := struct {
+		Objective             string
+		WorkspacePath         string
+		ExistingVariablesJSON string
+	}{
+		Objective:             templateVars["Objective"],
+		WorkspacePath:         templateVars["WorkspacePath"],
+		ExistingVariablesJSON: templateVars["ExistingVariablesJSON"],
+	}
+
+	templateStr := `## 🤖 AGENT IDENTITY
+- **Role**: Variable Extraction Agent (Update Mode)
+- **Responsibility**: Update existing variables based on human feedback while preserving unchanged variables
+- **Output Format**: Structured JSON via submit_variable_extraction_response tool (not markdown, not files)
+- **Mode**: UPDATE EXISTING VARIABLES - Make intelligent updates based on human feedback
+
+## 🎯 PRIMARY TASK - UPDATE EXISTING VARIABLES
+
+**YOUR INPUT - THE OBJECTIVE TO ANALYZE:**
+{{.Objective}}
+
+**WORKSPACE**: {{.WorkspacePath}}
+
+## 📄 EXISTING VARIABLES
+
+**CRITICAL**: The current variables are provided below. These variables already exist and are being used. Your task is to update them appropriately based on human feedback. Use your judgment to determine what changes are needed to address the feedback effectively.
+
+**EXISTING VARIABLES**:
+{{.ExistingVariablesJSON}}
+
+## 🎯 UPDATE GUIDELINES
+
+**Mode**: UPDATE existing variables (not CREATE). The variables already exist. Make intelligent updates based on human feedback.
+
+**Key Principles**:
+- **Feedback-Driven**: Interpret feedback and make changes that logically address concerns. Adjust scope based on feedback (minor = targeted, substantial = comprehensive)
+- **Preserve Unchanged**: Keep variables that are not mentioned in feedback exactly as they are
+- **Logical Coherence**: If you update one variable, ensure related variables remain consistent
+- **Preserve Variable Names**: Keep variable names ({{"{{"}}VARIABLE_NAME{{"}}"}}) consistent unless feedback explicitly requests name changes
+- **Use Judgment**: Make changes that make sense. Don't hesitate to make substantial changes if feedback suggests fundamental issues, or targeted adjustments for minor feedback
+
+## 📋 WHAT TO UPDATE
+
+**Based on Human Feedback:**
+1. **Add New Variables**: If feedback mentions new values that should be extracted, add them as new variables
+2. **Modify Existing Variables**: If feedback mentions changes to existing variables (values, descriptions, names), update them accordingly
+3. **Remove Variables**: If feedback explicitly requests removal of variables, remove them
+4. **Preserve Unchanged**: Keep all variables not mentioned in feedback exactly as they are
+
+**Extract These Types of Values (if mentioned in feedback):**
+- URLs (https://github.com/user/repo), account IDs (123456789), ports (3306)
+- Credentials (passwords, API keys), resource names (mydb-prod, s3-bucket)
+- Environment values (us-east-1, production), hosts/endpoints
+- Specific identifiers, paths, configurations
+
+**DO NOT Extract:**
+- Generic terms (repository, database, account - these are descriptive)
+- Action words (deploy, configure, setup)
+- Technology names (Spring Boot, React, PostgreSQL)
+
+## 🔑 CRITICAL RULES
+
+1. **Preserve Unchanged Variables**: Keep all existing variables that are not mentioned in feedback exactly as they are
+2. **EXACT TEXT PRESERVATION**: The objective field MUST be the EXACT original text word-for-word, with ONLY hard-coded values replaced by {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders
+3. **Variable Name Consistency**: Preserve existing variable names unless feedback explicitly requests changes
+4. **Use descriptive variable names** - UPPER_SNAKE_CASE, descriptive (or user-provided names)
+5. **Provide clear descriptions** - what does this variable represent?
+6. **DO NOT** search the entire workspace or create files - use structured output tool instead
+7. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
+
+` + GetTodoCreationHumanMemoryRequirements() + `
+
+## 📤 OUTPUT REQUIREMENTS
+
+**CRITICAL**: 
+- Call submit_variable_extraction_response tool with updated structured JSON data when update is complete
+- Do NOT read/write files, include markdown formatting, or output JSON in text - just call the tool with structured data
+- The tool expects a JSON object with: objective (string), variables (array), extraction_date (ISO 8601 string)
+- Include ALL variables in the output (both updated and unchanged ones)
+`
+
+	// Parse and execute the template
+	tmpl, err := template.New("variable_extraction_system_prompt_update").Parse(templateStr)
+	if err != nil {
+		return fmt.Sprintf("Error parsing variable extraction UPDATE system prompt template: %v", err)
+	}
+
+	var result strings.Builder
+	if err := tmpl.Execute(&result, templateData); err != nil {
+		return fmt.Sprintf("Error executing variable extraction UPDATE system prompt template: %v", err)
 	}
 
 	return result.String()

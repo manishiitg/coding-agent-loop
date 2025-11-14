@@ -357,7 +357,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
             <OpenRouterSection
               config={openrouterConfig}
               onUpdate={setOpenrouterConfig}
-              onTestAPIKey={(apiKey) => handleTestAPIKey('openrouter', apiKey)}
+              onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openrouter', apiKey, modelId)}
               apiKeyStatus={apiKeyStatus.openrouter}
               apiKeyError={apiKeyErrors.openrouter}
               isPrimary={primaryConfig.provider === 'openrouter'}
@@ -385,7 +385,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 <OpenAISection
                   config={openaiConfig}
                   onUpdate={setOpenaiConfig}
-                  onTestAPIKey={(apiKey) => handleTestAPIKey('openai', apiKey)}
+                  onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openai', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.openai}
                   apiKeyError={apiKeyErrors.openai}
                   isPrimary={primaryConfig.provider === 'openai'}
@@ -399,7 +399,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 <VertexSection
                   config={vertexConfig}
                   onUpdate={setVertexConfig}
-                  onTestAPIKey={(apiKey: string) => handleTestAPIKey('vertex', apiKey)}
+                  onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('vertex', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.vertex}
                   apiKeyError={apiKeyErrors.vertex}
                   isPrimary={primaryConfig.provider === 'vertex'}
@@ -413,7 +413,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 <AnthropicSection
                   config={anthropicConfig}
                   onUpdate={setAnthropicConfig}
-                  onTestAPIKey={(apiKey: string) => handleTestAPIKey('anthropic', apiKey)}
+                  onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('anthropic', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.anthropic}
                   apiKeyError={apiKeyErrors.anthropic}
                   isPrimary={primaryConfig.provider === 'anthropic'}
@@ -605,7 +605,7 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
                 className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey)}
+                onClick={() => onTestAPIKey(apiKey, config.model_id)}
                 disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"
@@ -1218,7 +1218,7 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                 className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey)}
+                onClick={() => onTestAPIKey(apiKey, config.model_id)}
                 disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"

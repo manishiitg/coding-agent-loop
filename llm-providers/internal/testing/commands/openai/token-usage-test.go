@@ -81,37 +81,65 @@ func runOpenAITokenUsageTest(cmd *cobra.Command, args []string) {
 	fmt.Printf("🔍 Check Langfuse for trace: %s\n", mainTraceID)
 }
 
-// testOpenAITokenUsage runs OpenAI token usage tests
+// testOpenAITokenUsage runs OpenAI token usage tests for multiple models
 func testOpenAITokenUsage(messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger) {
-	// Test 1: OpenAI gpt-4.1-mini for simple query
-	fmt.Printf("\n🧪 TEST: OpenAI gpt-4.1-mini (Simple Query)\n")
-	fmt.Printf("==========================================\n")
-
-	gpt41Config := llmproviders.Config{
-		Provider:     llmproviders.ProviderOpenAI,
-		ModelID:      "gpt-4.1-mini",
-		Temperature:  0.7,
-		EventEmitter: nil,
-		TraceID:      mainTraceID,
-		Logger:       logger,
+	// Define models to test
+	models := []struct {
+		name        string
+		modelID     string
+		description string
+	}{
+		{"gpt-4.1-mini", "gpt-4.1-mini", "GPT-4.1 Mini model"},
+		{"gpt-5", "gpt-5", "GPT-5 model"},
+		{"o3-mini", "o3-mini", "O3 Mini model (supports reasoning tokens)"},
 	}
 
-	gpt41LLM, err := llmproviders.InitializeLLM(gpt41Config)
-	if err != nil {
-		fmt.Printf("❌ Error creating OpenAI gpt-4.1-mini LLM: %v\n", err)
-		fmt.Printf("⏭️  Skipping OpenAI gpt-4.1-mini test\n")
-	} else {
-		fmt.Printf("🔧 Created OpenAI gpt-4.1-mini LLM using providers.go\n")
-		sharedutils.TestLLMTokenUsage(gpt41LLM, messages, openaiTokenTestPrompt)
+	// Complex reasoning prompt for o3-mini (to test reasoning tokens)
+	complexPrompt := `Please analyze the following complex scenario step by step: A company has 3 warehouses in different cities. Warehouse A can ship 100 units per day, Warehouse B can ship 150 units per day, and Warehouse C can ship 200 units per day. They need to fulfill orders for 5 customers: Customer 1 needs 80 units, Customer 2 needs 120 units, Customer 3 needs 90 units, Customer 4 needs 110 units, and Customer 5 needs 140 units. The shipping costs from each warehouse to each customer vary. Please create an optimal shipping plan that minimizes total cost while meeting all customer demands. Show your mathematical reasoning, create a cost matrix, and solve this step by step.`
+
+	complexMessages := []llmtypes.MessageContent{
+		{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: complexPrompt}},
+		},
 	}
 
-	// Test 2: OpenAI gpt-4o-mini for complex reasoning query
-	fmt.Printf("\n🧪 TEST: OpenAI gpt-4o-mini (Complex Reasoning Query)\n")
-	fmt.Printf("======================================================\n")
+	// Store LLM instances for cache tests
+	llmInstances := make(map[string]llmtypes.Model)
+
+	// Test 1-3: Simple query tests for all models
+	for _, model := range models {
+		fmt.Printf("\n🧪 TEST: OpenAI %s (Simple Query)\n", model.name)
+		fmt.Printf("==========================================\n")
+
+		config := llmproviders.Config{
+			Provider:     llmproviders.ProviderOpenAI,
+			ModelID:      model.modelID,
+			Temperature:  0.7,
+			EventEmitter: nil,
+			TraceID:      mainTraceID,
+			Logger:       logger,
+		}
+
+		llm, err := llmproviders.InitializeLLM(config)
+		if err != nil {
+			fmt.Printf("❌ Error creating OpenAI %s LLM: %v\n", model.name, err)
+			fmt.Printf("⏭️  Skipping OpenAI %s test\n", model.name)
+			continue
+		}
+
+		fmt.Printf("🔧 Created OpenAI %s LLM using providers.go\n", model.name)
+		sharedutils.TestLLMTokenUsage(llm, messages, openaiTokenTestPrompt)
+		llmInstances[model.name] = llm
+	}
+
+	// Test 4: Complex reasoning query for o3-mini (to validate reasoning tokens)
+	fmt.Printf("\n🧪 TEST: OpenAI o3-mini (Complex Reasoning Query - Testing Reasoning Tokens)\n")
+	fmt.Printf("===========================================================================\n")
 
 	o3Config := llmproviders.Config{
 		Provider:     llmproviders.ProviderOpenAI,
-		ModelID:      "gpt-4o-mini",
+		ModelID:      "o3-mini",
 		Temperature:  0.7,
 		EventEmitter: nil,
 		TraceID:      mainTraceID,
@@ -120,35 +148,41 @@ func testOpenAITokenUsage(messages []llmtypes.MessageContent, mainTraceID interf
 
 	o3LLM, err := llmproviders.InitializeLLM(o3Config)
 	if err != nil {
-		fmt.Printf("❌ Error creating OpenAI gpt-4o-mini LLM: %v\n", err)
-		fmt.Printf("⏭️  Skipping OpenAI gpt-4o-mini test\n")
+		fmt.Printf("❌ Error creating OpenAI o3-mini LLM: %v\n", err)
+		fmt.Printf("⏭️  Skipping OpenAI o3-mini reasoning test\n")
 	} else {
-		fmt.Printf("🔧 Created OpenAI gpt-4o-mini LLM using providers.go\n")
-
-		complexPrompt := `Please analyze the following complex scenario step by step: A company has 3 warehouses in different cities. Warehouse A can ship 100 units per day, Warehouse B can ship 150 units per day, and Warehouse C can ship 200 units per day. They need to fulfill orders for 5 customers: Customer 1 needs 80 units, Customer 2 needs 120 units, Customer 3 needs 90 units, Customer 4 needs 110 units, and Customer 5 needs 140 units. The shipping costs from each warehouse to each customer vary. Please create an optimal shipping plan that minimizes total cost while meeting all customer demands. Show your mathematical reasoning, create a cost matrix, and solve this step by step.`
-
-		complexMessages := []llmtypes.MessageContent{
-			{
-				Role:  llmtypes.ChatMessageTypeHuman,
-				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: complexPrompt}},
-			},
-		}
-
+		fmt.Printf("🔧 Created OpenAI o3-mini LLM using providers.go\n")
+		fmt.Printf("   Testing with complex reasoning prompt to validate reasoning tokens extraction\n")
 		sharedutils.TestLLMTokenUsage(o3LLM, complexMessages, complexPrompt)
+		llmInstances["o3-mini"] = o3LLM
 	}
 
-	// Test 3: Multi-turn conversation with cache
-	fmt.Printf("\n🧪 TEST: OpenAI (Multi-Turn Conversation with Cache)\n")
-	fmt.Printf("===================================================\n")
+	// Test 5-7: Cache tests for all models
+	for _, model := range models {
+		fmt.Printf("\n🧪 TEST: OpenAI %s (Multi-Turn Conversation with Cache)\n", model.name)
+		fmt.Printf("===================================================\n")
 
-	if o3LLM == nil {
-		o3LLM, err = llmproviders.InitializeLLM(o3Config)
-		if err != nil {
-			fmt.Printf("❌ Error creating OpenAI LLM: %v\n", err)
-			fmt.Printf("⏭️  Skipping OpenAI cache test\n")
-			return
+		llm, exists := llmInstances[model.name]
+		if !exists {
+			// Recreate LLM if it wasn't created earlier
+			config := llmproviders.Config{
+				Provider:     llmproviders.ProviderOpenAI,
+				ModelID:      model.modelID,
+				Temperature:  0.7,
+				EventEmitter: nil,
+				TraceID:      mainTraceID,
+				Logger:       logger,
+			}
+
+			var err error
+			llm, err = llmproviders.InitializeLLM(config)
+			if err != nil {
+				fmt.Printf("❌ Error creating OpenAI %s LLM: %v\n", model.name, err)
+				fmt.Printf("⏭️  Skipping OpenAI %s cache test\n", model.name)
+				continue
+			}
 		}
-	}
 
-	sharedutils.TestLLMTokenUsageWithCache(o3LLM)
+		sharedutils.TestLLMTokenUsageWithCache(llm)
+	}
 }

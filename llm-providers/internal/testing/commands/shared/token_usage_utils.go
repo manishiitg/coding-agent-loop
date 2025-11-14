@@ -93,6 +93,11 @@ func TestLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent, p
 			fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], *info.TotalTokens)
 			foundTokens = true
 		}
+		// Check for reasoning tokens (typed field - for o3 models)
+		if info.ReasoningTokens != nil {
+			fmt.Printf("✅ %s: %d (from typed field)\n", tokenFields["ReasoningTokens"], *info.ReasoningTokens)
+			foundTokens = true
+		}
 		// Check for cached tokens
 		if info.CachedContentTokens != nil {
 			fmt.Printf("✅ Cached Content Tokens: %d\n", *info.CachedContentTokens)
@@ -105,11 +110,18 @@ func TestLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent, p
 		// Check Additional map for other fields
 		if info.Additional != nil {
 			for field, label := range tokenFields {
-				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
+				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" && field != "ReasoningTokens" {
 					if value, ok := info.Additional[field]; ok {
 						fmt.Printf("✅ %s: %v\n", label, value)
 						foundTokens = true
 					}
+				}
+			}
+			// Check for reasoning tokens in Additional map (fallback)
+			if info.ReasoningTokens == nil {
+				if value, ok := info.Additional["ReasoningTokens"]; ok {
+					fmt.Printf("✅ %s: %v (from Additional map)\n", tokenFields["ReasoningTokens"], value)
+					foundTokens = true
 				}
 			}
 			// Check for cache-related fields in Additional
@@ -139,6 +151,9 @@ func TestLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent, p
 		fmt.Printf("   InputTokens: %v\n", info.InputTokens)
 		fmt.Printf("   OutputTokens: %v\n", info.OutputTokens)
 		fmt.Printf("   TotalTokens: %v\n", info.TotalTokens)
+		fmt.Printf("   ReasoningTokens: %v\n", info.ReasoningTokens)
+		fmt.Printf("   CachedContentTokens: %v\n", info.CachedContentTokens)
+		fmt.Printf("   CacheDiscount: %v\n", info.CacheDiscount)
 		if info.Additional != nil {
 			for key, value := range info.Additional {
 				fmt.Printf("   %s: %v (type: %T)\n", key, value, value)
@@ -319,6 +334,9 @@ func TestLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageC
 		fmt.Printf("   InputTokens: %v\n", info.InputTokens)
 		fmt.Printf("   OutputTokens: %v\n", info.OutputTokens)
 		fmt.Printf("   TotalTokens: %v\n", info.TotalTokens)
+		fmt.Printf("   ReasoningTokens: %v\n", info.ReasoningTokens)
+		fmt.Printf("   CachedContentTokens: %v\n", info.CachedContentTokens)
+		fmt.Printf("   CacheDiscount: %v\n", info.CacheDiscount)
 		if info.Additional != nil {
 			for key, value := range info.Additional {
 				fmt.Printf("   %s: %v (type: %T)\n", key, value, value)
@@ -670,6 +688,7 @@ func AnalyzeCacheTokenUsage(choice1, choice2 *llmtypes.ContentChoice) {
 		fmt.Printf("   InputTokens: %v\n", info.InputTokens)
 		fmt.Printf("   OutputTokens: %v\n", info.OutputTokens)
 		fmt.Printf("   TotalTokens: %v\n", info.TotalTokens)
+		fmt.Printf("   ReasoningTokens: %v\n", info.ReasoningTokens)
 		fmt.Printf("   CachedContentTokens: %v\n", info.CachedContentTokens)
 		fmt.Printf("   CacheDiscount: %v\n", info.CacheDiscount)
 		if info.Additional != nil {

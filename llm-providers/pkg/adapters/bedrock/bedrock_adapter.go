@@ -507,6 +507,151 @@ func (b *BedrockAdapter) Call(ctx context.Context, prompt string, options ...llm
 	return resp.Choices[0].Content, nil
 }
 
+// GenerateEmbeddings implements the llmtypes.EmbeddingModel interface
+// Input can be a single string or a slice of strings
+// Supports Amazon Titan Text Embeddings models (v1 and v2)
+func (b *BedrockAdapter) GenerateEmbeddings(ctx context.Context, input interface{}, options ...llmtypes.EmbeddingOption) (*llmtypes.EmbeddingResponse, error) {
+	// Parse embedding options
+	opts := &llmtypes.EmbeddingOptions{
+		Model: "amazon.titan-embed-text-v1", // Default model
+	}
+	for _, opt := range options {
+		opt(opts)
+	}
+
+	// Use provided model or default
+	modelID := opts.Model
+	if modelID == "" {
+		modelID = "amazon.titan-embed-text-v1"
+	}
+
+	// Convert input to slice of strings
+	var inputTexts []string
+	switch v := input.(type) {
+	case string:
+		// Validate single string input
+		if strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("input cannot be empty")
+		}
+		inputTexts = []string{v}
+	case []string:
+		// Array of strings input
+		if len(v) == 0 {
+			return nil, fmt.Errorf("input cannot be empty")
+		}
+		// Validate that no string in the array is empty
+		for i, text := range v {
+			if strings.TrimSpace(text) == "" {
+				return nil, fmt.Errorf("input at index %d cannot be empty", i)
+			}
+		}
+		inputTexts = v
+	default:
+		return nil, fmt.Errorf("input must be a string or []string, got %T", input)
+	}
+
+	// Determine default dimensions based on model
+	defaultDimensions := 1536 // Titan v1 default
+	if strings.Contains(modelID, "titan-embed-text-v2") {
+		defaultDimensions = 1024 // Titan v2 default
+	}
+
+	// Use provided dimensions or default
+	dimensions := defaultDimensions
+	if opts.Dimensions != nil {
+		dimensions = *opts.Dimensions
+	}
+
+	// Log input details if logger is available
+	if b.logger != nil {
+		b.logger.Debugf("Bedrock GenerateEmbeddings INPUT - model: %s, input_count: %d, dimensions: %d",
+			modelID, len(inputTexts), dimensions)
+	}
+
+	// Process each input text (Bedrock Titan supports single embedding per request)
+	// For batch, we'll make multiple requests
+	embeddings := make([]llmtypes.Embedding, 0, len(inputTexts))
+	var totalPromptTokens int
+
+	for i, text := range inputTexts {
+		// Build request body for Titan embedding
+		requestBody := map[string]interface{}{
+			"inputText": text,
+		}
+
+		// Add dimensions for Titan v2 (v1 doesn't support custom dimensions)
+		if strings.Contains(modelID, "titan-embed-text-v2") && dimensions != 1024 {
+			requestBody["dimensions"] = dimensions
+		}
+
+		// Marshal request body to JSON
+		bodyJSON, err := json.Marshal(requestBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+
+		// Create InvokeModel input
+		invokeInput := &bedrockruntime.InvokeModelInput{
+			ModelId:     aws.String(modelID),
+			Body:        bodyJSON,
+			ContentType: aws.String("application/json"),
+			Accept:      aws.String("application/json"),
+		}
+
+		// Call InvokeModel
+		result, err := b.client.InvokeModel(ctx, invokeInput)
+		if err != nil {
+			if b.logger != nil {
+				b.logger.Errorf("Bedrock GenerateEmbeddings ERROR - model: %s, input_index: %d, error: %v", modelID, i, err)
+			}
+			return nil, fmt.Errorf("bedrock invoke model: %w", err)
+		}
+
+		// Parse response (result.Body is already []byte)
+		var embeddingResponse struct {
+			Embedding       []float64 `json:"embedding"`
+			InputTokenCount int       `json:"inputTokenCount,omitempty"`
+		}
+		if err := json.Unmarshal(result.Body, &embeddingResponse); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		}
+
+		// Convert float64 to float32
+		embedding32 := make([]float32, len(embeddingResponse.Embedding))
+		for j, v := range embeddingResponse.Embedding {
+			embedding32[j] = float32(v)
+		}
+
+		embeddings = append(embeddings, llmtypes.Embedding{
+			Index:     i,
+			Embedding: embedding32,
+			Object:    "embedding",
+		})
+
+		// Accumulate token usage
+		if embeddingResponse.InputTokenCount > 0 {
+			totalPromptTokens += embeddingResponse.InputTokenCount
+		}
+	}
+
+	// Build response
+	response := &llmtypes.EmbeddingResponse{
+		Embeddings: embeddings,
+		Model:      modelID,
+		Object:     "list",
+	}
+
+	// Add usage information if available
+	if totalPromptTokens > 0 {
+		response.Usage = &llmtypes.EmbeddingUsage{
+			PromptTokens: totalPromptTokens,
+			TotalTokens:  totalPromptTokens,
+		}
+	}
+
+	return response, nil
+}
+
 // convertMessagesToConverse converts llmtypes messages to Converse API format
 func convertMessagesToConverse(langMessages []llmtypes.MessageContent) []types.Message {
 	converseMessages := make([]types.Message, 0, len(langMessages))

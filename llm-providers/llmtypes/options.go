@@ -133,3 +133,18 @@ func ImagePartBase64(role ChatMessageType, mediaType, base64Data string) Message
 func ImagePartURL(role ChatMessageType, imageURL string) MessageContent {
 	return ImagePart(role, "url", "", imageURL)
 }
+
+// WithEmbeddingModel sets the embedding model ID
+func WithEmbeddingModel(model string) EmbeddingOption {
+	return func(opts *EmbeddingOptions) {
+		opts.Model = model
+	}
+}
+
+// WithDimensions sets the dimensions parameter for embedding generation
+// This is only supported for text-embedding-3 models
+func WithDimensions(dimensions int) EmbeddingOption {
+	return func(opts *EmbeddingOptions) {
+		opts.Dimensions = &dimensions
+	}
+}

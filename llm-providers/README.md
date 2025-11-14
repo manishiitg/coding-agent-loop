@@ -133,6 +133,13 @@ All providers use the same shared test functions from `internal/testing/commands
 - **RunToolCallTest** - 4 standardized tool calling tests
 - **RunStructuredOutputTest** - Structured JSON output validation
 - **RunImageTest** - 3 standardized image understanding tests
+- **RunStreamingContentTest** - Content streaming validation
+- **RunStreamingToolCallTest** - Tool call streaming validation
+- **RunStreamingMixedTest** - Mixed content and tool call streaming
+- **RunStreamingParallelToolCallsTest** - Parallel tool call streaming
+- **RunStreamingWithFuncTest** - Function calling with streaming
+- **RunStreamingMultiTurnTest** - Multi-turn conversation streaming
+- **RunStreamingCancellationTest** - Streaming cancellation handling
 
 Each provider's test files only initialize their LLM instance and call these shared functions, ensuring:
 - ✅ **Consistency**: All providers run identical tests
@@ -148,6 +155,7 @@ Each provider supports the following test types:
 - **Token Usage Tests** - Validate token usage extraction (with cache tests)
 - **Structured Output Tests** - Test structured JSON outputs
 - **Image Understanding Tests** - 3 standardized vision/image understanding tests
+- **Streaming Tests** - Comprehensive streaming response validation (varies by provider)
 
 ### Provider Test Coverage
 
@@ -155,13 +163,13 @@ All providers have **identical test coverage** using the same standardized tests
 
 #### Test Coverage Matrix
 
-| Provider | Plain Text | Tool Calls | Structured Output | Image | Token Usage |
-|----------|------------|------------|-------------------|-------|-------------|
-| **Anthropic** | ✅ | ✅ (4 tests) | ✅ (Tool-based) | ✅ (3 tests) | ✅ (with cache) |
-| **OpenAI** | ✅ | ✅ (4 tests) | ✅ (JSON Schema) | ✅ (3 tests) | ✅ (with cache) |
-| **Bedrock** | ✅ | ✅ (4 tests) | ✅ (JSON mode) | ✅ (3 tests) | ✅ (with cache) |
-| **OpenRouter** | ✅ | ✅ (4 tests) | ✅ (JSON mode) | ✅ (3 tests) | ✅ (with cache) |
-| **Vertex AI** | ✅ | ✅ (4 tests) | ✅ (JSON mode) | ✅ (3 tests) | ✅ (with cache) |
+| Provider | Plain Text | Tool Calls | Structured Output | Image | Token Usage | Streaming |
+|----------|------------|------------|-------------------|-------|-------------|----------|
+| **Anthropic** | ✅ | ✅ (4 tests) | ✅ (Tool-based) | ✅ (3 tests) | ✅ (with cache) | ✅ (6 tests) |
+| **OpenAI** | ✅ | ✅ (4 tests) | ✅ (JSON Schema) | ✅ (3 tests) | ✅ (with cache) | ✅ (7 tests) |
+| **Bedrock** | ✅ | ✅ (4 tests) | ✅ (JSON mode) | ✅ (3 tests) | ✅ (with cache) | ✅ (7 tests) |
+| **OpenRouter** | ✅ | ✅ (4 tests) | ✅ (JSON mode) | ✅ (3 tests) | ✅ (with cache) | ❌ |
+| **Vertex AI** | ✅ | ✅ (4 tests) | ✅ (JSON mode) | ✅ (3 tests) | ✅ (with cache) | ✅ (4 tests) |
 
 #### Anthropic (`anthropic-*`)
 
@@ -172,6 +180,12 @@ All providers have **identical test coverage** using the same standardized tests
 | Structured Output | `anthropic-structured-output` | Tool-based approach |
 | Image Understanding | `anthropic-image` | 3 standardized tests |
 | Token Usage | `anthropic-token-usage` | Simple, complex, cache tests |
+| Streaming Content | `anthropic-streaming-content` | Content streaming validation |
+| Streaming Mixed | `anthropic-streaming-mixed` | Mixed content/tool call streaming |
+| Streaming Parallel | `anthropic-streaming-parallel` | Parallel tool call streaming |
+| Streaming Func | `anthropic-streaming-func` | Function calling with streaming |
+| Streaming Multi-Turn | `anthropic-streaming-multiturn` | Multi-turn conversation streaming |
+| Streaming Cancellation | `anthropic-streaming-cancellation` | Streaming cancellation handling |
 
 **Example:**
 ```bash
@@ -179,6 +193,8 @@ All providers have **identical test coverage** using the same standardized tests
 ./bin/llm-test anthropic-tool-call
 ./bin/llm-test anthropic-structured-output
 ./bin/llm-test anthropic-image
+./bin/llm-test anthropic-streaming-content
+./bin/llm-test anthropic-streaming-mixed
 ```
 
 #### OpenAI (`openai-*`)
@@ -190,6 +206,13 @@ All providers have **identical test coverage** using the same standardized tests
 | Structured Output | `openai-structured-output` | JSON Schema with strict mode |
 | Image Understanding | `openai-image` | 3 standardized tests |
 | Token Usage | `openai-token-usage` | Simple, complex, cache tests |
+| Streaming Tool Call | `openai-streaming-tool-call` | Tool call streaming validation |
+| Streaming Content | `openai-streaming-content` | Content streaming validation |
+| Streaming Mixed | `openai-streaming-mixed` | Mixed content/tool call streaming |
+| Streaming Parallel | `openai-streaming-parallel` | Parallel tool call streaming |
+| Streaming Func | `openai-streaming-func` | Function calling with streaming |
+| Streaming Multi-Turn | `openai-streaming-multiturn` | Multi-turn conversation streaming |
+| Streaming Cancellation | `openai-streaming-cancellation` | Streaming cancellation handling |
 
 **Example:**
 ```bash
@@ -197,6 +220,8 @@ All providers have **identical test coverage** using the same standardized tests
 ./bin/llm-test openai-tool-call --model gpt-4o-mini
 ./bin/llm-test openai-structured-output --model gpt-4o-mini
 ./bin/llm-test openai-image --model gpt-4o-mini
+./bin/llm-test openai-streaming-tool-call --model gpt-4o-mini
+./bin/llm-test openai-streaming-content --model gpt-4o-mini
 ```
 
 #### AWS Bedrock (`bedrock-*`)
@@ -208,6 +233,13 @@ All providers have **identical test coverage** using the same standardized tests
 | Structured Output | `bedrock-structured-output` | JSON mode with validation |
 | Image Understanding | `bedrock-image` | 3 standardized tests |
 | Token Usage | `bedrock-token-usage` | Simple, complex, cache tests |
+| Streaming Content | `bedrock-streaming-content` | Content streaming validation |
+| Streaming Mixed | `bedrock-streaming-mixed` | Mixed content/tool call streaming |
+| Streaming Parallel | `bedrock-streaming-parallel` | Parallel tool call streaming |
+| Streaming Func | `bedrock-streaming-func` | Function calling with streaming |
+| Streaming Multi-Turn | `bedrock-streaming-multiturn` | Multi-turn conversation streaming |
+| Streaming Cancellation | `bedrock-streaming-cancellation` | Streaming cancellation handling |
+| Streaming Tool Call History | `bedrock-streaming-toolcall-history` | Tool call with conversation history |
 
 **Example:**
 ```bash
@@ -215,6 +247,9 @@ All providers have **identical test coverage** using the same standardized tests
 ./bin/llm-test llm-tool-call
 ./bin/llm-test bedrock-structured-output
 ./bin/llm-test bedrock-image
+./bin/llm-test bedrock-streaming-content
+./bin/llm-test bedrock-streaming-mixed
+./bin/llm-test bedrock-streaming-toolcall-history
 ```
 
 #### OpenRouter (`openrouter-*`)
@@ -246,6 +281,10 @@ All providers have **identical test coverage** using the same standardized tests
 | Structured Output | `vertex-structured-output` | JSON mode |
 | Image Understanding | `vertex-image` | 3 standardized tests |
 | Token Usage | `vertex-token-usage` | Simple, complex, cache tests |
+| Streaming Content | `vertex-streaming-content` | Content streaming validation |
+| Streaming Mixed | `vertex-streaming-mixed` | Mixed content/tool call streaming |
+| Streaming Multi-Turn | `vertex-streaming-multiturn` | Multi-turn conversation streaming |
+| Streaming Cancellation | `vertex-streaming-cancellation` | Streaming cancellation handling |
 
 **Example:**
 ```bash
@@ -253,6 +292,8 @@ All providers have **identical test coverage** using the same standardized tests
 ./bin/llm-test vertex-tool-call
 ./bin/llm-test vertex-structured-output
 ./bin/llm-test vertex-image
+./bin/llm-test vertex-streaming-content
+./bin/llm-test vertex-streaming-mixed
 ```
 
 ### Standardized Test Features
@@ -297,6 +338,71 @@ All providers run the same 3 tests:
 - Default test image URL if no image provided
 - All tests include token usage logging
 
+### Streaming Tests
+
+Streaming tests validate real-time response streaming capabilities across providers. These tests ensure that:
+- Content chunks are streamed immediately as they're generated
+- Tool calls are streamed when complete
+- Streamed content matches final response content
+- Streaming works correctly in multi-turn conversations
+- Cancellation works properly during streaming
+
+#### Streaming Test Types
+
+1. **Content Streaming** (`*-streaming-content`)
+   - Tests basic content streaming without tool calls
+   - Validates that streamed chunks match final response
+   - Tests both short and longer content generation
+   - Verifies chunk ordering and completeness
+
+2. **Tool Call Streaming** (`*-streaming-tool-call`)
+   - Tests streaming with tool calls
+   - Validates that tool calls are streamed when complete
+   - Ensures streamed tool calls match final response
+   - **Available**: OpenAI only
+
+3. **Mixed Streaming** (`*-streaming-mixed`)
+   - Tests scenarios with both content and tool calls
+   - Validates chunk ordering (content before tool calls)
+   - Ensures both content and tool calls stream correctly
+
+4. **Parallel Tool Call Streaming** (`*-streaming-parallel`)
+   - Tests streaming with multiple parallel tool calls
+   - Validates that all tool calls are streamed correctly
+   - **Available**: Anthropic, OpenAI, Bedrock
+
+5. **Function Calling Streaming** (`*-streaming-func`)
+   - Tests function calling with streaming enabled
+   - Validates streaming behavior with function tools
+   - **Available**: Anthropic, OpenAI, Bedrock
+
+6. **Multi-Turn Streaming** (`*-streaming-multiturn`)
+   - Tests streaming across multiple conversation turns
+   - Validates streaming consistency in conversations
+   - Ensures context is maintained across turns
+
+7. **Streaming Cancellation** (`*-streaming-cancellation`)
+   - Tests proper cancellation handling during streaming
+   - Validates that streams are closed correctly on cancellation
+   - Ensures no resource leaks
+
+8. **Tool Call History Streaming** (`*-streaming-toolcall-history`)
+   - Tests tool call streaming with conversation history
+   - Validates streaming with previous tool call results
+   - **Available**: Bedrock only
+
+#### Streaming Test Coverage by Provider
+
+| Provider | Content | Tool Call | Mixed | Parallel | Func | Multi-Turn | Cancellation | History |
+|----------|---------|-----------|-------|----------|------|------------|--------------|---------|
+| **Anthropic** | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **OpenAI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Bedrock** | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **OpenRouter** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Vertex AI** | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+
+**Note**: OpenRouter does not currently support streaming tests. Vertex AI has partial streaming support (content, mixed, multi-turn, and cancellation only).
+
 ### Running Tests
 
 **Basic usage:**
@@ -339,6 +445,39 @@ All providers run the same 3 tests:
 # Image tests with custom images
 ./bin/llm-test openai-image --image-url https://example.com/image.jpg
 ./bin/llm-test openai-image --image-path /path/to/image.jpg
+
+# Streaming tests
+# Anthropic streaming
+./bin/llm-test anthropic-streaming-content
+./bin/llm-test anthropic-streaming-mixed
+./bin/llm-test anthropic-streaming-parallel
+./bin/llm-test anthropic-streaming-func
+./bin/llm-test anthropic-streaming-multiturn
+./bin/llm-test anthropic-streaming-cancellation
+
+# OpenAI streaming
+./bin/llm-test openai-streaming-tool-call --model gpt-4o-mini
+./bin/llm-test openai-streaming-content --model gpt-4o-mini
+./bin/llm-test openai-streaming-mixed --model gpt-4o-mini
+./bin/llm-test openai-streaming-parallel --model gpt-4o-mini
+./bin/llm-test openai-streaming-func --model gpt-4o-mini
+./bin/llm-test openai-streaming-multiturn --model gpt-4o-mini
+./bin/llm-test openai-streaming-cancellation --model gpt-4o-mini
+
+# Bedrock streaming
+./bin/llm-test bedrock-streaming-content
+./bin/llm-test bedrock-streaming-mixed
+./bin/llm-test bedrock-streaming-parallel
+./bin/llm-test bedrock-streaming-func
+./bin/llm-test bedrock-streaming-multiturn
+./bin/llm-test bedrock-streaming-cancellation
+./bin/llm-test bedrock-streaming-toolcall-history
+
+# Vertex AI streaming
+./bin/llm-test vertex-streaming-content
+./bin/llm-test vertex-streaming-mixed
+./bin/llm-test vertex-streaming-multiturn
+./bin/llm-test vertex-streaming-cancellation
 ```
 
 ### Test Output

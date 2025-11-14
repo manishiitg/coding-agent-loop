@@ -773,6 +773,121 @@ func (g *GoogleGenAIAdapter) Call(ctx context.Context, prompt string, options ..
 	return resp.Choices[0].Content, nil
 }
 
+// GenerateEmbeddings implements the llmtypes.EmbeddingModel interface
+// Input can be a single string or a slice of strings
+func (g *GoogleGenAIAdapter) GenerateEmbeddings(ctx context.Context, input interface{}, options ...llmtypes.EmbeddingOption) (*llmtypes.EmbeddingResponse, error) {
+	// Parse embedding options
+	opts := &llmtypes.EmbeddingOptions{
+		Model: "text-embedding-004", // Default model (latest Vertex AI embedding model)
+	}
+	for _, opt := range options {
+		opt(opts)
+	}
+
+	// Use provided model or default
+	modelID := opts.Model
+	if modelID == "" {
+		modelID = "text-embedding-004"
+	}
+
+	// Convert input to slice of strings
+	var inputTexts []string
+	switch v := input.(type) {
+	case string:
+		// Validate single string input
+		if strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("input cannot be empty")
+		}
+		inputTexts = []string{v}
+	case []string:
+		// Array of strings input
+		if len(v) == 0 {
+			return nil, fmt.Errorf("input cannot be empty")
+		}
+		// Validate that no string in the array is empty
+		for i, text := range v {
+			if strings.TrimSpace(text) == "" {
+				return nil, fmt.Errorf("input at index %d cannot be empty", i)
+			}
+		}
+		inputTexts = v
+	default:
+		return nil, fmt.Errorf("input must be a string or []string, got %T", input)
+	}
+
+	// Convert strings to genai.Content format
+	genaiContents := make([]*genai.Content, 0, len(inputTexts))
+	for _, text := range inputTexts {
+		genaiContents = append(genaiContents, &genai.Content{
+			Parts: []*genai.Part{
+				genai.NewPartFromText(text),
+			},
+		})
+	}
+
+	// Build EmbedContentConfig from options
+	config := &genai.EmbedContentConfig{}
+
+	// Add dimensions if specified (for text-embedding-004 and newer models)
+	if opts.Dimensions != nil {
+		dims := int32(*opts.Dimensions)
+		config.OutputDimensionality = &dims
+	}
+
+	// Log input details if logger is available
+	if g.logger != nil {
+		g.logger.Debugf("Vertex AI GenerateEmbeddings INPUT - model: %s, input_count: %d, dimensions: %v",
+			modelID, len(inputTexts), opts.Dimensions)
+	}
+
+	// Call Vertex AI EmbedContent API
+	result, err := g.client.Models.EmbedContent(ctx, modelID, genaiContents, config)
+	if err != nil {
+		if g.logger != nil {
+			g.logger.Errorf("Vertex AI GenerateEmbeddings ERROR - model: %s, error: %v", modelID, err)
+		}
+		return nil, fmt.Errorf("vertex ai generate embeddings: %w", err)
+	}
+
+	// Convert response from Vertex AI format to llmtypes format
+	return convertEmbeddingResponse(result, modelID), nil
+}
+
+// convertEmbeddingResponse converts Vertex AI embedding response to llmtypes EmbeddingResponse
+func convertEmbeddingResponse(result *genai.EmbedContentResponse, modelID string) *llmtypes.EmbeddingResponse {
+	if result == nil {
+		return &llmtypes.EmbeddingResponse{
+			Embeddings: []llmtypes.Embedding{},
+			Model:      modelID,
+		}
+	}
+
+	embeddings := make([]llmtypes.Embedding, 0, len(result.Embeddings))
+	for i, item := range result.Embeddings {
+		// Vertex AI returns []float32 directly, so we can use it as-is
+		embeddings = append(embeddings, llmtypes.Embedding{
+			Index:     i,
+			Embedding: item.Values,
+			Object:    "embedding",
+		})
+	}
+
+	response := &llmtypes.EmbeddingResponse{
+		Embeddings: embeddings,
+		Model:      modelID,
+		Object:     "list",
+	}
+
+	// Extract usage information if available in metadata
+	if result.Metadata != nil {
+		// Note: Vertex AI EmbedContentMetadata may not have token usage info
+		// We'll set usage if available, otherwise leave it nil
+		// The metadata structure may vary, so we check what's available
+	}
+
+	return response
+}
+
 // convertArgumentsToString converts function arguments to JSON string
 func convertArgumentsToString(args map[string]interface{}) string {
 	if args == nil {

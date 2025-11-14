@@ -28,6 +28,14 @@ type FunctionName = llmtypes.FunctionName
 type CallOptions = llmtypes.CallOptions
 type CallOption = llmtypes.CallOption
 
+// Re-export embedding types
+type EmbeddingModel = llmtypes.EmbeddingModel
+type Embedding = llmtypes.Embedding
+type EmbeddingResponse = llmtypes.EmbeddingResponse
+type EmbeddingUsage = llmtypes.EmbeddingUsage
+type EmbeddingOptions = llmtypes.EmbeddingOptions
+type EmbeddingOption = llmtypes.EmbeddingOption
+
 // Re-export constants
 const (
 	ChatMessageTypeSystem   = llmtypes.ChatMessageTypeSystem
@@ -40,16 +48,18 @@ const (
 
 // Re-export functions
 var (
-	WithModel         = llmtypes.WithModel
-	WithTemperature   = llmtypes.WithTemperature
-	WithMaxTokens     = llmtypes.WithMaxTokens
-	WithJSONMode      = llmtypes.WithJSONMode
-	WithTools         = llmtypes.WithTools
-	WithToolChoice    = llmtypes.WithToolChoice
-	WithStreamingFunc = llmtypes.WithStreamingFunc
-	TextPart          = llmtypes.TextPart
-	TextParts         = llmtypes.TextParts
-	ImagePart         = llmtypes.ImagePart
-	ImagePartBase64   = llmtypes.ImagePartBase64
-	ImagePartURL      = llmtypes.ImagePartURL
+	WithModel          = llmtypes.WithModel
+	WithTemperature    = llmtypes.WithTemperature
+	WithMaxTokens      = llmtypes.WithMaxTokens
+	WithJSONMode       = llmtypes.WithJSONMode
+	WithTools          = llmtypes.WithTools
+	WithToolChoice     = llmtypes.WithToolChoice
+	WithStreamingFunc  = llmtypes.WithStreamingFunc
+	TextPart           = llmtypes.TextPart
+	TextParts          = llmtypes.TextParts
+	ImagePart          = llmtypes.ImagePart
+	ImagePartBase64    = llmtypes.ImagePartBase64
+	ImagePartURL       = llmtypes.ImagePartURL
+	WithEmbeddingModel = llmtypes.WithEmbeddingModel
+	WithDimensions     = llmtypes.WithDimensions
 )

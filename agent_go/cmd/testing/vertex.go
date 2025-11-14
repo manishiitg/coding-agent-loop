@@ -11,14 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	vertexadapter "llm-providers/pkg/adapters/vertex"
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llm/vertex"
 	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"google.golang.org/genai"
 )
 
 var vertexCmd = &cobra.Command{
@@ -106,34 +105,32 @@ func runVertex(cmd *cobra.Command, args []string) {
 
 	var tools []llmtypes.Tool
 	var messages []llmtypes.MessageContent
-	var responseSchema *genai.Schema
-
 	if vertexFlags.structured {
 		// Test structured output with ResponseSchema (recipe example from user)
 		logger.Info("📋 Setting up structured output test with ResponseSchema...")
 
-		// Create the ResponseSchema matching the user's example
-		responseSchema = &genai.Schema{
-			Type: genai.TypeArray,
-			Items: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"recipeName": {
-						Type: genai.TypeString,
+		// Create the ResponseSchema as JSON Schema map (avoids direct genai import)
+		responseSchema := map[string]interface{}{
+			"type": "array",
+			"items": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"recipeName": map[string]interface{}{
+						"type": "string",
 					},
-					"ingredients": {
-						Type: genai.TypeArray,
-						Items: &genai.Schema{
-							Type: genai.TypeString,
+					"ingredients": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "string",
 						},
 					},
 				},
-				PropertyOrdering: []string{"recipeName", "ingredients"},
+				"propertyOrdering": []string{"recipeName", "ingredients"},
 			},
 		}
 
-		// Set context with ResponseSchema
-		ctx = vertex.WithResponseSchema(ctx, responseSchema)
+		// Set context with ResponseSchema using JSON Schema helper
+		ctx = vertexadapter.WithResponseSchemaFromJSON(ctx, responseSchema)
 
 		messages = []llmtypes.MessageContent{
 			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "List a few popular cookie recipes, and include the amounts of ingredients."),
@@ -281,10 +278,10 @@ func runVertex(cmd *cobra.Command, args []string) {
 	} else {
 		// Default test: image input with Vertex AI logo
 		logger.Info("🖼️ Running default image input test...")
-		
+
 		// Default test image URL - Vertex AI logo
 		testImageURL := "https://cdn.prod.website-files.com/657639ebfb91510f45654149/67cef0fb78a461a1580d3c5a_667f5f1018134e3c5a8549c2_AD_4nXfn52WaKNUy839wUllpITpaj7mvuOTR6AOzDk3SypLHLgO-_n8zgt7QJ7rxcLOfOJRWAShjk1dIZRmwuKYLCYFD4qgOq1SCiGFIYbnhDLjD1E0zTdb8cgnCBceLMy7lmCZ3qDUce-gCfJjofiZ9ftDF2m4.webp"
-		
+
 		parts := []llmtypes.ContentPart{
 			llmtypes.TextContent{Text: "What is the text written in this image?"},
 			llmtypes.ImageContent{
@@ -300,7 +297,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 				Parts: parts,
 			},
 		}
-		
+
 		logger.Info(fmt.Sprintf("✅ Default image test configured with URL: %s", testImageURL))
 	}
 

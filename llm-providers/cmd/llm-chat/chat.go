@@ -19,20 +19,9 @@ import (
 // noopLogger is a no-op logger implementation for chat
 type noopLogger struct{}
 
-func (n *noopLogger) Infof(format string, v ...any)                        {}
-func (n *noopLogger) Errorf(format string, v ...any)                       {}
-func (n *noopLogger) Info(args ...interface{})                             {}
-func (n *noopLogger) Error(args ...interface{})                            {}
-func (n *noopLogger) Debug(args ...interface{})                            {}
-func (n *noopLogger) Debugf(format string, args ...interface{})            {}
-func (n *noopLogger) Warn(args ...interface{})                             {}
-func (n *noopLogger) Warnf(format string, args ...interface{})             {}
-func (n *noopLogger) Fatal(args ...interface{})                            {}
-func (n *noopLogger) Fatalf(format string, args ...interface{})            {}
-func (n *noopLogger) WithField(key string, value interface{}) interface{}  { return n }
-func (n *noopLogger) WithFields(fields map[string]interface{}) interface{} { return n }
-func (n *noopLogger) WithError(err error) interface{}                      { return n }
-func (n *noopLogger) Close() error                                         { return nil }
+func (n *noopLogger) Infof(format string, v ...any)             {}
+func (n *noopLogger) Errorf(format string, v ...any)            {}
+func (n *noopLogger) Debugf(format string, args ...interface{}) {}
 
 // safeCloseChannel safely closes a channel, recovering from panic if already closed
 func safeCloseChannel(ch chan llmtypes.StreamChunk) {

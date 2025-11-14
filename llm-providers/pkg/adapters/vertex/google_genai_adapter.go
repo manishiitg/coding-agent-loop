@@ -99,7 +99,7 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 						toolNames = append(toolNames, toolCall.FunctionCall.Name)
 					}
 				}
-				g.logger.Warnf("⚠️ [GEMINI] Model message contains both TextContent and ToolCall parts - splitting into separate messages to avoid empty responses. Text preview: %q, Tool calls: %v", textPreview, toolNames)
+				g.logger.Debugf("⚠️ [GEMINI] Model message contains both TextContent and ToolCall parts - splitting into separate messages to avoid empty responses. Text preview: %q, Tool calls: %v", textPreview, toolNames)
 			}
 
 			// Create separate message for text content
@@ -241,7 +241,7 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 		// Log error with input and response details (including request ID for correlation)
 		if g.logger != nil {
 			if hadMixedMessages {
-				g.logger.Warnf("⚠️ [REQUEST_ID: %s] ERROR occurred after detecting mixed TextContent+ToolCall messages - correlation check", requestID)
+				g.logger.Debugf("⚠️ [REQUEST_ID: %s] ERROR occurred after detecting mixed TextContent+ToolCall messages - correlation check", requestID)
 			}
 			g.logErrorDetails(requestID, modelID, messages, config, opts, err, result)
 			g.logRawResponse(requestID, modelID, result, err)
@@ -921,13 +921,13 @@ func (g *GoogleGenAIAdapter) convertMessageParts(parts []llmtypes.ContentPart) [
 					if imagePart.InlineData != nil {
 						g.logger.Debugf("Image part created successfully: MIME type=%s, data length=%d", imagePart.InlineData.MIMEType, len(imagePart.InlineData.Data))
 					} else {
-						g.logger.Warnf("Image part created but InlineData is nil")
+						g.logger.Debugf("Image part created but InlineData is nil")
 					}
 				}
 				genaiParts = append(genaiParts, imagePart)
 			} else {
 				if g.logger != nil {
-					g.logger.Warnf("Failed to create image part from ImageContent")
+					g.logger.Debugf("Failed to create image part from ImageContent")
 				}
 			}
 		case llmtypes.ToolCallResponse:
@@ -1146,7 +1146,7 @@ func (g *GoogleGenAIAdapter) logRawResponse(requestID, modelID string, result *g
 		g.logger.Infof("🔍 [REQUEST_ID: %s] PromptFeedback:", requestID)
 		g.logger.Infof("🔍 [REQUEST_ID: %s]    BlockReason: %q", requestID, result.PromptFeedback.BlockReason)
 		if result.PromptFeedback.BlockReason != "" {
-			g.logger.Warnf("⚠️ [REQUEST_ID: %s] PromptFeedback.BlockReason present: %q (Note: Safety blocks usually cause API errors, not empty content)", requestID, result.PromptFeedback.BlockReason)
+			g.logger.Debugf("⚠️ [REQUEST_ID: %s] PromptFeedback.BlockReason present: %q (Note: Safety blocks usually cause API errors, not empty content)", requestID, result.PromptFeedback.BlockReason)
 		}
 		if len(result.PromptFeedback.SafetyRatings) > 0 {
 			g.logger.Infof("🔍 [REQUEST_ID: %s]    SafetyRatings count: %d", requestID, len(result.PromptFeedback.SafetyRatings))
@@ -1207,7 +1207,7 @@ func (g *GoogleGenAIAdapter) logRawResponse(requestID, modelID string, result *g
 		}
 		g.logger.Infof("🔍 [REQUEST_ID: %s] RAW VERTEX RESPONSE SUMMARY (JSON):\n   %s", requestID, jsonStr)
 	} else {
-		g.logger.Warnf("⚠️ [REQUEST_ID: %s] Failed to serialize response summary to JSON: %v", requestID, err)
+		g.logger.Debugf("⚠️ [REQUEST_ID: %s] Failed to serialize response summary to JSON: %v", requestID, err)
 	}
 }
 
@@ -1217,6 +1217,19 @@ func WithResponseSchema(ctx context.Context, schema *genai.Schema) context.Conte
 	return context.WithValue(ctx, ResponseSchemaKey, schema)
 }
 
+// WithResponseSchemaFromJSON accepts a JSON Schema map and converts it to genai.Schema
+// This allows consumers to avoid importing genai directly
+func WithResponseSchemaFromJSON(ctx context.Context, jsonSchema map[string]interface{}) context.Context {
+	if jsonSchema == nil {
+		return ctx
+	}
+	schema := convertJSONSchemaToSchema(jsonSchema)
+	if schema == nil {
+		return ctx
+	}
+	return WithResponseSchema(ctx, schema)
+}
+
 // createImagePart creates a genai.Part from ImageContent
 func (g *GoogleGenAIAdapter) createImagePart(img llmtypes.ImageContent) *genai.Part {
 	if img.SourceType == "base64" {
@@ -1224,7 +1237,7 @@ func (g *GoogleGenAIAdapter) createImagePart(img llmtypes.ImageContent) *genai.P
 		imageBytes, err := base64.StdEncoding.DecodeString(img.Data)
 		if err != nil {
 			if g.logger != nil {
-				g.logger.Warnf("Failed to decode base64 image: %v", err)
+				g.logger.Debugf("Failed to decode base64 image: %v", err)
 			}
 			return nil
 		}
@@ -1244,7 +1257,7 @@ func (g *GoogleGenAIAdapter) createImagePart(img llmtypes.ImageContent) *genai.P
 		imageBytes, mimeType, err := g.fetchImageFromURL(ctx, img.Data)
 		if err != nil {
 			if g.logger != nil {
-				g.logger.Warnf("Failed to fetch image from URL %s: %v", img.Data, err)
+				g.logger.Debugf("Failed to fetch image from URL %s: %v", img.Data, err)
 			}
 			return nil
 		}
@@ -1256,7 +1269,7 @@ func (g *GoogleGenAIAdapter) createImagePart(img llmtypes.ImageContent) *genai.P
 	}
 	// Invalid source type
 	if g.logger != nil {
-		g.logger.Warnf("Invalid image source type: %s", img.SourceType)
+		g.logger.Debugf("Invalid image source type: %s", img.SourceType)
 	}
 	return nil
 }

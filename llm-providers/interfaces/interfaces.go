@@ -38,27 +38,12 @@ type LLMEvent interface {
 }
 
 // Logger defines the interface for logging
-// This interface matches utils.ExtendedLogger from the main module
+// Minimal interface with only essential formatted logging methods
 type Logger interface {
 	// Core logging methods
 	Infof(format string, v ...any)
 	Errorf(format string, v ...any)
-	Info(args ...interface{})
-	Error(args ...interface{})
-	Debug(args ...interface{})
 	Debugf(format string, args ...interface{})
-	Warn(args ...interface{})
-	Warnf(format string, args ...interface{})
-	Fatal(args ...interface{})
-	Fatalf(format string, args ...interface{})
-
-	// Structured logging methods (returning interface{} for compatibility)
-	WithField(key string, value interface{}) interface{}
-	WithFields(fields map[string]interface{}) interface{}
-	WithError(err error) interface{}
-
-	// File management
-	Close() error
 }
 
 // LLMMetadata represents common metadata for LLM events

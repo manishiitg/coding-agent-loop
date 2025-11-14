@@ -83,6 +83,9 @@ type OrchestratorAgentConfig struct {
 	// Structured output configuration
 	StructuredOutputSchema string `json:"structured_output_schema,omitempty"`
 	StructuredOutputType   string `json:"structured_output_type,omitempty"` // "plan", "steps", "custom"
+
+	// Large output virtual tools configuration
+	EnableLargeOutputVirtualTools *bool `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

@@ -15,11 +15,11 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
-  fixedAgentMode?: 'simple' | 'orchestrator' | 'workflow';
+  fixedAgentMode?: 'simple' | 'workflow';
 }
 
 const PresetModal: React.FC<PresetModalProps> = React.memo(({
@@ -35,7 +35,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [agentMode, setAgentMode] = useState<'simple' | 'orchestrator' | 'workflow'>('simple');
+  const [agentMode, setAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
@@ -120,8 +120,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (label.trim() && query.trim()) {
-      if ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder) {
-        alert('Folder selection is required for Deep Search and workflow presets');
+      if (effectiveAgentMode === 'workflow' && !selectedFolder) {
+        alert('Folder selection is required for workflow presets');
         return;
       }
       
@@ -182,7 +182,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               form="preset-form"
               variant="outline"
               size="sm"
-              disabled={!label.trim() || !query.trim() || ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder)}
+              disabled={!label.trim() || !query.trim() || (effectiveAgentMode === 'workflow' && !selectedFolder)}
             >
               {editingPreset ? 'Update' : 'Save'} Preset
             </Button>
@@ -276,7 +276,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               {/* Folder Selection */}
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Folder {effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
+                  Folder {effectiveAgentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
                 </label>
                 <div className="space-y-2">
                   {selectedFolder && (
@@ -299,7 +299,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     data-folder-button
                     onClick={handleSelectFolders}
                     className={`w-full p-3 border-2 border-dashed rounded-md transition-colors ${
-                      (effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder
+                      effectiveAgentMode === 'workflow' && !selectedFolder
                         ? 'border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500'
                         : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-blue-500'
                     }`}
@@ -315,7 +315,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     Selected: {selectedFolder.filepath}
                   </p>
                 )}
-                {(effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder && (
+                {effectiveAgentMode === 'workflow' && !selectedFolder && (
                   <p className="text-xs text-red-500 mt-1">
                     ⚠️ Folder selection is required for {effectiveAgentMode} presets
                   </p>
@@ -331,7 +331,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <div className="grid grid-cols-2 gap-2">
                     {[
                       { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
-                      { value: 'orchestrator', label: 'Deep Search', description: 'Multi-step plans' },
                       { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
                     ].map((mode) => (
                       <div key={mode.value} className="flex items-center space-x-2">
@@ -341,7 +340,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           name="agentMode"
                           value={mode.value}
                           checked={agentMode === mode.value}
-                          onChange={(e) => setAgentMode(e.target.value as 'simple' | 'orchestrator' | 'workflow')}
+                          onChange={(e) => setAgentMode(e.target.value as 'simple' | 'workflow')}
                           className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
                         />
                         <label
@@ -366,11 +365,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     <div className="flex items-center gap-2">
                       <div className="font-medium text-gray-900 dark:text-white">
                         {fixedAgentMode === 'simple' ? 'Simple' :
-                         fixedAgentMode === 'orchestrator' ? 'Deep Search' : 'Workflow'}
+                         'Workflow'}
                       </div>
                       <div className="text-xs text-gray-500 dark:text-gray-400">
                         {fixedAgentMode === 'simple' ? 'Ask simple questions' :
-                         fixedAgentMode === 'orchestrator' ? 'Multi-step plans' : 'Todo-list execution'}
+                         'Todo-list execution'}
                       </div>
                     </div>
                   </div>

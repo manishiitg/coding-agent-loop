@@ -83,9 +83,14 @@ export default function FileRevisionsModal({
 
   if (!isOpen) return null
 
+  // Make modal bigger when a revision is selected
+  const modalSize = selectedVersion 
+    ? 'max-w-7xl h-[90vh]' 
+    : 'max-w-4xl h-5/6'
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl h-5/6 flex flex-col">
+    <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50">
+      <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full ${modalSize} flex flex-col transition-all duration-300`}>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <div>
@@ -111,22 +116,22 @@ export default function FileRevisionsModal({
             <div className="p-4">
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <div className="w-6 h-6 border-4 border-gray-300 border-t-blue-500 rounded-full animate-spin"></div>
-                  <span className="ml-2 text-sm text-gray-500">Loading versions...</span>
+                  <div className="w-6 h-6 border-4 border-gray-300 dark:border-gray-600 border-t-blue-500 dark:border-t-blue-400 rounded-full animate-spin"></div>
+                  <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">Loading versions...</span>
                 </div>
               ) : error ? (
                 <div className="text-center py-8">
-                  <p className="text-red-500 text-sm">{error}</p>
+                  <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>
                   <button
                     onClick={fetchVersions}
-                    className="mt-2 px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                    className="mt-2 px-3 py-1 text-sm bg-blue-500 dark:bg-blue-600 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700 transition-colors"
                   >
                     Retry
                   </button>
                 </div>
               ) : versions.length === 0 ? (
                 <div className="text-center py-8">
-                  <p className="text-gray-500 text-sm">No versions found</p>
+                  <p className="text-gray-500 dark:text-gray-400 text-sm">No versions found</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -139,15 +144,19 @@ export default function FileRevisionsModal({
                       }}
                       className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                         selectedVersion?.commit_hash === version.commit_hash
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                          : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
+                          ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/30'
+                          : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                       }`}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <GitCommit className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm font-mono text-gray-600 dark:text-gray-400">
+                            <GitCommit className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                            <span className={`text-sm font-mono ${
+                              selectedVersion?.commit_hash === version.commit_hash
+                                ? 'text-gray-700 dark:text-gray-200'
+                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-400'
+                            }`}>
                               {formatCommitHash(version.commit_hash)}
                             </span>
                             {index === 0 && (
@@ -156,17 +165,29 @@ export default function FileRevisionsModal({
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-gray-900 dark:text-gray-100 line-clamp-2">
+                          <p className="text-sm text-gray-900 dark:text-gray-100 hover:text-gray-900 dark:hover:text-gray-100 line-clamp-2">
                             {version.commit_message}
                           </p>
-                          <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 dark:text-gray-400">
+                          <div className={`flex items-center gap-4 mt-2 text-xs ${
+                            selectedVersion?.commit_hash === version.commit_hash
+                              ? 'text-gray-600 dark:text-gray-300'
+                              : 'text-gray-500 dark:text-gray-400 hover:text-gray-500 dark:hover:text-gray-400'
+                          }`}>
                             <div className="flex items-center gap-1">
-                              <User className="w-3 h-3" />
-                              {version.author}
+                              <User className={`w-3 h-3 ${
+                                selectedVersion?.commit_hash === version.commit_hash
+                                  ? 'text-gray-500 dark:text-gray-400'
+                                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-400 dark:hover:text-gray-500'
+                              }`} />
+                              <span className="text-inherit">{version.author}</span>
                             </div>
                             <div className="flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {formatDate(version.date)}
+                              <Clock className={`w-3 h-3 ${
+                                selectedVersion?.commit_hash === version.commit_hash
+                                  ? 'text-gray-500 dark:text-gray-400'
+                                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-400 dark:hover:text-gray-500'
+                              }`} />
+                              <span className="text-inherit">{formatDate(version.date)}</span>
                             </div>
                           </div>
                         </div>
@@ -214,7 +235,7 @@ export default function FileRevisionsModal({
                       {onRestoreVersion && (
                         <button
                           onClick={() => onRestoreVersion(selectedVersion)}
-                          className="flex items-center gap-1 px-3 py-1.5 text-sm text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors"
+                          className="flex items-center gap-1 px-3 py-1.5 text-sm text-white bg-blue-500 dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700 rounded-md transition-colors"
                         >
                           <RotateCcw className="w-4 h-4" />
                           Restore
@@ -297,8 +318,8 @@ export default function FileRevisionsModal({
             ) : (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
-                  <GitCommit className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                  <p className="text-gray-500 text-sm">Select a version to view details</p>
+                  <GitCommit className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-2" />
+                  <p className="text-gray-500 dark:text-gray-400 text-sm">Select a version to view details</p>
                 </div>
               </div>
             )}
@@ -307,8 +328,8 @@ export default function FileRevisionsModal({
 
         {/* Diff Modal */}
         {showDiffModal && selectedVersion && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-6xl h-5/6 flex flex-col">
+          <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-60">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-7xl h-[90vh] flex flex-col">
               {/* Diff Header */}
               <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
                 <div>

@@ -38,7 +38,6 @@ const (
 	PlanReaderAgentType        AgentType = "plan_reader"    // Reads plan markdown and returns structured JSON (read-only)
 
 	// Orchestrator types
-	PlannerOrchestratorAgentType  AgentType = "planner_orchestrator"  // AI-controlled planner orchestrator
 	WorkflowOrchestratorAgentType AgentType = "workflow_orchestrator" // AI-controlled workflow orchestrator
 
 	// 🆕 NEW: Workflow-specific types
@@ -143,6 +142,7 @@ func NewBaseAgent(
 	provider string,
 	logger utils.ExtendedLogger,
 	cacheOnly bool,
+	enableLargeOutputVirtualTools *bool, // NEW parameter
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -177,6 +177,15 @@ func NewBaseAgent(
 		mcpagent.WithSmartRouting(true),
 		mcpagent.WithSmartRoutingThresholds(20, 4), // 20 tools, 4 servers threshold for all agents
 	)
+
+	// Add large output virtual tools option if specified
+	// Default to true if nil (backward compatible)
+	largeOutputEnabled := true
+	if enableLargeOutputVirtualTools != nil {
+		largeOutputEnabled = *enableLargeOutputVirtualTools
+	}
+	agentOptions = append(agentOptions, mcpagent.WithLargeOutputVirtualTools(largeOutputEnabled))
+
 	logger.Infof("🎯 Smart routing enabled for %s agent - MaxTools: 20, MaxServers: 4", agentType)
 
 	agent, err := mcpagent.NewAgent(

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Search, Workflow, Settings, ExternalLink } from 'lucide-react'
+import { MessageCircle, Workflow, Settings, ExternalLink } from 'lucide-react'
 import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -13,15 +13,13 @@ interface ChatHeaderProps {
   chatSessionTitle: string
   chatSessionId: string
   sessionState: 'active' | 'completed' | 'loading' | 'error' | 'not-found'
-  onModeSelect: (category: 'chat' | 'deep-research' | 'workflow') => void
+  onModeSelect: (category: 'chat' | 'workflow') => void
 }
 
 const getModeIcon = (category: string) => {
   switch (category) {
     case 'chat':
       return <MessageCircle className="w-3 h-3" />
-    case 'deep-research':
-      return <Search className="w-3 h-3" />
     case 'workflow':
       return <Workflow className="w-3 h-3" />
     default:
@@ -33,8 +31,6 @@ const getModeName = (category: string) => {
   switch (category) {
     case 'chat':
       return 'Chat Mode'
-    case 'deep-research':
-      return 'Deep Research Mode'
     case 'workflow':
       return 'Workflow Mode'
     default:
@@ -66,7 +62,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   } = usePresetApplication()
 
   // Get active preset for current mode
-  const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+  const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
 
   
   const [showModeSwitch, setShowModeSwitch] = useState(false)
@@ -77,7 +73,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
-    const result = applyPreset(preset, selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+    const result = applyPreset(preset, selectedModeCategory as 'chat' | 'workflow')
     
     if (result.success) {
       setShowPresetDropdown(false)
@@ -97,7 +93,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     query: string, 
     selectedServers?: string[], 
     selectedTools?: string[],
-    agentMode?: 'simple' | 'orchestrator' | 'workflow', 
+    agentMode?: 'simple' | 'workflow', 
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig
   ) => {
@@ -159,8 +155,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                     selectedModeCategory === 'chat'
                       ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                      : selectedModeCategory === 'deep-research'
-                      ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800'
                       : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
                   }`}
                   title="Click to change mode"
@@ -205,30 +199,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                           </div>
                         </div>
                       </button>
-                      
-                      {/* Deep Research Mode */}
-                      <button
-                        onClick={() => {
-                          onModeSelect('deep-research')
-                          setShowModeSwitch(false)
-                        }}
-                        className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                          selectedModeCategory === 'deep-research'
-                            ? 'bg-green-100 dark:bg-green-900/30 text-green-900 dark:text-green-100'
-                            : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Search className="w-4 h-4 text-green-600" />
-                          <div>
-                            <div className="font-medium">Deep Research Mode</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Multi-step analysis and research
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                      
                       {/* Workflow Mode */}
                       <button
                         onClick={() => {
@@ -261,7 +231,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             <div className="flex items-center gap-3">
               {/* Preset Information - Show for chat mode even when no preset is selected */}
               {(() => {
-                const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+                const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
                 
                 // For chat mode, always show preset selector
                 if (selectedModeCategory === 'chat' || activePreset) {
@@ -362,7 +332,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                             </button>
                             
                             {/* Available Presets */}
-                            {getPresetsForMode(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+                            {getPresetsForMode(selectedModeCategory as 'chat' | 'workflow')
                               .map((preset: CustomPreset | PredefinedPreset) => (
                                 <div key={preset.id} className="flex items-center gap-1">
                                   <button
@@ -371,7 +341,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                                       setShowPresetDropdown(false)
                                     }}
                                     className={`flex-1 text-left p-2 rounded-md text-sm transition-colors ${
-                                      isPresetActive(preset.id, selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+                                      isPresetActive(preset.id, selectedModeCategory as 'chat' | 'workflow')
                                         ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
                                         : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
                                     }`}
@@ -391,7 +361,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                                   
                                   {/* Edit button - only show for custom presets that are currently selected */}
                                   {customPresets.some(cp => cp.id === preset.id) && 
-                                   isPresetActive(preset.id, selectedModeCategory as 'chat' | 'deep-research' | 'workflow') && (
+                                   isPresetActive(preset.id, selectedModeCategory as 'chat' | 'workflow') && (
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()

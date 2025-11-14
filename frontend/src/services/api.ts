@@ -430,6 +430,14 @@ export const agentApi = {
     return response.data
   },
 
+  restoreFileVersion: async (filepath: string, commitHash: string, commitMessage?: string) => {
+    const response = await plannerApi.post(`/api/restore/${encodeURIComponent(filepath)}`, {
+      commit_hash: commitHash,
+      commit_message: commitMessage
+    })
+    return response.data
+  },
+
   // Chat History API
   getChatSessions: async (limit: number = 20, offset: number = 0, presetQueryId?: string): Promise<ListChatSessionsResponse> => {
     const params: Record<string, string | number> = { limit, offset }

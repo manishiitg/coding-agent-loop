@@ -6,6 +6,7 @@ import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore } from '../stores'
 import type { LLMConfiguration, ExtendedLLMConfiguration } from '../services/api-types'
 import { AnthropicSection } from './AnthropicSection'
+import { OPENAI_MODELS } from '../utils/llmConfig'
 
 interface LLMConfigurationModalProps {
   isOpen: boolean
@@ -1136,8 +1137,9 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
 // OpenAI Section Component
 function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
+  const [newCustomModel, setNewCustomModel] = useState('')
   
-  const { availableOpenAIModels } = useLLMStore()
+  const { availableOpenAIModels, customOpenAIModels, addCustomOpenAIModel, removeCustomOpenAIModel } = useLLMStore()
 
   // Update local state when config changes (e.g., when loaded from backend)
   useEffect(() => {
@@ -1151,7 +1153,31 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
     onUpdate({ ...config, api_key: newApiKey })
   }
 
-  const allModels = availableOpenAIModels
+  // Combine backend models, constant models, and custom models (deduplicated)
+  const allModels = Array.from(new Set([
+    ...OPENAI_MODELS,
+    ...availableOpenAIModels,
+    ...customOpenAIModels
+  ]))
+
+  const handleAddCustomModel = () => {
+    if (newCustomModel.trim() && !allModels.includes(newCustomModel.trim())) {
+      addCustomOpenAIModel(newCustomModel.trim())
+      setNewCustomModel('')
+      
+      // Refresh available LLMs in the store to sync with ChatInput
+      const { refreshAvailableLLMs } = useLLMStore.getState()
+      refreshAvailableLLMs()
+    }
+  }
+  
+  const handleRemoveCustomModel = (model: string) => {
+    removeCustomOpenAIModel(model)
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
+  }
 
   return (
     <div className="space-y-6">
@@ -1264,6 +1290,55 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
               ))}
             </select>
           </div>
+        </div>
+      </Card>
+
+      {/* Custom Models */}
+      <Card className="p-4">
+        <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
+        
+        {/* Add Custom Model */}
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newCustomModel}
+              onChange={(e) => setNewCustomModel(e.target.value)}
+              placeholder="Enter custom model ID (e.g., gpt-4.1, gpt-4-turbo)"
+              className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+              onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()}
+            />
+            <Button
+              onClick={handleAddCustomModel}
+              disabled={!newCustomModel.trim() || allModels.includes(newCustomModel.trim())}
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          
+          {/* Custom Models List */}
+          {customOpenAIModels.length > 0 && (
+            <div className="space-y-2">
+              <h5 className="text-sm font-medium text-muted-foreground">Custom Models:</h5>
+              <div className="space-y-1">
+                {customOpenAIModels.map((model) => (
+                  <div key={model} className="flex items-center justify-between bg-muted/50 p-2 rounded-md">
+                    <span className="text-sm text-foreground font-mono">{model}</span>
+                    <Button
+                      onClick={() => handleRemoveCustomModel(model)}
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 

@@ -3,6 +3,7 @@ package todo_execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/shared"
+	todo_creation_human "mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 
 	"mcp-agent/agent_go/internal/llmtypes"
 )
@@ -94,6 +96,23 @@ type TodoStepsExtractedEvent struct {
 // GetEventType implements events.EventData interface
 func (e *TodoStepsExtractedEvent) GetEventType() events.EventType {
 	return events.TodoStepsExtracted
+}
+
+// ValidationFeedback represents combined issues and recommendations from validation
+type ValidationFeedback struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"` // HIGH/MEDIUM/LOW
+}
+
+// ValidationResponse represents the structured response from validation analysis
+type ValidationResponse struct {
+	IsSuccessCriteriaMet bool                 `json:"is_success_criteria_met"`
+	ExecutionStatus      string               `json:"execution_status"` // COMPLETED/PARTIAL/FAILED/INCOMPLETE
+	Reasoning            string               `json:"reasoning"`
+	Feedback             []ValidationFeedback `json:"feedback"`
+	LoopConditionMet     bool                 `json:"loop_condition_met"` // For loop steps: whether loop condition is met
+	LoopReasoning        string               `json:"loop_reasoning"`     // For loop steps: reasoning for loop condition check
 }
 
 // Variable represents a single variable definition
@@ -182,9 +201,21 @@ func (teo *TodoExecutionOrchestrator) ExecuteTodos(ctx context.Context, objectiv
 	teo.SetWorkspacePath(runWorkspacePath)
 
 	// Load variables from variables.json if it exists (optional - variables may not exist)
-	if err := teo.loadVariableValues(ctx, workspacePath); err != nil {
+	// First check runs folder, then fallback to workspace root
+	if err := teo.loadVariableValues(ctx, workspacePath, runWorkspacePath); err != nil {
 		teo.GetLogger().Infof("⚠️ Could not load variables (this is optional): %v", err)
 		// Continue execution even if variables don't exist
+	} else {
+		// If variables were loaded, request user review/editing
+		if teo.variablesManifest != nil && len(teo.variablesManifest.Variables) > 0 {
+			updated, err := teo.requestVariableReview(ctx, runWorkspacePath)
+			if err != nil {
+				return "", fmt.Errorf("failed to review variables: %w", err)
+			}
+			if updated {
+				teo.GetLogger().Infof("✅ Variables were updated by user")
+			}
+		}
 	}
 
 	// Read todo_final.json directly from workspace root
@@ -396,21 +427,35 @@ func (teo *TodoExecutionOrchestrator) runStepExecutionPhase(ctx context.Context,
 		return "", nil, fmt.Errorf("failed to create execution agent: %w", err)
 	}
 
+	// Convert SuccessPatterns and FailurePatterns to LearningAgentOutput format
+	// (format expected by todo_creation_human execution agent)
+	var learningAgentOutput strings.Builder
+	if len(step.SuccessPatterns) > 0 {
+		learningAgentOutput.WriteString("**Success Patterns (Follow These):**\n")
+		for _, pattern := range step.SuccessPatterns {
+			learningAgentOutput.WriteString(fmt.Sprintf("- %s\n", pattern))
+		}
+		learningAgentOutput.WriteString("\n")
+	}
+	if len(step.FailurePatterns) > 0 {
+		learningAgentOutput.WriteString("**Failure Patterns (Avoid These):**\n")
+		for _, pattern := range step.FailurePatterns {
+			learningAgentOutput.WriteString(fmt.Sprintf("- %s\n", pattern))
+		}
+	}
+
 	// Prepare template variables for this specific step
+	// Map to format expected by HumanControlledTodoPlannerExecutionAgent
 	templateVars := map[string]string{
-		"StepNumber":              fmt.Sprintf("%d", stepNumber),
-		"TotalSteps":              fmt.Sprintf("%d", totalSteps),
 		"StepTitle":               step.Title,
 		"StepDescription":         step.Description,
 		"StepSuccessCriteria":     step.SuccessCriteria,
 		"StepContextDependencies": strings.Join(step.ContextDependencies, ", "),
 		"StepContextOutput":       step.ContextOutput,
-		"StepSuccessPatterns":     strings.Join(step.SuccessPatterns, "\n- "),
-		"StepFailurePatterns":     strings.Join(step.FailurePatterns, "\n- "),
 		"WorkspacePath":           teo.GetWorkspacePath(), // This now includes runs/{folder}
-		"RunOption":               runOption,
-		"PreviousFeedback":        previousFeedback,
+		"ValidationFeedback":      previousFeedback,       // Map PreviousFeedback to ValidationFeedback
 		"PreviousIterationOutput": previousIterationOutput,
+		"LearningAgentOutput":     learningAgentOutput.String(), // Convert SuccessPatterns/FailurePatterns to LearningAgentOutput
 		"HasLoop":                 fmt.Sprintf("%v", step.HasLoop),
 		"LoopCondition":           step.LoopCondition,
 		"LoopDescription":         step.LoopDescription,
@@ -444,25 +489,26 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 		return nil, fmt.Errorf("failed to create validation agent: %w", err)
 	}
 
-	// Cast to TodoValidationAgent to access ExecuteStructured method
-	todoValidationAgent, ok := validationAgent.(*TodoValidationAgent)
+	// Cast to HumanControlledTodoPlannerValidationAgent to access ExecuteStructured method
+	todoValidationAgent, ok := validationAgent.(*todo_creation_human.HumanControlledTodoPlannerValidationAgent)
 	if !ok {
-		return nil, fmt.Errorf("failed to cast validation agent to TodoValidationAgent")
+		return nil, fmt.Errorf("failed to cast validation agent to HumanControlledTodoPlannerValidationAgent")
 	}
 
 	// Format conversation history as string for template variable
 	conversationHistoryStr := shared.FormatConversationHistory(conversationHistory)
 
 	// Prepare template variables for this specific step
+	// Map to format expected by HumanControlledTodoPlannerValidationAgent
 	templateVars := map[string]string{
-		"StepNumber":          fmt.Sprintf("%d", stepNumber),
-		"TotalSteps":          fmt.Sprintf("%d", totalSteps),
-		"StepTitle":           step.Title,
-		"StepDescription":     step.Description,
-		"StepSuccessCriteria": step.SuccessCriteria,
-		"WorkspacePath":       teo.GetWorkspacePath(), // This now includes runs/{folder}
-		"ExecutionOutput":     conversationHistoryStr, // Pass conversation history instead of just result
-		"LoopCondition":       step.LoopCondition,     // For loop steps: condition to check
+		"StepTitle":               step.Title,
+		"StepDescription":         step.Description,
+		"StepSuccessCriteria":     step.SuccessCriteria,
+		"StepContextDependencies": strings.Join(step.ContextDependencies, ", "),
+		"StepContextOutput":       step.ContextOutput,
+		"WorkspacePath":           teo.GetWorkspacePath(), // This now includes runs/{folder}
+		"ExecutionHistory":        conversationHistoryStr, // Map ExecutionOutput to ExecutionHistory
+		"LoopCondition":           step.LoopCondition,     // For loop steps: condition to check
 	}
 
 	validationResponse, _, err := todoValidationAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
@@ -470,14 +516,36 @@ func (teo *TodoExecutionOrchestrator) runStepValidationPhase(ctx context.Context
 		return nil, fmt.Errorf("step %d validation failed: %w", stepNumber, err)
 	}
 
-	return validationResponse, nil
+	// Convert todo_creation_human.ValidationResponse to todo_execution.ValidationResponse
+	// (They have the same structure, so we can just return it directly)
+	return &ValidationResponse{
+		IsSuccessCriteriaMet: validationResponse.IsSuccessCriteriaMet,
+		ExecutionStatus:      validationResponse.ExecutionStatus,
+		Reasoning:            validationResponse.Reasoning,
+		Feedback:             convertValidationFeedback(validationResponse.Feedback),
+		LoopConditionMet:     validationResponse.LoopConditionMet,
+		LoopReasoning:        validationResponse.LoopReasoning,
+	}, nil
+}
+
+// convertValidationFeedback converts todo_creation_human.ValidationFeedback to todo_execution.ValidationFeedback
+func convertValidationFeedback(feedback []todo_creation_human.ValidationFeedback) []ValidationFeedback {
+	result := make([]ValidationFeedback, len(feedback))
+	for i, f := range feedback {
+		result[i] = ValidationFeedback{
+			Type:        f.Type,
+			Description: f.Description,
+			Severity:    f.Severity,
+		}
+	}
+	return result
 }
 
 // formatStepResults removed; returning simple completion message instead
 
 // Agent creation methods
 func (teo *TodoExecutionOrchestrator) createExecutionAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Use combined standardized agent creation and setup
+	// Reuse the execution agent from todo_creation_human
 	agent, err := teo.CreateAndSetupStandardAgent(
 		ctx,
 		"todo_execution",
@@ -487,7 +555,7 @@ func (teo *TodoExecutionOrchestrator) createExecutionAgent(ctx context.Context, 
 		teo.GetMaxTurns(),
 		agents.OutputFormatStructured,
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewTodoExecutionAgent(config, logger, tracer, eventBridge)
+			return todo_creation_human.NewHumanControlledTodoPlannerExecutionAgent(config, logger, tracer, eventBridge)
 		},
 		teo.WorkspaceTools,
 		teo.WorkspaceToolExecutors,
@@ -500,8 +568,7 @@ func (teo *TodoExecutionOrchestrator) createExecutionAgent(ctx context.Context, 
 }
 
 func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Use combined standardized agent creation and setup with no MCP servers
-	// Validation agent only reads execution outputs and writes validation reports using workspace tools
+	// Reuse the validation agent from todo_creation_human
 	agent, err := teo.CreateAndSetupStandardAgentWithCustomServers(
 		ctx,
 		"validation-agent",
@@ -512,7 +579,7 @@ func (teo *TodoExecutionOrchestrator) createValidationAgent(ctx context.Context,
 		agents.OutputFormatStructured,
 		[]string{mcpclient.NoServers}, // No MCP servers - validation agent only uses workspace tools to read/write files
 		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewTodoValidationAgent(config, logger, tracer, eventBridge)
+			return todo_creation_human.NewHumanControlledTodoPlannerValidationAgent(config, logger, tracer, eventBridge)
 		},
 		teo.WorkspaceTools,
 		teo.WorkspaceToolExecutors,
@@ -727,12 +794,21 @@ func (teo *TodoExecutionOrchestrator) emitTodoStepsExtractedEvent(ctx context.Co
 }
 
 // loadVariableValues loads runtime variable values from variables.json
-func (teo *TodoExecutionOrchestrator) loadVariableValues(ctx context.Context, workspacePath string) error {
-	// Load variable values from variables.json
-	variablesPath := filepath.Join(workspacePath, "variables", "variables.json")
-	variablesContent, err := teo.ReadWorkspaceFile(ctx, variablesPath)
+// First checks runs folder, then falls back to todo_creation_human folder
+func (teo *TodoExecutionOrchestrator) loadVariableValues(ctx context.Context, workspacePath, runWorkspacePath string) error {
+	// Try to load from runs folder first
+	runVariablesPath := filepath.Join(runWorkspacePath, "variables", "variables.json")
+	variablesContent, err := teo.ReadWorkspaceFile(ctx, runVariablesPath)
 	if err != nil {
-		return fmt.Errorf("variables.json not found (this is optional): %w", err)
+		// Fallback to todo_creation_human folder (where variables are created)
+		todoCreationVariablesPath := filepath.Join(workspacePath, "todo_creation_human", "variables", "variables.json")
+		variablesContent, err = teo.ReadWorkspaceFile(ctx, todoCreationVariablesPath)
+		if err != nil {
+			return fmt.Errorf("variables.json not found in runs folder or todo_creation_human folder (this is optional): %w", err)
+		}
+		teo.GetLogger().Infof("📁 Loaded variables from todo_creation_human folder: %s", todoCreationVariablesPath)
+	} else {
+		teo.GetLogger().Infof("📁 Loaded variables from runs folder: %s", runVariablesPath)
 	}
 
 	// Parse variables.json to get current values
@@ -812,6 +888,197 @@ func (teo *TodoExecutionOrchestrator) formatVariableValues() string {
 		builder.WriteString(fmt.Sprintf("- {{%s}} = %s - %s\n", variable.Name, actualValue, variable.Description))
 	}
 	return builder.String()
+}
+
+// requestVariableReview requests human review and optional editing of variables
+// Returns: (updated bool, error) - true if variables were updated, false if approved as-is
+func (teo *TodoExecutionOrchestrator) requestVariableReview(ctx context.Context, runWorkspacePath string) (bool, error) {
+	teo.GetLogger().Infof("⏸️ Requesting human review for %d variables", len(teo.variablesManifest.Variables))
+
+	// Format variables for display
+	var variablesSummary strings.Builder
+	variablesSummary.WriteString(fmt.Sprintf("**Current Variables (%d):**\n\n", len(teo.variablesManifest.Variables)))
+
+	for _, variable := range teo.variablesManifest.Variables {
+		variablesSummary.WriteString(fmt.Sprintf("- **{{%s}}**: %s\n", variable.Name, variable.Description))
+		variablesSummary.WriteString(fmt.Sprintf("  - Current Value: `%s`\n", variable.Value))
+		variablesSummary.WriteString("\n")
+	}
+
+	variablesSummary.WriteString("\n**Instructions:**\n")
+	variablesSummary.WriteString("- Click **Approve** to use these variables as-is\n")
+	variablesSummary.WriteString("- Or provide new variable values in the text field below\n")
+	variablesSummary.WriteString("- Format: `VARIABLE_NAME=new_value` (one per line)\n")
+	variablesSummary.WriteString("- Example:\n")
+	variablesSummary.WriteString("  ```\n")
+	variablesSummary.WriteString("  AWS_ACCOUNT_ID=999999999999\n")
+	variablesSummary.WriteString("  GITHUB_REPO_URL=https://github.com/new/repo\n")
+	variablesSummary.WriteString("  ```\n")
+
+	// Generate unique request ID
+	requestID := fmt.Sprintf("variable_review_%d", time.Now().UnixNano())
+
+	// Request human feedback
+	approved, feedback, err := teo.RequestHumanFeedback(
+		ctx,
+		requestID,
+		"Review the variables below. Approve to use them as-is, or provide updated values in the text field.",
+		variablesSummary.String(),
+		"todo_execution_session",
+		teo.GetObjective(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to request variable review: %w", err)
+	}
+
+	// If approved without feedback, use variables as-is
+	if approved || strings.TrimSpace(feedback) == "" {
+		teo.GetLogger().Infof("✅ Variables approved as-is")
+		return false, nil
+	}
+
+	// User provided feedback - check if it contains variable updates
+	feedback = strings.TrimSpace(feedback)
+	if feedback == "" || feedback == "Approve" {
+		teo.GetLogger().Infof("✅ Variables approved as-is")
+		return false, nil
+	}
+
+	// User provided feedback - try to extract variables and update
+	teo.GetLogger().Infof("🔄 User provided variable updates: %s", feedback)
+
+	// Run variable extraction phase with user feedback
+	updatedManifest, err := teo.runVariableExtractionPhase(ctx, feedback, runWorkspacePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to update variables: %w", err)
+	}
+
+	// Update variables in orchestrator
+	teo.variablesManifest = updatedManifest
+	teo.variableValues = make(map[string]string)
+	for _, variable := range updatedManifest.Variables {
+		teo.variableValues[variable.Name] = variable.Value
+	}
+
+	// Save updated variables to runs folder
+	if err := teo.saveVariableValues(ctx, runWorkspacePath); err != nil {
+		teo.GetLogger().Warnf("⚠️ Failed to save updated variables: %v", err)
+		// Continue anyway - variables are in memory
+	}
+
+	teo.GetLogger().Infof("✅ Variables updated: %d variables", len(updatedManifest.Variables))
+	return true, nil
+}
+
+// runVariableExtractionPhase runs the variable extraction agent with user feedback to update variables
+func (teo *TodoExecutionOrchestrator) runVariableExtractionPhase(ctx context.Context, userFeedback string, runWorkspacePath string) (*VariablesManifest, error) {
+	teo.GetLogger().Infof("🔍 Running variable extraction phase with user feedback")
+
+	// Create variable extraction agent
+	extractionAgent, err := teo.createVariableExtractionAgent(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create variable extraction agent: %w", err)
+	}
+
+	// Prepare template variables - use the current objective and run workspace path
+	extractionTemplateVars := map[string]string{
+		"Objective":     teo.GetObjective(),
+		"WorkspacePath": runWorkspacePath,
+	}
+
+	// Use user feedback as the user message
+	// The feedback should contain variable updates like "AWS_ACCOUNT_ID=999999"
+	userMessage := fmt.Sprintf("Update variables based on the following user feedback:\n\n%s\n\nExtract and update variables from the objective, incorporating the user's changes. Call submit_variable_extraction_response tool with the structured output.", userFeedback)
+
+	// Execute variable extraction using structured output via tool
+	extractionAgentTyped, ok := extractionAgent.(*todo_creation_human.VariableExtractionAgent)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast variable extraction agent to correct type")
+	}
+
+	// Start with empty conversation history
+	var conversationHistory []llmtypes.MessageContent
+	manifest, updatedHistory, err := extractionAgentTyped.ExecuteStructured(ctx, extractionTemplateVars, conversationHistory, userMessage)
+	if err != nil {
+		// Check if this is a non-structured response error
+		if agents.IsNonStructuredResponseError(err) {
+			var nonStructuredErr *agents.NonStructuredResponseError
+			if errors.As(err, &nonStructuredErr) {
+				teo.GetLogger().Warnf("⚠️ Variable extraction agent returned text response instead of structured output: %s", nonStructuredErr.TextResponse)
+				return nil, fmt.Errorf("variable extraction agent returned text response: %s", nonStructuredErr.TextResponse)
+			}
+		}
+		return nil, fmt.Errorf("variable extraction failed: %w", err)
+	}
+
+	teo.GetLogger().Infof("✅ Variable extraction completed: %d variables extracted (conversation has %d messages)", len(manifest.Variables), len(updatedHistory))
+
+	// Convert todo_creation_human.VariablesManifest to todo_execution.VariablesManifest
+	result := &VariablesManifest{
+		Objective:      manifest.Objective,
+		ExtractionDate: manifest.ExtractionDate,
+		Variables:      make([]Variable, len(manifest.Variables)),
+	}
+	for i, v := range manifest.Variables {
+		result.Variables[i] = Variable{
+			Name:        v.Name,
+			Value:       v.Value,
+			Description: v.Description,
+		}
+	}
+
+	return result, nil
+}
+
+// createVariableExtractionAgent creates the variable extraction agent
+func (teo *TodoExecutionOrchestrator) createVariableExtractionAgent(ctx context.Context) (agents.OrchestratorAgent, error) {
+	// Use combined standardized agent creation and setup with no MCP servers
+	// Variable extraction agent only uses workspace tools to read/write files
+	agent, err := teo.CreateAndSetupStandardAgentWithCustomServers(
+		ctx,
+		"variable-extraction-agent",
+		"variable_extraction",
+		0, // No step number
+		0, // No iteration
+		teo.GetMaxTurns(),
+		agents.OutputFormatStructured,
+		[]string{mcpclient.NoServers}, // No MCP servers - variable extraction agent only uses workspace tools
+		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return todo_creation_human.NewVariableExtractionAgent(config, logger, tracer, eventBridge)
+		},
+		teo.WorkspaceTools,
+		teo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return agent, nil
+}
+
+// saveVariableValues saves the current variable values to variables.json in the runs folder
+func (teo *TodoExecutionOrchestrator) saveVariableValues(ctx context.Context, runWorkspacePath string) error {
+	if teo.variablesManifest == nil {
+		return fmt.Errorf("no variables manifest to save")
+	}
+
+	// Update extraction date to current time
+	teo.variablesManifest.ExtractionDate = time.Now().Format(time.RFC3339)
+
+	// Marshal to JSON
+	variablesJSON, err := json.MarshalIndent(teo.variablesManifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal variables manifest to JSON: %w", err)
+	}
+
+	// Save to runs folder
+	variablesPath := filepath.Join(runWorkspacePath, "variables", "variables.json")
+	if err := teo.WriteWorkspaceFile(ctx, variablesPath, string(variablesJSON)); err != nil {
+		return fmt.Errorf("failed to save variables.json to runs folder: %w", err)
+	}
+
+	teo.GetLogger().Infof("💾 Saved variables.json to runs folder: %s", variablesPath)
+	return nil
 }
 
 // requestStepsApproval requests human approval for extracted steps before execution

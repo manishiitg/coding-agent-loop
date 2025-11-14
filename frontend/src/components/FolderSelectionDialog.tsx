@@ -11,7 +11,7 @@ interface FolderSelectionDialogProps {
   onSelectFolder: (folder: PlannerFile) => void
   searchQuery: string
   position: { top: number; left: number }
-  agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow' // Add agent mode to filter folders
+  agentMode?: 'simple' | 'ReAct' | 'workflow' // Add agent mode to filter folders
 }
 
 export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
@@ -71,7 +71,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
       return 'Workflow'
     }
     
-    if (agentMode === 'orchestrator') {
+    if (false) { // Orchestrator mode removed
       return 'Tasks'
     }
     
@@ -231,7 +231,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
       fileList.forEach(file => {
         if (file.type === 'folder') {
           // Auto-expand root level folders for workflow/tasks modes
-          if (agentMode === 'workflow' || agentMode === 'orchestrator') {
+          if (agentMode === 'workflow') {
             const targetPrefix = agentMode === 'workflow' ? 'Workflow/' : 'Tasks/'
             if (file.filepath === targetPrefix.slice(0, -1)) {
               newExpanded.add(file.filepath)
@@ -544,9 +544,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Search className="w-4 h-4" />
           <span>
-            {agentMode === 'workflow' ? 'Select Workflow Folder' : 
-             agentMode === 'orchestrator' ? 'Select Tasks Folder' : 
-             'Select folder'}
+            {agentMode === 'workflow' ? 'Select Workflow Folder' : 'Select folder'}
           </span>
           {searchQuery && (
             <span className="text-muted-foreground">• {filteredFolders.length} folders</span>
@@ -557,7 +555,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
             Showing folders inside Workflow/
           </p>
         )}
-        {agentMode === 'orchestrator' && (
+        {false && ( // Orchestrator mode removed
           <p className="text-xs text-muted-foreground mt-1">
             Showing folders inside Tasks/
           </p>
@@ -623,7 +621,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
           <span>Create New Folder</span>
         </button>
         
-        {agentMode && (agentMode === 'workflow' || agentMode === 'orchestrator') && (
+        {agentMode === 'workflow' && (
           <p className="text-xs text-muted-foreground mt-1 text-center">
             Will be created in {agentMode === 'workflow' ? 'Workflow/' : 'Tasks/'}
           </p>

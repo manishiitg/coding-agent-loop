@@ -474,6 +474,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// Non-empty selectedTools array means "use only these specific tools"
 	// IMPORTANT: If a server is in selectedServers but has NO tools in selectedTools,
 	// it means "use ALL tools from that server" (all tools mode for that server)
+	// Also supports "server:*" pattern to explicitly request all tools from a server
 	if len(ag.selectedTools) > 0 {
 		logger.Infof("🔧 Tool filtering active: %d specific tools selected", len(ag.selectedTools))
 
@@ -483,17 +484,27 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 			selectedToolSet[fullName] = true
 		}
 
-		// Build map of which servers have specific tools
+		// Build map of servers that have "all tools" pattern (server:*)
+		serversWithAllTools := make(map[string]bool)
+		// Build map of which servers have specific tools (not "all tools")
 		serversWithSpecificTools := make(map[string]bool)
 		for _, fullName := range ag.selectedTools {
-			// Parse "server:tool" format
+			// Parse "server:tool" or "server:*" format
 			parts := strings.SplitN(fullName, ":", 2)
 			if len(parts) == 2 {
-				serversWithSpecificTools[parts[0]] = true
+				serverName := parts[0]
+				toolName := parts[1]
+				if toolName == "*" {
+					// "server:*" means all tools from this server
+					serversWithAllTools[serverName] = true
+				} else {
+					// Specific tool selected
+					serversWithSpecificTools[serverName] = true
+				}
 			}
 		}
 
-		// Filter tools: include specific tools OR all tools from servers without specific tools
+		// Filter tools: include specific tools OR all tools from servers with "*" pattern
 		var filteredTools []llmtypes.Tool
 		for _, tool := range allLLMTools {
 			// Get server name for this tool
@@ -504,18 +515,19 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 				continue
 			}
 
-			// Check if this server has specific tools selected
-			hasSpecificTools := serversWithSpecificTools[serverName]
-
-			if hasSpecificTools {
+			// Check if this server has "all tools" pattern
+			if serversWithAllTools[serverName] {
+				// Server has "server:*" pattern - include ALL tools from this server
+				filteredTools = append(filteredTools, tool)
+			} else if serversWithSpecificTools[serverName] {
 				// Server has specific tools - check if this tool is selected
 				fullName := fmt.Sprintf("%s:%s", serverName, tool.Function.Name)
 				if selectedToolSet[fullName] {
 					filteredTools = append(filteredTools, tool)
 				}
 			} else {
-				// Server has no specific tools - include ALL tools from this server
-				// (this is "all tools" mode for this server)
+				// Server has no tools in selectedTools - include ALL tools from this server
+				// (this is "all tools" mode for this server when it's in selectedServers)
 				filteredTools = append(filteredTools, tool)
 			}
 		}

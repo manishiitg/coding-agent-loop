@@ -74,6 +74,10 @@ type BaseOrchestrator struct {
 	// Optional simple state (for workflow orchestrators)
 	objective     string
 	workspacePath string
+
+	// Folder guard paths for fine-grained access control
+	folderGuardReadPaths  []string
+	folderGuardWritePaths []string
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -230,6 +234,21 @@ func (bo *BaseOrchestrator) GetWorkspacePath() string {
 // SetWorkspacePath sets the workspace path
 func (bo *BaseOrchestrator) SetWorkspacePath(workspacePath string) {
 	bo.workspacePath = workspacePath
+}
+
+// SetWorkspacePathForFolderGuard sets separate read and write paths for folder guard validation
+// If both arrays are empty, folder guard validation is disabled (allows all paths)
+func (bo *BaseOrchestrator) SetWorkspacePathForFolderGuard(readPaths []string, writePaths []string) {
+	if len(readPaths) == 0 && len(writePaths) == 0 {
+		// Empty arrays disable folder guard
+		bo.folderGuardReadPaths = nil
+		bo.folderGuardWritePaths = nil
+		bo.GetLogger().Infof("🔓 Folder guard disabled (empty read/write paths)")
+	} else {
+		bo.folderGuardReadPaths = readPaths
+		bo.folderGuardWritePaths = writePaths
+		bo.GetLogger().Infof("🔒 Folder guard enabled - Read paths: %v, Write paths: %v", readPaths, writePaths)
+	}
 }
 
 // GetContextAwareBridge returns the context-aware event bridge
@@ -393,6 +412,54 @@ func validatePathInWorkspace(workspacePath, inputPath string) error {
 	return nil
 }
 
+// validatePathInAllowedPaths validates that the input path is within any of the allowed paths
+// If allowedPaths is empty/nil, returns nil (allows all paths)
+func validatePathInAllowedPaths(allowedPaths []string, inputPath string) error {
+	// Empty array means disable folder guard - allow all paths
+	if len(allowedPaths) == 0 {
+		return nil
+	}
+
+	// Check against each allowed path
+	for _, allowedPath := range allowedPaths {
+		if err := validatePathInWorkspace(allowedPath, inputPath); err == nil {
+			// Path is valid within this allowed path
+			return nil
+		}
+	}
+
+	// Path is not valid within any allowed path
+	return fmt.Errorf("path '%s' is not within any of the allowed paths: %v", inputPath, allowedPaths)
+}
+
+// normalizePathForAllowedPaths normalizes a path relative to the first matching allowed path
+// Returns the normalized path and the matching allowed path index
+func normalizePathForAllowedPaths(allowedPaths []string, inputPath string) (string, int, error) {
+	// Empty array means disable folder guard - return path as-is
+	if len(allowedPaths) == 0 {
+		return inputPath, -1, nil
+	}
+
+	// Find first matching allowed path
+	for i, allowedPath := range allowedPaths {
+		if err := validatePathInWorkspace(allowedPath, inputPath); err == nil {
+			// Path matches this allowed path - normalize relative to it
+			normalizedPath, err := normalizePathForWorkspace(allowedPath, inputPath)
+			if err != nil {
+				return "", -1, err
+			}
+			return normalizedPath, i, nil
+		}
+	}
+
+	// No match found - use first allowed path as base for normalization
+	normalizedPath, err := normalizePathForWorkspace(allowedPaths[0], inputPath)
+	if err != nil {
+		return "", -1, err
+	}
+	return normalizedPath, 0, nil
+}
+
 // normalizePathForWorkspace normalizes a path to be workspace-relative
 // Returns a workspace-relative path (e.g., "." becomes "", "subfolder" stays "subfolder", absolute paths become relative)
 func normalizePathForWorkspace(workspacePath, inputPath string) (string, error) {
@@ -440,26 +507,43 @@ func normalizePathForWorkspace(workspacePath, inputPath string) (string, error) 
 	return rel, nil
 }
 
-// wrapWorkspaceToolsWithFolderGuard wraps workspace tool executors with path validation
-// Only wraps if workspacePath is set. Tools without path parameters are passed through unchanged.
-func (bo *BaseOrchestrator) wrapWorkspaceToolsWithFolderGuard(executors map[string]interface{}) map[string]interface{} {
+// WrapWorkspaceToolsWithFolderGuard wraps workspace tool executors with path validation
+// Uses folderGuardReadPaths and folderGuardWritePaths if set, otherwise falls back to workspacePath
+func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[string]interface{}) map[string]interface{} {
+	// Check if folder guard paths are set
+	useFolderGuardPaths := len(bo.folderGuardReadPaths) > 0 || len(bo.folderGuardWritePaths) > 0
 	workspacePath := bo.GetWorkspacePath()
-	if workspacePath == "" {
-		// No workspace path set - return executors unchanged
+
+	// If no folder guard paths and no workspace path, return executors unchanged
+	if !useFolderGuardPaths && workspacePath == "" {
 		return executors
 	}
 
 	// Tools that need path validation with their parameter names
-	toolsToValidate := map[string][]string{
+	// Classify as read-only or write operations
+	readOnlyTools := map[string][]string{
 		"read_workspace_file":             {"filepath"},
-		"update_workspace_file":           {"filepath"},
-		"diff_patch_workspace_file":       {"filepath"},
-		"delete_workspace_file":           {"filepath"},
-		"move_workspace_file":             {"source_filepath", "destination_filepath"},
 		"list_workspace_files":            {"folder"},
 		"regex_search_workspace_files":    {"folder"},
 		"semantic_search_workspace_files": {"folder"},
 		"execute_shell_command":           {"working_directory"},
+	}
+
+	writeTools := map[string][]string{
+		"update_workspace_file":     {"filepath"},
+		"diff_patch_workspace_file": {"filepath"},
+		"delete_workspace_file":     {"filepath"},
+		"write_workspace_file":      {"filepath"},
+		"move_workspace_file":       {"source_filepath", "destination_filepath"}, // Both use writePaths
+	}
+
+	// Combine all tools for iteration
+	toolsToValidate := make(map[string][]string)
+	for tool, params := range readOnlyTools {
+		toolsToValidate[tool] = params
+	}
+	for tool, params := range writeTools {
+		toolsToValidate[tool] = params
 	}
 
 	wrappedExecutors := make(map[string]interface{})
@@ -481,10 +565,64 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithFolderGuard(executors map[stri
 			continue
 		}
 
+		// Determine if this is a read-only or write tool
+		_, isReadOnly := readOnlyTools[toolName]
+		_, isWrite := writeTools[toolName]
+
 		// Create wrapper function with proper variable capture
 		toolNameCopy := toolName
 		paramsToValidateCopy := paramsToValidate
+		isReadOnlyCopy := isReadOnly
+		isWriteCopy := isWrite
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// Determine which paths to use for validation
+			var allowedPaths []string
+			var pathType string
+
+			if useFolderGuardPaths {
+				if isWriteCopy {
+					// Write operations use writePaths only
+					allowedPaths = bo.folderGuardWritePaths
+					pathType = "write"
+				} else if isReadOnlyCopy {
+					// Read operations can use both readPaths AND writePaths (if you can write, you can read)
+					// Combine readPaths and writePaths, removing duplicates
+					allowedPathsMap := make(map[string]bool)
+					for _, path := range bo.folderGuardReadPaths {
+						allowedPathsMap[path] = true
+					}
+					for _, path := range bo.folderGuardWritePaths {
+						allowedPathsMap[path] = true
+					}
+					// Convert map back to slice
+					allowedPaths = make([]string, 0, len(allowedPathsMap))
+					for path := range allowedPathsMap {
+						allowedPaths = append(allowedPaths, path)
+					}
+					pathType = "read"
+				} else {
+					// Unknown tool type - use readPaths + writePaths as default (read-like behavior)
+					allowedPathsMap := make(map[string]bool)
+					for _, path := range bo.folderGuardReadPaths {
+						allowedPathsMap[path] = true
+					}
+					for _, path := range bo.folderGuardWritePaths {
+						allowedPathsMap[path] = true
+					}
+					allowedPaths = make([]string, 0, len(allowedPathsMap))
+					for path := range allowedPathsMap {
+						allowedPaths = append(allowedPaths, path)
+					}
+					pathType = "read"
+				}
+			} else {
+				// Fallback to workspacePath (single path mode)
+				if workspacePath != "" {
+					allowedPaths = []string{workspacePath}
+					pathType = "workspace"
+				}
+			}
+
 			// Validate and normalize all path parameters
 			for _, paramName := range paramsToValidateCopy {
 				if paramValue, exists := args[paramName]; exists {
@@ -495,22 +633,28 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithFolderGuard(executors map[stri
 							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '' (workspace root)", toolNameCopy, paramName, pathStr)
 							continue
 						}
-						// First validate the path
-						bo.GetLogger().Infof("🔒 Validating path for tool %s, parameter %s: workspace='%s', input='%s'", toolNameCopy, paramName, workspacePath, pathStr)
-						if err := validatePathInWorkspace(workspacePath, pathStr); err != nil {
+
+						// Validate the path against allowed paths
+						bo.GetLogger().Infof("🔒 Validating path for tool %s, parameter %s: type=%s, paths=%v, input='%s'", toolNameCopy, paramName, pathType, allowedPaths, pathStr)
+						if err := validatePathInAllowedPaths(allowedPaths, pathStr); err != nil {
 							bo.GetLogger().Warnf("⚠️ Path validation failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
 							return "", err
 						}
-						bo.GetLogger().Infof("✅ Path validation passed for tool %s, parameter %s", toolNameCopy, paramName)
-						// Then normalize it to workspace-relative path
-						normalizedPath, err := normalizePathForWorkspace(workspacePath, pathStr)
+						bo.GetLogger().Infof("✅ Path validation passed for tool %s, parameter %s (type: %s)", toolNameCopy, paramName, pathType)
+
+						// Normalize the path
+						normalizedPath, matchedIndex, err := normalizePathForAllowedPaths(allowedPaths, pathStr)
 						if err != nil {
 							bo.GetLogger().Warnf("⚠️ Path normalization failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
 							return "", err
 						}
+						if matchedIndex >= 0 {
+							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s' (matched path index: %d)", toolNameCopy, paramName, pathStr, normalizedPath, matchedIndex)
+						} else {
+							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s' (no folder guard)", toolNameCopy, paramName, pathStr, normalizedPath)
+						}
 						// Update the args with normalized path
 						args[paramName] = normalizedPath
-						bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s'", toolNameCopy, paramName, pathStr, normalizedPath)
 					}
 				}
 			}
@@ -541,6 +685,12 @@ func (bo *BaseOrchestrator) CreateStandardAgentConfigWithCustomServers(agentName
 
 	bo.GetLogger().Infof("🔧 Created agent config for %s with custom MCP servers: %v", agentName, customServers)
 	return config
+}
+
+// CreateStandardAgentConfigWithLLM creates a standardized agent configuration with custom LLM config
+// This allows specific agents to override the default LLM configuration
+func (bo *BaseOrchestrator) CreateStandardAgentConfigWithLLM(agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
+	return bo.createAgentConfigWithLLM(agentName, maxTurns, outputFormat, llmConfig)
 }
 
 // createAgentConfigWithLLM creates a generic agent configuration with detailed LLM config
@@ -641,7 +791,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
 		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
@@ -738,7 +888,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
 		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
@@ -846,7 +996,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
 		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.wrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
@@ -1456,7 +1606,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 
 	// Execute the tool call using existing workspace tool logic
 	startTime := time.Now()
-	_, err := deleteExecutor(ctx, deleteArgs)
+	result, err := deleteExecutor(ctx, deleteArgs)
 	duration := time.Since(startTime)
 
 	if err != nil {
@@ -1475,6 +1625,22 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		return fmt.Errorf("failed to delete file %s: %w", filePath, err)
 	}
 
+	// Use the result from the executor (which should be JSON)
+	// If result is empty or invalid, construct JSON from filePath
+	resultStr := result
+	if resultStr == "" {
+		// Fallback: construct JSON result
+		resultMap := map[string]interface{}{
+			"filepath": filePath,
+			"deleted":  true,
+		}
+		if jsonBytes, err := json.Marshal(resultMap); err == nil {
+			resultStr = string(jsonBytes)
+		} else {
+			resultStr = fmt.Sprintf(`{"filepath":"%s","deleted":true}`, filePath)
+		}
+	}
+
 	// Emit successful tool call end event
 	toolCallEndEvent := &events.ToolCallEndEvent{
 		BaseEventData: events.BaseEventData{
@@ -1482,7 +1648,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		},
 		Turn:       0,
 		ToolName:   "delete_workspace_file",
-		Result:     fmt.Sprintf("Successfully deleted file: %s", filePath),
+		Result:     resultStr,
 		Duration:   duration,
 		ServerName: "workspace",
 	}
@@ -1620,4 +1786,90 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 	}
 
 	return nil
+}
+
+// getToolNamesByCategory returns a set of tool names for a given category
+// This uses the actual tool creation functions as the source of truth
+func getToolNamesByCategory(category string) map[string]bool {
+	toolNames := make(map[string]bool)
+
+	switch category {
+	case "workspace_tools":
+		// Get tool names from workspace tool executors (source of truth)
+		executors := virtualtools.CreateWorkspaceToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+	case "human_tools":
+		// Get tool names from human tool executors (source of truth)
+		executors := virtualtools.CreateHumanToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+		// Future categories can be added here:
+		// case "memory_tools":
+		//     executors := virtualtools.CreateMemoryToolExecutors()
+		//     for toolName := range executors {
+		//         toolNames[toolName] = true
+		//     }
+	}
+
+	return toolNames
+}
+
+// FilterCustomToolsByCategory filters custom tools and executors based on enabled categories and/or specific tools
+// Category identification uses the actual tool creation functions as the source of truth
+//   - "workspace_tools": all tools from CreateWorkspaceToolExecutors()
+//   - "human_tools": all tools from CreateHumanToolExecutors()
+//
+// Filtering logic:
+//   - If enabledTools is specified, use only those specific tools (overrides categories)
+//   - Else if enabledCategories is specified, use all tools from those categories
+//   - Else return all tools (backward compatible - default behavior)
+func FilterCustomToolsByCategory(
+	allTools []llmtypes.Tool,
+	allExecutors map[string]interface{},
+	enabledCategories []string,
+	enabledTools []string, // NEW: specific tool names to enable
+) ([]llmtypes.Tool, map[string]interface{}) {
+	// Build a set of enabled tool names
+	enabledToolNames := make(map[string]bool)
+
+	// Priority: specific tools override categories
+	if len(enabledTools) > 0 {
+		// Use specific tools only (overrides categories)
+		for _, toolName := range enabledTools {
+			enabledToolNames[toolName] = true
+		}
+	} else if len(enabledCategories) > 0 {
+		// Use all tools from enabled categories
+		for _, category := range enabledCategories {
+			categoryToolNames := getToolNamesByCategory(category)
+			for toolName := range categoryToolNames {
+				enabledToolNames[toolName] = true
+			}
+		}
+	} else {
+		// No filtering specified - return all tools (backward compatible)
+		return allTools, allExecutors
+	}
+
+	// Filter tools based on enabled tool names
+	var filteredTools []llmtypes.Tool
+	filteredExecutors := make(map[string]interface{})
+
+	for _, tool := range allTools {
+		toolName := tool.Function.Name
+
+		// Check if tool is in the enabled set
+		if enabledToolNames[toolName] {
+			filteredTools = append(filteredTools, tool)
+			// Include corresponding executor if it exists
+			if executor, exists := allExecutors[toolName]; exists {
+				filteredExecutors[toolName] = executor
+			}
+		}
+	}
+
+	return filteredTools, filteredExecutors
 }

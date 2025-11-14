@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Brain, ChevronDown, Check, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Brain, ChevronDown, Check, RefreshCw, Search } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -25,6 +25,22 @@ export default function LLMSelectionDropdown({
   openDirection = 'down' // Default to downward
 }: LLMSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus search input when dropdown opens
+  useEffect(() => {
+    if (isOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [isOpen]);
+
+  // Clear search when dropdown closes
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchQuery('');
+    }
+  }, [isOpen]);
 
   // Handle clicks outside and keyboard events when in modal
   useEffect(() => {
@@ -58,6 +74,19 @@ export default function LLMSelectionDropdown({
     }
     return 'Select LLM';
   };
+
+  // Filter LLMs based on search query
+  const filteredLLMs = searchQuery.trim()
+    ? availableLLMs.filter((llm) => {
+        const query = searchQuery.toLowerCase();
+        return (
+          llm.model.toLowerCase().includes(query) ||
+          llm.label.toLowerCase().includes(query) ||
+          llm.provider.toLowerCase().includes(query) ||
+          (llm.description && llm.description.toLowerCase().includes(query))
+        );
+      })
+    : availableLLMs;
 
   return (
     <TooltipProvider>
@@ -116,6 +145,22 @@ export default function LLMSelectionDropdown({
                       Select Primary LLM
                     </h3>
                     <div className="flex items-center gap-1">
+                      {/* Search Input */}
+                      <div className="relative flex items-center">
+                        <Search className="absolute left-2 w-3 h-3 text-muted-foreground pointer-events-none" />
+                        <input
+                          ref={searchInputRef}
+                          type="text"
+                          placeholder="Search..."
+                          value={searchQuery}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            setSearchQuery(e.target.value);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-6 w-24 pl-7 pr-2 text-xs bg-background border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
                       {onRefresh && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -154,10 +199,10 @@ export default function LLMSelectionDropdown({
 
                   {/* LLM List - Grouped by Provider */}
                   <div className="max-h-48 overflow-y-auto space-y-2 border-border border rounded-md p-2 bg-background">
-                    {availableLLMs.length > 0 ? (
+                    {filteredLLMs.length > 0 ? (
                       (() => {
                         // Group LLMs by provider
-                        const groupedLLMs = availableLLMs.reduce((groups, llm) => {
+                        const groupedLLMs = filteredLLMs.reduce((groups, llm) => {
                           if (!groups[llm.provider]) {
                             groups[llm.provider] = [];
                           }
@@ -173,9 +218,9 @@ export default function LLMSelectionDropdown({
                             </div>
                             
                             {/* Provider's LLMs */}
-                            {llms.map((llm) => (
+                            {llms.map((llm, index) => (
                               <div 
-                                key={`${llm.provider}-${llm.model}`}
+                                key={`${provider}-${llm.model}-${index}`}
                                 className="flex items-center space-x-2 p-2 rounded-md hover:bg-secondary cursor-pointer ml-2"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -214,6 +259,10 @@ export default function LLMSelectionDropdown({
                           </div>
                         ));
                       })()
+                    ) : availableLLMs.length > 0 ? (
+                      <div className="text-sm text-muted-foreground text-center py-4">
+                        No LLMs found matching "{searchQuery}"
+                      </div>
                     ) : (
                       <div className="text-sm text-muted-foreground text-center py-4">
                         No LLMs available. Check your configuration.

@@ -18,6 +18,31 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_execution"
 )
 
+// ExecutionMode represents the execution strategy for workflow todos
+type ExecutionMode string
+
+const (
+	SequentialExecution ExecutionMode = "sequential_execution"
+	ParallelExecution   ExecutionMode = "parallel_execution"
+)
+
+// String returns the string representation of the execution mode
+func (e ExecutionMode) String() string {
+	return string(e)
+}
+
+// GetLabel returns a human-readable label for the execution mode
+func (e ExecutionMode) GetLabel() string {
+	switch e {
+	case SequentialExecution:
+		return "Sequential Execution"
+	case ParallelExecution:
+		return "Parallel Execution"
+	default:
+		return string(e)
+	}
+}
+
 // WorkflowPhaseOption represents an option for a workflow phase
 type WorkflowPhaseOption struct {
 	ID          string `json:"id"`

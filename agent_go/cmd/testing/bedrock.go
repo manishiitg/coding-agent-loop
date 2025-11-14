@@ -55,7 +55,7 @@ func runBedrock(cmd *cobra.Command, args []string) {
 	InitTestLogger(logFile, logLevel)
 	logger := GetTestLogger()
 
-	testType := "tool calling"
+	testType := ""
 	if bedrockFlags.imagePath != "" || bedrockFlags.imageURL != "" {
 		testType = "image input"
 	} else {
@@ -159,10 +159,10 @@ func runBedrock(cmd *cobra.Command, args []string) {
 	} else {
 		// Default test: image input with Vertex AI logo
 		logger.Info("🖼️ Running default image input test...")
-		
+
 		// Default test image URL - Vertex AI logo
 		testImageURL := "https://cdn.prod.website-files.com/657639ebfb91510f45654149/67cef0fb78a461a1580d3c5a_667f5f1018134e3c5a8549c2_AD_4nXfn52WaKNUy839wUllpITpaj7mvuOTR6AOzDk3SypLHLgO-_n8zgt7QJ7rxcLOfOJRWAShjk1dIZRmwuKYLCYFD4qgOq1SCiGFIYbnhDLjD1E0zTdb8cgnCBceLMy7lmCZ3qDUce-gCfJjofiZ9ftDF2m4.webp"
-		
+
 		parts := []llmtypes.ContentPart{
 			llmtypes.TextContent{Text: "What is the text written in this image?"},
 			llmtypes.ImageContent{
@@ -178,7 +178,7 @@ func runBedrock(cmd *cobra.Command, args []string) {
 				Parts: parts,
 			},
 		}
-		
+
 		logger.Info(fmt.Sprintf("✅ Default image test configured with URL: %s", testImageURL))
 	}
 

@@ -489,7 +489,8 @@ func initializeOpenRouter(config Config) (llmtypes.Model, error) {
 	return llm, nil
 }
 
-// initializeVertex creates and configures a Vertex AI (Gemini) LLM instance
+// initializeVertex creates and configures a Vertex AI LLM instance
+// Supports both Gemini (via API key) and Anthropic (via OAuth2) models
 func initializeVertex(config Config) (llmtypes.Model, error) {
 	// LLM Initialization event data - use typed structure directly
 	llmMetadata := LLMMetadata{
@@ -506,16 +507,6 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 	// Emit LLM initialization start event
 	emitLLMInitializationStart(config.Tracers, string(config.Provider), config.ModelID, config.Temperature, config.TraceID, llmMetadata)
 
-	// Check for API key from environment
-	apiKey := os.Getenv("VERTEX_API_KEY")
-	if apiKey == "" {
-		// Try alternative environment variable names
-		apiKey = os.Getenv("GOOGLE_API_KEY")
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required")
-	}
-
 	// Set default model if not specified
 	modelID := config.ModelID
 	if modelID == "" {
@@ -523,7 +514,68 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 	}
 
 	logger := config.Logger
+
+	// Detect if this is an Anthropic model (starts with "claude-")
+	isAnthropicModel := strings.HasPrefix(modelID, "claude-")
+
+	if isAnthropicModel {
+		// Initialize Vertex AI Anthropic adapter
+		return initializeVertexAnthropic(config, modelID, logger)
+	}
+
+	// Initialize Gemini adapter (existing implementation)
+	return initializeVertexGemini(config, modelID, logger)
+}
+
+// initializeVertexAnthropic creates and configures a Vertex AI Anthropic LLM instance
+func initializeVertexAnthropic(config Config, modelID string, logger utils.ExtendedLogger) (llmtypes.Model, error) {
+	logger.Infof("Initializing Vertex AI Anthropic LLM - model_id: %s", modelID)
+
+	// Get required configuration
+	projectID := os.Getenv("VERTEX_PROJECT_ID")
+	if projectID == "" {
+		return nil, fmt.Errorf("VERTEX_PROJECT_ID environment variable is required for Anthropic models")
+	}
+
+	locationID := os.Getenv("VERTEX_LOCATION_ID")
+	if locationID == "" {
+		locationID = "global" // Default location
+		logger.Infof("VERTEX_LOCATION_ID not set, using default: %s", locationID)
+	}
+
+	// Create Vertex Anthropic adapter
+	llm := vertex.NewVertexAnthropicAdapter(projectID, locationID, modelID, logger)
+
+	// Emit LLM initialization success event
+	successMetadata := LLMMetadata{
+		ModelVersion: modelID,
+		User:         "vertex_user",
+		CustomFields: map[string]string{
+			"provider":     "vertex",
+			"model_type":   "anthropic",
+			"status":       StatusLLMInitialized,
+			"capabilities": CapabilityTextGeneration + "," + CapabilityToolCalling,
+		},
+	}
+	emitLLMInitializationSuccess(config.Tracers, string(config.Provider), modelID, CapabilityTextGeneration+","+CapabilityToolCalling, config.TraceID, successMetadata)
+
+	logger.Infof("Initialized Vertex AI Anthropic LLM - model_id: %s, project: %s, location: %s", modelID, projectID, locationID)
+	return llm, nil
+}
+
+// initializeVertexGemini creates and configures a Vertex AI Gemini LLM instance
+func initializeVertexGemini(config Config, modelID string, logger utils.ExtendedLogger) (llmtypes.Model, error) {
 	logger.Infof("Initializing Vertex AI (Gemini) LLM with API key - model_id: %s", modelID)
+
+	// Check for API key from environment
+	apiKey := os.Getenv("VERTEX_API_KEY")
+	if apiKey == "" {
+		// Try alternative environment variable names
+		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required for Gemini models")
+	}
 
 	// Use provided context or use background context
 	ctx := config.Context
@@ -545,10 +597,11 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 			ModelVersion: modelID,
 			User:         "vertex_user",
 			CustomFields: map[string]string{
-				"provider":  "vertex",
-				"operation": OperationLLMInitialization,
-				"error":     err.Error(),
-				"status":    StatusLLMFailed,
+				"provider":   "vertex",
+				"model_type": "gemini",
+				"operation":  OperationLLMInitialization,
+				"error":      err.Error(),
+				"status":     StatusLLMFailed,
 			},
 		}
 		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
@@ -565,13 +618,14 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 		User:         "vertex_user",
 		CustomFields: map[string]string{
 			"provider":     "vertex",
+			"model_type":   "gemini",
 			"status":       StatusLLMInitialized,
 			"capabilities": CapabilityTextGeneration + "," + CapabilityToolCalling,
 		},
 	}
 	emitLLMInitializationSuccess(config.Tracers, string(config.Provider), modelID, CapabilityTextGeneration+","+CapabilityToolCalling, config.TraceID, successMetadata)
 
-	logger.Infof("Initialized Vertex AI LLM - model_id: %s", modelID)
+	logger.Infof("Initialized Vertex AI Gemini LLM - model_id: %s", modelID)
 	return llm, nil
 }
 
@@ -698,6 +752,19 @@ func GetCrossProviderFallbackModels(provider Provider) []string {
 		if crossFallbackEnv != "" {
 			// Split by comma and trim whitespace
 			models := strings.Split(crossFallbackEnv, ",")
+			for i, model := range models {
+				models[i] = strings.TrimSpace(model)
+			}
+			return models
+		}
+		// No cross-provider fallbacks if environment variable is not set
+		return []string{}
+	case ProviderVertex:
+		// Get Anthropic cross-provider fallback models for Vertex
+		anthropicFallbackEnv := os.Getenv("VERTEX_ANTHROPIC_FALLBACK_MODELS")
+		if anthropicFallbackEnv != "" {
+			// Split by comma and trim whitespace
+			models := strings.Split(anthropicFallbackEnv, ",")
 			for i, model := range models {
 				models[i] = strings.TrimSpace(model)
 			}
@@ -1549,7 +1616,7 @@ func GetLLMDefaults() LLMDefaultsResponse {
 	}
 }
 
-// ValidateAPIKey validates API keys for OpenRouter, OpenAI, and Bedrock
+// ValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, and Vertex
 func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 	// Create logger for structured logging
 	logger := logger.CreateDefaultLogger()
@@ -1562,13 +1629,25 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 	logger.Infof("[API KEY VALIDATION] Validating %s API key", req.Provider)
 	switch req.Provider {
 	case "openrouter":
-		isValid, message, err = validateOpenRouterAPIKey(req.APIKey)
+		// OpenRouter uses API key, optionally test with model ID
+		logger.Infof("[API KEY VALIDATION] Testing OpenRouter API key")
+		isValid, message, err = validateOpenRouterAPIKey(req.APIKey, req.ModelID)
 	case "openai":
-		isValid, message, err = validateOpenAIAPIKey(req.APIKey)
+		// OpenAI uses API key, optionally test with model ID
+		logger.Infof("[API KEY VALIDATION] Testing OpenAI API key")
+		isValid, message, err = validateOpenAIAPIKey(req.APIKey, req.ModelID)
 	case "bedrock":
 		// Bedrock uses AWS credentials, test them instead of API key
 		logger.Infof("[API KEY VALIDATION] Testing AWS Bedrock credentials")
 		isValid, message, err = validateBedrockCredentials(req.ModelID)
+	case "vertex":
+		// Vertex uses Google API key, optionally test with model ID
+		logger.Infof("[API KEY VALIDATION] Testing Vertex AI API key")
+		isValid, message, err = validateVertexAPIKey(req.APIKey, req.ModelID)
+	case "anthropic":
+		// Anthropic uses API key, optionally test with model ID
+		logger.Infof("[API KEY VALIDATION] Testing Anthropic API key")
+		isValid, message, err = validateAnthropicAPIKey(req.APIKey, req.ModelID)
 	default:
 		logger.Warnf("[API KEY VALIDATION WARN] Unsupported provider: %s", req.Provider)
 		return APIKeyValidationResponse{
@@ -1600,7 +1679,7 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 }
 
 // validateOpenRouterAPIKey validates an OpenRouter API key
-func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
+func validateOpenRouterAPIKey(apiKey string, modelID string) (bool, string, error) {
 	logger := logger.CreateDefaultLogger()
 	logger.Infof("[OPENROUTER VALIDATION] Starting API key validation")
 
@@ -1611,12 +1690,38 @@ func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
 	}
 	logger.Infof("[OPENROUTER VALIDATION] Format validation passed")
 
-	// Test the API key by making a request to OpenRouter
+	// Require model ID for validation
+	if modelID == "" {
+		logger.Warnf("[OPENROUTER VALIDATION WARN] Model ID is required for validation")
+		return false, "Model ID is required for API key validation", nil
+	}
+	logger.Infof("[OPENROUTER VALIDATION] Using provided model ID: %s", modelID)
+
+	// Test the API key by making a minimal chat completion request to OpenRouter
 	logger.Infof("[OPENROUTER VALIDATION] Making request to OpenRouter API")
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", "https://openrouter.ai/api/v1/models", nil)
+
+	// Create a minimal chat completion request payload
+	requestBody := map[string]interface{}{
+		"model": modelID,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": "test",
+			},
+		},
+		"max_tokens": 1,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		logger.Errorf("[OPENROUTER VALIDATION ERROR] Failed to create request: %w", err)
+		logger.Errorf("[OPENROUTER VALIDATION ERROR] Failed to marshal request body: %v", err)
+		return false, "", fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", strings.NewReader(string(jsonBody)))
+	if err != nil {
+		logger.Errorf("[OPENROUTER VALIDATION ERROR] Failed to create request: %v", err)
 		return false, "", fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -1626,7 +1731,7 @@ func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
 	logger.Infof("[OPENROUTER VALIDATION] Sending request to OpenRouter API")
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Errorf("[OPENROUTER VALIDATION ERROR] Request failed: %w", err)
+		logger.Errorf("[OPENROUTER VALIDATION ERROR] Request failed: %v", err)
 		return false, "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -1636,10 +1741,16 @@ func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
 	switch resp.StatusCode {
 	case 200:
 		logger.Infof("[OPENROUTER VALIDATION SUCCESS] API key is valid")
+		if modelID != "" {
+			return true, fmt.Sprintf("OpenRouter API key is valid for model %s", modelID), nil
+		}
 		return true, "OpenRouter API key is valid", nil
 	case 401:
 		logger.Warnf("[OPENROUTER VALIDATION FAILED] Unauthorized - invalid API key")
 		return false, "Invalid OpenRouter API key", nil
+	case 403:
+		logger.Warnf("[OPENROUTER VALIDATION FAILED] Forbidden - API key lacks required permissions or model access")
+		return false, "API key lacks required permissions or model access", nil
 	case 429:
 		logger.Warnf("[OPENROUTER VALIDATION FAILED] Rate limit exceeded")
 		return false, "OpenRouter API rate limit exceeded", nil
@@ -1650,7 +1761,7 @@ func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
 }
 
 // validateOpenAIAPIKey validates an OpenAI API key
-func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
+func validateOpenAIAPIKey(apiKey string, modelID string) (bool, string, error) {
 	logger := logger.CreateDefaultLogger()
 	logger.Infof("[OPENAI VALIDATION] Starting API key validation")
 
@@ -1661,12 +1772,38 @@ func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
 	}
 	logger.Infof("[OPENAI VALIDATION] Format validation passed")
 
-	// Test the API key by making a request to OpenAI
+	// Require model ID for validation
+	if modelID == "" {
+		logger.Warnf("[OPENAI VALIDATION WARN] Model ID is required for validation")
+		return false, "Model ID is required for API key validation", nil
+	}
+	logger.Infof("[OPENAI VALIDATION] Using provided model ID: %s", modelID)
+
+	// Test the API key by making a minimal chat completion request to OpenAI
 	logger.Infof("[OPENAI VALIDATION] Making request to OpenAI API")
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
+
+	// Create a minimal chat completion request payload
+	requestBody := map[string]interface{}{
+		"model": modelID,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": "test",
+			},
+		},
+		"max_tokens": 1,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		logger.Errorf("[OPENAI VALIDATION ERROR] Failed to create request: %w", err)
+		logger.Errorf("[OPENAI VALIDATION ERROR] Failed to marshal request body: %v", err)
+		return false, "", fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", strings.NewReader(string(jsonBody)))
+	if err != nil {
+		logger.Errorf("[OPENAI VALIDATION ERROR] Failed to create request: %v", err)
 		return false, "", fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -1676,7 +1813,7 @@ func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
 	logger.Infof("[OPENAI VALIDATION] Sending request to OpenAI API")
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Errorf("[OPENAI VALIDATION ERROR] Request failed: %w", err)
+		logger.Errorf("[OPENAI VALIDATION ERROR] Request failed: %v", err)
 		return false, "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -1686,16 +1823,182 @@ func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
 	switch resp.StatusCode {
 	case 200:
 		logger.Infof("[OPENAI VALIDATION SUCCESS] API key is valid")
+		if modelID != "" {
+			return true, fmt.Sprintf("OpenAI API key is valid for model %s", modelID), nil
+		}
 		return true, "OpenAI API key is valid", nil
 	case 401:
 		logger.Warnf("[OPENAI VALIDATION FAILED] Unauthorized - invalid API key")
 		return false, "Invalid OpenAI API key", nil
+	case 403:
+		logger.Warnf("[OPENAI VALIDATION FAILED] Forbidden - API key lacks required permissions or model access")
+		return false, "API key lacks required permissions or model access", nil
 	case 429:
 		logger.Warnf("[OPENAI VALIDATION FAILED] Rate limit exceeded")
 		return false, "OpenAI API rate limit exceeded", nil
 	default:
 		logger.Warnf("[OPENAI VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
 		return false, fmt.Sprintf("OpenAI API returned status %d", resp.StatusCode), nil
+	}
+}
+
+// validateVertexAPIKey validates a Vertex AI (Google Gemini) API key
+func validateVertexAPIKey(apiKey string, modelID string) (bool, string, error) {
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[VERTEX VALIDATION] Starting API key validation")
+
+	// Basic validation - Google API keys don't have a specific prefix
+	if apiKey == "" {
+		logger.Warnf("[VERTEX VALIDATION WARN] API key is empty")
+		return false, "API key is empty", nil
+	}
+	logger.Infof("[VERTEX VALIDATION] API key format check passed")
+
+	// Require model ID for validation
+	if modelID == "" {
+		logger.Warnf("[VERTEX VALIDATION WARN] Model ID is required for validation")
+		return false, "Model ID is required for API key validation", nil
+	}
+	logger.Infof("[VERTEX VALIDATION] Using provided model ID: %s", modelID)
+
+	// Test with specific model
+	testURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s?key=%s", modelID, apiKey)
+	logger.Infof("[VERTEX VALIDATION] Testing with model: %s", modelID)
+
+	// Test the API key by making a request to Gemini API
+	logger.Infof("[VERTEX VALIDATION] Making request to Gemini API")
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", testURL, nil)
+	if err != nil {
+		logger.Errorf("[VERTEX VALIDATION ERROR] Failed to create request: %w", err)
+		return false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	logger.Infof("[VERTEX VALIDATION] Sending request to Gemini API")
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Errorf("[VERTEX VALIDATION ERROR] Request failed: %w", err)
+		return false, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	logger.Infof("[VERTEX VALIDATION] Response status: %d", resp.StatusCode)
+
+	switch resp.StatusCode {
+	case 200:
+		logger.Infof("[VERTEX VALIDATION SUCCESS] API key is valid")
+		if modelID != "" {
+			return true, fmt.Sprintf("Vertex AI API key is valid for model %s", modelID), nil
+		}
+		return true, "Vertex AI API key is valid", nil
+	case 400:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Bad request - invalid API key or model")
+		return false, "Invalid API key or model ID", nil
+	case 401:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Unauthorized - invalid API key")
+		return false, "Invalid Vertex AI API key", nil
+	case 403:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Forbidden - API key lacks required permissions")
+		return false, "API key lacks required permissions", nil
+	case 404:
+		if modelID != "" {
+			logger.Warnf("[VERTEX VALIDATION FAILED] Model not found: %s", modelID)
+			return false, fmt.Sprintf("Model %s not found", modelID), nil
+		}
+		logger.Warnf("[VERTEX VALIDATION FAILED] Resource not found")
+		return false, "Resource not found", nil
+	case 429:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Rate limit exceeded")
+		return false, "Vertex AI API rate limit exceeded", nil
+	default:
+		logger.Warnf("[VERTEX VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
+		return false, fmt.Sprintf("Vertex AI API returned status %d", resp.StatusCode), nil
+	}
+}
+
+// validateAnthropicAPIKey validates an Anthropic API key
+func validateAnthropicAPIKey(apiKey string, modelID string) (bool, string, error) {
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[ANTHROPIC VALIDATION] Starting API key validation")
+
+	// Basic format validation
+	if !strings.HasPrefix(apiKey, "sk-ant-") {
+		logger.Warnf("[ANTHROPIC VALIDATION WARN] Format validation failed - missing sk-ant- prefix")
+		return false, "Invalid Anthropic API key format", nil
+	}
+	logger.Infof("[ANTHROPIC VALIDATION] Format validation passed")
+
+	// Require model ID for validation
+	if modelID == "" {
+		logger.Warnf("[ANTHROPIC VALIDATION WARN] Model ID is required for validation")
+		return false, "Model ID is required for API key validation", nil
+	}
+	logger.Infof("[ANTHROPIC VALIDATION] Using provided model ID: %s", modelID)
+
+	// Test the API key by making a minimal request to Anthropic API
+	// We'll make a very lightweight message request with max_tokens=1 to test authentication
+	logger.Infof("[ANTHROPIC VALIDATION] Making request to Anthropic API")
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// Create a minimal message request payload
+	requestBody := map[string]interface{}{
+		"model":      modelID, // Use the provided model
+		"max_tokens": 1,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": "test",
+			},
+		},
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		logger.Errorf("[ANTHROPIC VALIDATION ERROR] Failed to marshal request body: %v", err)
+		return false, "", fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(string(jsonBody)))
+	if err != nil {
+		logger.Errorf("[ANTHROPIC VALIDATION ERROR] Failed to create request: %v", err)
+		return false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("content-type", "application/json")
+
+	logger.Infof("[ANTHROPIC VALIDATION] Sending request to Anthropic API")
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Errorf("[ANTHROPIC VALIDATION ERROR] Request failed: %v", err)
+		return false, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	logger.Infof("[ANTHROPIC VALIDATION] Response status: %d", resp.StatusCode)
+
+	switch resp.StatusCode {
+	case 200:
+		logger.Infof("[ANTHROPIC VALIDATION SUCCESS] API key is valid")
+		if modelID != "" {
+			return true, fmt.Sprintf("Anthropic API key is valid for model %s", modelID), nil
+		}
+		return true, "Anthropic API key is valid", nil
+	case 401:
+		logger.Warnf("[ANTHROPIC VALIDATION FAILED] Unauthorized - invalid API key")
+		return false, "Invalid Anthropic API key", nil
+	case 403:
+		logger.Warnf("[ANTHROPIC VALIDATION FAILED] Forbidden - API key lacks required permissions")
+		return false, "API key lacks required permissions", nil
+	case 429:
+		logger.Warnf("[ANTHROPIC VALIDATION FAILED] Rate limit exceeded")
+		return false, "Anthropic API rate limit exceeded", nil
+	default:
+		logger.Warnf("[ANTHROPIC VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
+		return false, fmt.Sprintf("Anthropic API returned status %d", resp.StatusCode), nil
 	}
 }
 
@@ -1722,13 +2025,12 @@ func validateBedrockCredentials(modelID string) (bool, string, error) {
 	}
 	logger.Infof("[BEDROCK VALIDATION] AWS credentials configured")
 
-	// Use provided model ID or fallback to default
+	// Require model ID for validation
 	if modelID == "" {
-		modelID = "us.anthropic.claude-3-haiku-20240307-v1:0" // fallback default
-		logger.Infof("[BEDROCK VALIDATION] Using fallback model ID: %s", modelID)
-	} else {
-		logger.Infof("[BEDROCK VALIDATION] Using provided model ID: %s", modelID)
+		logger.Warnf("[BEDROCK VALIDATION WARN] Model ID is required for validation")
+		return false, "Model ID is required for API key validation", nil
 	}
+	logger.Infof("[BEDROCK VALIDATION] Using provided model ID: %s", modelID)
 
 	// Test Bedrock access by creating a Bedrock LLM instance
 	logger.Infof("[BEDROCK VALIDATION] Testing Bedrock access by creating LLM instance")

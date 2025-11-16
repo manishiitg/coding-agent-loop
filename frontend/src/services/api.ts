@@ -292,6 +292,16 @@ export const agentApi = {
     return response.data
   },
 
+  updatePlannerFile: async (filepath: string, content: string, commitMessage?: string) => {
+    const requestBody: { content: string; commit_message?: string } = { content }
+    if (commitMessage) {
+      requestBody.commit_message = commitMessage
+    }
+    // API handles path conversion internally
+    const response = await plannerApi.put(`/api/documents/${encodeURIComponent(filepath)}`, requestBody)
+    return response.data
+  },
+
   deletePlannerFile: async (filepath: string, commitMessage?: string) => {
     const params: Record<string, string> = { confirm: 'true' }
     if (commitMessage) {
@@ -416,6 +426,14 @@ export const agentApi = {
   getFileVersions: async (filepath: string, limit: number = 10) => {
     const response = await plannerApi.get(`/api/versions/${encodeURIComponent(filepath)}`, {
       params: { limit }
+    })
+    return response.data
+  },
+
+  restoreFileVersion: async (filepath: string, commitHash: string, commitMessage?: string) => {
+    const response = await plannerApi.post(`/api/restore/${encodeURIComponent(filepath)}`, {
+      commit_hash: commitHash,
+      commit_message: commitMessage
     })
     return response.data
   },

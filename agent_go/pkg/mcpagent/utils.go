@@ -13,31 +13,14 @@ package mcpagent
 
 import (
 	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/pkg/mcpagent/prompt"
 
 	"mcp-agent/agent_go/internal/llmtypes"
 )
 
-// IsReActCompletion checks if the response contains ReAct completion patterns.
-func IsReActCompletion(response string) bool {
-	return prompt.IsReActCompletion(response)
-}
-
-// ExtractFinalAnswer extracts the final answer from a ReAct response.
-func ExtractFinalAnswer(response string) string {
-	return prompt.ExtractFinalAnswer(response)
-}
-
 // GetDefaultMaxTurns returns the default max turns for a given agent mode.
 func GetDefaultMaxTurns(mode AgentMode) int {
-	switch mode {
-	case ReActAgent:
-		return 50 // ReAct agents get more turns for reasoning
-	case SimpleAgent:
-		fallthrough
-	default:
-		return 50 // Simple agents use fewer turns
-	}
+	// All agents use the same default max turns
+	return 50
 }
 
 // ConvertToolChoice converts a tool choice string to *llmtypes.ToolChoice.

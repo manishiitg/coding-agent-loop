@@ -138,8 +138,8 @@ func debugMCPAgentConfig(logger utils.ExtendedLogger) error {
 		})
 	}
 
-	// Test 2: ReActAgent with 15 max turns
-	logger.Info("\n📋 Test 2: ReActAgent with 15 max turns")
+	// Test 2: SimpleAgent with 15 max turns
+	logger.Info("\n📋 Test 2: SimpleAgent with 15 max turns")
 	agent2, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
@@ -149,7 +149,7 @@ func debugMCPAgentConfig(logger utils.ExtendedLogger) error {
 		tracer,
 		traceID,
 		logger,
-		mcpagent.WithMode(mcpagent.ReActAgent),
+		mcpagent.WithMode(mcpagent.SimpleAgent),
 		mcpagent.WithMaxTurns(15),
 	)
 	if err != nil {
@@ -166,8 +166,8 @@ func debugMCPAgentConfig(logger utils.ExtendedLogger) error {
 	// Test 3: Check default values
 	logger.Info("\n📋 Test 3: Checking default values")
 	logger.Info("Default values", map[string]interface{}{
-		"simple_agent_max_turns": mcpagent.GetDefaultMaxTurns(mcpagent.SimpleAgent),
-		"react_agent_max_turns":  mcpagent.GetDefaultMaxTurns(mcpagent.ReActAgent),
+		"simple_agent_max_turns":   mcpagent.GetDefaultMaxTurns(mcpagent.SimpleAgent),
+		"simple_agent_max_turns_2": mcpagent.GetDefaultMaxTurns(mcpagent.SimpleAgent),
 	})
 
 	logger.Info("\n🔍 MCP agent debug test completed!")
@@ -191,12 +191,8 @@ func debugExternalPackageConfig(logger utils.ExtendedLogger) error {
 
 	// Test 2: Test mode conversion
 	logger.Info("\n📋 Test 2: Testing mode conversion")
-	var agentMode mcpagent.AgentMode
-	if config.AgentMode == external.ReActAgent {
-		agentMode = mcpagent.ReActAgent
-	} else {
-		agentMode = mcpagent.SimpleAgent
-	}
+	// All agents use Simple mode
+	agentMode := mcpagent.SimpleAgent
 
 	logger.Info("✅ Mode conversion successful", map[string]interface{}{
 		"external_mode": string(config.AgentMode),
@@ -206,7 +202,7 @@ func debugExternalPackageConfig(logger utils.ExtendedLogger) error {
 	// Test 3: Test config building
 	logger.Info("\n📋 Test 3: Testing config building")
 	config2 := external.DefaultConfig().
-		WithAgentMode(external.ReActAgent).
+		WithAgentMode(external.SimpleAgent).
 		WithMaxTurns(20).
 		WithLLM("openai", "gpt-4o-mini", 0.1)
 

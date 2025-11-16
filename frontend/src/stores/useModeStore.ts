@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
 
-export type ModeCategory = 'chat' | 'deep-research' | 'workflow' | null
+export type ModeCategory = 'chat' | 'workflow' | null
 
 interface ModeState {
   // Core mode selection
@@ -11,14 +11,13 @@ interface ModeState {
   
   // Preset tracking per category
   lastSelectedPreset: {
-    'deep-research': string | null
     'workflow': string | null
   }
   
   // Actions
   setModeCategory: (category: ModeCategory) => void
   completeInitialSetup: () => void
-  setLastPreset: (category: 'deep-research' | 'workflow', presetId: string | null) => void
+  setLastPreset: (category: 'workflow', presetId: string | null) => void
   resetModeSelection: () => void
   
   // Helpers
@@ -34,7 +33,6 @@ export const useModeStore = create<ModeState>()(
         selectedModeCategory: null,
         hasCompletedInitialSetup: false,
         lastSelectedPreset: {
-          'deep-research': null,
           'workflow': null
         },
 
@@ -61,7 +59,6 @@ export const useModeStore = create<ModeState>()(
             selectedModeCategory: null,
             hasCompletedInitialSetup: false,
             lastSelectedPreset: {
-              'deep-research': null,
               'workflow': null
             }
           })
@@ -71,10 +68,7 @@ export const useModeStore = create<ModeState>()(
         getModeCategoryFromAgentMode: (agentMode) => {
           switch (agentMode) {
             case 'simple':
-            case 'ReAct':
               return 'chat'
-            case 'orchestrator':
-              return 'deep-research'
             case 'workflow':
               return 'workflow'
             default:
@@ -85,13 +79,11 @@ export const useModeStore = create<ModeState>()(
         getAgentModeFromCategory: (category) => {
           switch (category) {
             case 'chat':
-              return 'ReAct' // Default to ReAct for chat mode
-            case 'deep-research':
-              return 'orchestrator'
+              return 'simple' // Default to simple for chat mode
             case 'workflow':
               return 'workflow'
             default:
-              return 'ReAct'
+              return 'simple'
           }
         }
       }),

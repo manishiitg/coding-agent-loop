@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +74,10 @@ type BaseOrchestrator struct {
 	// Optional simple state (for workflow orchestrators)
 	objective     string
 	workspacePath string
+
+	// Folder guard paths for fine-grained access control
+	folderGuardReadPaths  []string
+	folderGuardWritePaths []string
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -230,6 +236,21 @@ func (bo *BaseOrchestrator) SetWorkspacePath(workspacePath string) {
 	bo.workspacePath = workspacePath
 }
 
+// SetWorkspacePathForFolderGuard sets separate read and write paths for folder guard validation
+// If both arrays are empty, folder guard validation is disabled (allows all paths)
+func (bo *BaseOrchestrator) SetWorkspacePathForFolderGuard(readPaths []string, writePaths []string) {
+	if len(readPaths) == 0 && len(writePaths) == 0 {
+		// Empty arrays disable folder guard
+		bo.folderGuardReadPaths = nil
+		bo.folderGuardWritePaths = nil
+		bo.GetLogger().Infof("🔓 Folder guard disabled (empty read/write paths)")
+	} else {
+		bo.folderGuardReadPaths = readPaths
+		bo.folderGuardWritePaths = writePaths
+		bo.GetLogger().Infof("🔒 Folder guard enabled - Read paths: %v, Write paths: %v", readPaths, writePaths)
+	}
+}
+
 // GetContextAwareBridge returns the context-aware event bridge
 func (bo *BaseOrchestrator) GetContextAwareBridge() mcpagent.AgentEventListener {
 	return bo.contextAwareBridge
@@ -291,6 +312,363 @@ func (bo *BaseOrchestrator) GetType() string {
 	return string(bo.orchestratorType)
 }
 
+// validatePathInWorkspace validates that the input path is within the workspace boundary
+func validatePathInWorkspace(workspacePath, inputPath string) error {
+	if workspacePath == "" {
+		return nil // No validation if workspacePath is not set
+	}
+
+	// Normalize workspace path
+	workspaceAbs, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace path: %w", err)
+	}
+	workspaceAbs = filepath.Clean(workspaceAbs)
+
+	// Resolve input path relative to workspace if it's relative
+	var inputAbs string
+	if filepath.IsAbs(inputPath) {
+		inputAbs, err = filepath.Abs(inputPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve input path: %w", err)
+		}
+	} else {
+		// Relative path - check both workspace-relative and CWD-relative resolutions
+		// First, resolve relative to workspace (standard behavior)
+		inputAbsFromWorkspace := filepath.Join(workspaceAbs, inputPath)
+		inputAbsFromWorkspace = filepath.Clean(inputAbsFromWorkspace)
+
+		// Also check what it resolves to from current working directory
+		// This catches cases like "Workflow/HRMS PR Review/summary.md" which is a sibling, not a child
+		inputAbsFromCWD, err := filepath.Abs(inputPath)
+		if err == nil {
+			inputAbsFromCWD = filepath.Clean(inputAbsFromCWD)
+			// Check if CWD-resolved path is outside workspace
+			cwdRel, relErr := filepath.Rel(workspaceAbs, inputAbsFromCWD)
+			if relErr == nil && (strings.HasPrefix(cwdRel, "..") || cwdRel == "..") {
+				// CWD path is outside workspace - this is the real intent, so use CWD resolution and block it
+				inputAbs = inputAbsFromCWD
+			} else {
+				// CWD path is inside workspace - use workspace-relative resolution
+				inputAbs = inputAbsFromWorkspace
+			}
+		} else {
+			// Fallback to workspace-relative if CWD resolution fails
+			inputAbs = inputAbsFromWorkspace
+		}
+	}
+	inputAbs = filepath.Clean(inputAbs)
+
+	// Special exception: Allow Downloads directory to bypass workspace boundary check
+	// Downloads is a common directory that should be accessible regardless of workspace restrictions
+	// Check if the path contains "Downloads" as a directory component (not just as part of a filename)
+	inputAbsSlash := filepath.ToSlash(inputAbs)
+	inputPathSlash := filepath.ToSlash(inputPath)
+
+	// Check if path is in Downloads directory (allow "Downloads", "Downloads/...", or paths containing "/Downloads/")
+	// But still prevent directory traversal attacks like "../../Downloads"
+	isDownloadsPath := false
+	if strings.HasPrefix(inputPathSlash, "Downloads/") || inputPathSlash == "Downloads" {
+		// Direct Downloads path - allow it (no directory traversal)
+		isDownloadsPath = true
+	} else if strings.Contains(inputAbsSlash, "/Downloads/") || strings.HasSuffix(inputAbsSlash, "/Downloads") {
+		// Path contains Downloads directory - check it's not a directory traversal attack
+		if !strings.Contains(inputPathSlash, "../") && !strings.Contains(inputPathSlash, "..\\") {
+			isDownloadsPath = true
+		}
+	}
+
+	// If it's a Downloads path, skip workspace boundary validation
+	if isDownloadsPath {
+		// Final safety check: prevent any directory traversal attempts
+		if strings.Contains(inputPathSlash, "../") || strings.Contains(inputPathSlash, "..\\") {
+			return fmt.Errorf("path '%s' contains directory traversal and cannot be used even for Downloads directory", inputPath)
+		}
+		// Allow Downloads paths
+		return nil
+	}
+
+	// Check if input path is within workspace boundary
+	// First, verify that inputAbs actually has workspaceAbs as a prefix with proper path separator
+	// This ensures we're checking directory boundaries, not just string prefixes
+	workspaceAbsSlash := filepath.ToSlash(workspaceAbs) + "/"
+
+	// Check if paths are equal (same directory) or input is a subdirectory
+	if inputAbsSlash != filepath.ToSlash(workspaceAbs) && !strings.HasPrefix(inputAbsSlash, workspaceAbsSlash) {
+		return fmt.Errorf("path '%s' (resolved to '%s') is outside workspace boundary '%s'. All file operations must be within the configured workspace", inputPath, inputAbs, workspacePath)
+	}
+
+	// Additional check using relative path (catches edge cases)
+	rel, err := filepath.Rel(workspaceAbs, inputAbs)
+	if err != nil {
+		return fmt.Errorf("path validation error: %w", err)
+	}
+
+	// Check if path escapes workspace (contains ".." or is absolute)
+	if strings.HasPrefix(rel, "..") || rel == ".." {
+		return fmt.Errorf("path '%s' (resolved to '%s', relative: '%s') is outside workspace boundary '%s'. All file operations must be within the configured workspace", inputPath, inputAbs, rel, workspacePath)
+	}
+
+	return nil
+}
+
+// validatePathInAllowedPaths validates that the input path is within any of the allowed paths
+// If allowedPaths is empty/nil, returns nil (allows all paths)
+func validatePathInAllowedPaths(allowedPaths []string, inputPath string) error {
+	// Empty array means disable folder guard - allow all paths
+	if len(allowedPaths) == 0 {
+		return nil
+	}
+
+	// Check against each allowed path
+	for _, allowedPath := range allowedPaths {
+		if err := validatePathInWorkspace(allowedPath, inputPath); err == nil {
+			// Path is valid within this allowed path
+			return nil
+		}
+	}
+
+	// Path is not valid within any allowed path
+	return fmt.Errorf("path '%s' is not within any of the allowed paths: %v", inputPath, allowedPaths)
+}
+
+// normalizePathForAllowedPaths normalizes a path relative to the first matching allowed path
+// Returns the normalized path and the matching allowed path index
+func normalizePathForAllowedPaths(allowedPaths []string, inputPath string) (string, int, error) {
+	// Empty array means disable folder guard - return path as-is
+	if len(allowedPaths) == 0 {
+		return inputPath, -1, nil
+	}
+
+	// Find first matching allowed path
+	for i, allowedPath := range allowedPaths {
+		if err := validatePathInWorkspace(allowedPath, inputPath); err == nil {
+			// Path matches this allowed path - normalize relative to it
+			normalizedPath, err := normalizePathForWorkspace(allowedPath, inputPath)
+			if err != nil {
+				return "", -1, err
+			}
+			return normalizedPath, i, nil
+		}
+	}
+
+	// No match found - use first allowed path as base for normalization
+	normalizedPath, err := normalizePathForWorkspace(allowedPaths[0], inputPath)
+	if err != nil {
+		return "", -1, err
+	}
+	return normalizedPath, 0, nil
+}
+
+// normalizePathForWorkspace normalizes a path to be workspace-relative
+// Returns a workspace-relative path (e.g., "." becomes "", "subfolder" stays "subfolder", absolute paths become relative)
+func normalizePathForWorkspace(workspacePath, inputPath string) (string, error) {
+	if workspacePath == "" {
+		// No workspace - return path as-is
+		return inputPath, nil
+	}
+
+	// Handle empty string or "." - normalize to "" which represents workspace root
+	if inputPath == "" || inputPath == "." {
+		return "", nil
+	}
+
+	// Normalize workspace path
+	workspaceAbs, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve workspace path: %w", err)
+	}
+	workspaceAbs = filepath.Clean(workspaceAbs)
+
+	// Resolve input path relative to workspace if it's relative
+	var inputAbs string
+	if filepath.IsAbs(inputPath) {
+		inputAbs, err = filepath.Abs(inputPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve input path: %w", err)
+		}
+	} else {
+		// Relative path - resolve relative to workspace
+		inputAbs = filepath.Join(workspaceAbs, inputPath)
+	}
+	inputAbs = filepath.Clean(inputAbs)
+
+	// Convert to workspace-relative path
+	rel, err := filepath.Rel(workspaceAbs, inputAbs)
+	if err != nil {
+		return "", fmt.Errorf("path normalization error: %w", err)
+	}
+
+	// Handle edge cases
+	if rel == "." || rel == "" {
+		return "", nil // Workspace root
+	}
+
+	return rel, nil
+}
+
+// WrapWorkspaceToolsWithFolderGuard wraps workspace tool executors with path validation
+// Uses folderGuardReadPaths and folderGuardWritePaths if set, otherwise falls back to workspacePath
+func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[string]interface{}) map[string]interface{} {
+	// Check if folder guard paths are set
+	useFolderGuardPaths := len(bo.folderGuardReadPaths) > 0 || len(bo.folderGuardWritePaths) > 0
+	workspacePath := bo.GetWorkspacePath()
+
+	// If no folder guard paths and no workspace path, return executors unchanged
+	if !useFolderGuardPaths && workspacePath == "" {
+		return executors
+	}
+
+	// Tools that need path validation with their parameter names
+	// Classify as read-only or write operations
+	readOnlyTools := map[string][]string{
+		"read_workspace_file":             {"filepath"},
+		"list_workspace_files":            {"folder"},
+		"regex_search_workspace_files":    {"folder"},
+		"semantic_search_workspace_files": {"folder"},
+		"execute_shell_command":           {"working_directory"},
+	}
+
+	writeTools := map[string][]string{
+		"update_workspace_file":     {"filepath"},
+		"diff_patch_workspace_file": {"filepath"},
+		"delete_workspace_file":     {"filepath"},
+		"write_workspace_file":      {"filepath"},
+		"move_workspace_file":       {"source_filepath", "destination_filepath"}, // Both use writePaths
+	}
+
+	// Combine all tools for iteration
+	toolsToValidate := make(map[string][]string)
+	for tool, params := range readOnlyTools {
+		toolsToValidate[tool] = params
+	}
+	for tool, params := range writeTools {
+		toolsToValidate[tool] = params
+	}
+
+	wrappedExecutors := make(map[string]interface{})
+
+	for toolName, executor := range executors {
+		paramsToValidate, needsValidation := toolsToValidate[toolName]
+
+		if !needsValidation {
+			// Tool doesn't need validation - pass through unchanged
+			wrappedExecutors[toolName] = executor
+			continue
+		}
+
+		// Type assert executor to function type
+		originalExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error))
+		if !ok {
+			// Type assertion failed - pass through unchanged
+			wrappedExecutors[toolName] = executor
+			continue
+		}
+
+		// Determine if this is a read-only or write tool
+		_, isReadOnly := readOnlyTools[toolName]
+		_, isWrite := writeTools[toolName]
+
+		// Create wrapper function with proper variable capture
+		toolNameCopy := toolName
+		paramsToValidateCopy := paramsToValidate
+		isReadOnlyCopy := isReadOnly
+		isWriteCopy := isWrite
+		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// Determine which paths to use for validation
+			var allowedPaths []string
+			var pathType string
+
+			if useFolderGuardPaths {
+				if isWriteCopy {
+					// Write operations use writePaths only
+					allowedPaths = bo.folderGuardWritePaths
+					pathType = "write"
+				} else if isReadOnlyCopy {
+					// Read operations can use both readPaths AND writePaths (if you can write, you can read)
+					// Combine readPaths and writePaths, removing duplicates
+					allowedPathsMap := make(map[string]bool)
+					for _, path := range bo.folderGuardReadPaths {
+						allowedPathsMap[path] = true
+					}
+					for _, path := range bo.folderGuardWritePaths {
+						allowedPathsMap[path] = true
+					}
+					// Convert map back to slice
+					allowedPaths = make([]string, 0, len(allowedPathsMap))
+					for path := range allowedPathsMap {
+						allowedPaths = append(allowedPaths, path)
+					}
+					pathType = "read"
+				} else {
+					// Unknown tool type - use readPaths + writePaths as default (read-like behavior)
+					allowedPathsMap := make(map[string]bool)
+					for _, path := range bo.folderGuardReadPaths {
+						allowedPathsMap[path] = true
+					}
+					for _, path := range bo.folderGuardWritePaths {
+						allowedPathsMap[path] = true
+					}
+					allowedPaths = make([]string, 0, len(allowedPathsMap))
+					for path := range allowedPathsMap {
+						allowedPaths = append(allowedPaths, path)
+					}
+					pathType = "read"
+				}
+			} else {
+				// Fallback to workspacePath (single path mode)
+				if workspacePath != "" {
+					allowedPaths = []string{workspacePath}
+					pathType = "workspace"
+				}
+			}
+
+			// Validate and normalize all path parameters
+			for _, paramName := range paramsToValidateCopy {
+				if paramValue, exists := args[paramName]; exists {
+					if pathStr, ok := paramValue.(string); ok {
+						// Empty string or "." means workspace root - normalize to ""
+						if pathStr == "" || pathStr == "." {
+							args[paramName] = ""
+							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '' (workspace root)", toolNameCopy, paramName, pathStr)
+							continue
+						}
+
+						// Validate the path against allowed paths
+						bo.GetLogger().Infof("🔒 Validating path for tool %s, parameter %s: type=%s, paths=%v, input='%s'", toolNameCopy, paramName, pathType, allowedPaths, pathStr)
+						if err := validatePathInAllowedPaths(allowedPaths, pathStr); err != nil {
+							bo.GetLogger().Warnf("⚠️ Path validation failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
+							return "", err
+						}
+						bo.GetLogger().Infof("✅ Path validation passed for tool %s, parameter %s (type: %s)", toolNameCopy, paramName, pathType)
+
+						// Normalize the path
+						normalizedPath, matchedIndex, err := normalizePathForAllowedPaths(allowedPaths, pathStr)
+						if err != nil {
+							bo.GetLogger().Warnf("⚠️ Path normalization failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
+							return "", err
+						}
+						if matchedIndex >= 0 {
+							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s' (matched path index: %d)", toolNameCopy, paramName, pathStr, normalizedPath, matchedIndex)
+						} else {
+							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s' (no folder guard)", toolNameCopy, paramName, pathStr, normalizedPath)
+						}
+						// Update the args with normalized path
+						args[paramName] = normalizedPath
+					}
+				}
+			}
+
+			// All validations passed and paths normalized - call original executor
+			return originalExecutor(ctx, args)
+		}
+
+		wrappedExecutors[toolName] = wrappedExecutor
+	}
+
+	return wrappedExecutors
+}
+
 // CreateStandardAgentConfig creates a standardized agent configuration
 // use CreateAndSetupStandardAgent instead which combines configuration and setup.
 func (bo *BaseOrchestrator) CreateStandardAgentConfig(agentName string, maxTurns int, outputFormat agents.OutputFormat) *agents.OrchestratorAgentConfig {
@@ -309,9 +687,18 @@ func (bo *BaseOrchestrator) CreateStandardAgentConfigWithCustomServers(agentName
 	return config
 }
 
+// CreateStandardAgentConfigWithLLM creates a standardized agent configuration with custom LLM config
+// This allows specific agents to override the default LLM configuration
+func (bo *BaseOrchestrator) CreateStandardAgentConfigWithLLM(agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
+	return bo.createAgentConfigWithLLM(agentName, maxTurns, outputFormat, llmConfig)
+}
+
 // createAgentConfigWithLLM creates a generic agent configuration with detailed LLM config
 func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
 	config := agents.NewOrchestratorAgentConfig(agentName)
+
+	// Store the unique agent name for use in agent initialization
+	config.AgentName = agentName
 
 	// Use detailed LLM configuration from frontend if available
 	llmProvider := bo.GetProvider()
@@ -403,10 +790,13 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
 		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {
@@ -497,10 +887,13 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
 		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {
@@ -560,16 +953,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
 	}
 
-	// Set system prompt and user message processors if provided
+	// Set user message processor if provided
 	// Since agents embed *BaseOrchestratorAgent, methods are promoted
-	if systemPromptProcessor != nil {
-		if settable, ok := agent.(agents.SystemPromptProcessorSetter); ok {
-			settable.SetSystemPromptProcessor(systemPromptProcessor)
-			bo.GetLogger().Infof("✅ System prompt processor set for %s", agentName)
-		} else {
-			bo.GetLogger().Warnf("⚠️ Could not set system prompt processor for %s - agent does not implement SystemPromptProcessorSetter", agentName)
-		}
-	}
+	// Note: systemPromptProcessor is now passed as parameter to Execute methods, not set here
 	if userMessageProcessor != nil {
 		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
 			settable.SetUserMessageProcessor(userMessageProcessor)
@@ -609,125 +995,13 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 
 		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
-				// Convert Parameters to map[string]interface{}
-				var params map[string]interface{}
-				if tool.Function.Parameters != nil {
-					paramsBytes, err := json.Marshal(tool.Function.Parameters)
-					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
-					}
-				}
-				if params == nil {
-					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
-					continue
-				}
-
-				// Type assert executor to function type
-				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
-						tool.Function.Name,
-						tool.Function.Description,
-						params,
-						toolExecutor,
-					)
-				} else {
-					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
-				}
-			}
-		}
-
-		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
-	}
-
-	// Processors are now stored in BaseOrchestratorAgent, agent can use them directly
-	return agent, nil
-}
-
-// CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt creates and sets up an agent with custom servers, system prompt and user message processors
-func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt(
-	ctx context.Context,
-	agentName string,
-	phase string,
-	step, iteration int,
-	maxTurns int,
-	outputFormat agents.OutputFormat,
-	customServers []string,
-	systemPromptProcessor func(map[string]string) string,
-	userMessageProcessor func(map[string]string) string,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llmtypes.Tool,
-	customToolExecutors map[string]interface{},
-) (agents.OrchestratorAgent, error) {
-	// Create standardized agent configuration with custom servers
-	config := bo.CreateStandardAgentConfigWithCustomServers(agentName, maxTurns, outputFormat, customServers)
-
-	// Create agent using provided factory function
-	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
-
-	// Initialize and setup agent
-	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
-	}
-
-	// Set system prompt and user message processors if provided
-	// Since agents embed *BaseOrchestratorAgent, methods are promoted
-	if systemPromptProcessor != nil {
-		if settable, ok := agent.(agents.SystemPromptProcessorSetter); ok {
-			settable.SetSystemPromptProcessor(systemPromptProcessor)
-			bo.GetLogger().Infof("✅ System prompt processor set for %s", agentName)
-		} else {
-			bo.GetLogger().Warnf("⚠️ Could not set system prompt processor for %s - agent does not implement SystemPromptProcessorSetter", agentName)
-		}
-	}
-	if userMessageProcessor != nil {
-		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
-			settable.SetUserMessageProcessor(userMessageProcessor)
-			bo.GetLogger().Infof("✅ User message processor set for %s", agentName)
-		} else {
-			bo.GetLogger().Warnf("⚠️ Could not set user message processor for %s - agent does not implement UserMessageProcessorSetter", agentName)
-		}
-	}
-
-	// Validate essentials and connect event bridge
-	eventBridge := bo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
-	}
-
-	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
-	}
-
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
-	}
-
-	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
-	baseAgentName := baseAgent.GetName()
-	if cab, ok := eventBridge.(interface {
-		SetOrchestratorContext(phase string, step, iteration int, agentName string)
-	}); ok {
-		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
-		mcpAgent.AddEventListener(eventBridge)
-		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
-		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
-	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
-	}
-
-	// Register custom tools
-	if customTools != nil && customToolExecutors != nil {
-		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
-
-		for _, tool := range customTools {
-			if executor, exists := customToolExecutors[tool.Function.Name]; exists {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {
@@ -973,9 +1247,17 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	}
 
 	// Use the context-aware bridge to emit the event
-	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit human feedback event: %w", err)
+	bridge := bo.GetContextAwareBridge()
+	if bridge == nil {
+		bo.GetLogger().Errorf("❌ Context-aware bridge is nil, cannot emit blocking human feedback event")
+		return false, "", fmt.Errorf("context-aware bridge is nil")
 	}
+	bo.GetLogger().Infof("📤 Attempting to emit blocking_human_feedback event via context-aware bridge")
+	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+		bo.GetLogger().Errorf("❌ Failed to emit human feedback event: %w", err)
+		return false, "", fmt.Errorf("failed to emit event: %w", err)
+	}
+	bo.GetLogger().Infof("✅ Successfully emitted blocking_human_feedback event: requestID=%s", requestID)
 
 	// Use HumanFeedbackStore to wait for response
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
@@ -1081,47 +1363,35 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	return false, nil
 }
 
-// RequestThreeChoiceFeedback requests three-choice feedback from user
-// Returns: (choice string, error) where choice is "option1", "option2", or "option3"
-func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
+// RequestMultipleChoiceFeedback requests multiple-choice feedback from user
+// Returns: (choice string, error) where choice is "option0", "option1", "option2", etc. (0-based index)
+func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	ctx context.Context,
 	requestID string,
 	question string,
-	option1Label string,
-	option2Label string,
-	option3Label string,
+	options []string,
 	context string,
 	sessionID string,
 	workflowID string,
 ) (string, error) {
-	bo.GetLogger().Infof("🤔 Requesting three-choice feedback: %s", question)
+	bo.GetLogger().Infof("🤔 Requesting multiple-choice feedback: %s (%d options)", question, len(options))
 
-	// Set default labels if not provided
-	if option1Label == "" {
-		option1Label = "Option 1"
-	}
-	if option2Label == "" {
-		option2Label = "Option 2"
-	}
-	if option3Label == "" {
-		option3Label = "Option 3"
+	if len(options) == 0 {
+		return "", fmt.Errorf("at least one option is required")
 	}
 
-	// Emit human feedback request event with three-choice mode
+	// Emit human feedback request event with multiple-choice mode
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Question:        question,
-		AllowFeedback:   false, // No textarea in three-choice mode
-		ThreeChoiceMode: true,  // Enable three-choice mode
-		Option1Label:    option1Label,
-		Option2Label:    option2Label,
-		Option3Label:    option3Label,
-		Context:         context,
-		SessionID:       sessionID,
-		WorkflowID:      workflowID,
-		RequestID:       requestID,
+		Question:      question,
+		AllowFeedback: false, // No textarea in multiple-choice mode
+		Options:       options,
+		Context:       context,
+		SessionID:     sessionID,
+		WorkflowID:    workflowID,
+		RequestID:     requestID,
 	}
 
 	// Emit the event
@@ -1132,7 +1402,7 @@ func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
 	}
 
 	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit three-choice feedback event: %w", err)
+		bo.GetLogger().Warnf("⚠️ Failed to emit multiple-choice feedback event: %w", err)
 	}
 
 	// Wait for response
@@ -1141,7 +1411,7 @@ func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for three-choice response...")
+	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for multiple-choice response...")
 
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
 	if err != nil {
@@ -1150,16 +1420,23 @@ func (bo *BaseOrchestrator) RequestThreeChoiceFeedback(
 
 	bo.GetLogger().Infof("▶️ Orchestrator resumed with response: %s", response)
 
-	// Parse response: should be "option1", "option2", or "option3"
+	// Parse response: should be "option0", "option1", "option2", etc. (0-based)
 	response = strings.TrimSpace(response)
-	if response == "option1" || response == "option2" || response == "option3" {
-		bo.GetLogger().Infof("✅ User selected: %s", response)
-		return response, nil
+
+	// Validate response format (option0, option1, option2, etc.)
+	if strings.HasPrefix(response, "option") {
+		// Extract index from "option0", "option1", etc.
+		indexStr := strings.TrimPrefix(response, "option")
+		index, err := strconv.Atoi(indexStr)
+		if err == nil && index >= 0 && index < len(options) {
+			bo.GetLogger().Infof("✅ User selected: %s (option %d: %s)", response, index, options[index])
+			return response, nil
+		}
 	}
 
-	// Default to option1 if response is unclear
-	bo.GetLogger().Warnf("⚠️ Unexpected response format: %s, defaulting to option1", response)
-	return "option1", nil
+	// Default to option0 if response is unclear
+	bo.GetLogger().Warnf("⚠️ Unexpected response format: %s, defaulting to option0", response)
+	return "option0", nil
 }
 
 // WriteWorkspaceFile writes content to a file in the workspace using MCP tools
@@ -1329,7 +1606,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 
 	// Execute the tool call using existing workspace tool logic
 	startTime := time.Now()
-	_, err := deleteExecutor(ctx, deleteArgs)
+	result, err := deleteExecutor(ctx, deleteArgs)
 	duration := time.Since(startTime)
 
 	if err != nil {
@@ -1348,6 +1625,22 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		return fmt.Errorf("failed to delete file %s: %w", filePath, err)
 	}
 
+	// Use the result from the executor (which should be JSON)
+	// If result is empty or invalid, construct JSON from filePath
+	resultStr := result
+	if resultStr == "" {
+		// Fallback: construct JSON result
+		resultMap := map[string]interface{}{
+			"filepath": filePath,
+			"deleted":  true,
+		}
+		if jsonBytes, err := json.Marshal(resultMap); err == nil {
+			resultStr = string(jsonBytes)
+		} else {
+			resultStr = fmt.Sprintf(`{"filepath":"%s","deleted":true}`, filePath)
+		}
+	}
+
 	// Emit successful tool call end event
 	toolCallEndEvent := &events.ToolCallEndEvent{
 		BaseEventData: events.BaseEventData{
@@ -1355,7 +1648,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		},
 		Turn:       0,
 		ToolName:   "delete_workspace_file",
-		Result:     fmt.Sprintf("Successfully deleted file: %s", filePath),
+		Result:     resultStr,
 		Duration:   duration,
 		ServerName: "workspace",
 	}
@@ -1365,12 +1658,12 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	return nil
 }
 
-// CleanupDirectory deletes all files in a directory using list_workspace_files to enumerate files
-// then deletes each file found (skipping directories)
+// CleanupDirectory recursively deletes all files and directories in a directory using list_workspace_files
+// to enumerate files recursively, then deletes all files first, then directories (deepest first)
 func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string, dirName string) error {
-	bo.GetLogger().Infof("🧹 Cleaning up %s directory: %s", dirName, dirPath)
+	bo.GetLogger().Infof("🧹 Cleaning up %s directory recursively: %s", dirName, dirPath)
 
-	// Use list_workspace_files to enumerate all files in the directory, then delete them
+	// Use list_workspace_files to enumerate all files in the directory recursively, then delete them
 	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
 	if !exists {
 		bo.GetLogger().Warnf("⚠️ list_workspace_files executor not found, skipping directory cleanup")
@@ -1383,10 +1676,10 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 		return nil
 	}
 
-	// Call list_workspace_files to get all files in the directory
+	// Call list_workspace_files to get all files recursively (use high max_depth for recursive listing)
 	listArgs := map[string]interface{}{
 		"folder":    dirPath,
-		"max_depth": 1, // Only list files in this directory, not subdirectories
+		"max_depth": 100, // High depth to list all files and directories recursively
 	}
 
 	fileListJSON, err := listExecutor(ctx, listArgs)
@@ -1416,35 +1709,167 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 		}
 	}
 
-	// Delete each file found (skip directories)
-	deletedCount := 0
+	// Separate files and directories for proper deletion order
+	var filesToDelete []string
+	var dirsToDelete []string
+
 	for _, fileInfo := range filesList {
 		filepath, ok := fileInfo["filepath"].(string)
 		if !ok || filepath == "" {
 			continue
 		}
 
-		// Skip directories - only delete files
-		if isDirectory, ok := fileInfo["is_directory"].(bool); ok && isDirectory {
-			bo.GetLogger().Infof("⏭️ Skipping directory: %s", filepath)
+		// Skip the root directory itself
+		if filepath == dirPath {
 			continue
 		}
 
-		// Delete the file
-		if err := bo.DeleteWorkspaceFile(ctx, filepath); err == nil {
-			deletedCount++
-			bo.GetLogger().Infof("🗑️ Deleted: %s", filepath)
+		// Check if it's a directory
+		if isDirectory, ok := fileInfo["is_directory"].(bool); ok && isDirectory {
+			dirsToDelete = append(dirsToDelete, filepath)
 		} else {
-			// Log but don't fail - some files might already be deleted or have other issues
-			bo.GetLogger().Warnf("⚠️ Failed to delete %s: %v", filepath, err)
+			filesToDelete = append(filesToDelete, filepath)
 		}
 	}
 
-	if deletedCount > 0 {
-		bo.GetLogger().Infof("✅ Cleaned up %d files from %s directory", deletedCount, dirName)
+	// Delete all files first
+	deletedFileCount := 0
+	for _, filepath := range filesToDelete {
+		if err := bo.DeleteWorkspaceFile(ctx, filepath); err == nil {
+			deletedFileCount++
+			bo.GetLogger().Infof("🗑️ Deleted file: %s", filepath)
+		} else {
+			// Log but don't fail - some files might already be deleted or have other issues
+			bo.GetLogger().Warnf("⚠️ Failed to delete file %s: %v", filepath, err)
+		}
+	}
+
+	// Delete directories (deepest first - sort by path length descending)
+	// This ensures child directories are deleted before parent directories
+	sortKey := func(path string) int {
+		// Count path separators to determine depth
+		count := 0
+		for _, char := range path {
+			if char == '/' || char == '\\' {
+				count++
+			}
+		}
+		return count
+	}
+
+	// Sort directories by depth (deepest first)
+	for i := 0; i < len(dirsToDelete)-1; i++ {
+		for j := i + 1; j < len(dirsToDelete); j++ {
+			if sortKey(dirsToDelete[i]) < sortKey(dirsToDelete[j]) {
+				dirsToDelete[i], dirsToDelete[j] = dirsToDelete[j], dirsToDelete[i]
+			}
+		}
+	}
+
+	deletedDirCount := 0
+	for _, dirpath := range dirsToDelete {
+		// Delete directory using DeleteWorkspaceFile (workspace tool should handle directories)
+		if err := bo.DeleteWorkspaceFile(ctx, dirpath); err == nil {
+			deletedDirCount++
+			bo.GetLogger().Infof("🗑️ Deleted directory: %s", dirpath)
+		} else {
+			// Log but don't fail - some directories might already be deleted or have other issues
+			bo.GetLogger().Warnf("⚠️ Failed to delete directory %s: %v", dirpath, err)
+		}
+	}
+
+	totalDeleted := deletedFileCount + deletedDirCount
+	if totalDeleted > 0 {
+		bo.GetLogger().Infof("✅ Cleaned up %d files and %d directories from %s directory (total: %d)", deletedFileCount, deletedDirCount, dirName, totalDeleted)
 	} else {
-		bo.GetLogger().Infof("ℹ️ No files found to delete in %s directory (may have been empty)", dirName)
+		bo.GetLogger().Infof("ℹ️ No files or directories found to delete in %s directory (may have been empty)", dirName)
 	}
 
 	return nil
+}
+
+// getToolNamesByCategory returns a set of tool names for a given category
+// This uses the actual tool creation functions as the source of truth
+func getToolNamesByCategory(category string) map[string]bool {
+	toolNames := make(map[string]bool)
+
+	switch category {
+	case "workspace_tools":
+		// Get tool names from workspace tool executors (source of truth)
+		executors := virtualtools.CreateWorkspaceToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+	case "human_tools":
+		// Get tool names from human tool executors (source of truth)
+		executors := virtualtools.CreateHumanToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+		// Future categories can be added here:
+		// case "memory_tools":
+		//     executors := virtualtools.CreateMemoryToolExecutors()
+		//     for toolName := range executors {
+		//         toolNames[toolName] = true
+		//     }
+	}
+
+	return toolNames
+}
+
+// FilterCustomToolsByCategory filters custom tools and executors based on enabled categories and/or specific tools
+// Category identification uses the actual tool creation functions as the source of truth
+//   - "workspace_tools": all tools from CreateWorkspaceToolExecutors()
+//   - "human_tools": all tools from CreateHumanToolExecutors()
+//
+// Filtering logic:
+//   - If enabledTools is specified, use only those specific tools (overrides categories)
+//   - Else if enabledCategories is specified, use all tools from those categories
+//   - Else return all tools (backward compatible - default behavior)
+func FilterCustomToolsByCategory(
+	allTools []llmtypes.Tool,
+	allExecutors map[string]interface{},
+	enabledCategories []string,
+	enabledTools []string, // NEW: specific tool names to enable
+) ([]llmtypes.Tool, map[string]interface{}) {
+	// Build a set of enabled tool names
+	enabledToolNames := make(map[string]bool)
+
+	// Priority: specific tools override categories
+	if len(enabledTools) > 0 {
+		// Use specific tools only (overrides categories)
+		for _, toolName := range enabledTools {
+			enabledToolNames[toolName] = true
+		}
+	} else if len(enabledCategories) > 0 {
+		// Use all tools from enabled categories
+		for _, category := range enabledCategories {
+			categoryToolNames := getToolNamesByCategory(category)
+			for toolName := range categoryToolNames {
+				enabledToolNames[toolName] = true
+			}
+		}
+	} else {
+		// No filtering specified - return all tools (backward compatible)
+		return allTools, allExecutors
+	}
+
+	// Filter tools based on enabled tool names
+	var filteredTools []llmtypes.Tool
+	filteredExecutors := make(map[string]interface{})
+
+	for _, tool := range allTools {
+		toolName := tool.Function.Name
+
+		// Check if tool is in the enabled set
+		if enabledToolNames[toolName] {
+			filteredTools = append(filteredTools, tool)
+			// Include corresponding executor if it exists
+			if executor, exists := allExecutors[toolName]; exists {
+				filteredExecutors[toolName] = executor
+			}
+		}
+	}
+
+	return filteredTools, filteredExecutors
 }

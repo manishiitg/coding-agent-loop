@@ -101,20 +101,6 @@ const (
 	MCPServerConnectionEnd   EventType = "mcp_server_connection_end"
 	MCPServerConnectionError EventType = "mcp_server_connection_error"
 
-	// ReAct reasoning events
-	ReActReasoningStart EventType = "react_reasoning_start"
-	ReActReasoningStep  EventType = "react_reasoning_step"
-	ReActReasoningFinal EventType = "react_reasoning_final"
-	ReActReasoningEnd   EventType = "react_reasoning_end"
-	ReActReasoning      EventType = "react_reasoning"
-
-	// ReAct event type aliases for backward compatibility
-	ReActReasoningEventType      EventType = "react_reasoning"
-	ReActReasoningStartEventType EventType = "react_reasoning_start"
-	ReActReasoningEndEventType   EventType = "react_reasoning_end"
-	ReActReasoningStepEventType  EventType = "react_reasoning_step"
-	ReActReasoningFinalEventType EventType = "react_reasoning_final"
-
 	// Cache events
 	CacheHit            EventType = "cache_hit"
 	CacheMiss           EventType = "cache_miss"
@@ -241,9 +227,7 @@ func GetComponentFromEventType(eventType EventType) string {
 		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
 		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted:
 		return "orchestrator"
-	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError ||
-		eventType == ReActReasoningStart || eventType == ReActReasoningStep ||
-		eventType == ReActReasoningFinal || eventType == ReActReasoningEnd || eventType == ReActReasoning:
+	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
 		return "agent"
 	case eventType == LLMGenerationStart || eventType == LLMGenerationEnd || eventType == LLMGenerationError ||
 		eventType == SmartRoutingStart || eventType == SmartRoutingEnd:

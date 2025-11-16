@@ -1,17 +1,25 @@
 package virtualtools
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"mcp-agent/agent_go/internal/llmtypes"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/image/draw"
 )
 
 // WorkspaceAPIResponse represents the response structure from the workspace API
@@ -36,6 +44,112 @@ func getWorkspaceAPIURL() string {
 		return url
 	}
 	return "http://localhost:8081"
+}
+
+// isImageFile checks if a file is an image based on its extension
+func isImageFile(filepathStr string) bool {
+	ext := strings.ToLower(filepath.Ext(filepathStr))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+// getMimeTypeFromExtension returns the MIME type for an image file extension
+func getMimeTypeFromExtension(ext string) string {
+	ext = strings.ToLower(ext)
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return "image/jpeg" // Default fallback
+	}
+}
+
+// resizeImage resizes an image to a maximum dimension while preserving aspect ratio
+// maxDimension: maximum width or height (e.g., 1024)
+// Returns resized image bytes and the MIME type, or original if no resize needed
+func resizeImage(imageData []byte, mimeType string, maxDimension int) ([]byte, string, error) {
+	// Decode image
+	img, format, err := image.Decode(bytes.NewReader(imageData))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to decode image: %w", err)
+	}
+
+	// Get original dimensions
+	bounds := img.Bounds()
+	origWidth := bounds.Dx()
+	origHeight := bounds.Dy()
+
+	// Check if resize is needed
+	if origWidth <= maxDimension && origHeight <= maxDimension {
+		// No resize needed
+		return imageData, mimeType, nil
+	}
+
+	// Calculate new dimensions preserving aspect ratio
+	var newWidth, newHeight int
+	if origWidth > origHeight {
+		// Landscape: width is the limiting factor
+		newWidth = maxDimension
+		newHeight = int((int64(origHeight) * int64(maxDimension)) / int64(origWidth))
+	} else {
+		// Portrait or square: height is the limiting factor
+		newHeight = maxDimension
+		newWidth = int((int64(origWidth) * int64(maxDimension)) / int64(origHeight))
+	}
+
+	// Create new image with calculated dimensions
+	resized := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+	draw.BiLinear.Scale(resized, resized.Bounds(), img, bounds, draw.Over, nil)
+
+	// Encode resized image
+	var buf bytes.Buffer
+	switch format {
+	case "jpeg", "jpg":
+		if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 85}); err != nil {
+			return nil, "", fmt.Errorf("failed to encode JPEG: %w", err)
+		}
+		return buf.Bytes(), "image/jpeg", nil
+	case "png":
+		if err := png.Encode(&buf, resized); err != nil {
+			return nil, "", fmt.Errorf("failed to encode PNG: %w", err)
+		}
+		return buf.Bytes(), "image/png", nil
+	case "gif":
+		// GIF resizing is more complex, skip for now and return original
+		// TODO: Implement GIF resizing if needed
+		return imageData, mimeType, nil
+	default:
+		// For unsupported formats (like WebP), return original
+		// WebP requires external library, so we skip resizing for now
+		return imageData, mimeType, nil
+	}
+}
+
+// parseWorkspaceFileData extracts filepath and content from workspace API response data
+func parseWorkspaceFileData(data interface{}) (filepath, content string, err error) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return "", "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", data)
+	}
+
+	filepath = getStringValue(dataMap, "filepath")
+	content = getStringValue(dataMap, "content")
+
+	if filepath == "" {
+		return "", "", fmt.Errorf("filepath not found in workspace API response")
+	}
+
+	return filepath, content, nil
 }
 
 // CreateWorkspaceTools creates workspace-related virtual tools
@@ -298,6 +412,67 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 	}
 	workspaceTools = append(workspaceTools, moveFileTool)
 
+	// Add execute_shell_command tool
+	executeShellTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "execute_shell_command",
+			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/planner-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/planner-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/planner-docs' (e.g., '/app/planner-docs/script.py', '/app/planner-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Shell command to execute. If use_shell is true, this can be a complex command with pipes, redirects, etc. (e.g., 'ls', 'grep', 'find', './script.sh', 'ls | grep .md', 'cd dir && ls', 'VAR=value command')",
+					},
+					"args": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Command arguments as an array of strings (e.g., ['-l', '-a'] for 'ls -l -a'). Ignored if use_shell is true - include arguments in command string instead.",
+					},
+					"working_directory": map[string]interface{}{
+						"type":        "string",
+						"description": "Relative directory path within workspace to execute command (default: root of workspace). Example: 'scripts' resolves to '/app/planner-docs/scripts'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
+					},
+					"timeout": map[string]interface{}{
+						"type":        "integer",
+						"description": "Timeout in seconds (default: 60, max: 300)",
+					},
+					"use_shell": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Execute through shell interpreter (sh -c). Enables complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, wildcards, etc. Default: false (direct execution, more secure). Set to true for complex commands.",
+					},
+				},
+				"required": []string{"command"},
+			}),
+		},
+	}
+	workspaceTools = append(workspaceTools, executeShellTool)
+
+	// Add read_image tool
+	readImageTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "read_image",
+			Description: "Read an image file from workspace and ask a question about it. This tool will process the image and your question together.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"filepath": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the image file. Must always be workspace-relative (e.g., 'Downloads/hdfc_login.png', 'images/photo.jpg', 'screenshots/screen.png'). Do not use absolute paths.",
+					},
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Question to ask about the image (e.g., 'What is in this image?', 'Describe this image', 'What text is written here?')",
+					},
+				},
+				"required": []string{"filepath", "query"},
+			}),
+		},
+	}
+	workspaceTools = append(workspaceTools, readImageTool)
+
 	return workspaceTools
 }
 
@@ -317,6 +492,8 @@ func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args ma
 	executors["get_workspace_github_status"] = handleGetWorkspaceGitHubStatus
 	executors["delete_workspace_file"] = handleDeleteWorkspaceFile
 	executors["move_workspace_file"] = handleMoveWorkspaceFile
+	executors["execute_shell_command"] = handleExecuteShellCommand
+	executors["read_image"] = handleReadImage
 
 	return executors
 }
@@ -405,13 +582,21 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 // handleReadWorkspaceFile handles the read_workspace_file tool execution
 func handleReadWorkspaceFile(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Extract filepath parameter
-	filepath, ok := args["filepath"].(string)
-	if !ok || filepath == "" {
+	filepathStr, ok := args["filepath"].(string)
+	if !ok || filepathStr == "" {
 		return "", fmt.Errorf("filepath is required and must be a string")
 	}
 
-	// Build API URL
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + filepath
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(filepathStr, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Build API URL with encoded path
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
 
 	// Create HTTP request with context
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
@@ -439,6 +624,16 @@ func handleReadWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 
 	// Check HTTP status
 	if resp.StatusCode != http.StatusOK {
+		// Check if it's a 404 with "Document not found" message
+		if resp.StatusCode == http.StatusNotFound {
+			var apiResp WorkspaceAPIResponse
+			if err := json.Unmarshal(body, &apiResp); err == nil {
+				// Check if the error message indicates document not found
+				if strings.Contains(apiResp.Message, "Document not found") || strings.Contains(apiResp.Error, "Document not found") {
+					return "", fmt.Errorf("workspace API returned status %d: %s. Use the 'list_workspace_files' tool to find the correct file path", resp.StatusCode, string(body))
+				}
+			}
+		}
 		return "", fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -450,14 +645,177 @@ func handleReadWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 
 	// Check API response success
 	if !apiResp.Success {
+		// Check if it's a "Document not found" error
+		if strings.Contains(apiResp.Message, "Document not found") || strings.Contains(apiResp.Error, "Document not found") {
+			return "", fmt.Errorf("workspace API error: %s. Use the 'list_workspace_files' tool to find the correct file path", apiResp.Error)
+		}
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
-	// Return the raw API response directly
+	// Check if file is an image - if so, inform LLM to use read_image tool
+	if isImageFile(filepathStr) {
+		return "", fmt.Errorf("this file is an image (%s). Please use the 'read_image' tool instead to read and analyze image files. The read_image tool requires both 'filepath' and 'query' parameters", filepathStr)
+	}
+
+	// For non-image files, return the raw API response directly
 	responseData, err := json.Marshal(apiResp.Data)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+	return string(responseData), nil
+}
+
+// handleReadImage handles the read_image tool execution
+func handleReadImage(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract parameters
+	filepathStr, ok := args["filepath"].(string)
+	if !ok || filepathStr == "" {
+		return "", fmt.Errorf("filepath is required and must be a string")
+	}
+
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return "", fmt.Errorf("query is required and must be a string")
+	}
+
+	// Check if file is an image
+	if !isImageFile(filepathStr) {
+		return "", fmt.Errorf("file is not an image: %s (supported formats: jpg, jpeg, png, gif, webp)", filepathStr)
+	}
+
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(filepathStr, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Build API URL with encoded path
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Make the request
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check HTTP status
+	if resp.StatusCode != http.StatusOK {
+		// Check if it's a 404 with "Document not found" message
+		if resp.StatusCode == http.StatusNotFound {
+			var apiResp WorkspaceAPIResponse
+			if err := json.Unmarshal(body, &apiResp); err == nil {
+				// Check if the error message indicates document not found
+				if strings.Contains(apiResp.Message, "Document not found") || strings.Contains(apiResp.Error, "Document not found") {
+					return "", fmt.Errorf("workspace API returned status %d: %s. Use the 'list_workspace_files' tool to find the correct file path", resp.StatusCode, string(body))
+				}
+			}
+		}
+		return "", fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse JSON response
+	var apiResp WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	// Check API response success
+	if !apiResp.Success {
+		// Check if it's a "Document not found" error
+		if strings.Contains(apiResp.Message, "Document not found") || strings.Contains(apiResp.Error, "Document not found") {
+			return "", fmt.Errorf("workspace API error: %s. Use the 'list_workspace_files' tool to find the correct file path", apiResp.Error)
+		}
+		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Parse workspace file data
+	_, content, err := parseWorkspaceFileData(apiResp.Data)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse workspace file data: %w", err)
+	}
+
+	if content == "" {
+		return "", fmt.Errorf("no content found in workspace response")
+	}
+
+	// Handle base64 encoding and extract raw image data
+	var imageBytes []byte
+	if strings.HasPrefix(content, "data:image/") {
+		// Content is already a data URL, extract base64 part
+		parts := strings.Split(content, ",")
+		if len(parts) == 2 {
+			decoded, err := base64.StdEncoding.DecodeString(parts[1])
+			if err != nil {
+				return "", fmt.Errorf("failed to decode base64 data URL: %w", err)
+			}
+			imageBytes = decoded
+		} else {
+			return "", fmt.Errorf("invalid data URL format")
+		}
+	} else {
+		// Check if content is already base64-encoded (without data URL prefix)
+		decoded, err := base64.StdEncoding.DecodeString(content)
+		if err == nil {
+			// Already base64-encoded
+			imageBytes = decoded
+		} else {
+			// Not base64, treat as raw bytes
+			imageBytes = []byte(content)
+		}
+	}
+
+	// Determine MIME type from file extension
+	ext := strings.ToLower(filepath.Ext(filepathStr))
+	mimeType := getMimeTypeFromExtension(ext)
+
+	// Resize image if needed (max 1024x1024 pixels for optimal LLM performance)
+	const maxDimension = 1024
+	resizedBytes, resizedMimeType, err := resizeImage(imageBytes, mimeType, maxDimension)
+	if err != nil {
+		// Log error but continue with original image
+		// This allows the function to work even if resizing fails
+		resizedBytes = imageBytes
+		resizedMimeType = mimeType
+	}
+
+	// Encode resized (or original) image to base64
+	base64Data := base64.StdEncoding.EncodeToString(resizedBytes)
+	mimeType = resizedMimeType
+
+	// Return structured JSON
+	result := map[string]interface{}{
+		"_type":     "image_query",
+		"filepath":  filepathStr,
+		"query":     query,
+		"mime_type": mimeType,
+		"data":      base64Data,
+	}
+
+	responseData, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response: %w", err)
+	}
+
 	return string(responseData), nil
 }
 
@@ -753,18 +1111,21 @@ func handleDeleteWorkspaceFile(ctx context.Context, args map[string]interface{})
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
-	// Format the response
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("🗑️ **File Deleted: `%s`**\n\n", filepath))
-
+	// Return structured JSON for frontend parsing
+	resultJSON := map[string]interface{}{
+		"filepath": filepath,
+		"deleted":  true,
+	}
 	if commitMessage != "" {
-		result.WriteString(fmt.Sprintf("**Commit Message**: %s\n", commitMessage))
+		resultJSON["commit_message"] = commitMessage
 	}
 
-	result.WriteString("**Status**: File permanently deleted from workspace")
-	result.WriteString("\n\n⚠️ **Warning**: This action cannot be undone. The file has been permanently removed.")
+	jsonBytes, err := json.Marshal(resultJSON)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal result: %w", err)
+	}
 
-	return result.String(), nil
+	return string(jsonBytes), nil
 }
 
 // handleMoveWorkspaceFile handles the move_workspace_file tool execution
@@ -850,6 +1211,163 @@ func handleMoveWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 
 	result.WriteString("**Status**: File successfully moved to new location")
 	result.WriteString("\n\n✅ **Operation completed successfully**")
+
+	return result.String(), nil
+}
+
+// handleExecuteShellCommand handles the execute_shell_command tool execution
+func handleExecuteShellCommand(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract command parameter (required)
+	command, ok := args["command"].(string)
+	if !ok || command == "" {
+		return "", fmt.Errorf("command is required and must be a string")
+	}
+
+	// Extract args parameter (optional)
+	var argsArray []string
+	if argsVal, exists := args["args"]; exists {
+		if argsList, ok := argsVal.([]interface{}); ok {
+			for _, arg := range argsList {
+				if str, ok := arg.(string); ok {
+					argsArray = append(argsArray, str)
+				}
+			}
+		}
+	}
+
+	// Extract working_directory parameter (optional)
+	workingDirectory := getStringValue(args, "working_directory")
+
+	// Extract timeout parameter (optional)
+	timeout := getIntValue(args, "timeout")
+	if timeout == 0 {
+		timeout = 60 // Default timeout
+	}
+	if timeout > 300 {
+		timeout = 300 // Max timeout
+	}
+
+	// Extract use_shell parameter (optional)
+	useShell := getBoolValue(args, "use_shell")
+
+	// Build API URL
+	apiURL := getWorkspaceAPIURL() + "/api/execute"
+
+	// Prepare request body
+	requestBody := map[string]interface{}{
+		"command": command,
+	}
+	if len(argsArray) > 0 {
+		requestBody["args"] = argsArray
+	}
+	if workingDirectory != "" {
+		requestBody["working_directory"] = workingDirectory
+	}
+	if timeout > 0 {
+		requestBody["timeout"] = timeout
+	}
+	if useShell {
+		requestBody["use_shell"] = true
+	}
+
+	// Create HTTP request with context
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Set timeout (slightly longer than max command timeout)
+	clientTimeout := time.Duration(timeout+10) * time.Second
+	if clientTimeout > 310*time.Second {
+		clientTimeout = 310 * time.Second
+	}
+	client := &http.Client{
+		Timeout: clientTimeout,
+	}
+
+	// Make the request
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Parse JSON response
+	var apiResp WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	// Check API response success
+	if !apiResp.Success {
+		// Try to extract error details from response
+		errorMsg := apiResp.Error
+		if errorMsg == "" {
+			errorMsg = apiResp.Message
+		}
+		return "", fmt.Errorf("workspace API error: %s", errorMsg)
+	}
+
+	// Extract execution response data
+	dataMap, ok := apiResp.Data.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", apiResp.Data)
+	}
+
+	// Extract fields from response
+	stdout := getStringValue(dataMap, "stdout")
+	stderr := getStringValue(dataMap, "stderr")
+	exitCode := getIntValue(dataMap, "exit_code")
+	executionTimeMs := getIntValue(dataMap, "execution_time_ms")
+	executedCommand := getStringValue(dataMap, "command")
+
+	// Format the response for LLM
+	var result strings.Builder
+	result.WriteString("🔧 **Shell Command Execution**\n\n")
+	result.WriteString(fmt.Sprintf("**Command**: `%s`\n", executedCommand))
+
+	if workingDirectory != "" {
+		result.WriteString(fmt.Sprintf("**Working Directory**: `%s`\n", workingDirectory))
+	}
+
+	result.WriteString(fmt.Sprintf("**Exit Code**: %d\n", exitCode))
+	result.WriteString(fmt.Sprintf("**Execution Time**: %d ms\n\n", executionTimeMs))
+
+	// Display stdout if present
+	if stdout != "" {
+		result.WriteString("**Standard Output:**\n")
+		result.WriteString("```\n")
+		result.WriteString(stdout)
+		result.WriteString("\n```\n\n")
+	}
+
+	// Display stderr if present (even on success, as some commands write to stderr)
+	if stderr != "" {
+		result.WriteString("**Standard Error:**\n")
+		result.WriteString("```\n")
+		result.WriteString(stderr)
+		result.WriteString("\n```\n\n")
+	}
+
+	// Add status message
+	if exitCode == 0 {
+		result.WriteString("✅ **Command executed successfully**")
+	} else {
+		result.WriteString(fmt.Sprintf("⚠️ **Command exited with code %d**", exitCode))
+	}
 
 	return result.String(), nil
 }

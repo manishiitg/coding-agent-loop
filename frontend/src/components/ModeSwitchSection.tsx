@@ -75,12 +75,6 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
       description: 'Quick conversations and questions'
     },
     {
-      category: 'deep-research',
-      name: 'Deep Research Mode',
-      icon: getModeIcon('deep-research', 'w-4 h-4 text-green-600'),
-      description: 'Multi-step analysis and research'
-    },
-    {
       category: 'workflow',
       name: 'Workflow Mode',
       icon: getModeIcon('workflow', 'w-4 h-4 text-purple-600'),
@@ -116,8 +110,6 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
                 </div>
                 <div className="text-xs text-blue-700 dark:text-blue-300">
                   {agentMode === 'simple' ? 'Simple Agent' : 
-                   agentMode === 'ReAct' ? 'ReAct Agent' :
-                   agentMode === 'orchestrator' ? 'Orchestrator Agent' :
                    agentMode === 'workflow' ? 'Workflow Agent' : 'Unknown Agent'}
                 </div>
               </div>
@@ -136,8 +128,6 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
                       selectedModeCategory === mode.category
                         ? mode.category === 'chat' 
                           ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
-                          : mode.category === 'deep-research'
-                          ? 'bg-green-100 dark:bg-green-900/30 text-green-900 dark:text-green-100'
                           : 'bg-purple-100 dark:bg-purple-900/30 text-purple-900 dark:text-purple-100'
                         : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                     }`}

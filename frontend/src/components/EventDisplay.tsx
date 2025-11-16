@@ -5,8 +5,12 @@ import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores'
 import { agentApi } from '../services/api'
 
+interface EventDisplayProps {
+  onFeedbackSubmitted?: () => void
+}
+
 // Isolated event display component that can re-render without affecting input
-export const EventDisplay = React.memo(() => {
+export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted }) => {
   // Store subscriptions
   const {
     events,
@@ -62,6 +66,7 @@ export const EventDisplay = React.memo(() => {
               events={events} 
               onApproveWorkflow={handleApproveWorkflow}
               onSubmitFeedback={handleSubmitFeedback}
+              onFeedbackSubmitted={onFeedbackSubmitted}
               isApproving={false}
             />
           </div>

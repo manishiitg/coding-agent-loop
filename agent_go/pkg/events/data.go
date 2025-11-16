@@ -184,6 +184,22 @@ func serializeMessage(msg llmtypes.MessageContent) SerializedMessage {
 			case llmtypes.TextContent:
 				messagePart.Type = "text"
 				messagePart.Content = p.Text
+			case llmtypes.ImageContent:
+				messagePart.Type = "image"
+				// Store metadata only, not full base64 data (too large for events)
+				imageMeta := map[string]interface{}{
+					"source_type": p.SourceType,
+					"media_type":  p.MediaType,
+				}
+				if p.SourceType == "url" {
+					// Include URL since it's not as large as base64 data
+					imageMeta["url"] = p.Data
+				} else {
+					// For base64, just indicate data length
+					imageMeta["data_length"] = len(p.Data)
+					imageMeta["data_preview"] = "base64_encoded_image_data"
+				}
+				messagePart.Content = imageMeta
 			case llmtypes.ToolCall:
 				messagePart.Type = "tool_call"
 				messagePart.Content = map[string]interface{}{
@@ -431,75 +447,6 @@ type ToolContext struct {
 	Arguments  string `json:"arguments,omitempty"`
 	Result     string `json:"result,omitempty"`
 	Status     string `json:"status"`
-}
-
-// ReActReasoningEvent represents a single reasoning step in ReAct agent
-type ReActReasoningEvent struct {
-	BaseEventData
-	Turn        int    `json:"turn"`
-	StepNumber  int    `json:"step_number"`
-	Thought     string `json:"thought"`
-	Action      string `json:"action,omitempty"`
-	Observation string `json:"observation,omitempty"`
-	Conclusion  string `json:"conclusion,omitempty"`
-}
-
-// ReActReasoningStartEvent represents the start of ReAct reasoning process
-type ReActReasoningStartEvent struct {
-	BaseEventData
-	Turn     int    `json:"turn"`
-	Question string `json:"question"`
-}
-
-// ReActReasoningEndEvent represents the end of ReAct reasoning process
-type ReActReasoningEndEvent struct {
-	BaseEventData
-	Turn           int    `json:"turn"`
-	FinalAnswer    string `json:"final_answer"`
-	TotalSteps     int    `json:"total_steps"`
-	ReasoningChain string `json:"reasoning_chain"`
-}
-
-// ReActReasoningStepEvent represents an intermediate reasoning step in ReAct agent
-type ReActReasoningStepEvent struct {
-	BaseEventData
-	Turn        int    `json:"turn"`
-	StepNumber  int    `json:"step_number"`
-	Thought     string `json:"thought"`
-	Action      string `json:"action,omitempty"`
-	Observation string `json:"observation,omitempty"`
-	Conclusion  string `json:"conclusion,omitempty"`
-	StepType    string `json:"step_type"`
-	Content     string `json:"content"`
-}
-
-// ReActReasoningFinalEvent represents the final reasoning step in ReAct agent
-type ReActReasoningFinalEvent struct {
-	BaseEventData
-	Turn        int    `json:"turn"`
-	FinalAnswer string `json:"final_answer"`
-	Content     string `json:"content"`
-	Reasoning   string `json:"reasoning"`
-}
-
-func (e *ReActReasoningEvent) GetEventType() EventType {
-	return ReActReasoningEventType
-}
-
-func (e *ReActReasoningStartEvent) GetEventType() EventType {
-	return ReActReasoningStartEventType
-}
-
-func (e *ReActReasoningEndEvent) GetEventType() EventType {
-	return ReActReasoningEndEventType
-}
-
-func (e *ReActReasoningStepEvent) GetEventType() EventType {
-	return ReActReasoningStepEventType
-}
-
-func (e *ReActReasoningFinalEvent) GetEventType() EventType {
-	return ReActReasoningFinalEventType
 }
 
 // SystemPromptEvent represents a system prompt being used
@@ -955,72 +902,6 @@ func NewErrorDetailEvent(turn int, error, errorType, component, operation, conte
 		Duration:    duration,
 		Recoverable: recoverable,
 		RetryCount:  retryCount,
-	}
-}
-
-// NewReActReasoningEvent creates a new ReAct reasoning step event
-func NewReActReasoningEvent(turn, stepNumber int, thought, action, observation, conclusion string) *ReActReasoningEvent {
-	return &ReActReasoningEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:        turn,
-		StepNumber:  stepNumber,
-		Thought:     thought,
-		Action:      action,
-		Observation: observation,
-		Conclusion:  conclusion,
-	}
-}
-
-// NewReActReasoningStartEvent creates a new ReAct reasoning start event
-func NewReActReasoningStartEvent(turn int, question string) *ReActReasoningStartEvent {
-	return &ReActReasoningStartEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:     turn,
-		Question: question,
-	}
-}
-
-// NewReActReasoningEndEvent creates a new ReAct reasoning end event
-func NewReActReasoningEndEvent(turn int, finalAnswer string, totalSteps int, reasoningChain string) *ReActReasoningEndEvent {
-	return &ReActReasoningEndEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:           turn,
-		FinalAnswer:    finalAnswer,
-		TotalSteps:     totalSteps,
-		ReasoningChain: reasoningChain,
-	}
-}
-
-// NewReActReasoningStepEvent creates a new ReAct reasoning step event
-func NewReActReasoningStepEvent(turn, stepNumber int, thought, stepType, content string) *ReActReasoningStepEvent {
-	return &ReActReasoningStepEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       turn,
-		StepNumber: stepNumber,
-		Thought:    thought,
-		StepType:   stepType,
-		Content:    content,
-	}
-}
-
-// NewReActReasoningFinalEvent creates a new ReAct reasoning final event
-func NewReActReasoningFinalEvent(turn int, finalAnswer, content, reasoning string) *ReActReasoningFinalEvent {
-	return &ReActReasoningFinalEvent{
-		BaseEventData: BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:        turn,
-		FinalAnswer: finalAnswer,
-		Content:     content,
-		Reasoning:   reasoning,
 	}
 }
 
@@ -1764,21 +1645,22 @@ func (e *OrchestratorAgentStartEvent) GetEventType() EventType {
 
 type OrchestratorAgentEndEvent struct {
 	BaseEventData
-	AgentType    string            `json:"agent_type"`           // planning, execution, validation, organizer
-	AgentName    string            `json:"agent_name"`           // specific agent name
-	Objective    string            `json:"objective"`            // what the agent was trying to accomplish
-	InputData    map[string]string `json:"input_data"`           // template variables passed to agent
-	Result       string            `json:"result"`               // agent's output/result
-	Success      bool              `json:"success"`              // whether agent completed successfully
-	Error        string            `json:"error,omitempty"`      // error message if failed
-	Duration     time.Duration     `json:"duration"`             // how long the agent took
-	ModelID      string            `json:"model_id"`             // which LLM model was used
-	Provider     string            `json:"provider"`             // which LLM provider
-	ServersCount int               `json:"servers_count"`        // number of MCP servers used
-	MaxTurns     int               `json:"max_turns"`            // maximum conversation turns
-	PlanID       string            `json:"plan_id,omitempty"`    // associated plan ID
-	StepIndex    int               `json:"step_index,omitempty"` // which step in the plan
-	Iteration    int               `json:"iteration,omitempty"`  // which iteration of the loop
+	AgentType          string                 `json:"agent_type"`                    // planning, execution, validation, organizer
+	AgentName          string                 `json:"agent_name"`                    // specific agent name
+	Objective          string                 `json:"objective"`                     // what the agent was trying to accomplish
+	InputData          map[string]string      `json:"input_data"`                    // template variables passed to agent
+	Result             string                 `json:"result"`                        // agent's output/result (text summary)
+	StructuredResponse map[string]interface{} `json:"structured_response,omitempty"` // structured response data (for ExecuteStructured calls)
+	Success            bool                   `json:"success"`                       // whether agent completed successfully
+	Error              string                 `json:"error,omitempty"`               // error message if failed
+	Duration           time.Duration          `json:"duration"`                      // how long the agent took
+	ModelID            string                 `json:"model_id"`                      // which LLM model was used
+	Provider           string                 `json:"provider"`                      // which LLM provider
+	ServersCount       int                    `json:"servers_count"`                 // number of MCP servers used
+	MaxTurns           int                    `json:"max_turns"`                     // maximum conversation turns
+	PlanID             string                 `json:"plan_id,omitempty"`             // associated plan ID
+	StepIndex          int                    `json:"step_index,omitempty"`          // which step in the plan
+	Iteration          int                    `json:"iteration,omitempty"`           // which iteration of the loop
 }
 
 func (e *OrchestratorAgentEndEvent) GetEventType() EventType {
@@ -1841,19 +1723,16 @@ func (e *RequestHumanFeedbackEvent) GetEventType() EventType {
 
 type BlockingHumanFeedbackEvent struct {
 	BaseEventData
-	Question        string `json:"question"`       // Question to ask user
-	AllowFeedback   bool   `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
-	Context         string `json:"context"`        // Additional context (e.g., validation results)
-	SessionID       string `json:"session_id"`
-	WorkflowID      string `json:"workflow_id"`
-	RequestID       string `json:"request_id"`                  // Unique ID for this feedback request
-	YesNoOnly       bool   `json:"yes_no_only"`                 // If true, show only Approve/Reject buttons (no textarea)
-	YesLabel        string `json:"yes_label,omitempty"`         // Custom label for Approve button (default: "Approve")
-	NoLabel         string `json:"no_label,omitempty"`          // Custom label for Reject button (default: "Reject")
-	ThreeChoiceMode bool   `json:"three_choice_mode,omitempty"` // If true, show three option buttons
-	Option1Label    string `json:"option1_label,omitempty"`     // Label for first option
-	Option2Label    string `json:"option2_label,omitempty"`     // Label for second option
-	Option3Label    string `json:"option3_label,omitempty"`     // Label for third option
+	Question      string   `json:"question"`       // Question to ask user
+	AllowFeedback bool     `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
+	Context       string   `json:"context"`        // Additional context (e.g., validation results)
+	SessionID     string   `json:"session_id"`
+	WorkflowID    string   `json:"workflow_id"`
+	RequestID     string   `json:"request_id"`          // Unique ID for this feedback request
+	YesNoOnly     bool     `json:"yes_no_only"`         // If true, show only Approve/Reject buttons (no textarea)
+	YesLabel      string   `json:"yes_label,omitempty"` // Custom label for Approve button (default: "Approve")
+	NoLabel       string   `json:"no_label,omitempty"`  // Custom label for Reject button (default: "Reject")
+	Options       []string `json:"options,omitempty"`   // Array of option labels for multiple choice (renders as buttons)
 }
 
 func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {

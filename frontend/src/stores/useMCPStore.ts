@@ -84,9 +84,11 @@ export const useMCPStore = create<MCPState>()(
 
         toggleServer: (server) => {
           set((state) => {
-            const newSelected = state.selectedServers.includes(server)
-              ? state.selectedServers.filter(s => s !== server)
-              : [...state.selectedServers, server]
+            // Remove "NO_SERVERS" if toggling a real server
+            const filtered = state.selectedServers.filter(s => s !== "NO_SERVERS")
+            const newSelected = filtered.includes(server)
+              ? filtered.filter(s => s !== server)
+              : [...filtered, server]
             
             return { selectedServers: newSelected }
           })
@@ -95,11 +97,13 @@ export const useMCPStore = create<MCPState>()(
         selectAllServers: () => {
           const state = get()
           const availableServers = state.getAvailableServers()
-          set({ selectedServers: availableServers })
+          // Filter out "NO_SERVERS" and set actual server names
+          set({ selectedServers: availableServers.filter(s => s !== "NO_SERVERS") })
         },
 
         clearAllServers: () => {
-          set({ selectedServers: [] })
+          // Set "NO_SERVERS" to indicate no servers should be used
+          set({ selectedServers: ["NO_SERVERS"] })
         },
 
         refreshTools: async () => {
@@ -211,7 +215,8 @@ export const useMCPStore = create<MCPState>()(
 
         isServerSelected: (server) => {
           const state = get()
-          return state.selectedServers.includes(server)
+          // Filter out "NO_SERVERS" when checking if a real server is selected
+          return state.selectedServers.filter(s => s !== "NO_SERVERS").includes(server)
         },
 
         // Generic actions

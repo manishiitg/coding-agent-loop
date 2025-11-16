@@ -9,17 +9,18 @@ import { ToolSelectionSection } from './ToolSelectionSection';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
+import { useModeStore } from '../stores/useModeStore';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
 import type { LLMOption } from '../types/llm';
 
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
-  fixedAgentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow';
+  fixedAgentMode?: 'simple' | 'workflow';
 }
 
 const PresetModal: React.FC<PresetModalProps> = React.memo(({
@@ -35,7 +36,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [agentMode, setAgentMode] = useState<'simple' | 'ReAct' | 'orchestrator' | 'workflow'>('ReAct');
+  const [agentMode, setAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
@@ -46,8 +47,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const availableLLMs = useLLMStore(state => state.availableLLMs);
   const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
   const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
+  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
 
   // Calculate effective agent mode that always honors fixedAgentMode when provided
+  // This ensures workflow presets only show Workflow/ folders in the folder selection dialog
   const effectiveAgentMode = fixedAgentMode || agentMode;
 
   // LLM selection handler - updates local preset LLM config
@@ -78,7 +81,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setQuery(editingPreset.query);
       setSelectedServers(editingPreset.selectedServers || []);
       setSelectedTools(editingPreset.selectedTools || []); // NEW
-      setAgentMode(editingPreset.agentMode || 'ReAct');
+      setAgentMode(editingPreset.agentMode || 'simple');
       setSelectedFolder(editingPreset.selectedFolder || null);
       setLlmConfig(editingPreset.llmConfig || {
         provider: primaryConfig.provider,
@@ -89,7 +92,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setQuery('');
       setSelectedServers([]);
       setSelectedTools([]); // NEW
-      setAgentMode(fixedAgentMode || 'ReAct');
+      // Default to current mode if no fixedAgentMode is provided
+      const defaultMode = fixedAgentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : 'simple');
+      setAgentMode(defaultMode);
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
       setLlmConfig({
@@ -97,12 +102,23 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       });
     }
-  }, [editingPreset, fixedAgentMode, primaryConfig]);
+  }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
   const handleSelectFolders = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    // Estimate dialog height (max-h-80 = 320px + some padding)
+    const estimatedDialogHeight = 320;
+    const spaceAbove = rect.top + window.scrollY;
+    
+    // Always try to position above the button so contents are visible
+    // Fallback to below only if there's not enough space above
+    const minSpaceNeeded = 200; // Minimum space needed above
+    const shouldPositionAbove = spaceAbove >= minSpaceNeeded;
+    
     setFolderDialogPosition({
-      top: rect.bottom + window.scrollY,
+      top: shouldPositionAbove 
+        ? rect.top + window.scrollY - estimatedDialogHeight 
+        : rect.bottom + window.scrollY,
       left: rect.left + window.scrollX
     });
     setShowFolderDialog(true);
@@ -120,8 +136,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (label.trim() && query.trim()) {
-      if ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder) {
-        alert('Folder selection is required for Deep Search and workflow presets');
+      if (effectiveAgentMode === 'workflow' && !selectedFolder) {
+        alert('Folder selection is required for workflow presets');
         return;
       }
       
@@ -182,7 +198,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               form="preset-form"
               variant="outline"
               size="sm"
-              disabled={!label.trim() || !query.trim() || ((effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder)}
+              disabled={!label.trim() || !query.trim() || (effectiveAgentMode === 'workflow' && !selectedFolder)}
             >
               {editingPreset ? 'Update' : 'Save'} Preset
             </Button>
@@ -276,7 +292,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               {/* Folder Selection */}
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Folder {effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
+                  Folder {effectiveAgentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
                 </label>
                 <div className="space-y-2">
                   {selectedFolder && (
@@ -299,7 +315,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     data-folder-button
                     onClick={handleSelectFolders}
                     className={`w-full p-3 border-2 border-dashed rounded-md transition-colors ${
-                      (effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder
+                      effectiveAgentMode === 'workflow' && !selectedFolder
                         ? 'border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500'
                         : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-blue-500'
                     }`}
@@ -315,7 +331,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     Selected: {selectedFolder.filepath}
                   </p>
                 )}
-                {(effectiveAgentMode === 'orchestrator' || effectiveAgentMode === 'workflow') && !selectedFolder && (
+                {effectiveAgentMode === 'workflow' && !selectedFolder && (
                   <p className="text-xs text-red-500 mt-1">
                     ⚠️ Folder selection is required for {effectiveAgentMode} presets
                   </p>
@@ -331,8 +347,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <div className="grid grid-cols-2 gap-2">
                     {[
                       { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
-                      { value: 'ReAct', label: 'ReAct', description: 'Step-by-step reasoning' },
-                      { value: 'orchestrator', label: 'Deep Search', description: 'Multi-step plans' },
                       { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
                     ].map((mode) => (
                       <div key={mode.value} className="flex items-center space-x-2">
@@ -342,7 +356,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           name="agentMode"
                           value={mode.value}
                           checked={agentMode === mode.value}
-                          onChange={(e) => setAgentMode(e.target.value as 'simple' | 'ReAct' | 'orchestrator' | 'workflow')}
+                          onChange={(e) => setAgentMode(e.target.value as 'simple' | 'workflow')}
                           className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
                         />
                         <label
@@ -367,13 +381,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     <div className="flex items-center gap-2">
                       <div className="font-medium text-gray-900 dark:text-white">
                         {fixedAgentMode === 'simple' ? 'Simple' :
-                         fixedAgentMode === 'ReAct' ? 'ReAct' :
-                         fixedAgentMode === 'orchestrator' ? 'Deep Search' : 'Workflow'}
+                         'Workflow'}
                       </div>
                       <div className="text-xs text-gray-500 dark:text-gray-400">
                         {fixedAgentMode === 'simple' ? 'Ask simple questions' :
-                         fixedAgentMode === 'ReAct' ? 'Step-by-step reasoning' :
-                         fixedAgentMode === 'orchestrator' ? 'Multi-step plans' : 'Todo-list execution'}
+                         'Todo-list execution'}
                       </div>
                     </div>
                   </div>
@@ -390,7 +402,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           onSelectFolder={handleFolderSelect}
           searchQuery=""
           position={folderDialogPosition}
-          agentMode={effectiveAgentMode}
+          agentMode={effectiveAgentMode as 'simple' | 'workflow'}
         />
       </Card>
     </div>

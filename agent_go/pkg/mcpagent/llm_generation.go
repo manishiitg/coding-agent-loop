@@ -208,7 +208,18 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		logger.Infof("🔍 Using frontend cross-provider fallback - Provider: %s, Models: %v", crossProviderName, crossProviderFallbacks)
 	} else {
 		crossProviderFallbacks = llm.GetCrossProviderFallbackModels(provider)
-		crossProviderName = "openai" // Default fallback provider
+		// Determine cross-provider name based on provider and fallback models
+		if len(crossProviderFallbacks) > 0 {
+			// Detect provider from first fallback model
+			crossProviderName = string(detectProviderFromModelID(crossProviderFallbacks[0]))
+		} else {
+			// Default fallback provider based on primary provider
+			if provider == llm.ProviderVertex {
+				crossProviderName = "anthropic"
+			} else {
+				crossProviderName = "openai"
+			}
+		}
 		logger.Infof("🔍 Using default cross-provider fallback - Provider: %s, Models: %v", crossProviderName, crossProviderFallbacks)
 	}
 
@@ -261,22 +272,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		if err == nil {
 			logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - SUCCESS - Response: %v", attempt+1, resp != nil)
 			usage = extractUsageMetricsWithMessages(resp, messages)
-			// Emit LLM generation success event (replaced span-based tracing)
-			llmAttemptEndEvent := &events.LLMGenerationEndEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Turn:      turn + 1,
-				Content:   resp.Choices[0].Content,
-				ToolCalls: len(resp.Choices[0].ToolCalls),
-				Duration:  time.Since(llmGenerationStartEvent.Timestamp),
-				UsageMetrics: events.UsageMetrics{
-					PromptTokens:     usage.InputTokens,
-					CompletionTokens: usage.OutputTokens,
-					TotalTokens:      usage.TotalTokens,
-				},
-			}
-			a.EmitTypedEvent(ctx, llmAttemptEndEvent)
+			// Note: llm_generation_end event is emitted by EndLLMGeneration() in conversation.go
+			// to avoid duplicate events
 			return resp, nil, usage
 		}
 
@@ -306,10 +303,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 		// Handle max token errors with fallback models
 		if isMaxTokenError(err) {
-			// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
-			if a.AgentMode == ReActAgent && a.reasoningTracker != nil {
-				a.reasoningTracker.Reset()
-			}
 
 			// Create max token fallback event (replaced span-based tracing)
 			maxTokenFallbackEvent := &events.LLMGenerationErrorEvent{
@@ -391,16 +384,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				a.LLM = fallbackLLM
 
 				// For ReAct agents, use streaming in fallback as well
-				var fresp *llmtypes.ContentResponse
-				var ferr2 error
-				if a.AgentMode == ReActAgent {
-					streamingOpts := append(opts, llmtypes.WithStreamingFunc(func(chunk string) {
-						sendMessage(chunk)
-					}))
-					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, streamingOpts...)
-				} else {
-					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-				}
+				// Use non-streaming approach for all agents during fallback
+				fresp, ferr2 := a.LLM.GenerateContent(ctx, messages, opts...)
 
 				a.LLM = origLLM
 				a.ModelID = origModelID
@@ -674,10 +659,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 		// Handle throttling errors with fallback models
 		if isThrottlingError(err) {
-			// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
-			if a.AgentMode == ReActAgent && a.reasoningTracker != nil {
-				a.reasoningTracker.Reset()
-			}
 
 			// Track throttling start time
 			throttlingStartTime := time.Now()
@@ -1075,7 +1056,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			break
 		}
 
-		// Handle empty content errors with retry first (if retries available), then fallback models
+		// Handle empty content errors - go directly to fallback models (no retry delay)
 		if isEmptyContentError(err) {
 			logger.Infof("🔍 EMPTY CONTENT ERROR HANDLING STARTED")
 			logger.Infof("🔍 Error details: %s", err.Error())
@@ -1083,91 +1064,11 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			logger.Infof("🔍 Same provider fallbacks: %v", sameProviderFallbacks)
 			logger.Infof("🔍 Cross provider fallbacks: %v", crossProviderFallbacks)
 
-			// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
-			if a.AgentMode == ReActAgent && a.reasoningTracker != nil {
-				a.reasoningTracker.Reset()
-			}
 			// Track empty content error start time
 			emptyContentStartTime := time.Now()
 
-			// 🆕 RETRY WITH SAME MODEL FIRST (if retries available)
-			// Use fixed 5 second delay for retries
-			if attempt < maxRetries-1 {
-				emptyContentRetryDelay := 5 * time.Second
-				if emptyContentRetryDelay > maxDelay {
-					emptyContentRetryDelay = maxDelay
-				}
-				logger.Infof("⏳ Empty content error: Waiting %v before retrying with same model %s (attempt %d/%d)", emptyContentRetryDelay, a.ModelID, attempt+1, maxRetries)
-
-				// Emit empty content error event with retry delay
-				emptyContentEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(emptyContentStartTime), "empty_content", emptyContentRetryDelay)
-				a.EmitTypedEvent(ctx, emptyContentEvent)
-
-				// Create retry delay event (replaced span-based tracing)
-				emptyContentRetryDelayEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Data: map[string]interface{}{
-						"delay_duration": emptyContentRetryDelay.String(),
-						"attempt":        attempt + 1,
-						"max_retries":    maxRetries,
-						"operation":      "retry_delay",
-						"error_type":     "empty_content",
-						"model_id":       a.ModelID,
-						"provider":       string(a.provider),
-					},
-				}
-				a.EmitTypedEvent(ctx, emptyContentRetryDelayEvent)
-
-				sendMessage(fmt.Sprintf("\n⚠️ Empty content error detected (turn %d, attempt %d/%d). Waiting %v before retrying with same model...", turn, attempt+1, maxRetries, emptyContentRetryDelay))
-
-				// Wait with context cancellation support
-				retryTimer := time.NewTimer(emptyContentRetryDelay)
-				defer retryTimer.Stop()
-
-				select {
-				case <-ctx.Done():
-					logger.Infof("❌ Empty content retry cancelled - context done: %v", ctx.Err())
-					// Emit retry delay cancellation event
-					emptyContentRetryDelayCancelledEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":       turn + 1,
-							"cancelled":  true,
-							"error":      ctx.Err().Error(),
-							"error_type": "empty_content",
-							"operation":  "retry_delay",
-						},
-					}
-					a.EmitTypedEvent(ctx, emptyContentRetryDelayCancelledEvent)
-					return nil, ctx.Err(), usage
-				case <-retryTimer.C:
-					logger.Infof("✅ Empty content retry delay completed, retrying with same model %s", a.ModelID)
-				}
-
-				// Emit retry delay completion event
-				emptyContentRetryDelayCompletedEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Data: map[string]interface{}{
-						"turn":       turn + 1,
-						"completed":  true,
-						"error_type": "empty_content",
-						"operation":  "retry_delay",
-					},
-				}
-				a.EmitTypedEvent(ctx, emptyContentRetryDelayCompletedEvent)
-
-				sendMessage(fmt.Sprintf("\n🔄 Retrying with same model %s after %v delay (turn %d, attempt %d/%d)...", a.ModelID, emptyContentRetryDelay, turn, attempt+2, maxRetries))
-				continue // Retry in the main loop with same model
-			}
-
-			// No retries left, try fallback models
-			logger.Infof("❌ No retries left (attempt %d/%d), proceeding with fallback models", attempt+1, maxRetries)
+			// Go directly to fallback models (no retry delay for empty content errors)
+			logger.Infof("⚠️ Empty content error detected (turn %d, attempt %d/%d). Proceeding directly to fallback models...", turn, attempt+1, maxRetries)
 
 			// Emit empty content error event (no retry delay since we're going to fallback)
 			emptyContentEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(emptyContentStartTime), "empty_content", 0)
@@ -1190,7 +1091,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			}
 			a.EmitTypedEvent(ctx, emptyContentFallbackEvent)
 
-			sendMessage("\n⚠️ Empty content error: All retries exhausted. Trying fallback models...")
+			sendMessage("\n⚠️ Empty content error: Proceeding directly to fallback models...")
 
 			// Phase 1: Try same-provider fallbacks first
 			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), string(a.provider)))
@@ -1477,11 +1378,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 		// Handle connection/network errors with fallback models
 		if isConnectionError(err) {
-			// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
-			if a.AgentMode == ReActAgent && a.reasoningTracker != nil {
-				a.reasoningTracker.Reset()
-			}
-
 			// Track connection error start time
 			connectionErrorStartTime := time.Now()
 
@@ -1754,9 +1650,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 // handleErrorWithFallback is a generic function that handles any error type with fallback models
 func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
 	// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
-	if a.AgentMode == ReActAgent && a.reasoningTracker != nil {
-		a.reasoningTracker.Reset()
-	}
 
 	// Track error start time
 	errorStartTime := time.Now()

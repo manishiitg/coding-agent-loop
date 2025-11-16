@@ -214,9 +214,9 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		logger.Infof("🔧 Smart routing disabled - using all available tools")
 	}
 
-	if config.AgentMode == mcpagent.ReActAgent {
-		// Create ReAct agent
-		agent, err = mcpagent.NewReActAgent(
+	if config.AgentMode == mcpagent.SimpleAgent {
+		// Create Simple agent
+		agent, err = mcpagent.NewSimpleAgent(
 			ctx,
 			llm,
 			config.ServerName,

@@ -227,7 +227,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("✅ OpenAI Simple Agent created successfully")
 
 	// Create OpenAI ReAct Agent
-	openaiReActAgent, err := mcpagent.NewReActAgent(ctx, openaiLLM, "openai-react-test", "configs/mcp_servers_simple.json", "gpt-4o-mini", nil, "openai-react-trace", logger)
+	openaiReActAgent, err := mcpagent.NewSimpleAgent(ctx, openaiLLM, "openai-react-test", "configs/mcp_servers_simple.json", "gpt-4o-mini", nil, "openai-react-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create OpenAI ReAct agent: %w", err)
 		return err
@@ -334,7 +334,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("✅ Bedrock Simple Agent created successfully")
 
 	// Create Bedrock ReAct Agent
-	bedrockReActAgent, err := mcpagent.NewReActAgent(ctx, bedrockLLM, "bedrock-react-test", "configs/mcp_servers_simple.json", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", nil, "bedrock-react-trace", logger)
+	bedrockReActAgent, err := mcpagent.NewSimpleAgent(ctx, bedrockLLM, "bedrock-react-test", "configs/mcp_servers_simple.json", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", nil, "bedrock-react-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create Bedrock ReAct agent: %w", err)
 		return err
@@ -440,7 +440,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("✅ Anthropic Simple Agent created successfully")
 
 	// Create Anthropic ReAct Agent
-	anthropicReActAgent, err := mcpagent.NewReActAgent(ctx, anthropicLLM, "anthropic-react-test", "configs/mcp_servers_simple.json", "claude-3-5-sonnet-20241022", nil, "anthropic-react-trace", logger)
+	anthropicReActAgent, err := mcpagent.NewSimpleAgent(ctx, anthropicLLM, "anthropic-react-test", "configs/mcp_servers_simple.json", "claude-3-5-sonnet-20241022", nil, "anthropic-react-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create Anthropic ReAct agent: %w", err)
 		return err
@@ -588,7 +588,7 @@ func testAgentStructuredOutput(cmd *cobra.Command) error {
 	logger.Info("✅ OpenAI GPT-4.1 Simple Agent created successfully")
 
 	// Create OpenAI GPT-4.1 ReAct Agent
-	openaiGPT4ReActAgent, err := mcpagent.NewReActAgent(ctx, openaiGPT4LLM, "openai-gpt4.1-react-test", "configs/mcp_servers_simple.json", "gpt-4.1", nil, "openai-gpt4.1-react-trace", logger)
+	openaiGPT4ReActAgent, err := mcpagent.NewSimpleAgent(ctx, openaiGPT4LLM, "openai-gpt4.1-react-test", "configs/mcp_servers_simple.json", "gpt-4.1", nil, "openai-gpt4.1-react-trace", logger)
 	if err != nil {
 		logger.Errorf("❌ Failed to create OpenAI GPT-4.1 ReAct agent: %w", err)
 		return err
@@ -805,7 +805,7 @@ func runVertexAIStructuredOutputTest(logger interface{}) error {
 	log.Info("✅ Vertex AI Simple Agent created successfully")
 
 	// Create Vertex AI ReAct Agent
-	vertexReActAgent, err := mcpagent.NewReActAgent(ctx, vertexLLM, "vertex-react-test", "configs/mcp_servers_simple.json", "gemini-2.5-flash", nil, "vertex-react-trace", log)
+	vertexReActAgent, err := mcpagent.NewSimpleAgent(ctx, vertexLLM, "vertex-react-test", "configs/mcp_servers_simple.json", "gemini-2.5-flash", nil, "vertex-react-trace", log)
 	if err != nil {
 		log.Errorf("❌ Failed to create Vertex AI ReAct agent: %w", err)
 		return err

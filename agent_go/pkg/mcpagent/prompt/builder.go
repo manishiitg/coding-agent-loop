@@ -37,14 +37,8 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	currentDate := now.Format("2006-01-02")
 	currentTime := now.Format("15:04:05")
 
-	// Choose template based on mode
-	var prompt string
-	modeStr := fmt.Sprintf("%v", mode)
-	if modeStr == "ReAct" {
-		prompt = ReActSystemPromptTemplate
-	} else {
-		prompt = SystemPromptTemplate
-	}
+	// Always use Simple system prompt template
+	prompt := SystemPromptTemplate
 
 	// Replace placeholders (tools are passed via llmtypes.WithTools())
 	// prompt = strings.ReplaceAll(prompt, "{{TOOLS_SECTION}}", "Tools are available via llmtypes.WithTools() - see available tools in the tools array")
@@ -55,39 +49,6 @@ func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources ma
 	prompt = strings.ReplaceAll(prompt, CurrentTimePlaceholder, currentTime)
 
 	return prompt
-}
-
-// IsReActCompletion checks if the response contains ReAct completion patterns
-func IsReActCompletion(response string) bool {
-	responseLower := strings.ToLower(response)
-	for _, pattern := range ReActCompletionPatterns {
-		if strings.Contains(responseLower, strings.ToLower(pattern)) {
-			return true
-		}
-	}
-	return false
-}
-
-// ExtractFinalAnswer extracts the final answer from a ReAct response
-func ExtractFinalAnswer(response string) string {
-	responseLower := strings.ToLower(response)
-
-	// Look for completion patterns
-	for _, pattern := range ReActCompletionPatterns {
-		patternLower := strings.ToLower(pattern)
-		if strings.Contains(responseLower, patternLower) {
-			// Find the position of the pattern
-			pos := strings.Index(strings.ToLower(response), patternLower)
-			if pos != -1 {
-				// Extract everything after the pattern
-				finalAnswer := response[pos+len(pattern):]
-				return strings.TrimSpace(finalAnswer)
-			}
-		}
-	}
-
-	// If no pattern found, return the original response
-	return response
 }
 
 // buildPromptsSectionWithPreviews builds the prompts section with previews

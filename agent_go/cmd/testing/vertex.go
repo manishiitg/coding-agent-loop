@@ -2,10 +2,14 @@ package testing
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
+	"mime"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/llm/vertex"
@@ -30,6 +34,8 @@ type vertexTestFlags struct {
 	withGitHub bool
 	structured bool
 	configPath string
+	imagePath  string
+	imageURL   string
 }
 
 var vertexFlags vertexTestFlags
@@ -41,6 +47,8 @@ func init() {
 	vertexCmd.Flags().BoolVar(&vertexFlags.withGitHub, "with-github", false, "use GitHub MCP tools for testing")
 	vertexCmd.Flags().BoolVar(&vertexFlags.structured, "structured", false, "test structured JSON output with ResponseSchema")
 	vertexCmd.Flags().StringVar(&vertexFlags.configPath, "config", "configs/mcp_servers_clean_user.json", "MCP config file path")
+	vertexCmd.Flags().StringVar(&vertexFlags.imagePath, "with-image", "", "path to image file to test image input (JPEG, PNG, GIF, WebP)")
+	vertexCmd.Flags().StringVar(&vertexFlags.imageURL, "image-url", "", "URL of image to test image input")
 }
 
 func runVertex(cmd *cobra.Command, args []string) {
@@ -67,11 +75,13 @@ func runVertex(cmd *cobra.Command, args []string) {
 
 	ctx := context.Background()
 
-	testType := "plain generation"
+	testType := "image input (default)"
 	if vertexFlags.withTools {
 		testType = "tool calling"
 	} else if vertexFlags.structured {
 		testType = "structured output"
+	} else if vertexFlags.imagePath != "" || vertexFlags.imageURL != "" {
+		testType = "image input"
 	}
 	logger.Info(fmt.Sprintf("🚀 Testing Vertex AI (%s)", testType))
 
@@ -91,7 +101,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 		Context:     ctx,
 	})
 	if err != nil {
-		log.Fatalf("Failed to initialize Vertex LLM: %w", err)
+		log.Fatalf("Failed to initialize Vertex LLM: %v", err)
 	}
 
 	var tools []llmtypes.Tool
@@ -136,25 +146,25 @@ func runVertex(cmd *cobra.Command, args []string) {
 		logger.Info("🔗 Connecting to GitHub MCP server...")
 		config, err := mcpclient.LoadMergedConfig(vertexFlags.configPath, logger)
 		if err != nil {
-			log.Fatalf("Failed to load MCP config: %w", err)
+			log.Fatalf("Failed to load MCP config: %v", err)
 		}
 
 		githubConfig, err := config.GetServer("github")
 		if err != nil {
-			log.Fatalf("GitHub server not found in config: %w", err)
+			log.Fatalf("GitHub server not found in config: %v", err)
 		}
 
 		// Create client and connect
 		client := mcpclient.New(githubConfig, logger)
 		if err := client.Connect(ctx); err != nil {
-			log.Fatalf("Failed to connect to GitHub MCP: %w", err)
+			log.Fatalf("Failed to connect to GitHub MCP: %v", err)
 		}
 		defer client.Close()
 
 		// List tools
 		mcpTools, err := client.ListTools(ctx)
 		if err != nil {
-			log.Fatalf("Failed to list GitHub tools: %w", err)
+			log.Fatalf("Failed to list GitHub tools: %v", err)
 		}
 
 		logger.Info(fmt.Sprintf("✅ Loaded %d tools from GitHub MCP", len(mcpTools)))
@@ -162,7 +172,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 		// Convert to LLM tools
 		llmTools, err := mcpclient.ToolsAsLLM(mcpTools)
 		if err != nil {
-			log.Fatalf("Failed to convert tools: %w", err)
+			log.Fatalf("Failed to convert tools: %v", err)
 		}
 
 		// Normalize tools
@@ -197,10 +207,101 @@ func runVertex(cmd *cobra.Command, args []string) {
 		messages = []llmtypes.MessageContent{
 			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "What's the weather in Tokyo?"),
 		}
-	} else {
-		messages = []llmtypes.MessageContent{
-			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Hello! Can you introduce yourself?"),
+	} else if vertexFlags.imagePath != "" || vertexFlags.imageURL != "" {
+		// Test image input
+		logger.Info("🖼️ Setting up image input test...")
+
+		var imageParts []llmtypes.ContentPart
+
+		if vertexFlags.imagePath != "" {
+			// Load and encode image file
+			logger.Info(fmt.Sprintf("📁 Loading image from file: %s", vertexFlags.imagePath))
+			imageData, err := os.ReadFile(vertexFlags.imagePath)
+			if err != nil {
+				log.Fatalf("Failed to read image file: %v", err)
+			}
+
+			// Detect MIME type from file extension
+			ext := strings.ToLower(filepath.Ext(vertexFlags.imagePath))
+			mediaType := mime.TypeByExtension(ext)
+			if mediaType == "" {
+				// Fallback to common types
+				switch ext {
+				case ".jpg", ".jpeg":
+					mediaType = "image/jpeg"
+				case ".png":
+					mediaType = "image/png"
+				case ".gif":
+					mediaType = "image/gif"
+				case ".webp":
+					mediaType = "image/webp"
+				default:
+					log.Fatalf("Unsupported image format: %s. Supported: JPEG, PNG, GIF, WebP", ext)
+				}
+			}
+
+			// Encode to base64
+			base64Data := base64.StdEncoding.EncodeToString(imageData)
+			logger.Info(fmt.Sprintf("✅ Image loaded: %d bytes, MIME type: %s", len(imageData), mediaType))
+
+			imageParts = append(imageParts, llmtypes.ImageContent{
+				SourceType: "base64",
+				MediaType:  mediaType,
+				Data:       base64Data,
+			})
+		} else {
+			// Use image URL (from flag or default test URL)
+			imageURL := vertexFlags.imageURL
+			if imageURL == "" {
+				// Default test image URL - Vertex AI logo
+				imageURL = "https://cdn.prod.website-files.com/657639ebfb91510f45654149/67cef0fb78a461a1580d3c5a_667f5f1018134e3c5a8549c2_AD_4nXfn52WaKNUy839wUllpITpaj7mvuOTR6AOzDk3SypLHLgO-_n8zgt7QJ7rxcLOfOJRWAShjk1dIZRmwuKYLCYFD4qgOq1SCiGFIYbnhDLjD1E0zTdb8cgnCBceLMy7lmCZ3qDUce-gCfJjofiZ9ftDF2m4.webp"
+			}
+			logger.Info(fmt.Sprintf("🌐 Using image URL: %s", imageURL))
+			imageParts = append(imageParts, llmtypes.ImageContent{
+				SourceType: "url",
+				MediaType:  "", // Not needed for URL
+				Data:       imageURL,
+			})
 		}
+
+		// Create message with text and image
+		parts := []llmtypes.ContentPart{
+			llmtypes.TextContent{Text: "What is the text written in this image?"},
+		}
+		parts = append(parts, imageParts...)
+
+		messages = []llmtypes.MessageContent{
+			{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: parts,
+			},
+		}
+
+		logger.Info("✅ Image input test configured")
+	} else {
+		// Default test: image input with Vertex AI logo
+		logger.Info("🖼️ Running default image input test...")
+		
+		// Default test image URL - Vertex AI logo
+		testImageURL := "https://cdn.prod.website-files.com/657639ebfb91510f45654149/67cef0fb78a461a1580d3c5a_667f5f1018134e3c5a8549c2_AD_4nXfn52WaKNUy839wUllpITpaj7mvuOTR6AOzDk3SypLHLgO-_n8zgt7QJ7rxcLOfOJRWAShjk1dIZRmwuKYLCYFD4qgOq1SCiGFIYbnhDLjD1E0zTdb8cgnCBceLMy7lmCZ3qDUce-gCfJjofiZ9ftDF2m4.webp"
+		
+		parts := []llmtypes.ContentPart{
+			llmtypes.TextContent{Text: "What is the text written in this image?"},
+			llmtypes.ImageContent{
+				SourceType: "url",
+				MediaType:  "",
+				Data:       testImageURL,
+			},
+		}
+
+		messages = []llmtypes.MessageContent{
+			{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: parts,
+			},
+		}
+		
+		logger.Info(fmt.Sprintf("✅ Default image test configured with URL: %s", testImageURL))
 	}
 
 	// Call with or without tools
@@ -262,7 +363,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 	}
 
 	if err != nil {
-		log.Fatalf("❌ Error: %w", err)
+		log.Fatalf("❌ Error: %v", err)
 	}
 
 	if len(resp.Choices) == 0 {
@@ -288,7 +389,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 			// Try to parse as JSON array
 			var recipes []map[string]interface{}
 			if err := json.Unmarshal([]byte(choice.Content), &recipes); err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Response is not valid JSON array: %w", err))
+				logger.Warn(fmt.Sprintf("⚠️ Response is not valid JSON array: %v", err))
 				logger.Info("Response content:", map[string]interface{}{
 					"content": choice.Content,
 				})

@@ -45,8 +45,20 @@ func (s *HumanFeedbackStore) CreateRequest(uniqueID, message string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.requests[uniqueID]; exists {
-		return fmt.Errorf("feedback request %s already exists", uniqueID)
+	// Check if request already exists
+	if existingRequest, exists := s.requests[uniqueID]; exists {
+		// If the request is completed, clean it up and allow creating a new one
+		if existingRequest.IsCompleted {
+			// Clean up completed request
+			delete(s.requests, uniqueID)
+			if waiter, exists := s.waiters[uniqueID]; exists {
+				close(waiter)
+				delete(s.waiters, uniqueID)
+			}
+		} else {
+			// Request exists and is still pending - cannot create duplicate
+			return fmt.Errorf("feedback request %s already exists and is pending", uniqueID)
+		}
 	}
 
 	s.requests[uniqueID] = &HumanFeedbackRequest{

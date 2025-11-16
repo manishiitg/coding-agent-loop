@@ -2,10 +2,14 @@ package testing
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
+	"mime"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/pkg/mcpclient"
@@ -30,6 +34,8 @@ type anthropicTestFlags struct {
 	withGitHub bool
 	structured bool
 	configPath string
+	imagePath  string
+	imageURL   string
 }
 
 var anthropicFlags anthropicTestFlags
@@ -41,6 +47,8 @@ func init() {
 	anthropicCmd.Flags().BoolVar(&anthropicFlags.withGitHub, "with-github", false, "use GitHub MCP tools for testing")
 	anthropicCmd.Flags().BoolVar(&anthropicFlags.structured, "structured", false, "test structured JSON output with JSON mode")
 	anthropicCmd.Flags().StringVar(&anthropicFlags.configPath, "config", "configs/mcp_servers_clean_user.json", "MCP config file path")
+	anthropicCmd.Flags().StringVar(&anthropicFlags.imagePath, "with-image", "", "path to image file to test image input (JPEG, PNG, GIF, WebP)")
+	anthropicCmd.Flags().StringVar(&anthropicFlags.imageURL, "image-url", "", "URL of image to test image input")
 }
 
 func runAnthropic(cmd *cobra.Command, args []string) {
@@ -78,6 +86,8 @@ func runAnthropic(cmd *cobra.Command, args []string) {
 		testType = "tool calling"
 	} else if anthropicFlags.structured {
 		testType = "structured output"
+	} else if anthropicFlags.imagePath != "" || anthropicFlags.imageURL != "" {
+		testType = "image input"
 	}
 	logger.Info(fmt.Sprintf("🚀 Testing Anthropic Claude (%s)", testType))
 
@@ -174,6 +184,72 @@ func runAnthropic(cmd *cobra.Command, args []string) {
 		messages = []llmtypes.MessageContent{
 			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "What's the weather in Tokyo?"),
 		}
+	} else if anthropicFlags.imagePath != "" || anthropicFlags.imageURL != "" {
+		// Test image input
+		logger.Info("🖼️ Setting up image input test...")
+
+		var imageParts []llmtypes.ContentPart
+
+		if anthropicFlags.imagePath != "" {
+			// Load and encode image file
+			logger.Info(fmt.Sprintf("📁 Loading image from file: %s", anthropicFlags.imagePath))
+			imageData, err := os.ReadFile(anthropicFlags.imagePath)
+			if err != nil {
+				log.Fatalf("Failed to read image file: %w", err)
+			}
+
+			// Detect MIME type from file extension
+			ext := strings.ToLower(filepath.Ext(anthropicFlags.imagePath))
+			mediaType := mime.TypeByExtension(ext)
+			if mediaType == "" {
+				// Fallback to common types
+				switch ext {
+				case ".jpg", ".jpeg":
+					mediaType = "image/jpeg"
+				case ".png":
+					mediaType = "image/png"
+				case ".gif":
+					mediaType = "image/gif"
+				case ".webp":
+					mediaType = "image/webp"
+				default:
+					log.Fatalf("Unsupported image format: %s. Supported: JPEG, PNG, GIF, WebP", ext)
+				}
+			}
+
+			// Encode to base64
+			base64Data := base64.StdEncoding.EncodeToString(imageData)
+			logger.Info(fmt.Sprintf("✅ Image loaded: %d bytes, MIME type: %s", len(imageData), mediaType))
+
+			imageParts = append(imageParts, llmtypes.ImageContent{
+				SourceType: "base64",
+				MediaType:  mediaType,
+				Data:       base64Data,
+			})
+		} else if anthropicFlags.imageURL != "" {
+			// Use image URL
+			logger.Info(fmt.Sprintf("🌐 Using image URL: %s", anthropicFlags.imageURL))
+			imageParts = append(imageParts, llmtypes.ImageContent{
+				SourceType: "url",
+				MediaType:  "", // Not needed for URL
+				Data:       anthropicFlags.imageURL,
+			})
+		}
+
+		// Create message with text and image
+		parts := []llmtypes.ContentPart{
+			llmtypes.TextContent{Text: "What is the text written in this image?"},
+		}
+		parts = append(parts, imageParts...)
+
+		messages = []llmtypes.MessageContent{
+			{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: parts,
+			},
+		}
+
+		logger.Info("✅ Image input test configured")
 	} else {
 		messages = []llmtypes.MessageContent{
 			llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Hello! Can you introduce yourself?"),

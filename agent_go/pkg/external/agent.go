@@ -31,13 +31,6 @@ const (
 	// It's faster and more efficient for straightforward queries that don't require
 	// complex reasoning chains.
 	SimpleAgent AgentMode = "simple"
-
-	// ReActAgent is the reasoning and acting agent with explicit thought processes.
-	//
-	// This mode uses the ReAct (Reasoning + Acting) pattern to break down complex
-	// problems into logical steps. It provides detailed reasoning for each action
-	// and is better suited for complex, multi-step queries.
-	ReActAgent AgentMode = "react"
 )
 
 // PerformanceMetrics represents comprehensive agent performance data and statistics.
@@ -490,26 +483,7 @@ func NewAgent(ctx context.Context, config Config) (Agent, error) {
 		tracer = observability.GetTracer(config.TraceProvider)
 	}
 
-	// Initialize LLM
-	llm, err := initializeLLM(config.Provider, config.ModelID, config.Temperature)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
-	}
-
-	// Note: Custom logger from config is not currently used
-
-	// Create the underlying agent using the new functional options pattern
-	var agent *mcpagent.Agent
-
-	// Determine agent mode
-	var agentMode mcpagent.AgentMode
-	if config.AgentMode == ReActAgent {
-		agentMode = mcpagent.ReActAgent
-	} else {
-		agentMode = mcpagent.SimpleAgent
-	}
-
-	// Create agent with functional options
+	// Create logger first (needed for LLM initialization)
 	// Use custom logger if provided, otherwise create a default logger with file and console output
 	var agentLogger utils.ExtendedLogger
 	if config.Logger != nil {
@@ -523,6 +497,20 @@ func NewAgent(ctx context.Context, config Config) (Agent, error) {
 		}
 		agentLogger = defaultLogger
 	}
+
+	// Initialize LLM (now with logger available)
+	llm, err := initializeLLM(config.Provider, config.ModelID, config.Temperature, agentLogger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize LLM: %w", err)
+	}
+
+	// Create the underlying agent using the new functional options pattern
+	var agent *mcpagent.Agent
+
+	// Determine agent mode
+	var agentMode mcpagent.AgentMode
+	// All agents use Simple mode
+	agentMode = mcpagent.SimpleAgent
 
 	// Now that we have a logger, check if we need to create a Langfuse tracer
 	if config.Tracer == nil && config.TraceProvider == "langfuse" {

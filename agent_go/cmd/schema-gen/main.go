@@ -44,10 +44,6 @@ type UnifiedEvent struct {
 	TokenUsageEvent                 events.TokenUsageEvent                 `json:"token_usage"`
 	MaxTurnsReachedEvent            events.MaxTurnsReachedEvent            `json:"max_turns_reached"`
 	ContextCancelledEvent           events.ContextCancelledEvent           `json:"context_cancelled"`
-	ReActReasoningStartEvent        events.ReActReasoningStartEvent        `json:"react_reasoning_start"`
-	ReActReasoningStepEvent         events.ReActReasoningStepEvent         `json:"react_reasoning_step"`
-	ReActReasoningFinalEvent        events.ReActReasoningFinalEvent        `json:"react_reasoning_final"`
-	ReActReasoningEndEvent          events.ReActReasoningEndEvent          `json:"react_reasoning_end"`
 
 	// Additional MCP Agent Events that exist in backend
 	ToolOutputEvent   events.ToolOutputEvent   `json:"tool_output"`
@@ -116,10 +112,6 @@ type EventData struct {
 	ErrorDetail                *events.ErrorDetailEvent                `json:"error_detail,omitempty"`
 	MaxTurnsReached            *events.MaxTurnsReachedEvent            `json:"max_turns_reached,omitempty"`
 	ContextCancelled           *events.ContextCancelledEvent           `json:"context_cancelled,omitempty"`
-	ReActReasoningStart        *events.ReActReasoningStartEvent        `json:"react_reasoning_start,omitempty"`
-	ReActReasoningStep         *events.ReActReasoningStepEvent         `json:"react_reasoning_step,omitempty"`
-	ReActReasoningFinal        *events.ReActReasoningFinalEvent        `json:"react_reasoning_final,omitempty"`
-	ReActReasoningEnd          *events.ReActReasoningEndEvent          `json:"react_reasoning_end,omitempty"`
 
 	// Additional MCP Agent Events that exist in backend
 	ToolOutput   *events.ToolOutputEvent   `json:"tool_output,omitempty"`

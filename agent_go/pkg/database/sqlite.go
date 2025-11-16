@@ -536,7 +536,7 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	// Set default agent mode if not provided
 	agentMode := req.AgentMode
 	if agentMode == "" {
-		agentMode = AgentModeReAct // Use constant for default
+		agentMode = AgentModeSimple // Use constant for default
 	}
 
 	query := `

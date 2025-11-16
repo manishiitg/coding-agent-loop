@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -60,7 +61,7 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	c.logger.Debugf("🔍 ContextAwareBridge: Received event %s", event.Type)
+	c.logger.Infof("🔍 ContextAwareBridge: Received event %s (type: %s)", event.Type, event.Type)
 
 	// Copy orchestrator context while holding read lock
 	c.mu.RLock()
@@ -109,12 +110,16 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	}
 
 	// Forward to underlying bridge
-	c.logger.Debugf("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type)
+	c.logger.Infof("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type)
+	if c.underlyingBridge == nil {
+		c.logger.Errorf("❌ ContextAwareBridge: Underlying bridge is nil, cannot forward event %s", event.Type)
+		return fmt.Errorf("underlying bridge is nil")
+	}
 	err := c.underlyingBridge.HandleEvent(ctx, event)
 	if err != nil {
 		c.logger.Warnf("⚠️ ContextAwareBridge: Error forwarding event %s: %w", event.Type, err)
 	} else {
-		c.logger.Debugf("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type)
+		c.logger.Infof("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type)
 	}
 	return err
 }

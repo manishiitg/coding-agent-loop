@@ -26,7 +26,6 @@ interface GlobalPresetState {
   // Active preset tracking per mode category
   activePresetIds: {
     'chat': string | null
-    'deep-research': string | null
     'workflow': string | null
   }
   
@@ -38,15 +37,15 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<void>
+  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<void>
   deletePreset: (id: string) => Promise<void>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
   // Actions for preset application
-  applyPreset: (presetOrId: CustomPreset | PredefinedPreset | string, modeCategory: 'chat' | 'deep-research' | 'workflow') => PresetApplicationResult
-  clearActivePreset: (modeCategory: 'chat' | 'deep-research' | 'workflow') => void
-  getActivePreset: (modeCategory: 'chat' | 'deep-research' | 'workflow') => CustomPreset | PredefinedPreset | null
+  applyPreset: (presetOrId: CustomPreset | PredefinedPreset | string, modeCategory: 'chat' | 'workflow') => PresetApplicationResult
+  clearActivePreset: (modeCategory: 'chat' | 'workflow') => void
+  getActivePreset: (modeCategory: 'chat' | 'workflow') => CustomPreset | PredefinedPreset | null
   
   // Actions for current state management
   setCurrentPresetServers: (servers: string[]) => void
@@ -56,8 +55,8 @@ interface GlobalPresetState {
   clearPresetState: () => void
   
   // Helper actions
-  getPresetsForMode: (modeCategory: 'chat' | 'deep-research' | 'workflow') => (CustomPreset | PredefinedPreset)[]
-  isPresetActive: (presetId: string, modeCategory: 'chat' | 'deep-research' | 'workflow') => boolean
+  getPresetsForMode: (modeCategory: 'chat' | 'workflow') => (CustomPreset | PredefinedPreset)[]
+  isPresetActive: (presetId: string, modeCategory: 'chat' | 'workflow') => boolean
 }
 
 export const useGlobalPresetStore = create<GlobalPresetState>()(
@@ -72,7 +71,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       activePresetIds: {
         'chat': null,
-        'deep-research': null,
         'workflow': null
       },
       
@@ -169,7 +167,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               createdAt: new Date(preset.created_at).getTime(),
               selectedServers,
               selectedTools, // NEW
-              agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
+              agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
               selectedFolder,
               llmConfig
             }
@@ -212,7 +210,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 query: preset.query,
                 selectedServers: [],
                 selectedTools: [], // NEW: Predefined presets don't have custom tool selection
-                agentMode: preset.agent_mode as 'simple' | 'ReAct' | 'orchestrator' | 'workflow' | undefined,
+                agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
                 selectedFolder,
                 llmConfig
               }
@@ -342,7 +340,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             customPresets: state.customPresets.filter(preset => preset.id !== id),
             activePresetIds: {
               chat: state.activePresetIds.chat === id ? null : state.activePresetIds.chat,
-              'deep-research': state.activePresetIds['deep-research'] === id ? null : state.activePresetIds['deep-research'],
               workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow
             }
           }))
@@ -549,7 +546,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           currentQuery: '',
           activePresetIds: {
             'chat': null,
-            'deep-research': null,
             'workflow': null
           }
         })
@@ -562,9 +558,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         
         return allPresets.filter(preset => {
           if (modeCategory === 'chat') {
-            return preset.agentMode === 'simple' || preset.agentMode === 'ReAct'
-          } else if (modeCategory === 'deep-research') {
-            return preset.agentMode === 'orchestrator'
+            return preset.agentMode === 'simple'
           } else if (modeCategory === 'workflow') {
             return preset.agentMode === 'workflow'
           }

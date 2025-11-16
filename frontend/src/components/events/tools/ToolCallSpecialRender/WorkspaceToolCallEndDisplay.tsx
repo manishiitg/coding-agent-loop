@@ -311,6 +311,65 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
     )
   }
 
+  // Handle delete_workspace_file tool response
+  if (toolName === 'delete_workspace_file') {
+    const filepath = (parsedResult.filepath as string) || ''
+    const folder = (parsedResult.folder as string) || ''
+    const deleted = (parsedResult.deleted as boolean) || false
+    
+    return (
+      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-green-700 dark:text-green-300">
+                🗑️ File Deleted Successfully{' '}
+                <span className="text-xs font-normal text-green-600 dark:text-green-400">
+                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.tool_name && ` • Tool: ${event.tool_name}`}
+                  {event.server_name && ` • Server: ${event.server_name}`}
+                  {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {event.timestamp && (
+            <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
+              {new Date(event.timestamp).toLocaleTimeString()}
+            </div>
+          )}
+        </div>
+
+        {/* File metadata */}
+        <div className="mt-2">
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+            <div className="grid grid-cols-1 gap-2 text-xs">
+              {filepath && (
+                <div>
+                  <span className="font-medium text-green-700 dark:text-green-300">📁 File: </span>
+                  <span className="font-mono text-gray-800 dark:text-gray-200">{filepath}</span>
+                </div>
+              )}
+              {folder && (
+                <div>
+                  <span className="font-medium text-green-700 dark:text-green-300">📂 Folder: </span>
+                  <span className="font-mono text-gray-800 dark:text-gray-200">{folder}</span>
+                </div>
+              )}
+              {deleted && (
+                <div>
+                  <span className="font-medium text-green-700 dark:text-green-300">✅ Status: </span>
+                  <span className="text-gray-800 dark:text-gray-200">File deleted successfully</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // For other workspace tools, return null to use default renderer
   return null
 }

@@ -23,7 +23,6 @@ type AgentMode string
 
 const (
 	SimpleAgent AgentMode = "simple"
-	ReActAgent  AgentMode = "react"
 )
 
 // AgentType represents the type of agent
@@ -39,7 +38,6 @@ const (
 	PlanReaderAgentType        AgentType = "plan_reader"    // Reads plan markdown and returns structured JSON (read-only)
 
 	// Orchestrator types
-	PlannerOrchestratorAgentType  AgentType = "planner_orchestrator"  // AI-controlled planner orchestrator
 	WorkflowOrchestratorAgentType AgentType = "workflow_orchestrator" // AI-controlled workflow orchestrator
 
 	// 🆕 NEW: Workflow-specific types
@@ -67,7 +65,7 @@ const (
 // BaseAgentInterface defines the interface for base agent operations
 type BaseAgentInterface interface {
 	// Core execution
-	Execute(ctx context.Context, userMessage string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error)
+	Execute(ctx context.Context, userMessage string, conversationHistory []llmtypes.MessageContent, systemPrompt string, overwriteSystemPrompt bool) (string, []llmtypes.MessageContent, error)
 
 	// Agent information
 	GetType() AgentType
@@ -144,17 +142,11 @@ func NewBaseAgent(
 	provider string,
 	logger utils.ExtendedLogger,
 	cacheOnly bool,
+	enableLargeOutputVirtualTools *bool, // NEW parameter
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
-	var mcpMode mcpagent.AgentMode
-	switch mode {
-	case SimpleAgent:
-		mcpMode = mcpagent.SimpleAgent
-	case ReActAgent:
-		mcpMode = mcpagent.ReActAgent
-	default:
-		mcpMode = mcpagent.SimpleAgent
-	}
+	// All agents use Simple mode
+	var mcpMode mcpagent.AgentMode = mcpagent.SimpleAgent
 
 	// Create the underlying MCP agent
 	serverNameStr := strings.Join(serverNames, ",")
@@ -185,6 +177,15 @@ func NewBaseAgent(
 		mcpagent.WithSmartRouting(true),
 		mcpagent.WithSmartRoutingThresholds(20, 4), // 20 tools, 4 servers threshold for all agents
 	)
+
+	// Add large output virtual tools option if specified
+	// Default to true if nil (backward compatible)
+	largeOutputEnabled := true
+	if enableLargeOutputVirtualTools != nil {
+		largeOutputEnabled = *enableLargeOutputVirtualTools
+	}
+	agentOptions = append(agentOptions, mcpagent.WithLargeOutputVirtualTools(largeOutputEnabled))
+
 	logger.Infof("🎯 Smart routing enabled for %s agent - MaxTools: 20, MaxServers: 4", agentType)
 
 	agent, err := mcpagent.NewAgent(
@@ -226,8 +227,19 @@ func NewBaseAgent(
 }
 
 // Execute executes the agent with user message and conversation history
-func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversationHistory []llmtypes.MessageContent, systemPrompt string, overwriteSystemPrompt bool) (string, []llmtypes.MessageContent, error) {
 	ba.logger.Infof("🚀 Executing %s agent: %s", ba.agentType, ba.name)
+
+	// Set or append system prompt if provided
+	if systemPrompt != "" {
+		if overwriteSystemPrompt {
+			ba.agent.SetSystemPrompt(systemPrompt)
+			ba.logger.Infof("✅ System prompt overwritten (length: %d chars)", len(systemPrompt))
+		} else {
+			ba.agent.AppendSystemPrompt(systemPrompt)
+			ba.logger.Infof("✅ System prompt appended to agent (length: %d chars)", len(systemPrompt))
+		}
+	}
 
 	// Event emission now handled by unified events system
 
@@ -240,30 +252,17 @@ func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversati
 	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
-	// Prepare messages: add userMessage (instructions) ONLY on first turn
-	// On subsequent turns, conversationHistory already contains the full conversation context
-	var messages []llmtypes.MessageContent
+	// Prepare messages: always append userMessage to conversation history
+	messages := make([]llmtypes.MessageContent, len(conversationHistory))
+	copy(messages, conversationHistory)
 
-	// Copy existing conversation history if present
-	if len(conversationHistory) > 0 {
-		// Continuing conversation - use history as-is, don't add instructions again
-		// IMPORTANT: Do NOT append userMessage here because:
-		// 1. Instructions are already in history from iteration 1
-		// 2. Adding instructions again would create duplicate instructions
-		// 3. Human feedback needs to be the last message, not instructions
-		messages = make([]llmtypes.MessageContent, len(conversationHistory))
-		copy(messages, conversationHistory)
-		ba.logger.Infof("📝 Continuing existing conversation with %d messages (instructions already in history)", len(conversationHistory))
-	} else {
-		// First turn - add instructions as initial user message
-		// This is the ONLY place we add instructions to the conversation
-		ba.logger.Infof("📝 Starting new conversation with template message")
-		userMessageContent := llmtypes.MessageContent{
-			Role:  llmtypes.ChatMessageTypeHuman,
-			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: userMessage}},
-		}
-		messages = append(messages, userMessageContent)
+	// Always append the user message
+	userMessageContent := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: userMessage}},
 	}
+	messages = append(messages, userMessageContent)
+	ba.logger.Infof("📝 Added user message to conversation (total messages: %d)", len(messages))
 
 	// Execute the agent with orchestrator context and conversation history
 	answer, updatedConversationHistory, err := ba.agent.AskWithHistory(orchestratorCtx, messages)
@@ -300,38 +299,6 @@ func (ba *BaseAgent) GetServerNames() []string {
 // Agent returns the underlying MCP agent for direct access
 func (ba *BaseAgent) Agent() *mcpagent.Agent {
 	return ba.agent
-}
-
-// AskStructured runs a single-question interaction and converts the result to structured output
-// This provides a convenient way for orchestrator agents to get structured responses
-func (ba *BaseAgent) AskStructured(ctx context.Context, question string, result interface{}, schema string) error {
-	if ba.agent == nil {
-		return fmt.Errorf("underlying agent not initialized")
-	}
-
-	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
-	// Added orchestrator_id to context for hierarchy detection
-
-	// Use the underlying MCP agent's AskStructured method
-	// The MCP agent's AskStructured expects: (agent, ctx, question, schema, schemaString)
-	// where schema is the type, not the result variable
-	// We pass the result variable directly and let Go's type system handle it
-	_, err := mcpagent.AskStructured(ba.agent, orchestratorCtx, question, result, schema)
-	return err
-}
-
-// Ask runs a single-question interaction and returns the raw text response
-func (ba *BaseAgent) Ask(ctx context.Context, question string) (string, error) {
-	if ba.agent == nil {
-		return "", fmt.Errorf("underlying agent not initialized")
-	}
-
-	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
-	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
-	// Added orchestrator_id to context for hierarchy detection
-
-	return ba.agent.Ask(orchestratorCtx, question)
 }
 
 // GetInstructions returns the agent's instructions
@@ -410,39 +377,44 @@ func (ba *BaseAgent) GetConfigurationSummary() map[string]interface{} {
 
 // AskStructuredTyped is a standalone generic function that provides type-safe structured output
 // This gives us the clean generic API without needing to modify the BaseAgent struct
-func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llmtypes.MessageContent) (T, error) {
+func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llmtypes.MessageContent, systemPrompt string, overwriteSystemPrompt bool) (T, []llmtypes.MessageContent, error) {
 	// Check if ba is nil
 	if ba == nil {
 		var zero T
-		return zero, fmt.Errorf("BaseAgent is nil - Initialize() must be called before using the agent")
+		return zero, nil, fmt.Errorf("BaseAgent is nil - Initialize() must be called before using the agent")
 	}
 
 	if ba.agent == nil {
 		var zero T
-		return zero, fmt.Errorf("underlying agent not initialized")
+		return zero, nil, fmt.Errorf("underlying agent not initialized")
+	}
+
+	// Set or append system prompt if provided
+	if systemPrompt != "" {
+		if overwriteSystemPrompt {
+			ba.agent.SetSystemPrompt(systemPrompt)
+			ba.logger.Infof("✅ System prompt overwritten (length: %d chars)", len(systemPrompt))
+		} else {
+			ba.agent.AppendSystemPrompt(systemPrompt)
+			ba.logger.Infof("✅ System prompt appended to agent (length: %d chars)", len(systemPrompt))
+		}
 	}
 
 	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
 	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
 	// Added orchestrator_id to context for hierarchy detection
 
-	// Prepare messages: add question ONLY on first turn (when history is empty)
-	var messages []llmtypes.MessageContent
+	// Prepare messages: always append question to conversation history
+	messages := make([]llmtypes.MessageContent, len(conversationHistory))
+	copy(messages, conversationHistory)
 
-	if len(conversationHistory) > 0 {
-		// Continuing conversation - use history as-is, don't add question again
-		// IMPORTANT: Do NOT append question here - it would create duplicate messages
-		// Instructions are already in history from iteration 1
-		messages = make([]llmtypes.MessageContent, len(conversationHistory))
-		copy(messages, conversationHistory)
-	} else {
-		// First turn - add question as initial user message
-		userMessage := llmtypes.MessageContent{
-			Role:  llmtypes.ChatMessageTypeHuman,
-			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question}},
-		}
-		messages = append(messages, userMessage)
+	// Always append the question
+	userMessage := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question}},
 	}
+	messages = append(messages, userMessage)
+	ba.logger.Infof("📝 Added question to conversation (total messages: %d)", len(messages))
 
 	// The MCP agent's AskWithHistoryStructured expects: (agent, ctx, messages, schema, schemaString)
 	// where schema is the type, not the result variable
@@ -450,6 +422,52 @@ func AskStructuredTyped[T any](ba *BaseAgent, ctx context.Context, question stri
 	var schemaType T
 
 	// Call the MCP agent's generic AskWithHistoryStructured function
-	result, _, err := mcpagent.AskWithHistoryStructured(ba.agent, orchestratorCtx, messages, schemaType, schema)
-	return result, err
+	// Capture updated conversation history for proper conversation maintenance
+	result, updatedHistory, err := mcpagent.AskWithHistoryStructured(ba.agent, orchestratorCtx, messages, schemaType, schema)
+	return result, updatedHistory, err
+}
+
+// AskStructuredTypedViaTool is similar to AskStructuredTyped but uses tool calls instead of two-phase conversion
+func AskStructuredTypedViaTool[T any](ba *BaseAgent, ctx context.Context, question string, schema string, conversationHistory []llmtypes.MessageContent, systemPrompt string, overwriteSystemPrompt bool, toolName string, toolDescription string) (mcpagent.StructuredOutputResult[T], []llmtypes.MessageContent, error) {
+	// Check if ba is nil
+	if ba == nil {
+		var zero mcpagent.StructuredOutputResult[T]
+		return zero, nil, fmt.Errorf("BaseAgent is nil - Initialize() must be called before using the agent")
+	}
+
+	if ba.agent == nil {
+		var zero mcpagent.StructuredOutputResult[T]
+		return zero, nil, fmt.Errorf("underlying agent not initialized")
+	}
+
+	// Set or append system prompt if provided
+	if systemPrompt != "" {
+		if overwriteSystemPrompt {
+			ba.agent.SetSystemPrompt(systemPrompt)
+			ba.logger.Infof("✅ System prompt overwritten (length: %d chars)", len(systemPrompt))
+		} else {
+			ba.agent.AppendSystemPrompt(systemPrompt)
+			ba.logger.Infof("✅ System prompt appended to agent (length: %d chars)", len(systemPrompt))
+		}
+	}
+
+	// ✅ HIERARCHY FIX: Add orchestrator_id to context for proper hierarchy detection
+	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	// Added orchestrator_id to context for hierarchy detection
+
+	// Prepare messages: always append question to conversation history
+	messages := make([]llmtypes.MessageContent, len(conversationHistory))
+	copy(messages, conversationHistory)
+
+	// Always append the question
+	userMessage := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: question}},
+	}
+	messages = append(messages, userMessage)
+	ba.logger.Infof("📝 Added question to conversation (total messages: %d)", len(messages))
+
+	// Call the MCP agent's AskWithHistoryStructuredViaTool function
+	result, err := mcpagent.AskWithHistoryStructuredViaTool[T](ba.agent, orchestratorCtx, messages, toolName, toolDescription, schema)
+	return result, result.Messages, err
 }

@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "types:events": "npx json-schema-to-typescript ../agent_go/schemas/unified-events-complete.schema.json > src/generated/events.ts",
-    "predev": "npm run types:events"
+    "types:events-bridge": "npx json-schema-to-typescript ../agent_go/schemas/polling-event.schema.json > src/generated/events-bridge.ts",
+    "types:generate": "npm run types:events && npm run types:events-bridge",
+    "predev": "npm run types:generate"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.11",
@@ -20,20 +22,19 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.1.11",
     "@tanstack/react-query": "^5.81.5",
-    "@tanstack/react-virtual": "^3.13.12",
     "@types/node": "^24.0.10",
-    "@types/react-window": "^2.0.0",
     "ajv": "^8.17.1",
     "axios": "^1.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lodash.debounce": "^4.0.8",
     "lucide-react": "^0.525.0",
+    "monaco-editor": "^0.45.0",
+    "@monaco-editor/react": "^4.6.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^15.5.0",
-    "react-window": "^2.1.1",
     "tailwind-merge": "^2.6.0",
     "zustand": "^5.0.8"
   },

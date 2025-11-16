@@ -18,7 +18,6 @@ const (
 // Agent mode constants
 const (
 	AgentModeSimple       = "simple"
-	AgentModeReAct        = "ReAct"
 	AgentModeOrchestrator = "orchestrator"
 	AgentModeWorkflow     = "workflow"
 )
@@ -107,7 +106,7 @@ type GetEventsResponse struct {
 
 // PresetLLMConfig represents LLM configuration stored with presets
 type PresetLLMConfig struct {
-	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex
+	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex, anthropic
 	ModelID  string `json:"model_id"`
 }
 
@@ -188,7 +187,7 @@ func (r *CreatePresetQueryRequest) Validate() error {
 
 	// Validate agent mode
 	if r.AgentMode != "" {
-		validModes := []string{AgentModeSimple, AgentModeReAct, AgentModeOrchestrator, AgentModeWorkflow}
+		validModes := []string{AgentModeSimple, AgentModeOrchestrator, AgentModeWorkflow}
 		valid := false
 		for _, mode := range validModes {
 			if r.AgentMode == mode {
@@ -213,7 +212,7 @@ func (r *CreatePresetQueryRequest) Validate() error {
 		if r.LLMConfig.ModelID == "" {
 			return fmt.Errorf("model_id is required when llm_config is provided")
 		}
-		validProviders := []string{"openrouter", "bedrock", "openai", "vertex"}
+		validProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic"}
 		valid := false
 		for _, provider := range validProviders {
 			if r.LLMConfig.Provider == provider {
@@ -244,7 +243,7 @@ type UpdatePresetQueryRequest struct {
 func (r *UpdatePresetQueryRequest) Validate() error {
 	// Validate agent mode if provided
 	if r.AgentMode != "" {
-		validModes := []string{AgentModeSimple, AgentModeReAct, AgentModeOrchestrator, AgentModeWorkflow}
+		validModes := []string{AgentModeSimple, AgentModeOrchestrator, AgentModeWorkflow}
 		valid := false
 		for _, mode := range validModes {
 			if r.AgentMode == mode {
@@ -269,7 +268,7 @@ func (r *UpdatePresetQueryRequest) Validate() error {
 		if r.LLMConfig.ModelID == "" {
 			return fmt.Errorf("model_id is required when llm_config is provided")
 		}
-		validProviders := []string{"openrouter", "bedrock", "openai", "vertex"}
+		validProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic"}
 		valid := false
 		for _, provider := range validProviders {
 			if r.LLMConfig.Provider == provider {

@@ -36,38 +36,6 @@ Guidelines:
 - If no tools are relevant, answer directly with your knowledge
 - Once you have enough information from tool results, STOP calling tools and provide a final, comprehensive answer.`,
 
-	"react": `You are a ReAct (Reasoning and Acting) agent that explicitly reasons through problems step-by-step.
-
-You must follow this pattern for EVERY response:
-
-1. THINK: Start with "Let me think about this step by step..." and explain your reasoning
-2. ACT: Use tools when needed to gather information or perform actions
-3. OBSERVE: Reflect on the results and plan your next steps
-4. REPEAT: Continue this cycle until you have a complete answer
-5. FINAL ANSWER: End with "Final Answer:" followed by your comprehensive response
-
-Available tools:
-{{TOOLS}}
-
-{{PROMPTS_SECTION}}
-
-{{RESOURCES_SECTION}}
-
-{{VIRTUAL_TOOLS_SECTION}}
-
-ReAct Guidelines:
-- ALWAYS start your response with explicit reasoning: "Let me think about this step by step..."
-- Use tools when they can help answer the user's question
-- After each tool result, reflect on what you learned and plan your next steps
-- Continue the reasoning-acting cycle until you have sufficient information
-- DO NOT call the same tool with the same arguments repeatedly
-- If a tool call fails, reflect on the error and try a different approach
-- Each tool call should serve a specific purpose in your reasoning chain
-- Provide clear, helpful responses based on the tool outputs
-- You must continue reasoning and acting until you can provide a comprehensive Final Answer
-- NEVER stop without providing a Final Answer, even if no tools are available
-- Always end with "Final Answer:" followed by your complete response`,
-
 	"minimal": `You are an AI assistant with access to tools and resources.
 
 Available tools:
@@ -136,8 +104,6 @@ func BuildSystemPrompt(config SystemPromptConfig, toolsSection, promptsSection, 
 		template = config.CustomTemplate
 	case "simple":
 		template = SystemPromptTemplates["simple"]
-	case "react":
-		template = SystemPromptTemplates["react"]
 	case "minimal":
 		template = SystemPromptTemplates["minimal"]
 	case "detailed":
@@ -169,14 +135,8 @@ func GetSystemPromptMode(agentMode AgentMode, configMode string) string {
 		return configMode
 	}
 
-	switch agentMode {
-	case ReActAgent:
-		return "react"
-	case SimpleAgent:
-		return "simple"
-	default:
-		return "simple"
-	}
+	// All agents use simple mode
+	return "simple"
 }
 
 // ValidateSystemPromptConfig validates the system prompt configuration
@@ -185,7 +145,7 @@ func ValidateSystemPromptConfig(config SystemPromptConfig) error {
 		return fmt.Errorf("custom system prompt mode requires a custom template")
 	}
 
-	validModes := []string{"auto", "simple", "react", "minimal", "detailed", "custom"}
+	validModes := []string{"auto", "simple", "minimal", "detailed", "custom"}
 	modeValid := false
 	for _, mode := range validModes {
 		if config.Mode == mode {

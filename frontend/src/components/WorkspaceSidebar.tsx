@@ -170,7 +170,7 @@ export default function WorkspaceSidebar({
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  setAgentMode(agentMode === 'ReAct' ? 'simple' : 'ReAct')
+                  setAgentMode('simple')
                 }}
                 className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
               >
@@ -234,7 +234,7 @@ export default function WorkspaceSidebar({
                 </kbd>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to ReAct Agent</span>
+                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Simple Agent</span>
                 <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
                   Ctrl+2
                 </kbd>

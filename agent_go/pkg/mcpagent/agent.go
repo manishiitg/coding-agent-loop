@@ -2,6 +2,7 @@ package mcpagent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -38,8 +39,6 @@ type AgentMode string
 const (
 	// SimpleAgent is the standard tool-using agent without explicit reasoning
 	SimpleAgent AgentMode = "simple"
-	// ReActAgent is the reasoning and acting agent with explicit thought processes
-	ReActAgent AgentMode = "ReAct"
 )
 
 // AgentOption defines a functional option for configuring an Agent
@@ -243,9 +242,6 @@ type Agent struct {
 
 	// Custom tools that are handled as virtual tools
 	customTools map[string]CustomTool
-
-	// ReAct reasoning tracker for real-time reasoning detection
-	reasoningTracker *ReActReasoningTracker
 
 	// Custom logger (optional) - uses our ExtendedLogger interface for consistency
 	Logger utils.ExtendedLogger
@@ -478,6 +474,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// Non-empty selectedTools array means "use only these specific tools"
 	// IMPORTANT: If a server is in selectedServers but has NO tools in selectedTools,
 	// it means "use ALL tools from that server" (all tools mode for that server)
+	// Also supports "server:*" pattern to explicitly request all tools from a server
 	if len(ag.selectedTools) > 0 {
 		logger.Infof("🔧 Tool filtering active: %d specific tools selected", len(ag.selectedTools))
 
@@ -487,17 +484,27 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 			selectedToolSet[fullName] = true
 		}
 
-		// Build map of which servers have specific tools
+		// Build map of servers that have "all tools" pattern (server:*)
+		serversWithAllTools := make(map[string]bool)
+		// Build map of which servers have specific tools (not "all tools")
 		serversWithSpecificTools := make(map[string]bool)
 		for _, fullName := range ag.selectedTools {
-			// Parse "server:tool" format
+			// Parse "server:tool" or "server:*" format
 			parts := strings.SplitN(fullName, ":", 2)
 			if len(parts) == 2 {
-				serversWithSpecificTools[parts[0]] = true
+				serverName := parts[0]
+				toolName := parts[1]
+				if toolName == "*" {
+					// "server:*" means all tools from this server
+					serversWithAllTools[serverName] = true
+				} else {
+					// Specific tool selected
+					serversWithSpecificTools[serverName] = true
+				}
 			}
 		}
 
-		// Filter tools: include specific tools OR all tools from servers without specific tools
+		// Filter tools: include specific tools OR all tools from servers with "*" pattern
 		var filteredTools []llmtypes.Tool
 		for _, tool := range allLLMTools {
 			// Get server name for this tool
@@ -508,18 +515,19 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 				continue
 			}
 
-			// Check if this server has specific tools selected
-			hasSpecificTools := serversWithSpecificTools[serverName]
-
-			if hasSpecificTools {
+			// Check if this server has "all tools" pattern
+			if serversWithAllTools[serverName] {
+				// Server has "server:*" pattern - include ALL tools from this server
+				filteredTools = append(filteredTools, tool)
+			} else if serversWithSpecificTools[serverName] {
 				// Server has specific tools - check if this tool is selected
 				fullName := fmt.Sprintf("%s:%s", serverName, tool.Function.Name)
 				if selectedToolSet[fullName] {
 					filteredTools = append(filteredTools, tool)
 				}
 			} else {
-				// Server has no specific tools - include ALL tools from this server
-				// (this is "all tools" mode for this server)
+				// Server has no tools in selectedTools - include ALL tools from this server
+				// (this is "all tools" mode for this server when it's in selectedServers)
 				filteredTools = append(filteredTools, tool)
 			}
 		}
@@ -621,20 +629,60 @@ func (a *Agent) SetCurrentQuery(query string) {
 // createOnDemandConnection creates a connection to a specific server when needed in cache-only mode
 func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
 	logger := getLogger(a)
+	startTime := time.Now()
 	logger.Infof("[ON-DEMAND CONNECTION] Creating connection for server: %s", serverName)
 
+	// Add a shorter timeout for on-demand connections (3 minutes instead of 10)
+	// This prevents hanging for too long and provides faster feedback
+	connectTimeout := 3 * time.Minute
+	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+
+	// Start a goroutine to log progress and timeout warnings
+	progressDone := make(chan bool, 1)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second) // Log every 30 seconds
+		defer ticker.Stop()
+
+		elapsed := time.Since(startTime)
+		for {
+			select {
+			case <-ticker.C:
+				elapsed = time.Since(startTime)
+				remaining := connectTimeout - elapsed
+				if remaining > 0 {
+					logger.Infof("[ON-DEMAND CONNECTION] Still connecting to %s... (elapsed: %v, remaining: %v)",
+						serverName, elapsed.Round(time.Second), remaining.Round(time.Second))
+				} else {
+					logger.Warnf("[ON-DEMAND CONNECTION] Connection to %s has exceeded timeout (%v)", serverName, connectTimeout)
+				}
+			case <-connectCtx.Done():
+				return
+			case <-progressDone:
+				return
+			}
+		}
+	}()
+
 	// Load the merged config to get server details
+	logger.Infof("[ON-DEMAND CONNECTION] Loading config for server: %s", serverName)
 	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
 	if err != nil {
+		progressDone <- true
 		return nil, fmt.Errorf("failed to load merged config for on-demand connection: %w", err)
 	}
 
 	serverConfig, exists := config.MCPServers[serverName]
 	if !exists {
+		progressDone <- true
 		return nil, fmt.Errorf("server %s not found in config", serverName)
 	}
 
+	logger.Infof("[ON-DEMAND CONNECTION] Server config loaded: command=%s, args=%v, protocol=%s",
+		serverConfig.Command, serverConfig.Args, serverConfig.Protocol)
+
 	// Create a new client for this specific server
+	logger.Infof("[ON-DEMAND CONNECTION] Creating MCP client for server: %s", serverName)
 	client := mcpclient.New(mcpclient.MCPServerConfig{
 		Command:  serverConfig.Command,
 		Args:     serverConfig.Args,
@@ -643,12 +691,31 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 		Env:      serverConfig.Env, // Include environment variables
 	}, logger)
 
-	// Connect to the server
-	if err := client.Connect(ctx); err != nil {
+	// Connect to the server with timeout context
+	logger.Infof("[ON-DEMAND CONNECTION] Attempting to connect to server: %s (timeout: %v)", serverName, connectTimeout)
+	connectStartTime := time.Now()
+	if err := client.Connect(connectCtx); err != nil {
+		progressDone <- true
+		connectDuration := time.Since(connectStartTime)
+
+		// Check if it was a timeout
+		if connectCtx.Err() == context.DeadlineExceeded {
+			logger.Errorf("[ON-DEMAND CONNECTION] Connection to %s timed out after %v: %v",
+				serverName, connectDuration, err)
+			return nil, fmt.Errorf("connection to server %s timed out after %v: %w",
+				serverName, connectTimeout, err)
+		}
+
+		logger.Errorf("[ON-DEMAND CONNECTION] Failed to connect to server %s after %v: %v",
+			serverName, connectDuration, err)
 		return nil, fmt.Errorf("failed to connect to server %s: %w", serverName, err)
 	}
 
-	logger.Infof("[ON-DEMAND CONNECTION] Successfully connected to server: %s", serverName)
+	progressDone <- true
+	connectDuration := time.Since(connectStartTime)
+	totalDuration := time.Since(startTime)
+	logger.Infof("[ON-DEMAND CONNECTION] Successfully connected to server: %s (connect_time: %v, total_time: %v)",
+		serverName, connectDuration.Round(time.Millisecond), totalDuration.Round(time.Millisecond))
 	return client, nil
 }
 
@@ -868,12 +935,8 @@ func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configP
 	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(SimpleAgent))...)
 }
 
-func NewReActAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
-	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(ReActAgent))...)
-}
-
 // Legacy constructors have been removed to enforce proper logger usage
-// Use NewAgent, NewSimpleAgent, or NewReActAgent with functional options instead
+// Use NewAgent or NewSimpleAgent with functional options instead
 
 // AddEventListener and EmitEvent methods have been removed - events now go directly to tracers
 
@@ -1198,6 +1261,190 @@ func AskWithHistoryStructured[T any](a *Agent, ctx context.Context, messages []l
 	}
 
 	return structuredResult, updatedMessages, nil
+}
+
+// AskWithHistoryStructuredViaTool runs an interaction using message history and extracts structured output
+// from a dynamically registered tool call. The LLM can call the tool during conversation, and we extract
+// the structured data from the tool call arguments after conversation completes.
+func AskWithHistoryStructuredViaTool[T any](
+	a *Agent,
+	ctx context.Context,
+	messages []llmtypes.MessageContent,
+	toolName string,
+	toolDescription string,
+	schema string,
+) (StructuredOutputResult[T], error) {
+	// Parse schema string to get tool parameters
+	toolParams, err := parseSchemaForToolParameters(schema)
+	if err != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to parse schema for tool parameters: %w", err)
+	}
+
+	// Create a cancellable context to break conversation as soon as tool is called
+	toolCalledCtx, cancelToolCalled := context.WithCancel(ctx)
+	defer cancelToolCalled()
+
+	// Channel to signal that tool was called (thread-safe)
+	toolCalledChan := make(chan bool, 1)
+
+	// Register custom tool dynamically
+	// The execution function signals that tool was called and cancels the context to break immediately
+	executionFunc := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Signal that tool was called (non-blocking)
+		select {
+		case toolCalledChan <- true:
+		default:
+		}
+		// Cancel the context to break the conversation immediately
+		cancelToolCalled()
+		// Return minimal message - we'll break immediately so this won't be processed
+		return "", nil
+	}
+
+	a.RegisterCustomTool(toolName, toolDescription, toolParams, executionFunc)
+
+	// Call existing AskWithHistory - will break as soon as tool is called
+	textResponse, updatedMessages, err := a.AskWithHistory(toolCalledCtx, messages)
+
+	// Check if tool was called (non-blocking check)
+	toolCalled := false
+	select {
+	case <-toolCalledChan:
+		toolCalled = true
+	default:
+	}
+
+	// If tool was called, context cancellation is expected - we still need to extract structured output
+	if toolCalled {
+		// Scan messages for structured tool call (even if AskWithHistory returned error due to cancellation)
+		structuredResult, found, extractErr := extractStructuredToolCall[T](updatedMessages, toolName)
+		if extractErr != nil {
+			var zero StructuredOutputResult[T]
+			return zero, fmt.Errorf("tool was called but structured output extraction failed: %w", extractErr)
+		}
+
+		if found {
+			// Structured tool was called - return structured result immediately
+			return StructuredOutputResult[T]{
+				HasStructuredOutput: true,
+				StructuredResult:    structuredResult,
+				TextResponse:        "",
+				Messages:            updatedMessages,
+			}, nil
+		}
+
+		// Tool was called but not found in messages - error
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("tool was called but not found in messages")
+	}
+
+	// Tool was not called according to flag - but check messages anyway
+	// (context cancellation might have happened even if tool was called)
+	// Scan messages for structured tool call (in case it was called but flag wasn't set)
+	structuredResult, found, extractErr := extractStructuredToolCall[T](updatedMessages, toolName)
+	if extractErr != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to extract structured tool call: %w", extractErr)
+	}
+
+	if found {
+		// Structured tool was called - return structured result (even if there was an error)
+		return StructuredOutputResult[T]{
+			HasStructuredOutput: true,
+			StructuredResult:    structuredResult,
+			TextResponse:        "",
+			Messages:            updatedMessages,
+		}, nil
+	}
+
+	// Tool was not found in messages - check if there was an error
+	if err != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to get response from conversation: %w", err)
+	}
+
+	// Structured tool was not called - return text response (conversational input)
+	return StructuredOutputResult[T]{
+		HasStructuredOutput: false,
+		StructuredResult:    structuredResult, // zero value
+		TextResponse:        textResponse,
+		Messages:            updatedMessages,
+	}, nil
+}
+
+// StructuredOutputResult represents the result of AskWithHistoryStructuredViaTool
+// It can contain either structured output (if tool was called) or text response (if tool was not called)
+type StructuredOutputResult[T any] struct {
+	HasStructuredOutput bool
+	StructuredResult    T
+	TextResponse        string
+	Messages            []llmtypes.MessageContent
+}
+
+// parseSchemaForToolParameters parses a JSON schema string and extracts properties for tool parameters
+func parseSchemaForToolParameters(schemaString string) (map[string]interface{}, error) {
+	var schema map[string]interface{}
+	if err := json.Unmarshal([]byte(schemaString), &schema); err != nil {
+		return nil, fmt.Errorf("failed to parse schema JSON: %w", err)
+	}
+
+	// Extract properties - this becomes the tool parameters
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("schema missing 'properties' field or it's not an object")
+	}
+
+	// Build tool parameter schema with type "object"
+	toolParams := map[string]interface{}{
+		"type":       "object",
+		"properties": properties,
+	}
+
+	// Add required fields if present
+	if required, ok := schema["required"].([]interface{}); ok {
+		toolParams["required"] = required
+	}
+
+	return toolParams, nil
+}
+
+// extractStructuredToolCall scans messages for tool calls matching the tool name and extracts structured data
+func extractStructuredToolCall[T any](messages []llmtypes.MessageContent, toolName string) (T, bool, error) {
+	var zero T
+
+	// Scan messages in reverse order to find the last (most recent) tool call
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+
+		// Only check AI messages (they contain tool calls)
+		if msg.Role != llmtypes.ChatMessageTypeAI {
+			continue
+		}
+
+		// Check each part for tool calls
+		for _, part := range msg.Parts {
+			if toolCall, ok := part.(llmtypes.ToolCall); ok {
+				if toolCall.FunctionCall != nil && toolCall.FunctionCall.Name == toolName {
+					// Found matching tool call - extract arguments
+					argsJSON := toolCall.FunctionCall.Arguments
+					if argsJSON == "" {
+						return zero, false, fmt.Errorf("tool call '%s' has empty arguments", toolName)
+					}
+
+					// Parse JSON arguments into struct type T
+					var result T
+					if err := json.Unmarshal([]byte(argsJSON), &result); err != nil {
+						return zero, false, fmt.Errorf("failed to parse tool call arguments: %w", err)
+					}
+
+					return result, true, nil
+				}
+			}
+		}
+	}
+
+	return zero, false, nil
 }
 
 // GetServerNames returns the list of connected server names

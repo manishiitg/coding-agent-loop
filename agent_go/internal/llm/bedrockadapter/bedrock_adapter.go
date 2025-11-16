@@ -162,6 +162,7 @@ func convertMessages(langMessages []llmtypes.MessageContent) []map[string]interf
 	for _, msg := range langMessages {
 		// Extract content parts
 		var contentBlocks []map[string]interface{}
+		var imageParts []llmtypes.ImageContent
 		var toolCallID string
 		var toolResponseContent string
 		var toolCalls []llmtypes.ToolCall
@@ -174,6 +175,9 @@ func convertMessages(langMessages []llmtypes.MessageContent) []map[string]interf
 					"type": "text",
 					"text": p.Text,
 				})
+			case llmtypes.ImageContent:
+				// Collect image parts to process later
+				imageParts = append(imageParts, p)
 			case llmtypes.ToolCallResponse:
 				// Tool response - extract tool call ID and content
 				toolCallID = p.ToolCallID
@@ -181,6 +185,14 @@ func convertMessages(langMessages []llmtypes.MessageContent) []map[string]interf
 			case llmtypes.ToolCall:
 				// Tool call in assistant message
 				toolCalls = append(toolCalls, p)
+			}
+		}
+
+		// Add image blocks to contentBlocks
+		for _, img := range imageParts {
+			imageBlock := createImageBlock(img)
+			if imageBlock != nil {
+				contentBlocks = append(contentBlocks, imageBlock)
 			}
 		}
 
@@ -272,6 +284,32 @@ func convertMessages(langMessages []llmtypes.MessageContent) []map[string]interf
 	}
 
 	return claudeMessages
+}
+
+// createImageBlock creates a Claude format image block from ImageContent
+func createImageBlock(img llmtypes.ImageContent) map[string]interface{} {
+	if img.SourceType == "base64" {
+		// Create base64 image block
+		return map[string]interface{}{
+			"type": "image",
+			"source": map[string]interface{}{
+				"type":       "base64",
+				"media_type": img.MediaType,
+				"data":       img.Data,
+			},
+		}
+	} else if img.SourceType == "url" {
+		// Create URL image block
+		return map[string]interface{}{
+			"type": "image",
+			"source": map[string]interface{}{
+				"type": "url",
+				"url":  img.Data,
+			},
+		}
+	}
+	// Invalid source type
+	return nil
 }
 
 // convertTools converts llmtypes tools to Claude tool format

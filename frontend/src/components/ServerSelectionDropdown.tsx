@@ -28,20 +28,27 @@ export default function ServerSelectionDropdown({
     onServerToggle(server);
   };
 
+  // Check if "NO_SERVERS" is selected
+  const hasNoServers = selectedServers.includes("NO_SERVERS");
+  // Filter out "NO_SERVERS" from the actual server list for display
+  const actualSelectedServers = selectedServers.filter(s => s !== "NO_SERVERS");
+
   const getDisplayText = () => {
-    if (selectedServers.length === 0) {
+    if (hasNoServers) {
+      return "None";
+    } else if (actualSelectedServers.length === 0) {
       return `All servers (${availableServers.length})`;
-    } else if (selectedServers.length === availableServers.length) {
+    } else if (actualSelectedServers.length === availableServers.length) {
       return `All servers (${availableServers.length})`;
-    } else if (selectedServers.length === 1) {
-      return selectedServers[0];
+    } else if (actualSelectedServers.length === 1) {
+      return actualSelectedServers[0];
     } else {
-      return `${selectedServers.length} servers`;
+      return `${actualSelectedServers.length} servers`;
     }
   };
 
-  const isAllSelected = selectedServers.length === availableServers.length;
-  const isNoneSelected = selectedServers.length === 0;
+  const isAllSelected = actualSelectedServers.length === availableServers.length && !hasNoServers;
+  const isNoneSelected = hasNoServers;
 
   return (
     <TooltipProvider>
@@ -125,7 +132,7 @@ export default function ServerSelectionDropdown({
                         <div key={server} className="flex items-center space-x-2">
                           <Checkbox
                             id={`manual-server-${server}`}
-                            checked={selectedServers.includes(server)}
+                            checked={actualSelectedServers.includes(server)}
                             onCheckedChange={() => handleServerToggle(server)}
                             className="h-4 w-4"
                           />
@@ -135,7 +142,7 @@ export default function ServerSelectionDropdown({
                           >
                             {server}
                           </label>
-                          {selectedServers.includes(server) && (
+                          {actualSelectedServers.includes(server) && (
                             <Check className="w-3 h-3 text-green-600" />
                           )}
                         </div>
@@ -148,9 +155,9 @@ export default function ServerSelectionDropdown({
                   </div>
 
                   {/* Selection Summary */}
-                  {selectedServers.length > 0 && selectedServers.length < availableServers.length && (
+                  {actualSelectedServers.length > 0 && actualSelectedServers.length < availableServers.length && !hasNoServers && (
                     <div className="text-xs text-gray-500 bg-gray-50 dark:bg-gray-700 rounded p-2">
-                      Selected: {selectedServers.join(', ')}
+                      Selected: {actualSelectedServers.join(', ')}
                     </div>
                   )}
 
@@ -158,9 +165,11 @@ export default function ServerSelectionDropdown({
                   <div className="text-xs text-gray-500">
                     {availableServers.length === 0 
                       ? 'No servers available - check MCP server connections'
-                      : selectedServers.length === 0 
-                        ? 'No servers selected - all servers will be used'
-                        : `${selectedServers.length} of ${availableServers.length} servers selected`
+                      : hasNoServers
+                        ? 'No servers selected - pure LLM mode (no tools)'
+                        : actualSelectedServers.length === 0 
+                          ? 'No servers selected - all servers will be used'
+                          : `${actualSelectedServers.length} of ${availableServers.length} servers selected`
                     }
                   </div>
                 </div>

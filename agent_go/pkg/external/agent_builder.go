@@ -45,7 +45,7 @@ type AgentBuilder struct {
 // NewAgentBuilder creates a new agent builder with default values
 func NewAgentBuilder() *AgentBuilder {
 	return &AgentBuilder{
-		agentMode:     ReActAgent,
+		agentMode:     SimpleAgent,
 		serverName:    "all",
 		configPath:    "configs/mcp_servers.json",
 		provider:      llm.ProviderBedrock,

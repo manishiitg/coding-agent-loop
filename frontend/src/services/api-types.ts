@@ -29,12 +29,6 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
 }
 
 // Execution mode constants matching backend enum
-export const EXECUTION_MODES = {
-  SEQUENTIAL: 'sequential_execution',
-  PARALLEL: 'parallel_execution'
-} as const
-
-export type OrchestratorExecutionMode = typeof EXECUTION_MODES[keyof typeof EXECUTION_MODES]
 
 // Agent streaming types
 export interface AgentQueryRequest {
@@ -46,11 +40,9 @@ export interface AgentQueryRequest {
   enabled_tools?: string[]
   enabled_servers?: string[]
   selected_tools?: string[] // Array of "server:tool" strings
-  agent_mode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+  agent_mode?: 'simple' | 'workflow'
   llm_config?: LLMConfiguration
   preset_query_id?: string
-  // Orchestrator execution mode selection
-  orchestrator_execution_mode?: OrchestratorExecutionMode
 }
 
 export interface AgentQueryResponse {

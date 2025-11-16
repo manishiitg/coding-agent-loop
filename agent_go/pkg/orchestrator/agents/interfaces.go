@@ -77,9 +77,15 @@ type OrchestratorAgentConfig struct {
 	UseStructuredOutput bool                   `json:"use_structured_output,omitempty"`
 	CustomSettings      map[string]interface{} `json:"custom_settings,omitempty"`
 
+	// Agent name (unique identifier for this agent instance)
+	AgentName string `json:"agent_name,omitempty"` // e.g., "execution-agent-step-1-title"
+
 	// Structured output configuration
 	StructuredOutputSchema string `json:"structured_output_schema,omitempty"`
 	StructuredOutputType   string `json:"structured_output_type,omitempty"` // "plan", "steps", "custom"
+
+	// Large output virtual tools configuration
+	EnableLargeOutputVirtualTools *bool `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

@@ -54,15 +54,21 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
           )}
         </div>
         
-        {/* Content with markdown rendering - always visible */}
-        {event.content && (
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Content:</div>
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+        {/* Content with markdown rendering - show even if empty */}
+        <div className="space-y-2 mt-2">
+          <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Content:</div>
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+            {event.content ? (
               <ConversationMarkdownRenderer content={event.content} />
-            </div>
+            ) : (
+              <div className="text-xs text-gray-500 dark:text-gray-400 italic">
+                {event.tool_calls && event.tool_calls > 0 
+                  ? `No text content (${event.tool_calls} tool call${event.tool_calls > 1 ? 's' : ''} made)` 
+                  : 'No content generated'}
+              </div>
+            )}
           </div>
-        )}
+        </div>
         
       </div>
     </div>

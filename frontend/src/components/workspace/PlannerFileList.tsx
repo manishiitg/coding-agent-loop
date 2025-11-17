@@ -1,4 +1,4 @@
-import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal } from 'lucide-react'
+import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -19,7 +19,9 @@ interface PlannerFileListProps {
   addFileToContext: (file: {name: string, path: string, type: 'file' | 'folder'}) => void
   highlightedFile?: string | null
   onFolderUpload?: (folderPath: string) => void
-  onCreateFolder?: (parentPath?: string) => void
+  onCreateFolder?: (parentFolder?: PlannerFile | string) => void
+  onFileMove?: (file: PlannerFile) => void
+  onFolderMove?: (folder: PlannerFile) => void
 }
 
 export default function PlannerFileList({
@@ -38,7 +40,9 @@ export default function PlannerFileList({
   addFileToContext,
   highlightedFile,
   onFolderUpload,
-  onCreateFolder
+  onCreateFolder,
+  onFileMove,
+  onFolderMove
 }: PlannerFileListProps) {
   const { scrollToFile } = useWorkspaceStore()
 
@@ -48,7 +52,9 @@ export default function PlannerFileList({
     const isLoadingChildren = loadingChildren.has(file.filepath)
     const isClickable = file.type === 'folder' || file.type === 'file' || !file.type
     const fileName = file.filepath.split('/').pop() || file.filepath
-    const isHighlighted = highlightedFile === file.filepath
+    // Check both filepath (adjusted for display) and originalFilepath (original path)
+    // This ensures workspace tool events can highlight files even when paths are adjusted in workflow mode
+    const isHighlighted = highlightedFile === file.filepath || highlightedFile === file.originalFilepath
     const isInContext = chatFileContext.some(ctx => ctx.path === file.filepath)
 
     return (
@@ -62,6 +68,7 @@ export default function PlannerFileList({
           `}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           data-filepath={file.filepath}
+          data-original-filepath={file.originalFilepath || undefined}
           data-highlighted={isHighlighted ? 'true' : 'false'}
           onClick={() => {
             if (file.type === 'folder') {
@@ -127,7 +134,7 @@ export default function PlannerFileList({
             </Tooltip>
 
             {/* More actions dropdown for folders */}
-            {file.type === 'folder' && (onCreateFolder || onFolderUpload) && (
+            {file.type === 'folder' && (onCreateFolder || onFolderUpload || onFolderMove) && (
               <div className="relative group">
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -153,7 +160,7 @@ export default function PlannerFileList({
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          onCreateFolder(file.filepath)
+                          onCreateFolder(file)
                         }}
                         className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                       >
@@ -171,6 +178,18 @@ export default function PlannerFileList({
                       >
                         <Upload className="w-3 h-3" />
                         Upload File
+                      </button>
+                    )}
+                    {onFolderMove && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onFolderMove(file)
+                        }}
+                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      >
+                        <Move className="w-3 h-3" />
+                        Move
                       </button>
                     )}
                     {onDeleteAllFilesInFolder && (
@@ -198,6 +217,26 @@ export default function PlannerFileList({
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* Move button for files */}
+            {file.type !== 'folder' && onFileMove && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onFileMove(file)
+                    }}
+                    className="p-1 text-gray-400 hover:text-blue-500 transition-colors"
+                  >
+                    <Move className="w-3 h-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Move file</p>
+                </TooltipContent>
+              </Tooltip>
             )}
 
             {/* Delete button for files */}

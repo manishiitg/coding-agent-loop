@@ -555,24 +555,6 @@ export const ChatInput = React.memo<ChatInputProps>(({
                         </TooltipContent>
                       </Tooltip>
                     )}
-                    
-                    {/* New Chat button - only show when not streaming */}
-                    {!isStreaming && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={onNewChat}
-                            className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-                          >
-                            New Chat
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Create a new chat session</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
                   </div>
                 </div>
               </div>

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
-import { WorkflowPresetSelector } from './WorkflowPresetSelector'
 import { WorkflowPhaseHandler } from './WorkflowPhaseHandler'
 import { agentApi } from '../../services/api'
 import { WORKFLOW_PHASES, type WorkflowPhase } from '../../constants/workflow'
@@ -46,7 +45,6 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   
   const [availablePresets, setAvailablePresets] = useState<Preset[]>([])
   const [hasAttemptedLoad, setHasAttemptedLoad] = useState<boolean>(false)
-  const [isCreatingWorkflow, setIsCreatingWorkflow] = useState<boolean>(false)
 
   // Use external state from ChatArea
   const currentPhase = currentWorkflowPhase
@@ -86,7 +84,6 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
       setHasAttemptedLoad(false)
       setAvailablePresets([])
       onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
-      setIsCreatingWorkflow(false)
     }
   }, [agentMode, onPresetCleared, onWorkflowPhaseChange])
 
@@ -135,8 +132,6 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
     if (!selectedWorkflowPreset) return
 
     try {
-      setIsCreatingWorkflow(true)
-
       // Create workflow - this generates the todo list
       const createResponse = await agentApi.createWorkflow(selectedWorkflowPreset, true)
       // Workflow created
@@ -155,8 +150,6 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
       console.error('[WORKFLOW] Error creating workflow:', error)
       // Reset to objective input phase on error
       onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
-    } finally {
-      setIsCreatingWorkflow(false)
     }
   }, [selectedWorkflowPreset, onWorkflowPhaseChange])
 
@@ -194,13 +187,6 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   if (agentMode === 'workflow') {
     return (
       <>
-        {selectedWorkflowPreset && (
-          <WorkflowPresetSelector
-            selectedPresetId={selectedWorkflowPreset}
-            availablePresets={availablePresets}
-            isCreatingWorkflow={isCreatingWorkflow}
-          />
-        )}
         {selectedWorkflowPreset && (
           <WorkflowPhaseHandler
             phase={currentPhase || WORKFLOW_PHASES.PRE_VERIFICATION}

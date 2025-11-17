@@ -84,11 +84,16 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	}
 
 	// Helper function to check if an error is an empty content error
+	// Note: Excludes MALFORMED_FUNCTION_CALL errors which have their own specific error message
 	isEmptyContentError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
+		// Exclude MALFORMED_FUNCTION_CALL errors - they have their own specific message
+		if strings.Contains(msg, "MALFORMED_FUNCTION_CALL") {
+			return false
+		}
 		isEmptyContent := strings.Contains(msg, "Choice.Content is empty string") ||
 			strings.Contains(msg, "empty content error") ||
 			strings.Contains(msg, "choice.Content is empty") ||

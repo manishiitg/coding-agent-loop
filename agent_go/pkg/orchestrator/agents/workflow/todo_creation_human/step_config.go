@@ -39,8 +39,8 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 	}
 
 	// Fallback to workspace default config
-	// Note: todo_creation_human saves configs to workspacePath/todo_creation_human/planning/step_config.json
-	configPath := filepath.Join(workspacePath, "todo_creation_human", "planning", "step_config.json")
+	// Note: configs are saved to workspacePath/planning/step_config.json
+	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
 	content, err = bo.ReadWorkspaceFile(ctx, configPath)
 	if err != nil {
 		// File doesn't exist yet - return empty structure

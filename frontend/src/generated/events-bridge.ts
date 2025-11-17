@@ -75,6 +75,7 @@ export interface ToolCallStartEvent {
   tool_name?: string;
   tool_params?: ToolParams;
   server_name?: string;
+  auto_expand?: boolean;
 }
 export interface ToolParams {
   arguments?: string;
@@ -98,6 +99,7 @@ export interface ToolCallEndEvent {
   result?: string;
   duration?: number;
   server_name?: string;
+  auto_expand?: boolean;
 }
 export interface ToolCallErrorEvent {
   timestamp?: string;
@@ -1096,8 +1098,6 @@ export interface TodoStepsExtractedEvent {
   extracted_steps?: TodoStep[];
   extraction_method?: string;
   plan_source?: string;
-  workspace_path: string;
-  run_folder?: string;
 }
 export interface TodoStep {
   title?: string;
@@ -1124,29 +1124,4 @@ export interface TodoStep {
    * Human-readable explanation of the loop behavior
    */
   loop_description?: string;
-  /**
-   * Per-agent configuration for this step
-   */
-  agent_configs?: AgentConfigs;
-}
-export interface AgentLLMConfig {
-  provider?: string;
-  model_id?: string;
-}
-export interface AgentConfigs {
-  execution_llm?: AgentLLMConfig;
-  validation_llm?: AgentLLMConfig;
-  learning_llm?: AgentLLMConfig;
-  execution_max_turns?: number;
-  validation_max_turns?: number;
-  learning_max_turns?: number;
-  disable_validation?: boolean;
-  disable_learning?: boolean;
-  learning_after_loop_iteration?: boolean;
-  learning_detail_level?: string;
-  selected_servers?: string[];
-  selected_tools?: string[];
-  enabled_custom_tool_categories?: string[];
-  enabled_custom_tools?: string[];
-  enable_large_output_virtual_tools?: boolean;
 }

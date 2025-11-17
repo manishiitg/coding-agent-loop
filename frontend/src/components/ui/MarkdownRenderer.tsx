@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface MarkdownRendererProps {
   content: string
@@ -49,6 +50,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         `
       }} />
       <ReactMarkdown 
+        remarkPlugins={[remarkGfm]}
         components={{
           p: ({ children }) => <p className="mb-2 last:mb-0 text-sm leading-relaxed break-words overflow-wrap-anywhere">{children}</p>,
           h1: ({ children }) => <h1 className="text-lg font-bold mb-2 break-words overflow-wrap-anywhere">{children}</h1>,

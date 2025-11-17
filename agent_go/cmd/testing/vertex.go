@@ -57,7 +57,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 	InitTestLogger(logFile, logLevel)
 	logger := GetTestLogger()
 
-	// Get API key
+	// Get API key (optional - will use OAuth if not provided)
 	apiKey := vertexFlags.apiKey
 	if apiKey == "" {
 		if key := os.Getenv("VERTEX_API_KEY"); key != "" {
@@ -66,12 +66,43 @@ func runVertex(cmd *cobra.Command, args []string) {
 			apiKey = key
 		}
 	}
-	if apiKey == "" {
-		log.Fatal("API key required: set --api-key flag or VERTEX_API_KEY/GOOGLE_API_KEY environment variable")
-	}
 
-	// Set API key as environment variable for internal LLM provider to pick up
-	os.Setenv("VERTEX_API_KEY", apiKey)
+	// Set API key as environment variable if provided (for API key auth)
+	if apiKey != "" {
+		os.Setenv("VERTEX_API_KEY", apiKey)
+		logger.Info("🔑 Using API key authentication")
+	} else {
+		logger.Info("🔐 No API key provided - will use OAuth authentication (gcloud/ADC)")
+
+		// Ensure required environment variables are set for OAuth
+		projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+		if projectID == "" {
+			projectID = os.Getenv("VERTEX_PROJECT_ID")
+		}
+		if projectID == "" {
+			log.Fatal("For OAuth authentication, GOOGLE_CLOUD_PROJECT or VERTEX_PROJECT_ID environment variable is required")
+		}
+
+		location := os.Getenv("GOOGLE_CLOUD_LOCATION")
+		if location == "" {
+			location = os.Getenv("VERTEX_LOCATION_ID")
+		}
+		if location == "" {
+			location = "us-central1"
+			logger.Info(fmt.Sprintf("⚠️ GOOGLE_CLOUD_LOCATION not set, using default: %s", location))
+		}
+		// Vertex AI doesn't support "global" location
+		if location == "global" {
+			location = "us-central1"
+			logger.Info(fmt.Sprintf("⚠️ Location 'global' is not valid for Vertex AI, using: %s", location))
+		}
+
+		// Set environment variables for OAuth
+		os.Setenv("GOOGLE_CLOUD_PROJECT", projectID)
+		os.Setenv("GOOGLE_CLOUD_LOCATION", location)
+		os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+		logger.Info(fmt.Sprintf("🔧 Using Vertex AI project: %s, location: %s", projectID, location))
+	}
 
 	ctx := context.Background()
 
@@ -281,10 +312,10 @@ func runVertex(cmd *cobra.Command, args []string) {
 	} else {
 		// Default test: image input with Vertex AI logo
 		logger.Info("🖼️ Running default image input test...")
-		
+
 		// Default test image URL - Vertex AI logo
 		testImageURL := "https://cdn.prod.website-files.com/657639ebfb91510f45654149/67cef0fb78a461a1580d3c5a_667f5f1018134e3c5a8549c2_AD_4nXfn52WaKNUy839wUllpITpaj7mvuOTR6AOzDk3SypLHLgO-_n8zgt7QJ7rxcLOfOJRWAShjk1dIZRmwuKYLCYFD4qgOq1SCiGFIYbnhDLjD1E0zTdb8cgnCBceLMy7lmCZ3qDUce-gCfJjofiZ9ftDF2m4.webp"
-		
+
 		parts := []llmtypes.ContentPart{
 			llmtypes.TextContent{Text: "What is the text written in this image?"},
 			llmtypes.ImageContent{
@@ -300,7 +331,7 @@ func runVertex(cmd *cobra.Command, args []string) {
 				Parts: parts,
 			},
 		}
-		
+
 		logger.Info(fmt.Sprintf("✅ Default image test configured with URL: %s", testImageURL))
 	}
 

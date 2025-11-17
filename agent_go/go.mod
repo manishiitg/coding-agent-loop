@@ -21,7 +21,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	golang.org/x/image v0.32.0
-	google.golang.org/genai v1.33.0
+	google.golang.org/genai v1.35.0
 )
 
 require (

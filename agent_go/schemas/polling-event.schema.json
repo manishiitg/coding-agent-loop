@@ -2701,6 +2701,9 @@
         },
         "server_name": {
           "type": "string"
+        },
+        "auto_expand": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -2808,6 +2811,9 @@
         },
         "server_name": {
           "type": "string"
+        },
+        "auto_expand": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

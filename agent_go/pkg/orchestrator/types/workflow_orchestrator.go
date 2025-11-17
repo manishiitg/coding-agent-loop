@@ -15,33 +15,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_execution"
 )
-
-// ExecutionMode represents the execution strategy for workflow todos
-type ExecutionMode string
-
-const (
-	SequentialExecution ExecutionMode = "sequential_execution"
-	ParallelExecution   ExecutionMode = "parallel_execution"
-)
-
-// String returns the string representation of the execution mode
-func (e ExecutionMode) String() string {
-	return string(e)
-}
-
-// GetLabel returns a human-readable label for the execution mode
-func (e ExecutionMode) GetLabel() string {
-	switch e {
-	case SequentialExecution:
-		return "Sequential Execution"
-	case ParallelExecution:
-		return "Parallel Execution"
-	default:
-		return string(e)
-	}
-}
 
 // WorkflowPhaseOption represents an option for a workflow phase
 type WorkflowPhaseOption struct {
@@ -79,52 +53,8 @@ func GetWorkflowConstants() WorkflowConstants {
 			{
 				ID:          database.WorkflowStatusPreVerification,
 				Title:       "Planning & Todo Creation",
-				Description: "Stage 1: Collaborate with the planning agent to create and iterate on a comprehensive todo list using MCP tools. You can refine and improve the todo list through conversation until you're satisfied with the final plan.",
+				Description: "Collaborate with the planning agent to create and iterate on a comprehensive todo list using MCP tools. You can refine and improve the todo list through conversation until you're satisfied with the final plan. Execution happens automatically after plan approval.",
 				Options:     []WorkflowPhaseOption{}, // No options for planning phase
-			},
-			{
-				ID:          database.WorkflowStatusPostVerification,
-				Title:       "Execution & Review",
-				Description: "Stage 2: Execute the approved todo list. The system will create multiple runs organized by date in the runs/ directory. You can review execution results and track progress over time.",
-				Options: []WorkflowPhaseOption{
-					// Run Management Options
-					{
-						ID:          "use_same_run",
-						Label:       "Use Same Run",
-						Description: "Continue using the existing run folder for the current date. This allows you to build upon previous execution results within the same day.",
-						Group:       "run_management",
-						Default:     false,
-					},
-					{
-						ID:          "create_new_runs_always",
-						Label:       "Create New Runs Always",
-						Description: "Always create a new run folder for each execution, even on the same date. This provides a clean slate for each execution.",
-						Group:       "run_management",
-						Default:     true,
-					},
-					{
-						ID:          "create_new_run_once_daily",
-						Label:       "Create New Run Once Daily",
-						Description: "Create a new run folder only once per day. Subsequent executions on the same date will use the existing run folder.",
-						Group:       "run_management",
-						Default:     false,
-					},
-					// Execution Strategy Options
-					{
-						ID:          SequentialExecution.String(),
-						Label:       SequentialExecution.GetLabel(),
-						Description: "Execute todos one by one in order, waiting for each to complete before starting the next",
-						Group:       "execution_strategy",
-						Default:     true,
-					},
-					{
-						ID:          ParallelExecution.String(),
-						Label:       ParallelExecution.GetLabel(),
-						Description: "Execute multiple todos simultaneously when they don't have dependencies",
-						Group:       "execution_strategy",
-						Default:     false,
-					},
-				},
 			},
 		},
 	}
@@ -264,20 +194,9 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return "", fmt.Errorf("workspace path is required")
 	}
 
-	// Check workflow status and execute appropriate flow
-	switch workflowStatus {
-	case database.WorkflowStatusPostVerification:
-		// Proceed directly to execution phase
-		return wo.runExecution(ctx, objective, selectedOptions)
-
-	case database.WorkflowStatusPreVerification:
-		// Run planning phase
-		return wo.runPlanning(ctx, objective, selectedOptions)
-
-	default:
-		wo.GetLogger().Warnf("⚠️ Unknown workflow status: %s, defaulting to planning phase", workflowStatus)
-		return wo.runPlanning(ctx, objective, selectedOptions)
-	}
+	// All workflow statuses now go through planning phase (which includes execution)
+	// Execution is handled automatically within the planning phase after plan approval
+	return wo.runPlanning(ctx, objective, selectedOptions)
 }
 
 func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
@@ -318,9 +237,10 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	}
 
 	// Emit request_human_feedback event
+	// Note: Execution now happens automatically after plan approval, so no separate phase needed
 	if err := wo.emitRequestHumanFeedback(ctx, objective, todoListMarkdown,
 		"planning_verification",
-		database.WorkflowStatusPostVerification,
+		database.WorkflowStatusPreVerification, // Stay in planning phase
 		"Human Controlled Planning Complete",
 		"Approve Plan & Continue",
 		"Please review the generated todo list and approve to proceed with execution."); err != nil {
@@ -336,36 +256,6 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	return planningResult, nil
 }
 
-// runExecution runs the execution phase of the workflow
-func (wo *WorkflowOrchestrator) runExecution(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	// Create TodoExecutionOrchestrator
-	todoExecutionOrchestrator, err := wo.createTodoExecutionOrchestrator()
-	if err != nil {
-		return "", fmt.Errorf("failed to create execution orchestrator: %w", err)
-	}
-
-	// Get run option
-	runOption := wo.getRunOption(selectedOptions)
-
-	// Delegate to TodoExecutionOrchestrator using Execute method
-	executionOptions := map[string]interface{}{
-		"runOption": runOption,
-	}
-	executionResult, err := todoExecutionOrchestrator.Execute(ctx, objective, wo.GetWorkspacePath(), executionOptions)
-	if err != nil {
-		return "", fmt.Errorf("execution orchestrator failed: %w", err)
-	}
-
-	// Execution is complete - no refinement needed
-	wo.GetLogger().Infof("✅ Execution phase completed successfully")
-
-	// Emit orchestrator completion events
-	wo.EmitOrchestratorEnd(ctx, objective, executionResult, "completed", "", "workflow_execution")
-	wo.EmitUnifiedCompletionEvent(ctx, "workflow", "workflow", objective, executionResult, "completed", 1)
-
-	return executionResult, nil
-}
-
 // Helper methods for workflow operations
 // getSessionID returns the session ID for this workflow
 func (wo *WorkflowOrchestrator) getSessionID() string {
@@ -379,34 +269,6 @@ func (wo *WorkflowOrchestrator) getWorkflowID() string {
 	// This should be generated when the workflow starts
 	// For now, return a placeholder
 	return "workflow-" + fmt.Sprintf("%d", time.Now().Unix())
-}
-
-// createTodoExecutionOrchestrator creates and configures the TodoExecutionOrchestrator
-func (wo *WorkflowOrchestrator) createTodoExecutionOrchestrator() (orchestrator.Orchestrator, error) {
-	llmConfig := wo.GetLLMConfig()
-	agent, err := todo_execution.NewTodoExecutionOrchestrator(wo.GetProvider(), wo.GetModel(), wo.GetTemperature(), wo.GetAgentMode(), wo.GetSelectedServers(), wo.GetSelectedTools(), wo.GetMCPConfigPath(), llmConfig, wo.GetMaxTurns(), wo.GetLogger(), wo.GetTracer(), wo.GetContextAwareBridge(), wo.WorkspaceTools, wo.WorkspaceToolExecutors)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create todo execution orchestrator: %w", err)
-	}
-
-	// Set workspace tools if available
-	// Note: WorkspaceTools and WorkspaceToolExecutors are already available from BaseOrchestrator
-
-	return agent, nil
-}
-
-// getRunOption extracts the run option from selected options
-func (wo *WorkflowOrchestrator) getRunOption(selectedOptions *database.WorkflowSelectedOptions) string {
-	runOption := "create_new_runs_always" // default
-	if selectedOptions != nil && selectedOptions.PhaseID == database.WorkflowStatusPostVerification {
-		for _, selection := range selectedOptions.Selections {
-			if selection.Group == "run_management" {
-				runOption = selection.OptionID
-				break
-			}
-		}
-	}
-	return runOption
 }
 
 // emitRequestHumanFeedback emits a request human feedback event
@@ -473,7 +335,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				// Validate it's a known workflow status
 				validStatuses := []string{
 					database.WorkflowStatusPreVerification,
-					database.WorkflowStatusPostVerification,
 				}
 				valid := false
 				for _, status := range validStatuses {

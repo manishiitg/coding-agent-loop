@@ -330,6 +330,16 @@ export const agentApi = {
     return response.data
   },
 
+  movePlannerFile: async (filepath: string, destinationPath: string, commitMessage?: string) => {
+    const requestBody: { destination_path: string; commit_message?: string } = { destination_path: destinationPath }
+    if (commitMessage) {
+      requestBody.commit_message = commitMessage
+    }
+    // API handles path conversion internally
+    const response = await plannerApi.post(`/api/documents/${encodeURIComponent(filepath)}/move`, requestBody)
+    return response.data
+  },
+
   uploadPlannerFile: async (file: File, folderPath: string, commitMessage?: string) => {
     const formData = new FormData()
     formData.append('file', file)

@@ -780,8 +780,8 @@ func MoveDocument(c *gin.Context) {
 	sourcePath := utils.SanitizeInputPath(filePathParam, docsDir)
 	destinationPath := utils.SanitizeInputPath(req.DestinationPath, docsDir)
 
-	// Validate source filepath
-	if err := validateFilepath(sourcePath); err != nil {
+	// Validate source filepath (use lenient validation for move - supports all file types)
+	if err := validateFilePathLenient(sourcePath); err != nil {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
 			Message: "Invalid source filepath",
@@ -790,8 +790,8 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
-	// Validate destination filepath
-	if err := validateFilepath(destinationPath); err != nil {
+	// Validate destination filepath (use lenient validation for move - supports all file types)
+	if err := validateFilePathLenient(destinationPath); err != nil {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
 			Message: "Invalid destination filepath",
@@ -1102,13 +1102,21 @@ func CreateFolder(c *gin.Context) {
 		return
 	}
 
-	// Check if folder already exists
-	if _, err := os.Stat(folderPath); err == nil {
-		c.JSON(http.StatusConflict, models.APIResponse{
-			Success: false,
-			Message: "Folder already exists",
-			Error:   "Folder already exists: " + req.FolderPath,
-		})
+	// Check if folder already exists or if a file exists at that path
+	if info, err := os.Stat(folderPath); err == nil {
+		if info.IsDir() {
+			c.JSON(http.StatusConflict, models.APIResponse{
+				Success: false,
+				Message: "Folder already exists",
+				Error:   "Folder already exists: " + req.FolderPath,
+			})
+		} else {
+			c.JSON(http.StatusConflict, models.APIResponse{
+				Success: false,
+				Message: "File exists at folder path",
+				Error:   "A file already exists at this path. Cannot create folder: " + req.FolderPath,
+			})
+		}
 		return
 	}
 
@@ -1700,6 +1708,29 @@ func validateFilepath(filepath string) error {
 	// Check if it's a markdown file
 	if !strings.HasSuffix(strings.ToLower(filepath), ".md") {
 		return fmt.Errorf("filepath must end with .md extension")
+	}
+
+	// Check for invalid characters
+	invalidChars := []string{"<", ">", ":", "\"", "|", "?", "*"}
+	for _, char := range invalidChars {
+		if strings.Contains(filepath, char) {
+			return fmt.Errorf("filepath contains invalid character: %s", char)
+		}
+	}
+
+	return nil
+}
+
+// validateFilePathLenient validates filepath for move operations - supports all file types, not just .md
+func validateFilePathLenient(filepath string) error {
+	// Check if filepath is empty
+	if filepath == "" {
+		return fmt.Errorf("filepath cannot be empty")
+	}
+
+	// Check for directory traversal attacks
+	if strings.Contains(filepath, "..") || strings.HasPrefix(filepath, "/") {
+		return fmt.Errorf("filepath contains invalid characters or path traversal")
 	}
 
 	// Check for invalid characters

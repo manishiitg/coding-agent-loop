@@ -565,48 +565,147 @@ func initializeVertexAnthropic(config Config, modelID string, logger utils.Exten
 
 // initializeVertexGemini creates and configures a Vertex AI Gemini LLM instance
 func initializeVertexGemini(config Config, modelID string, logger utils.ExtendedLogger) (llmtypes.Model, error) {
-	logger.Infof("Initializing Vertex AI (Gemini) LLM with API key - model_id: %s", modelID)
-
-	// Check for API key from environment
-	apiKey := os.Getenv("VERTEX_API_KEY")
-	if apiKey == "" {
-		// Try alternative environment variable names
-		apiKey = os.Getenv("GOOGLE_API_KEY")
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required for Gemini models")
-	}
-
 	// Use provided context or use background context
 	ctx := config.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	// Create Google GenAI client with API key authentication
-	// Using BackendGeminiAPI for Gemini Developer API
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
-	if err != nil {
-		logger.Errorf("Failed to create GenAI client: %w", err)
+	// Check for API key from environment first
+	logger.Infof("🔐 [VERTEX AUTH] Checking authentication methods for model: %s", modelID)
+	apiKey := os.Getenv("VERTEX_API_KEY")
+	if apiKey == "" {
+		// Try alternative environment variable names
+		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
 
-		// Emit LLM initialization error event
-		errorMetadata := LLMMetadata{
-			ModelVersion: modelID,
-			User:         "vertex_user",
-			CustomFields: map[string]string{
-				"provider":   "vertex",
-				"model_type": "gemini",
-				"operation":  OperationLLMInitialization,
-				"error":      err.Error(),
-				"status":     StatusLLMFailed,
-			},
+	var client *genai.Client
+	var err error
+	var authMethod string
+
+	if apiKey != "" {
+		// Use API key authentication with Gemini Developer API
+		logger.Infof("🔑 [VERTEX AUTH] API key found in environment, using API key authentication")
+		logger.Infof("Initializing Vertex AI (Gemini) LLM with API key - model_id: %s", modelID)
+		authMethod = "API key"
+		client, err = genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		})
+		if err != nil {
+			logger.Errorf("❌ [VERTEX AUTH] Failed to create GenAI client with API key: %w", err)
+			logger.Infof("🔄 [VERTEX AUTH] Falling back to OAuth authentication...")
+			// Fall through to try OAuth auth
+			apiKey = ""
 		}
-		emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
+	} else {
+		logger.Infof("⚠️ [VERTEX AUTH] No API key found (checked VERTEX_API_KEY and GOOGLE_API_KEY)")
+	}
 
-		return nil, fmt.Errorf("create genai client: %w", err)
+	// If API key auth failed or no API key, try OAuth authentication
+	if apiKey == "" {
+		logger.Infof("🔐 [VERTEX AUTH] Attempting Google OAuth authentication - model_id: %s", modelID)
+		logger.Infof("   Will try in order: 1) gcloud CLI, 2) Application Default Credentials")
+		authMethod = "OAuth (gcloud/ADC)"
+
+		// SDK will automatically use Application Default Credentials (ADC)
+		// No need to manually get access token - SDK handles this internally
+		// Calling GetAccessToken here might interfere with SDK's credential detection
+		logger.Debugf("🔍 [VERTEX AUTH] SDK will automatically detect and use Application Default Credentials")
+
+		// Check for required Vertex AI environment variables
+		projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+		if projectID == "" {
+			projectID = os.Getenv("VERTEX_PROJECT_ID")
+		}
+		location := os.Getenv("GOOGLE_CLOUD_LOCATION")
+		if location == "" {
+			location = os.Getenv("VERTEX_LOCATION_ID")
+		}
+		if location == "" {
+			location = "us-central1" // Default location
+			logger.Infof("⚠️ [VERTEX AUTH] GOOGLE_CLOUD_LOCATION not set, using default: %s", location)
+		}
+		// Vertex AI doesn't support "global" location - convert to a valid region
+		if location == "global" {
+			location = "us-central1" // Convert global to a valid region
+			logger.Warnf("⚠️ [VERTEX AUTH] Location 'global' is not valid for Vertex AI, using: %s", location)
+		}
+
+		if projectID == "" {
+			logger.Errorf("❌ [VERTEX AUTH] GOOGLE_CLOUD_PROJECT or VERTEX_PROJECT_ID environment variable is required for Vertex AI")
+			return nil, fmt.Errorf("GOOGLE_CLOUD_PROJECT or VERTEX_PROJECT_ID environment variable is required for Vertex AI OAuth authentication")
+		}
+
+		// Set required environment variables for GenAI SDK auto-detection
+		// The SDK auto-detects BackendVertexAI when GOOGLE_GENAI_USE_VERTEXAI=true
+		// and GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION are set
+		// IMPORTANT: Unset API key env vars to ensure SDK uses OAuth path, not API key path
+		// The SDK checks for API keys and will error if both API key and project/location are set
+		if os.Getenv("GOOGLE_API_KEY") != "" {
+			os.Unsetenv("GOOGLE_API_KEY")
+			logger.Debugf("🔧 [VERTEX AUTH] Unset GOOGLE_API_KEY to force OAuth path")
+		}
+		if os.Getenv("GEMINI_API_KEY") != "" {
+			os.Unsetenv("GEMINI_API_KEY")
+			logger.Debugf("🔧 [VERTEX AUTH] Unset GEMINI_API_KEY to force OAuth path")
+		}
+
+		os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+		os.Setenv("GOOGLE_CLOUD_PROJECT", projectID)
+		os.Setenv("GOOGLE_CLOUD_LOCATION", location)
+		logger.Debugf("🔧 [VERTEX AUTH] Set GOOGLE_GENAI_USE_VERTEXAI=true")
+		logger.Debugf("🔧 [VERTEX AUTH] Set GOOGLE_CLOUD_PROJECT=%s", projectID)
+		logger.Debugf("🔧 [VERTEX AUTH] Set GOOGLE_CLOUD_LOCATION=%s", location)
+
+		logger.Infof("🔧 [VERTEX AUTH] Using Vertex AI project: %s, location: %s", projectID, location)
+
+		// Let SDK create its own HTTP client with credentials (it handles OAuth automatically)
+		// We'll add logging by wrapping the transport after client creation
+		// SDK will auto-detect BackendVertexAI from environment variables
+		// This is the official way per Google's documentation
+		// When GOOGLE_GENAI_USE_VERTEXAI=true and GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION are set,
+		// the SDK automatically uses BackendVertexAI with OAuth via ADC
+		logger.Debugf("🔧 [VERTEX AUTH] Creating GenAI client with auto-detection (OAuth via ADC)...")
+		// Use v1 API version instead of v1beta1 to avoid PredictionService.predict permission requirement
+		// v1beta1 routes through PredictionService which requires aiplatform.endpoints.predict permission
+		// v1 uses GenerativeService which may have different permission requirements
+		// Use nil config to let SDK auto-detect (like the working example)
+		// The simple test shows this works perfectly with both v1beta1 and v1
+		// No need to wrap transport - SDK handles authentication correctly
+		client, err = genai.NewClient(ctx, nil)
+		if err != nil {
+			logger.Errorf("❌ [VERTEX AUTH] Failed to create GenAI client: %w", err)
+			// Emit LLM initialization error event
+			errorMetadata := LLMMetadata{
+				ModelVersion: modelID,
+				User:         "vertex_user",
+				CustomFields: map[string]string{
+					"provider":    "vertex",
+					"model_type":  "gemini",
+					"operation":   OperationLLMInitialization,
+					"error":       err.Error(),
+					"status":      StatusLLMFailed,
+					"auth_method": authMethod,
+				},
+			}
+			emitLLMInitializationError(config.Tracers, string(config.Provider), modelID, OperationLLMInitialization, err, config.TraceID, errorMetadata)
+			return nil, fmt.Errorf("create genai client with OAuth: %w", err)
+		}
+
+		// Verify which backend was auto-detected
+		detectedBackend := client.ClientConfig().Backend
+		if detectedBackend == genai.BackendVertexAI {
+			logger.Infof("✅ [VERTEX AUTH] SDK auto-detected BackendVertexAI (OAuth via ADC)")
+		} else if detectedBackend == genai.BackendGeminiAPI {
+			logger.Warnf("⚠️ [VERTEX AUTH] SDK auto-detected BackendGeminiAPI instead of BackendVertexAI - this may cause issues")
+		} else {
+			logger.Infof("🔍 [VERTEX AUTH] SDK auto-detected backend: %v", detectedBackend)
+		}
+
+		logger.Infof("✅ [VERTEX AUTH] Successfully authenticated using %s", authMethod)
+	} else if err == nil {
+		logger.Infof("✅ [VERTEX AUTH] Successfully authenticated using %s", authMethod)
 	}
 
 	// Create adapter wrapper that implements llmtypes.Model interface
@@ -1236,6 +1335,15 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 				}
 			}
 
+			// Check if this is a MALFORMED_FUNCTION_CALL error
+			var errorMsg string
+			if firstChoice.StopReason == "MALFORMED_FUNCTION_CALL" {
+				errorMsg = "MALFORMED_FUNCTION_CALL: One or more function declarations have invalid schemas. This usually indicates missing 'items' field in array parameters or other schema validation issues."
+				p.logger.Errorf("   ❌ Detected MALFORMED_FUNCTION_CALL - This indicates a problem with function declarations")
+			} else {
+				errorMsg = "choice.Content is empty"
+			}
+
 			// Emit LLM generation error event for empty choice content
 			errorMetadata := LLMMetadata{
 				User: "llm_generation_user",
@@ -1245,13 +1353,15 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 					"messages":        fmt.Sprintf("%d", len(messages)),
 					"temperature":     fmt.Sprintf("%f", getTemperatureFromOptions(options)),
 					"message_content": extractMessageContentAsString(messages),
-					"error":           "Choice.Content is empty",
+					"error":           errorMsg,
+					"stop_reason":     firstChoice.StopReason,
 					"debug_note":      "Response validation failed - empty content",
 				},
 			}
-			emitLLMGenerationError(p.tracers, string(p.provider), p.modelID, OperationLLMGeneration, len(messages), getTemperatureFromOptions(options), extractMessageContentAsString(messages), fmt.Errorf("choice.Content is empty"), p.traceID, errorMetadata)
+			err := fmt.Errorf("%s", errorMsg)
+			emitLLMGenerationError(p.tracers, string(p.provider), p.modelID, OperationLLMGeneration, len(messages), getTemperatureFromOptions(options), extractMessageContentAsString(messages), err, p.traceID, errorMetadata)
 
-			return nil, fmt.Errorf("choice.Content is empty")
+			return nil, err
 		}
 	}
 
@@ -1641,9 +1751,16 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 		logger.Infof("[API KEY VALIDATION] Testing AWS Bedrock credentials")
 		isValid, message, err = validateBedrockCredentials(req.ModelID)
 	case "vertex":
-		// Vertex uses Google API key, optionally test with model ID
-		logger.Infof("[API KEY VALIDATION] Testing Vertex AI API key")
-		isValid, message, err = validateVertexAPIKey(req.APIKey, req.ModelID)
+		// Vertex uses Google API key or OAuth, optionally test with model ID
+		if req.APIKey == "" {
+			// No API key provided, try OAuth authentication
+			logger.Infof("[API KEY VALIDATION] No API key provided for Vertex, testing OAuth authentication")
+			isValid, message, err = validateVertexOAuth(req.ModelID)
+		} else {
+			// API key provided, test with API key
+			logger.Infof("[API KEY VALIDATION] Testing Vertex AI API key")
+			isValid, message, err = validateVertexAPIKey(req.APIKey, req.ModelID)
+		}
 	case "anthropic":
 		// Anthropic uses API key, optionally test with model ID
 		logger.Infof("[API KEY VALIDATION] Testing Anthropic API key")
@@ -1916,6 +2033,98 @@ func validateVertexAPIKey(apiKey string, modelID string) (bool, string, error) {
 		logger.Warnf("[VERTEX VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
 		return false, fmt.Sprintf("Vertex AI API returned status %d", resp.StatusCode), nil
 	}
+}
+
+// validateVertexOAuth validates Vertex AI authentication using OAuth (gcloud/ADC)
+// Uses the same initializeVertexGemini function as agents to ensure consistency
+func validateVertexOAuth(modelID string) (bool, string, error) {
+	logger := logger.CreateDefaultLogger()
+	logger.Infof("[VERTEX OAUTH VALIDATION] Starting OAuth authentication validation")
+
+	// Require model ID for validation
+	if modelID == "" {
+		logger.Warnf("[VERTEX OAUTH VALIDATION WARN] Model ID is required for validation")
+		return false, "Model ID is required for OAuth validation", nil
+	}
+	logger.Infof("[VERTEX OAUTH VALIDATION] Using provided model ID: %s", modelID)
+
+	// Ensure no API key is set so we test OAuth path
+	// Temporarily unset API keys to force OAuth authentication
+	originalVertexKey := os.Getenv("VERTEX_API_KEY")
+	originalGoogleKey := os.Getenv("GOOGLE_API_KEY")
+	defer func() {
+		// Restore original values
+		if originalVertexKey != "" {
+			os.Setenv("VERTEX_API_KEY", originalVertexKey)
+		} else {
+			os.Unsetenv("VERTEX_API_KEY")
+		}
+		if originalGoogleKey != "" {
+			os.Setenv("GOOGLE_API_KEY", originalGoogleKey)
+		} else {
+			os.Unsetenv("GOOGLE_API_KEY")
+		}
+	}()
+	os.Unsetenv("VERTEX_API_KEY")
+	os.Unsetenv("GOOGLE_API_KEY")
+
+	ctx := context.Background()
+
+	// Use the same initialization function as agents
+	// This ensures validation tests the exact same code path
+	logger.Infof("[VERTEX OAUTH VALIDATION] Using same initialization function as agents (initializeVertexGemini)")
+	llmInstance, err := initializeVertexGemini(Config{
+		Provider: ProviderVertex,
+		ModelID:  modelID,
+		Logger:   logger,
+		Context:  ctx,
+	}, modelID, logger)
+	if err != nil {
+		logger.Warnf("[VERTEX OAUTH VALIDATION FAILED] Failed to initialize Vertex AI LLM: %v", err)
+		return false, fmt.Sprintf("OAuth authentication test failed: %v", err), nil
+	}
+
+	// Send a simple test message to verify OAuth authentication works
+	testMessage := "Hi"
+	logger.Infof("[VERTEX OAUTH VALIDATION] Sending test message to LLM: %q", testMessage)
+
+	testMessages := []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: testMessage},
+			},
+		},
+	}
+
+	// Create a timeout context for the test
+	testCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	// Call GenerateContent to test OAuth authentication
+	response, err := llmInstance.GenerateContent(testCtx, testMessages)
+	if err != nil {
+		logger.Warnf("[VERTEX OAUTH VALIDATION FAILED] Test message failed: %v", err)
+		return false, fmt.Sprintf("OAuth authentication test failed: %v", err), nil
+	}
+
+	// Check if we got a valid response
+	if response == nil || len(response.Choices) == 0 {
+		logger.Warnf("[VERTEX OAUTH VALIDATION FAILED] No response received from LLM")
+		return false, "OAuth authentication test failed: no response from LLM", nil
+	}
+
+	// Success! OAuth token works and we got a valid response
+	responsePreview := response.Choices[0].Content
+	if len(responsePreview) > 100 {
+		responsePreview = responsePreview[:100] + "..."
+	}
+	logger.Infof("[VERTEX OAUTH VALIDATION SUCCESS] OAuth authentication is valid - received response: %q", responsePreview)
+
+	if modelID != "" {
+		return true, fmt.Sprintf("Vertex AI OAuth authentication is valid for model %s", modelID), nil
+	}
+	return true, "Vertex AI OAuth authentication is valid", nil
 }
 
 // validateAnthropicAPIKey validates an Anthropic API key

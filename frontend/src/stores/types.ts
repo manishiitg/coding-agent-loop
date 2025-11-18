@@ -52,8 +52,8 @@ export interface Toast {
 // Agent Mode Types
 export type AgentMode = 'simple' | 'workflow'
 
-// Workflow Types
-export type WorkflowPhase = 'pre-verification' | 'post-verification' | 'post-verification-todo-refinement'
+// Workflow Types - dynamic from backend
+export type WorkflowPhase = string
 
 // Store Action Types
 export interface StoreActions {

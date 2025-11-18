@@ -139,8 +139,8 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 2. **SECONDARY**: Document which tool approaches failed
 3. **PATTERNS**: Capture high-level strategies and workflow patterns
 4. **OUTPUT**: Create reusable patterns for future executions
-- **IMPORTANT**: All learnings are written to a SINGLE file (general_learnings.md) shared across all steps
-- **CRITICAL**: Always read existing general_learnings.md first, then append new learnings organized by step title`
+- **IMPORTANT**: Each step gets its own learning file (format: {StepTitle}_learning.md)
+- **CRITICAL**: Always read existing {StepTitle}_learning.md first if it exists, then merge new learnings with existing content (preserve all previous learnings)`
 	}() + `
 
 ## 🧠 **TOOL EXTRACTION PROCESS (Focus on Efficiency)**
@@ -178,8 +178,7 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 	}() + `
 6. **Read Existing File First** - **CRITICAL STEP BEFORE WRITING**:
    - **MANDATORY**: Use read_workspace_file tool to read the existing learning file BEFORE writing
-   - **Exact Mode**: Read {{.WorkspacePath}}/learnings/{StepTitle}_learning.md if it exists
-   - **General Mode**: Read {{.WorkspacePath}}/learnings/general_learnings.md if it exists
+   - **Both Modes**: Read {{.WorkspacePath}}/learnings/{StepTitle}_learning.md if it exists
    - **Purpose**: Preserve all existing learnings - never overwrite or lose previous content
    - **If file doesn't exist**: Create new file with current learnings
    - **If file exists**: Merge new learnings with existing content (append new patterns, don't replace)
@@ -376,12 +375,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 **CRITICAL**: After writing the learning file, output ONLY the file path that was updated. Keep your response minimal and concise.
 
 **Output Format:**
-` + func() string {
-		if learningDetailLevel == "exact" {
-			return `Updated: ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md`
-		}
-		return `Updated: ` + templateVars["WorkspacePath"] + `/learnings/general_learnings.md`
-	}() + `
+` + `Updated: ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md` + `
 
 **DO NOT provide:**
 - Comprehensive summaries
@@ -408,8 +402,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 		return `patterns or Python scripts were identified - include tool names (without arguments) but ALWAYS save full Python script content to scripts/ folder for both success and failure patterns`
 	}() + `
 - **FILE MERGING INSTRUCTIONS**:
-  - **Exact Mode**: If {StepTitle}_learning.md exists, read it first, then merge new learnings (append new success/failure patterns to existing ones, preserve all previous content)
-  - **General Mode**: If general_learnings.md exists, read it first, then append new learnings for this step (add new section with step title as header, preserve all previous sections)
+  - **Both Modes**: If {StepTitle}_learning.md exists, read it first, then merge new learnings (append new success/failure patterns to existing ones, preserve all previous content)
   - **Merging Strategy**: Combine existing and new learnings - add new patterns without removing or replacing existing ones
   - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results. Replace outdated patterns with current ones based on the most recent execution. This ensures learnings stay current and accurate.
   - **EXCLUDE WORKSPACE TOOLS**: When updating or adding patterns, ensure workspace management tools are never included in success/failure patterns
@@ -480,9 +473,7 @@ DO NOT replace them with actual values. Keep variable placeholders like {{AWS_AC
 4. **Write short, precise content**: Each entry should be 1-2 lines maximum. No verbose explanations.
 
 **File to create/update:**
-` + func() string {
-		if learningDetailLevel == "exact" {
-			return `- ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md
+` + `- ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md
 
 **CRITICAL FILE HANDLING INSTRUCTIONS:**
 1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md (if it exists)
@@ -495,30 +486,9 @@ DO NOT replace them with actual values. Keep variable placeholders like {{AWS_AC
    - This tracks reliability across executions - higher Runs and Success % = more reliable
 5. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns
 6. **IF FILE DOESN'T EXIST**: Create new file with current learnings (all new patterns start with [Runs: 1 | Success: 100%])
-7. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)`
-		}
-		return `- ` + templateVars["WorkspacePath"] + `/learnings/general_learnings.md
+7. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)` + `
 
-**CRITICAL FILE HANDLING INSTRUCTIONS:**
-1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + templateVars["WorkspacePath"] + `/learnings/general_learnings.md (if it exists)
-2. **IF FILE EXISTS**: Append new learnings for this step with step title as section header - preserve ALL previous sections and learnings
-3. **UPDATE EXISTING PATTERNS**: If success/failure patterns for this step in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results
-4. **UPDATE PATTERN SCORES**: Compare existing patterns for this step with current success/failure patterns:
-   - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 2 | Success: 66.7%] → [Runs: 3 | Success: 75%])
-   - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs
-   - **New patterns**: Start with [Runs: 1 | Success: 100%]
-   - This tracks reliability across executions - higher Runs and Success % = more reliable
-5. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns
-6. **IF FILE DOESN'T EXIST**: Create new file with current learnings organized by step title (all new patterns start with [Runs: 1 | Success: 100%])
-7. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)`
-	}() + `
-
-**After writing the file, output ONLY the file path** (e.g., "Updated: ` + func() string {
-		if learningDetailLevel == "exact" {
-			return templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md`
-		}
-		return templateVars["WorkspacePath"] + `/learnings/general_learnings.md`
-	}() + `"). 
+**After writing the file, output ONLY the file path** (e.g., "Updated: ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md"). 
 
 **Keep response minimal** - just the file path. No summaries or analysis.
 `

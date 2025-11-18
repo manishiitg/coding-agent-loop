@@ -51,10 +51,22 @@ func GetWorkflowConstants() WorkflowConstants {
 	return WorkflowConstants{
 		Phases: []WorkflowPhase{
 			{
-				ID:          database.WorkflowStatusPreVerification,
-				Title:       "Planning & Todo Creation",
-				Description: "Collaborate with the planning agent to create and iterate on a comprehensive todo list using MCP tools. You can refine and improve the todo list through conversation until you're satisfied with the final plan. Execution happens automatically after plan approval.",
+				ID:          "variable-extraction",
+				Title:       "Variable Extraction",
+				Description: "Extract variables from the objective and replace hard-coded values with templated placeholders. This phase runs before planning to identify dynamic values that should be parameterized.",
+				Options:     []WorkflowPhaseOption{}, // No options for variable extraction phase
+			},
+			{
+				ID:          "planning",
+				Title:       "Planning",
+				Description: "Create and iterate on a comprehensive plan using the planning agent. You can refine and improve the plan through conversation until you're satisfied. This phase runs after variable extraction and before execution.",
 				Options:     []WorkflowPhaseOption{}, // No options for planning phase
+			},
+			{
+				ID:          database.WorkflowStatusPreVerification,
+				Title:       "Execution",
+				Description: "Execute the approved plan using MCP tools. This phase runs after both variable extraction and planning are complete.",
+				Options:     []WorkflowPhaseOption{}, // No options for execution phase
 			},
 		},
 	}
@@ -194,19 +206,108 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return "", fmt.Errorf("workspace path is required")
 	}
 
-	// All workflow statuses now go through planning phase (which includes execution)
-	// Execution is handled automatically within the planning phase after plan approval
+	// Route to appropriate phase based on workflow status
+	// IMPORTANT: Each phase is isolated and should NOT trigger other phases
+	if workflowStatus == "variable-extraction" {
+		wo.GetLogger().Infof("🔍 Routing to variable extraction phase (workflowStatus: %s)", workflowStatus)
+		return wo.runVariableExtraction(ctx, objective, selectedOptions)
+	}
+
+	if workflowStatus == "planning" {
+		wo.GetLogger().Infof("📋 Routing to planning phase (workflowStatus: %s)", workflowStatus)
+		return wo.runPlanningOnly(ctx, objective, selectedOptions)
+	}
+
+	// All other workflow statuses (pre-verification) go through execution phase
+	// Execution requires both variables.json and plan.json to exist
+	wo.GetLogger().Infof("🚀 Routing to execution phase (workflowStatus: %s)", workflowStatus)
 	return wo.runPlanning(ctx, objective, selectedOptions)
 }
 
+// runVariableExtraction runs only the variable extraction phase
+func (wo *WorkflowOrchestrator) runVariableExtraction(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Infof("🔍 Starting Variable Extraction Phase")
+
+	// Create human controlled planner orchestrator (needed for variable extraction)
+	llmConfig := wo.GetLLMConfig()
+	todoPlannerAgent, err := todo_creation_human.NewHumanControlledTodoPlannerOrchestrator(
+		wo.GetProvider(),
+		wo.GetModel(),
+		wo.GetTemperature(),
+		wo.GetAgentMode(),
+		wo.GetSelectedServers(),
+		wo.GetSelectedTools(),
+		wo.GetMCPConfigPath(),
+		llmConfig,
+		wo.GetMaxTurns(),
+		wo.GetLogger(),
+		wo.GetTracer(),
+		wo.GetContextAwareBridge(),
+		wo.WorkspaceTools,
+		wo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
+	}
+
+	// Run only variable extraction
+	result, err := todoPlannerAgent.ExtractVariablesOnly(ctx, objective, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("variable extraction failed: %w", err)
+	}
+
+	wo.GetLogger().Infof("✅ Variable extraction completed successfully")
+	return result, nil
+}
+
+// runPlanningOnly runs only the planning phase
+func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Infof("📋 Starting Planning Phase")
+
+	// Create human controlled planner orchestrator (needed for planning)
+	llmConfig := wo.GetLLMConfig()
+	todoPlannerAgent, err := todo_creation_human.NewHumanControlledTodoPlannerOrchestrator(
+		wo.GetProvider(),
+		wo.GetModel(),
+		wo.GetTemperature(),
+		wo.GetAgentMode(),
+		wo.GetSelectedServers(),
+		wo.GetSelectedTools(),
+		wo.GetMCPConfigPath(),
+		llmConfig,
+		wo.GetMaxTurns(),
+		wo.GetLogger(),
+		wo.GetTracer(),
+		wo.GetContextAwareBridge(),
+		wo.WorkspaceTools,
+		wo.WorkspaceToolExecutors,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
+	}
+
+	// Run only planning
+	result, err := todoPlannerAgent.CreatePlanOnly(ctx, objective, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("planning failed: %w", err)
+	}
+
+	wo.GetLogger().Infof("✅ Planning completed successfully")
+	return result, nil
+}
+
+// runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
+// This is called for pre-verification status and executes the approved plan
 func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Infof("👤 Starting Planning Phase")
+	wo.GetLogger().Infof("🚀 Starting Execution Phase")
+
 	return wo.runHumanControlledPlanning(ctx, objective)
 }
 
-// runHumanControlledPlanning runs the human controlled planning with simplified approach
+// runHumanControlledPlanning runs the execution phase (CreateTodoList)
+// This requires both variables.json and plan.json to exist
 func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, objective string) (string, error) {
-	wo.GetLogger().Infof("👤 Running Human Controlled Planning for objective: %s", objective)
+	wo.GetLogger().Infof("🚀 Running Execution for objective: %s", objective)
 
 	// Create human controlled planner orchestrator directly
 	llmConfig := wo.GetLLMConfig()
@@ -334,7 +435,9 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 			} else {
 				// Validate it's a known workflow status
 				validStatuses := []string{
-					database.WorkflowStatusPreVerification,
+					"variable-extraction",                  // Variable extraction phase
+					"planning",                             // Planning phase
+					database.WorkflowStatusPreVerification, // Execution phase
 				}
 				valid := false
 				for _, status := range validStatuses {

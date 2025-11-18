@@ -11,6 +11,7 @@ import (
 	"text/template"
 	"time"
 
+	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
@@ -288,29 +289,11 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 }
 
 // writePlanToFile writes PlanningResponse to plan.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
-// Creates a backup of the existing plan.json before writing (if it exists)
 func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
 	planPath := filepath.Join(workspacePath, "planning", "plan.json")
-	backupPath := filepath.Join(workspacePath, "planning", "plan_backup.json")
 
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
-
-	// Create backup of existing plan.json before updating (if it exists)
-	existingPlanContent, err := readFile(ctx, planPath)
-	if err == nil {
-		// Existing plan.json found - create backup
-		if err := writeFile(ctx, backupPath, existingPlanContent); err != nil {
-			if logger != nil {
-				logger.Warnf("⚠️ Failed to create plan backup: %v (continuing anyway)", err)
-			}
-		} else {
-			if logger != nil {
-				logger.Infof("💾 Created backup of existing plan.json at %s", backupPath)
-			}
-		}
-	}
-	// If readFile fails, it means plan.json doesn't exist yet (first time creation) - no backup needed
 
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
@@ -742,6 +725,34 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	// Get logger from MCP agent (it has a Logger field)
 	logger := mcpAgent.Logger
 
+	// Register human_feedback tool first (required before making plan changes)
+	humanTools := virtualtools.CreateHumanTools()
+	humanToolExecutors := virtualtools.CreateHumanToolExecutors()
+	if len(humanTools) > 0 && len(humanToolExecutors) > 0 {
+		humanTool := humanTools[0] // Get the first (and only) human tool
+		if humanTool.Function != nil {
+			// Convert Parameters to map[string]interface{}
+			var params map[string]interface{}
+			if humanTool.Function.Parameters != nil {
+				paramsBytes, err := json.Marshal(humanTool.Function.Parameters)
+				if err == nil {
+					json.Unmarshal(paramsBytes, &params)
+				}
+			}
+			if params != nil {
+				if executor, exists := humanToolExecutors[humanTool.Function.Name]; exists {
+					mcpAgent.RegisterCustomTool(
+						humanTool.Function.Name,
+						humanTool.Function.Description,
+						params,
+						executor,
+					)
+					logger.Infof("✅ Registered human_feedback tool for planning agent")
+				}
+			}
+		}
+	}
+
 	mcpAgent.RegisterCustomTool(
 		"update_plan_steps",
 		"Update existing steps in the plan. Provide existing_step_title (required) to identify which step to update, and only include the fields you want to change. The plan.json file is updated immediately when this tool is called.",
@@ -777,38 +788,38 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	systemPrompt := planningSystemPromptProcessorForUpdate(templateVars)
 
 	// Execute the agent with normal Execute (not StructuredOutputViaTool)
-	textResponse, updatedHistory, err := baseAgent.Execute(ctx, userMessage, conversationHistory, systemPrompt, false)
+	_, updatedHistory, err := baseAgent.Execute(ctx, userMessage, conversationHistory, systemPrompt, false)
 	if err != nil {
 		return nil, updatedHistory, fmt.Errorf("agent execution failed: %w", err)
 	}
 
 	// Check if any of our custom tools were called
 	toolCalls := extractToolCallsFromMessages(updatedHistory)
-	toolCalled := false
+	planUpdateToolCalled := false
 	for _, toolName := range toolCalls {
 		if toolName == "update_plan_steps" || toolName == "delete_plan_steps" || toolName == "add_plan_steps" {
-			toolCalled = true
-			break
+			planUpdateToolCalled = true
 		}
 	}
 
-	// If no tools were called, this is a conversational response
-	if !toolCalled {
-		// Return NonStructuredResponseError so controller can handle it
-		return nil, updatedHistory, &agents.NonStructuredResponseError{
-			TextResponse:   textResponse,
-			UpdatedHistory: updatedHistory,
-			OriginalError:  fmt.Errorf("conversational response detected - no plan update tools were called"),
-		}
-	}
-
-	// Tools were called - read the updated plan.json and return it
-	updatedPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
+	// Read the current plan.json (whether tools were called or not)
+	// In UPDATE mode, conversational responses are normal - not an error
+	// If tools were called, plan.json was updated. If not, we return the current plan unchanged.
+	currentPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
 	if err != nil {
-		return nil, updatedHistory, fmt.Errorf("failed to read updated plan: %w", err)
+		return nil, updatedHistory, fmt.Errorf("failed to read plan: %w", err)
 	}
 
-	return updatedPlan, updatedHistory, nil
+	if !planUpdateToolCalled {
+		// No tools called - this is a normal conversational response, not an error
+		// Return the current plan (unchanged) so conversation can continue
+		logger.Infof("📝 Planning agent in UPDATE mode: Conversational response (no plan changes). Returning current plan.")
+		return currentPlan, updatedHistory, nil
+	}
+
+	// Tools were called - plan.json was updated
+	logger.Infof("✅ Plan updated via tools (%d steps)", len(currentPlan.Steps))
+	return currentPlan, updatedHistory, nil
 }
 
 // parseSchemaForToolParameters parses a JSON schema string and extracts properties for tool parameters
@@ -985,7 +996,7 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 ## 🤖 AGENT IDENTITY
 - **Role**: Planning Agent (Update Mode)
 - **Task**: Update existing plan based on human feedback
-- **Tools**: Use update_plan_steps, delete_plan_steps, and add_plan_steps tools to modify the plan. These tools update plan.json immediately when called.
+- **Tools**: Use human_feedback tool to confirm changes, then use update_plan_steps, delete_plan_steps, and add_plan_steps tools to modify the plan. These tools update plan.json immediately when called.
 
 ## 🎯 OBJECTIVE
 
@@ -1020,12 +1031,25 @@ Update this plan based on human feedback. Use judgment to determine what changes
 - Keep same detail level in all steps
 
 **Available Tools**:
+- **human_feedback**: **REQUIRED BEFORE MAKING ANY PLAN CHANGES**. Use this tool to ask the user for confirmation before modifying the plan. Provide a clear message describing the proposed changes (what steps will be updated/deleted/added and why). Wait for user approval before proceeding with plan modification tools. Generate a unique UUID for the unique_id parameter.
 - **update_plan_steps**: Update existing steps. Provide existing_step_title (REQUIRED) to identify which step to update, and only include the fields you want to change. Other fields preserve existing values. To rename, include both existing_step_title and new title. The plan.json file is updated immediately when this tool is called.
 - **delete_plan_steps**: Delete steps from the plan by providing their exact titles. Must match existing titles exactly (case-sensitive, preserve whitespace). The plan.json file is updated immediately when this tool is called.
 - **add_plan_steps**: Add new steps to the plan. Provide complete step definitions with all required fields (title, description, success_criteria, has_loop, insert_after_step_title). **CRITICAL**: Each new step MUST specify insert_after_step_title (REQUIRED) to indicate where to insert it. Use the exact title of the step to insert after (case-sensitive, preserve whitespace). Use empty string "" to insert at the beginning of the plan. Multiple steps with the same insert_after_step_title will be inserted in the order they appear in the array. The plan.json file is updated immediately when this tool is called.
 
+**CRITICAL WORKFLOW - HUMAN CONFIRMATION REQUIRED**:
+1. **ALWAYS use human_feedback tool FIRST** before making any plan changes (update/delete/add steps)
+2. In the human_feedback message, clearly describe:
+   - What changes you plan to make (which steps to update/delete/add)
+   - Why these changes address the user's feedback
+   - The impact of these changes
+3. The human_feedback tool will automatically return the user's response. **After receiving the response**:
+   - If user approved: Immediately proceed with update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
+   - If user asked questions or needs clarification: Respond conversationally without calling plan update tools
+   - If user rejected or requested changes: Adjust your approach and either ask again with human_feedback or respond conversationally
+4. You can call multiple plan modification tools in the same turn after getting approval
+
 **Guidelines**:
-- You can call multiple tools in one turn if needed
+- You can call multiple plan modification tools in one turn after getting approval
 - Tools update plan.json immediately - no merging needed
 - Unchanged steps are preserved automatically
 - A step cannot be both updated and deleted
@@ -1038,9 +1062,17 @@ Update this plan based on human feedback. Use judgment to determine what changes
 
 ## 📤 OUTPUT REQUIREMENTS
 
-**Call tools when**: User wants plan changes (modify/delete/add steps). Use update_plan_steps, delete_plan_steps, or add_plan_steps as appropriate. You can call multiple tools in one turn.
+**Workflow for plan changes**:
+1. **First**: Use human_feedback tool to describe proposed changes and get user confirmation
+2. **After human_feedback returns**: The tool automatically provides the user's response. Based on that response:
+   - **If approved**: Immediately call update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
+   - **If questions/clarification needed**: Respond conversationally without calling plan update tools
+   - **If rejected**: Adjust your approach and either ask again with human_feedback or respond conversationally
+3. You can call multiple plan modification tools in the same turn after getting approval
 
 **Respond conversationally when**: User asks questions, seeks clarification, or provides feedback that doesn't require plan changes. In this case, don't call any tools - just respond with text.
+
+**IMPORTANT**: Never call update_plan_steps, delete_plan_steps, or add_plan_steps without first getting user confirmation via human_feedback tool. After human_feedback returns, you will automatically continue in the same turn and can make the plan changes.
 `
 
 	tmpl, err := template.New("human_controlled_planning_update").Parse(templateStr)

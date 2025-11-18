@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { WorkflowPhaseHandler } from './WorkflowPhaseHandler'
 import { agentApi } from '../../services/api'
-import { WORKFLOW_PHASES, type WorkflowPhase } from '../../constants/workflow'
+import { type WorkflowPhase, getDefaultWorkflowPhase, getWorkflowPhases } from '../../constants/workflow'
 import { useAppStore, useChatStore } from '../../stores'
 import { usePresetApplication } from '../../stores/useGlobalPresetStore'
 
@@ -83,7 +83,9 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
       onPresetCleared()
       setHasAttemptedLoad(false)
       setAvailablePresets([])
-      onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
+      getDefaultWorkflowPhase().then(defaultPhase => {
+        onWorkflowPhaseChange?.(defaultPhase)
+      })
     }
   }, [agentMode, onPresetCleared, onWorkflowPhaseChange])
 
@@ -94,7 +96,9 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
       const selectedPreset = availablePresets.find(p => p.id === selectedWorkflowPreset)
       if (selectedPreset) {
         onPresetSelected(selectedWorkflowPreset, selectedPreset.description)
-        onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
+        getDefaultWorkflowPhase().then(defaultPhase => {
+          onWorkflowPhaseChange?.(defaultPhase)
+        })
       } else {
         // If preset not found, load presets first
         if (!hasAttemptedLoad) {
@@ -114,7 +118,8 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
               const foundPreset = presets.find(p => p.id === selectedWorkflowPreset)
               if (foundPreset) {
                 onPresetSelected(selectedWorkflowPreset, foundPreset.description)
-                onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
+                const defaultPhase = await getDefaultWorkflowPhase()
+                onWorkflowPhaseChange?.(defaultPhase)
               }
             } catch (error) {
               console.error('[WORKFLOW] Failed to load presets:', error)
@@ -140,16 +145,19 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
         // For workflow mode, we need to use the normal agent execution flow
         // The backend will handle the workflow Deep Search execution
         // We'll return the objective so ChatArea can submit it as a normal query
-        // Workflow created, transitioning to planning phase
-        onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
+        // Workflow created, transitioning to planning phase (second phase)
+        const phases = await getWorkflowPhases()
+        const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+        onWorkflowPhaseChange?.(planningPhase)
 
         // Return the objective so ChatArea can submit it as a normal agent query
         return { objective, workflowId: createResponse.workflow.id }
       }
     } catch (error) {
       console.error('[WORKFLOW] Error creating workflow:', error)
-      // Reset to objective input phase on error
-      onWorkflowPhaseChange?.(WORKFLOW_PHASES.PRE_VERIFICATION)
+      // Reset to default phase on error
+      const defaultPhase = await getDefaultWorkflowPhase()
+      onWorkflowPhaseChange?.(defaultPhase)
     }
   }, [selectedWorkflowPreset, onWorkflowPhaseChange])
 
@@ -166,7 +174,11 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   const handleChatSubmit = useCallback(async (query: string) => {
     // handleChatSubmit called
 
-    if (currentPhase === WORKFLOW_PHASES.PRE_VERIFICATION) {
+    // Get phases to determine planning phase (second phase)
+    const phases = await getWorkflowPhases()
+    const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+    
+    if (currentPhase === planningPhase) {
       // Calling handleObjectiveSubmit
       const result = await handleObjectiveSubmit(query)
       // handleObjectiveSubmit result
@@ -189,7 +201,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
       <>
         {selectedWorkflowPreset && (
           <WorkflowPhaseHandler
-            phase={currentPhase || WORKFLOW_PHASES.PRE_VERIFICATION}
+            phase={currentPhase || 'variable-extraction'}
             presetQueryId={selectedWorkflowPreset}
             onStateChange={handleStateChange}
           />

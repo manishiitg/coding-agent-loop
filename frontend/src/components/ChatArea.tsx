@@ -9,7 +9,7 @@ import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { WORKFLOW_PHASES } from '../constants/workflow'
+import { getWorkflowPhases, getDefaultWorkflowPhase } from '../constants/workflow'
 import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
@@ -403,6 +403,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setCurrentWorkflowQueryId(presetId) // Store the preset query ID for workflow approval
     
     try {
+      // Get available phases from backend to validate status
+      const phases = await getWorkflowPhases()
+      const phaseIds = phases.map(p => p.id)
+      const defaultPhase = phases.length > 0 ? phases[0].id : 'variable-extraction'
+      
       // Check if workflow already exists for this preset
       const workflowStatus = await agentApi.getWorkflowStatus(presetId)
       
@@ -411,41 +416,44 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         const status = workflow.workflow_status
         
         // Set the workflow phase based on the database status
-        if (status === WORKFLOW_PHASES.POST_VERIFICATION) {
-          setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
-        } else if (status === WORKFLOW_PHASES.POST_VERIFICATION_TODO_REFINEMENT) {
-          setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION_TODO_REFINEMENT)
+        // Use the status if it's a valid phase ID, otherwise use default (first phase)
+        if (status && phaseIds.includes(status)) {
+          setCurrentWorkflowPhase(status)
         } else {
-          setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+          // Default to first phase if status is invalid or not found
+          setCurrentWorkflowPhase(defaultPhase)
         }
         
         // Use presetContent directly (this is the objective from preset query)
         setCurrentQuery(presetContent)
       } else {
-        // No workflow exists, proceed with normal flow
-        setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+        // No workflow exists, proceed with default phase
+        setCurrentWorkflowPhase(defaultPhase)
         setCurrentQuery(presetContent)
       }
     } catch (error) {
       console.error('[WORKFLOW] Error checking workflow status:', error)
-      // Fallback to normal flow on error
-      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+      // Fallback to default phase on error
+      const defaultPhase = await getDefaultWorkflowPhase()
+      setCurrentWorkflowPhase(defaultPhase)
       setCurrentQuery(presetContent)
     }
   }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId, clearFileContext])
 
-  const handleWorkflowPresetCleared = useCallback(() => {
+  const handleWorkflowPresetCleared = useCallback(async () => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null) // Clear the stored preset query ID
-    setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION) // Reset to preset selection phase
+    const defaultPhase = await getDefaultWorkflowPhase()
+    setCurrentWorkflowPhase(defaultPhase) // Reset to default phase
     setCurrentQuery('')
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase, setCurrentQuery])
   
   // Clear workflow state when starting a new chat
-  const clearWorkflowState = useCallback(() => {
+  const clearWorkflowState = useCallback(async () => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null)
-    setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+    const defaultPhase = await getDefaultWorkflowPhase()
+    setCurrentWorkflowPhase(defaultPhase)
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase])
 
   // Handle human verification actions
@@ -465,7 +473,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     
     try {
       // Determine next phase based on event data
-      const nextPhase = eventData?.next_phase || WORKFLOW_PHASES.POST_VERIFICATION
+      // If next_phase is provided, use it; otherwise get the second phase (planning) as default
+      let nextPhase = eventData?.next_phase
+      if (!nextPhase) {
+        const phases = await getWorkflowPhases()
+        // Use second phase (planning) if available, otherwise first phase
+        nextPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+      }
       
       // Update workflow status to the determined next phase
       await agentApi.updateWorkflow(presetQueryId, nextPhase)
@@ -632,9 +646,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         // Update last event index immediately
         setLastEventIndex(response.last_event_index)
         
-        // Add new events to batch for debounced processing
+        // Filter events first (synchronous)
         const newEvents = response.events.filter(event => {
-            
             // Detect request human feedback event and stop streaming
             if (event.type === 'request_human_feedback') {
               setIsStreaming(false)
@@ -650,41 +663,48 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               }
             }
             
-            
             // Process workspace events using the centralized store
             const { processWorkspaceEvent } = useWorkspaceStore.getState()
             processWorkspaceEvent(event)
-
-            // Process workflow-specific events
-            if (agentMode === 'workflow') {
-              // Handle todo list generation from workflow agent
-              // Note: orchestrator events removed, using agent_end events instead
-              if (event.type === 'agent_end') {
-                const agentEvent = event.data?.agent_end
-                if (agentEvent && (agentEvent as { agent_type?: string })?.agent_type === 'todo_planner') {
-                  const result = (agentEvent as { result?: string })?.result || ''
-                  if (result) {
-                    // Only reset to PRE_VERIFICATION if workflow hasn't been approved yet
-                    // This prevents resetting the phase after user approval
-                    if (currentWorkflowPhase === WORKFLOW_PHASES.POST_VERIFICATION) {
-                      // Workflow already approved, keeping POST_VERIFICATION phase
-                    } else {
-                      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
-                    }
-                  }
-                }
-              }
-
-              // Handle workflow completion events
-              if (event.type === 'workflow_end') {
-                setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
-              }
-
-            }
             
             // Only filter out user_message events from backend since we add them immediately in submitQuery
             return event.type !== 'user_message'
           })
+          
+        // Process workflow-specific events asynchronously (after filtering)
+        if (agentMode === 'workflow') {
+          for (const event of response.events) {
+            // Handle todo list generation from workflow agent
+            // Note: orchestrator events removed, using agent_end events instead
+            if (event.type === 'agent_end') {
+              const agentEvent = event.data?.agent_end
+              if (agentEvent && (agentEvent as { agent_type?: string })?.agent_type === 'todo_planner') {
+                const result = (agentEvent as { result?: string })?.result || ''
+                if (result) {
+                  // Get phases to determine planning phase
+                  const phases = await getWorkflowPhases()
+                  const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+                  
+                  // Only reset to planning phase if workflow hasn't been approved yet
+                  // This prevents resetting the phase after user approval
+                  if (currentWorkflowPhase === planningPhase) {
+                    // Workflow already in planning phase, keep it
+                  } else {
+                    setCurrentWorkflowPhase(planningPhase)
+                  }
+                }
+              }
+            }
+
+            // Handle workflow completion events
+            if (event.type === 'workflow_end') {
+              // Get phases to determine completion phase (second phase = planning/execution)
+              const phases = await getWorkflowPhases()
+              const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+              setCurrentWorkflowPhase(completionPhase)
+            }
+          }
+        }
           
     // Add events to batch instead of immediately processing
     eventBatchRef.current.push(...newEvents)
@@ -1249,8 +1269,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     
     // For workflow mode, preserve the selected preset but reset workflow phase
     if (agentMode === 'workflow' && selectedWorkflowPreset) {
-      // Keep the preset selected, just reset the workflow phase
-      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+      // Keep the preset selected, just reset the workflow phase to default
+      getDefaultWorkflowPhase().then(defaultPhase => {
+        setCurrentWorkflowPhase(defaultPhase)
+      })
       // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
     } else {
       // For other modes, clear workflow state completely

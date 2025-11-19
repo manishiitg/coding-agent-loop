@@ -34,6 +34,21 @@ type LLMConfig struct {
 	ModelID               string                        `json:"model_id"`
 	FallbackModels        []string                      `json:"fallback_models"`
 	CrossProviderFallback *agents.CrossProviderFallback `json:"cross_provider_fallback,omitempty"`
+	APIKeys               *APIKeys                      `json:"api_keys,omitempty"`
+}
+
+// APIKeys represents API keys for different providers
+type APIKeys struct {
+	OpenRouter *string     `json:"openrouter,omitempty"`
+	OpenAI     *string     `json:"openai,omitempty"`
+	Anthropic  *string     `json:"anthropic,omitempty"`
+	Vertex     *string     `json:"vertex,omitempty"`
+	Bedrock    *BedrockKey `json:"bedrock,omitempty"`
+}
+
+// BedrockKey represents Bedrock configuration
+type BedrockKey struct {
+	Region string `json:"region"`
 }
 
 // OrchestratorType represents the type of orchestrator
@@ -732,6 +747,20 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	if llmConfig != nil {
 		config.FallbackModels = llmConfig.FallbackModels
 		config.CrossProviderFallback = llmConfig.CrossProviderFallback
+		// Convert API keys from orchestrator format to agent format
+		if llmConfig.APIKeys != nil {
+			config.APIKeys = &agents.AgentAPIKeys{
+				OpenRouter: llmConfig.APIKeys.OpenRouter,
+				OpenAI:     llmConfig.APIKeys.OpenAI,
+				Anthropic:  llmConfig.APIKeys.Anthropic,
+				Vertex:     llmConfig.APIKeys.Vertex,
+			}
+			if llmConfig.APIKeys.Bedrock != nil {
+				config.APIKeys.Bedrock = &agents.BedrockAgentConfig{
+					Region: llmConfig.APIKeys.Bedrock.Region,
+				}
+			}
+		}
 	}
 
 	return config
@@ -1041,7 +1070,6 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 // setupAgent removed: logic is now inlined in CreateAndSetupStandardAgent
 
 // ReadWorkspaceFile reads a file from the workspace and returns its content
-// Emits tool call events for proper observability
 func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath string) (string, error) {
 	bo.GetLogger().Infof("📖 Reading workspace file: %s", filePath)
 
@@ -1050,78 +1078,20 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 		"filepath": filePath,
 	}
 
-	// Convert args to JSON string for event
-	argsJSON, _ := json.Marshal(readArgs)
-
-	// Emit tool call start event
-	toolCallStartEvent := &events.ToolCallStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:     0, // Orchestrator-level call
-		ToolName: "read_workspace_file",
-		ToolParams: events.ToolParams{
-			Arguments: string(argsJSON),
-		},
-		ServerName: "workspace", // Internal workspace tool
-		AutoExpand: false,       // Keep collapsed by default for orchestrator file operations
-	}
-
-	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
-
 	// Get the tool executor
 	readExecutorInterface, exists := bo.WorkspaceToolExecutors["read_workspace_file"]
 	if !exists {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      "read_workspace_file tool executor not found",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("read_workspace_file tool executor not found")
 	}
 
 	readExecutor, ok := readExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      "read_workspace_file tool executor has wrong type",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("read_workspace_file tool executor has wrong type")
 	}
 
 	// Execute the tool call using existing workspace tool logic
-	startTime := time.Now()
 	readResult, err := readExecutor(ctx, readArgs)
-	duration := time.Since(startTime)
-
 	if err != nil {
-		// Emit tool call error event for read failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      fmt.Sprintf("Failed to read file: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
 	}
 
@@ -1132,18 +1102,6 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	}
 
 	if err := json.Unmarshal([]byte(readResult), &fileData); err != nil {
-		// Emit tool call error event for parsing failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      fmt.Sprintf("Failed to parse workspace response: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("failed to parse workspace response: %w", err)
 	}
 
@@ -1151,46 +1109,8 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	fileContent := fileData.Content
 
 	if fileContent == "" {
-		// Emit tool call error event for missing content
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      "No content found in workspace response",
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("no content found in workspace response")
 	}
-
-	// Emit successful tool call end event with file content as JSON
-	// Frontend expects JSON format with "content" and "filepath" fields
-	resultData := map[string]interface{}{
-		"content":  fileContent,
-		"filepath": filePath,
-	}
-	resultJSON, err := json.Marshal(resultData)
-	if err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to marshal file result to JSON: %w", err)
-		// Fallback to plain text if JSON marshaling fails
-		resultJSON = []byte(fileContent)
-	}
-
-	toolCallEndEvent := &events.ToolCallEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       0,
-		ToolName:   "read_workspace_file",
-		Result:     string(resultJSON),
-		Duration:   duration,
-		ServerName: "workspace",
-		AutoExpand: false, // Keep collapsed by default for orchestrator file operations
-	}
-	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
 	bo.GetLogger().Infof("✅ Successfully read file: %s (%d characters)", filePath, len(fileContent))
 	return fileContent, nil
@@ -1442,7 +1362,6 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 }
 
 // WriteWorkspaceFile writes content to a file in the workspace using MCP tools
-// Emits tool call events for proper observability
 func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath string, content string) error {
 	bo.GetLogger().Infof("📝 Writing workspace file: %s (%d characters)", filePath, len(content))
 
@@ -1452,101 +1371,28 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 		"content":  content,
 	}
 
-	// Convert args to JSON string for event
-	argsJSON, _ := json.Marshal(writeArgs)
-
-	// Emit tool call start event
-	toolCallStartEvent := &events.ToolCallStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:     0, // Orchestrator-level call
-		ToolName: "update_workspace_file",
-		ToolParams: events.ToolParams{
-			Arguments: string(argsJSON),
-		},
-		ServerName: "workspace", // Internal workspace tool
-		AutoExpand: false,       // Keep collapsed by default for orchestrator file operations
-	}
-
-	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
-
 	// Get the tool executor
 	writeExecutorInterface, exists := bo.WorkspaceToolExecutors["update_workspace_file"]
 	if !exists {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "update_workspace_file",
-			Error:      "update_workspace_file tool executor not found",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("update_workspace_file tool executor not found")
 	}
 
 	writeExecutor, ok := writeExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "update_workspace_file",
-			Error:      "update_workspace_file tool executor has wrong type",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("update_workspace_file tool executor has wrong type")
 	}
 
 	// Execute the tool call using existing workspace tool logic
-	startTime := time.Now()
 	_, err := writeExecutor(ctx, writeArgs)
-	duration := time.Since(startTime)
-
 	if err != nil {
-		// Emit tool call error event for write failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "update_workspace_file",
-			Error:      fmt.Sprintf("Failed to write file: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("failed to write file %s: %w", filePath, err)
 	}
-
-	// Emit successful tool call end event
-	toolCallEndEvent := &events.ToolCallEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       0,
-		ToolName:   "update_workspace_file",
-		Result:     fmt.Sprintf("Successfully wrote file (%d characters)", len(content)),
-		Duration:   duration,
-		ServerName: "workspace",
-		AutoExpand: false, // Keep collapsed by default for orchestrator file operations
-	}
-	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
 	bo.GetLogger().Infof("✅ Successfully wrote file: %s (%d characters)", filePath, len(content))
 	return nil
 }
 
 // DeleteWorkspaceFile deletes a file from the workspace using MCP tools
-// Emits tool call events for proper observability
 func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath string) error {
 	bo.GetLogger().Infof("🗑️ Deleting workspace file: %s", filePath)
 
@@ -1555,110 +1401,22 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		"filepath": filePath,
 	}
 
-	// Convert args to JSON string for event
-	argsJSON, _ := json.Marshal(deleteArgs)
-
-	// Emit tool call start event
-	toolCallStartEvent := &events.ToolCallStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:     0, // Orchestrator-level call
-		ToolName: "delete_workspace_file",
-		ToolParams: events.ToolParams{
-			Arguments: string(argsJSON),
-		},
-		ServerName: "workspace", // Internal workspace tool
-		AutoExpand: false,       // Keep collapsed by default for orchestrator file operations
-	}
-
-	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
-
 	// Get the tool executor
 	deleteExecutorInterface, exists := bo.WorkspaceToolExecutors["delete_workspace_file"]
 	if !exists {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "delete_workspace_file",
-			Error:      "delete_workspace_file tool executor not found",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("delete_workspace_file tool executor not found")
 	}
 
 	deleteExecutor, ok := deleteExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "delete_workspace_file",
-			Error:      "delete_workspace_file tool executor has wrong type",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("delete_workspace_file tool executor has wrong type")
 	}
 
 	// Execute the tool call using existing workspace tool logic
-	startTime := time.Now()
-	result, err := deleteExecutor(ctx, deleteArgs)
-	duration := time.Since(startTime)
-
+	_, err := deleteExecutor(ctx, deleteArgs)
 	if err != nil {
-		// Emit tool call error event for delete failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "delete_workspace_file",
-			Error:      fmt.Sprintf("Failed to delete file: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("failed to delete file %s: %w", filePath, err)
 	}
-
-	// Use the result from the executor (which should be JSON)
-	// If result is empty or invalid, construct JSON from filePath
-	resultStr := result
-	if resultStr == "" {
-		// Fallback: construct JSON result
-		resultMap := map[string]interface{}{
-			"filepath": filePath,
-			"deleted":  true,
-		}
-		if jsonBytes, err := json.Marshal(resultMap); err == nil {
-			resultStr = string(jsonBytes)
-		} else {
-			resultStr = fmt.Sprintf(`{"filepath":"%s","deleted":true}`, filePath)
-		}
-	}
-
-	// Emit successful tool call end event
-	toolCallEndEvent := &events.ToolCallEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       0,
-		ToolName:   "delete_workspace_file",
-		Result:     resultStr,
-		Duration:   duration,
-		ServerName: "workspace",
-		AutoExpand: false, // Keep collapsed by default for orchestrator file operations
-	}
-	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
 	bo.GetLogger().Infof("✅ Successfully deleted file: %s", filePath)
 	return nil

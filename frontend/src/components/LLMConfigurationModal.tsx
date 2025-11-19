@@ -159,6 +159,46 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     }
   }, [isOpen, onClose])
 
+  // Helper function to sync primaryConfig when provider config changes
+  const syncPrimaryConfig = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic', config: ExtendedLLMConfiguration) => {
+    if (primaryConfig.provider === provider) {
+      // If this provider is currently primary, sync the primaryConfig
+      const updatedPrimaryConfig: LLMConfiguration = {
+        provider: provider,
+        model_id: config.model_id,
+        fallback_models: config.fallback_models,
+        cross_provider_fallback: config.cross_provider_fallback
+      }
+      setPrimaryConfig(updatedPrimaryConfig)
+    }
+  }
+
+  // Wrapper functions that sync primaryConfig when provider is primary
+  const handleOpenrouterConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setOpenrouterConfig(config)
+    syncPrimaryConfig('openrouter', config)
+  }
+
+  const handleBedrockConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setBedrockConfig(config)
+    syncPrimaryConfig('bedrock', config)
+  }
+
+  const handleOpenaiConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setOpenaiConfig(config)
+    syncPrimaryConfig('openai', config)
+  }
+
+  const handleVertexConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setVertexConfig(config)
+    syncPrimaryConfig('vertex', config)
+  }
+
+  const handleAnthropicConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setAnthropicConfig(config)
+    syncPrimaryConfig('anthropic', config)
+  }
+
   // Handle primary provider selection
   const handleSetPrimaryProvider = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic') => {
     let configToUse: ExtendedLLMConfiguration
@@ -357,23 +397,23 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
             {/* Right Content - Provider Configuration */}
             <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
               {activeTab === 'openrouter' && (
-            <OpenRouterSection
-              config={openrouterConfig}
-              onUpdate={setOpenrouterConfig}
-              onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openrouter', apiKey, modelId)}
-              apiKeyStatus={apiKeyStatus.openrouter}
-              apiKeyError={apiKeyErrors.openrouter}
-              isPrimary={primaryConfig.provider === 'openrouter'}
-              onSetPrimary={() => handleSetPrimaryProvider('openrouter')}
-              getAvailableModelsForProvider={getAvailableModelsForProvider}
-              currentProvider="openrouter"
-            />
+              <OpenRouterSection
+                config={openrouterConfig}
+                onUpdate={handleOpenrouterConfigUpdate}
+                onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openrouter', apiKey, modelId)}
+                apiKeyStatus={apiKeyStatus.openrouter}
+                apiKeyError={apiKeyErrors.openrouter}
+                isPrimary={primaryConfig.provider === 'openrouter'}
+                onSetPrimary={() => handleSetPrimaryProvider('openrouter')}
+                getAvailableModelsForProvider={getAvailableModelsForProvider}
+                currentProvider="openrouter"
+              />
               )}
 
               {activeTab === 'bedrock' && (
                 <BedrockSection
                   config={bedrockConfig}
-                  onUpdate={setBedrockConfig}
+                  onUpdate={handleBedrockConfigUpdate}
                   onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('bedrock', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus}
                   apiKeyErrors={apiKeyErrors}
@@ -387,7 +427,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'openai' && (
                 <OpenAISection
                   config={openaiConfig}
-                  onUpdate={setOpenaiConfig}
+                  onUpdate={handleOpenaiConfigUpdate}
                   onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openai', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.openai}
                   apiKeyError={apiKeyErrors.openai}
@@ -401,7 +441,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'vertex' && (
                 <VertexSection
                   config={vertexConfig}
-                  onUpdate={setVertexConfig}
+                  onUpdate={handleVertexConfigUpdate}
                   onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('vertex', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.vertex}
                   apiKeyError={apiKeyErrors.vertex}
@@ -415,7 +455,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'anthropic' && (
                 <AnthropicSection
                   config={anthropicConfig}
-                  onUpdate={setAnthropicConfig}
+                  onUpdate={handleAnthropicConfigUpdate}
                   onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('anthropic', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.anthropic}
                   apiKeyError={apiKeyErrors.anthropic}

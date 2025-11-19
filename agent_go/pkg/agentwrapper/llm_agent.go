@@ -56,6 +56,21 @@ type LLMAgentConfig struct {
 	// Detailed LLM configuration from frontend
 	FallbackModels        []string               // Custom fallback models from frontend
 	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration
+	APIKeys               *WrapperAPIKeys        // API keys for providers
+}
+
+// WrapperAPIKeys represents API keys for different providers (for agent wrapper)
+type WrapperAPIKeys struct {
+	OpenRouter *string
+	OpenAI     *string
+	Anthropic  *string
+	Vertex     *string
+	Bedrock    *WrapperBedrockConfig
+}
+
+// WrapperBedrockConfig represents Bedrock-specific configuration (for agent wrapper)
+type WrapperBedrockConfig struct {
+	Region string
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -698,6 +713,22 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 		logger.Infof("Added default cross-provider fallback models: %v", crossProviderFallbacks)
 	}
 
+	// Convert API keys from wrapper config to LLM config format
+	var llmAPIKeys *llm.ProviderAPIKeys
+	if config.APIKeys != nil {
+		llmAPIKeys = &llm.ProviderAPIKeys{
+			OpenRouter: config.APIKeys.OpenRouter,
+			OpenAI:     config.APIKeys.OpenAI,
+			Anthropic:  config.APIKeys.Anthropic,
+			Vertex:     config.APIKeys.Vertex,
+		}
+		if config.APIKeys.Bedrock != nil {
+			llmAPIKeys.Bedrock = &llm.BedrockConfig{
+				Region: config.APIKeys.Bedrock.Region,
+			}
+		}
+	}
+
 	// Use the existing LLM provider system with detailed fallback models
 	llmConfig := llm.Config{
 		Provider:       llmProvider,
@@ -707,6 +738,7 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 		FallbackModels: fallbackModels,
 		MaxRetries:     3,
 		Logger:         logger,
+		APIKeys:        llmAPIKeys,
 	}
 
 	// Initialize the LLM using the factory with detailed fallback support

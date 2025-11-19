@@ -52,7 +52,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = usePresetApplication()
   
   const { 
-    primaryConfig: llmConfig
+    primaryConfig: llmConfig,
+    openrouterConfig,
+    openaiConfig,
+    anthropicConfig,
+    vertexConfig,
+    bedrockConfig
   } = useLLMStore()
   
   const { 
@@ -1217,6 +1222,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         'hasAllToolsMarkers': currentPresetTools?.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
       });
       
+      // Build llm_config with API keys from provider configs
+      const llmConfigWithApiKeys = {
+        ...llmConfig,
+        api_keys: {
+          ...(openrouterConfig.api_key ? { openrouter: openrouterConfig.api_key } : {}),
+          ...(openaiConfig.api_key ? { openai: openaiConfig.api_key } : {}),
+          ...(anthropicConfig.api_key ? { anthropic: anthropicConfig.api_key } : {}),
+          ...(vertexConfig.api_key ? { vertex: vertexConfig.api_key } : {}),
+          ...(bedrockConfig.region ? { bedrock: { region: bedrockConfig.region } } : {}),
+        }
+      }
+      
       // Submit query to backend
       const response = await agentApi.startQuery({
         query: enhancedQuery,
@@ -1226,7 +1243,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? filteredPresetTools : undefined, // Only send when preset is active
         provider: llmConfig.provider,
         model_id: llmConfig.model_id,
-        llm_config: llmConfig,
+        llm_config: llmConfigWithApiKeys,
         preset_query_id: selectedWorkflowPreset || undefined,
       })
 
@@ -1250,7 +1267,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setHasActiveChat(false)
     }
 
-  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
+  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {

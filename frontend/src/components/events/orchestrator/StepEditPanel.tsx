@@ -702,6 +702,88 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
               )}
             </div>
 
+            {/* Conditional Branching Configuration */}
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-2">
+                Conditional Branching
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`has-condition-${stepIndex}`}
+                    checked={step.has_condition || false}
+                    disabled={true}
+                    className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500 disabled:opacity-50"
+                  />
+                  <label
+                    htmlFor={`has-condition-${stepIndex}`}
+                    className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer flex-1"
+                  >
+                    Enable Conditional Branching
+                    <span className="text-gray-500 dark:text-gray-500 ml-1">
+                      (Use planning tools to convert step to conditional)
+                    </span>
+                  </label>
+                </div>
+                
+                {step.has_condition && (
+                  <div className="ml-6 space-y-2 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded">
+                    <div className="text-xs font-medium text-purple-700 dark:text-purple-400">
+                      Condition Question:
+                    </div>
+                    <div className="text-xs text-gray-700 dark:text-gray-300">
+                      {step.condition_question || '(Not set)'}
+                    </div>
+                    
+                    {step.condition_context && (
+                      <>
+                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mt-2">
+                          Condition Context:
+                        </div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">
+                          {step.condition_context}
+                        </div>
+                      </>
+                    )}
+                    
+                    {step.if_true_steps && step.if_true_steps.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs font-medium text-green-700 dark:text-green-400">
+                          ✅ If True Branch: {step.if_true_steps.length} step(s)
+                        </div>
+                      </div>
+                    )}
+                    
+                    {step.if_false_steps && step.if_false_steps.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs font-medium text-red-700 dark:text-red-400">
+                          ❌ If False Branch: {step.if_false_steps.length} step(s)
+                        </div>
+                      </div>
+                    )}
+                    
+                    {step.condition_result !== undefined && (
+                      <div className={`mt-2 p-1 rounded text-xs ${step.condition_result ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
+                        <div className="font-medium">
+                          {step.condition_result ? '✅ Decision: TRUE' : '❌ Decision: FALSE'}
+                        </div>
+                        {step.condition_reason && (
+                          <div className="text-gray-600 dark:text-gray-400 mt-1 italic text-xs">
+                            {step.condition_reason}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="text-xs text-gray-500 dark:text-gray-500 mt-2 italic">
+                      Note: Use planning agent tools (convert_step_to_conditional, add_branch_steps, etc.) to manage conditional steps and branches. All planning tools now use step IDs (from the step's id field) instead of titles for identification.
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Loop Configuration (only shown if has_loop is true) */}
             {step.has_loop && (
               <>

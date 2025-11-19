@@ -112,6 +112,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(openaiEmptyParamsTestCmd)
 	TestingCmd.AddCommand(openaiMultiTurnToolTestCmd)
 	TestingCmd.AddCommand(genaiMultiTurnToolTestCmd)
+	TestingCmd.AddCommand(genaiMultiToolComplexTestCmd)
 	TestingCmd.AddCommand(bedrockMultiTurnToolTestCmd)
 	TestingCmd.AddCommand(debugExternalCmd)
 	TestingCmd.AddCommand(customToolsTestCmd)

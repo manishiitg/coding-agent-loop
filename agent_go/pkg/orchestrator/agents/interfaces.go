@@ -51,6 +51,7 @@ type OrchestratorAgentConfig struct {
 	// Detailed LLM configuration from frontend
 	FallbackModels        []string               `json:"fallback_models,omitempty"`
 	CrossProviderFallback *CrossProviderFallback `json:"cross_provider_fallback,omitempty"`
+	APIKeys               *AgentAPIKeys          `json:"api_keys,omitempty"`
 
 	// Required Agent behavior
 	Mode         AgentMode    `json:"mode" validate:"required"`
@@ -92,6 +93,20 @@ type OrchestratorAgentConfig struct {
 type CrossProviderFallback struct {
 	Provider string   `json:"provider"`
 	Models   []string `json:"models"`
+}
+
+// AgentAPIKeys represents API keys for different providers (for agent config)
+type AgentAPIKeys struct {
+	OpenRouter *string
+	OpenAI     *string
+	Anthropic  *string
+	Vertex     *string
+	Bedrock    *BedrockAgentConfig
+}
+
+// BedrockAgentConfig represents Bedrock-specific configuration (for agent config)
+type BedrockAgentConfig struct {
+	Region string
 }
 
 // NewOrchestratorAgentConfig creates a new agent configuration with minimal defaults

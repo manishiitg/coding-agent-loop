@@ -46,6 +46,7 @@ func init() {
 	genaiMultiTurnToolTestCmd.Flags().StringVar(&genaiMultiTurnToolFlags.model, "model", "gemini-2.5-flash", "Google GenAI model to test")
 	genaiMultiTurnToolTestCmd.Flags().IntVar(&genaiMultiTurnToolFlags.maxTurns, "max-turns", 5, "Maximum conversation turns")
 	genaiMultiTurnToolTestCmd.Flags().BoolVar(&genaiMultiTurnToolFlags.verbose, "verbose", false, "Enable verbose logging")
+	TestingCmd.AddCommand(genaiMultiTurnToolTestCmd)
 }
 
 func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
@@ -59,10 +60,16 @@ func runGenAIMultiTurnToolTest(cmd *cobra.Command, args []string) {
 	log.Printf("   Max Turns: %d", maxTurns)
 
 	// Check for API key
-	if os.Getenv("VERTEX_API_KEY") == "" && os.Getenv("GOOGLE_API_KEY") == "" {
+	apiKey := os.Getenv("VERTEX_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
+	if apiKey == "" {
 		log.Printf("❌ VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required")
 		return
 	}
+	// Ensure API key is set for the test
+	os.Setenv("VERTEX_API_KEY", apiKey)
 
 	// Create Google GenAI LLM using our adapter
 	logger := GetTestLogger()

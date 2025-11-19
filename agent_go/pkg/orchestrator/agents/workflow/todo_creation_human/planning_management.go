@@ -31,6 +31,55 @@ type LearningFileInfo struct {
 	ModifiedAt time.Time `json:"modified_at"`
 }
 
+// addIDsToPlanSteps recursively adds IDs to all steps in a plan
+// IDs are generated from step titles for consistency with step_config.json
+// ID is now mandatory, so this function always generates IDs
+func addIDsToPlanSteps(steps []PlanStep) {
+	for i := range steps {
+		// Always generate ID for top-level step (ID is mandatory)
+		if steps[i].Title != "" {
+			steps[i].ID = GenerateStepID(steps[i].Title)
+		} else {
+			// If no title, generate a fallback ID (should not happen in normal flow)
+			steps[i].ID = GenerateStepID(fmt.Sprintf("step-%d", i))
+		}
+
+		// Recursively add IDs to branch steps
+		if len(steps[i].IfTrueSteps) > 0 {
+			addIDsToBranchSteps(steps[i].IfTrueSteps, steps[i].Title, "true")
+		}
+		if len(steps[i].IfFalseSteps) > 0 {
+			addIDsToBranchSteps(steps[i].IfFalseSteps, steps[i].Title, "false")
+		}
+	}
+}
+
+// addIDsToBranchSteps recursively adds IDs to branch steps
+// parentTitle: title of the parent step
+// branchType: "true" or "false"
+// ID is now mandatory, so this function always generates IDs
+func addIDsToBranchSteps(steps []PlanStep, parentTitle, branchType string) {
+	for i := range steps {
+		// Always generate ID for branch step (ID is mandatory)
+		// Format: parent-title + branch-type + nested-index + branch-title
+		if steps[i].Title != "" && parentTitle != "" {
+			idInput := fmt.Sprintf("%s-%s-%d-%s", parentTitle, branchType, i, steps[i].Title)
+			steps[i].ID = GenerateStepID(idInput)
+		} else {
+			// If no title or parent title, generate a fallback ID (should not happen in normal flow)
+			steps[i].ID = GenerateStepID(fmt.Sprintf("branch-%s-%d", branchType, i))
+		}
+
+		// Recursively add IDs to nested branch steps
+		if len(steps[i].IfTrueSteps) > 0 {
+			addIDsToBranchSteps(steps[i].IfTrueSteps, steps[i].Title, "true")
+		}
+		if len(steps[i].IfFalseSteps) > 0 {
+			addIDsToBranchSteps(steps[i].IfFalseSteps, steps[i].Title, "false")
+		}
+	}
+}
+
 // runPlanningPhase generates JSON plan directly
 // conversationHistory is updated in-place to accumulate across iterations
 // Returns the generated PlanningResponse and updated conversation history
@@ -193,6 +242,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 
 	// Only save plan for CREATE mode - UPDATE mode already saved it via tools
 	if !isUpdateMode {
+		// Add IDs to all steps before saving (for consistency with step_config.json)
+		addIDsToPlanSteps(planResponse.Steps)
+
 		// Save JSON plan to file manually
 		planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
 
@@ -204,6 +256,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 		if err := hcpo.WriteWorkspaceFile(ctx, planPath, string(planJSON)); err != nil {
 			return nil, nil, fmt.Errorf("failed to save plan.json: %w", err)
 		}
+		// Note: IDs are added above before marshaling, so they're included in the saved file
 
 		// Note: Learning integration cache removal no longer needed - execution agent auto-discovers files
 
@@ -306,6 +359,67 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestPlanApproval(
 
 // convertPlanStepsToTodoSteps converts PlanStep to TodoStep format
 // Merges agent configs from step_config.json by step index matching
+// convertBranchSteps converts a slice of PlanStep to TodoStep (helper for recursive conversion)
+// parentTitle: title of the parent step (for generating unique IDs)
+// branchType: "true" or "false" (for generating unique IDs)
+// stepConfigs: step configs file for matching branch step configs by ID
+func convertBranchSteps(planSteps []PlanStep, parentTitle, branchType string, stepConfigs *StepConfigFile) []TodoStep {
+	if len(planSteps) == 0 {
+		return nil
+	}
+	todoSteps := make([]TodoStep, len(planSteps))
+	for i, step := range planSteps {
+		// Match config by ID (parent-title + branch-type + nested-index + branch-title)
+		var agentConfigs *AgentConfigs
+		if stepConfigs != nil && step.Title != "" && parentTitle != "" {
+			agentConfigs = MatchStepConfigByID(parentTitle, branchType, i, step.Title, stepConfigs)
+			// Note: Configs will be nil if not found (which is expected for new steps without saved configs)
+		}
+
+		// Validation is required for loop steps to check loop conditions
+		// Ensure validation is not disabled for loop steps
+		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation {
+			// Create a copy of configs with validation enabled
+			enabledConfigs := *agentConfigs
+			enabledConfigs.DisableValidation = false
+			agentConfigs = &enabledConfigs
+		}
+
+		// Recursively convert nested branch steps
+		var ifTrueSteps []TodoStep
+		if len(step.IfTrueSteps) > 0 {
+			// For nested branches, use current step title as parent
+			ifTrueSteps = convertBranchSteps(step.IfTrueSteps, step.Title, "true", stepConfigs)
+		}
+
+		var ifFalseSteps []TodoStep
+		if len(step.IfFalseSteps) > 0 {
+			// For nested branches, use current step title as parent
+			ifFalseSteps = convertBranchSteps(step.IfFalseSteps, step.Title, "false", stepConfigs)
+		}
+
+		todoSteps[i] = TodoStep{
+			ID:                  step.ID, // Copy ID from PlanStep for frontend matching
+			Title:               step.Title,
+			Description:         step.Description,
+			SuccessCriteria:     step.SuccessCriteria,
+			ContextDependencies: step.ContextDependencies,
+			ContextOutput:       step.ContextOutput.String(),
+			HasLoop:             step.HasLoop,
+			LoopCondition:       step.LoopCondition,
+			MaxIterations:       step.MaxIterations,
+			LoopDescription:     step.LoopDescription,
+			HasCondition:        step.HasCondition,
+			ConditionQuestion:   step.ConditionQuestion,
+			ConditionContext:    step.ConditionContext,
+			IfTrueSteps:         ifTrueSteps,
+			IfFalseSteps:        ifFalseSteps,
+			AgentConfigs:        agentConfigs, // Matched from step_config.json by ID
+		}
+	}
+	return todoSteps
+}
+
 func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(ctx context.Context, planSteps []PlanStep) []TodoStep {
 	// Read step configs from step_config.json
 	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
@@ -336,8 +450,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			agentConfigs = &enabledConfigs
 		}
 
+		// Convert branch steps recursively with parent title context
+		var ifTrueSteps []TodoStep
+		if len(step.IfTrueSteps) > 0 {
+			// Use step title as parent for ID generation
+			ifTrueSteps = convertBranchSteps(step.IfTrueSteps, step.Title, "true", stepConfigs)
+		}
+
+		var ifFalseSteps []TodoStep
+		if len(step.IfFalseSteps) > 0 {
+			// Use step title as parent for ID generation
+			ifFalseSteps = convertBranchSteps(step.IfFalseSteps, step.Title, "false", stepConfigs)
+		}
+
 		// Convert FlexibleContextOutput to string for TodoStep
 		todoSteps[i] = TodoStep{
+			ID:                  step.ID, // Copy ID from PlanStep for frontend matching
 			Title:               step.Title,
 			Description:         step.Description,
 			SuccessCriteria:     step.SuccessCriteria,
@@ -347,6 +475,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			LoopCondition:       step.LoopCondition,
 			MaxIterations:       step.MaxIterations,
 			LoopDescription:     step.LoopDescription,
+			HasCondition:        step.HasCondition,
+			ConditionQuestion:   step.ConditionQuestion,
+			ConditionContext:    step.ConditionContext,
+			IfTrueSteps:         ifTrueSteps,
+			IfFalseSteps:        ifFalseSteps,
 			AgentConfigs:        agentConfigs, // Merged from step_config.json (validation enforced for loops)
 		}
 	}

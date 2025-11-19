@@ -719,8 +719,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) ExtractVariablesOnly(ctx con
 			if approved {
 				hcpo.GetLogger().Infof("✅ Variables approved by human")
 				hcpo.emitVariablesExtractedEvent(ctx, variablesManifest.Variables, templatedObjective)
-				// Mark variables as existing so the loop doesn't run again
-				variablesExist = true
 				break
 			}
 

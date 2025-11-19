@@ -108,85 +108,29 @@ export default function Workspace({
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
   const emptyLoadingSet = useMemo(() => new Set<string>(), [])
   
-  // Fetch files from Planner
-  const fetchFiles = useCallback(async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      
-      // Get current expanded folders from store directly to avoid dependency loop
-      const currentExpanded = useWorkspaceStore.getState().expandedFolders
-      const previouslyExpanded = new Set(currentExpanded)
-      
-      const response = await agentApi.getPlannerFiles()
-      if (response.success && response.data) {
-        const allFiles = response.data
-        
-        // Process hierarchical structure from API
-        const processedFiles = processHierarchicalFiles(allFiles)
-        setFiles(processedFiles)
-        
-        // Collect all folder paths from the new file structure (using display paths)
-        const collectFolderPaths = (fileList: PlannerFile[]): Set<string> => {
-          const paths = new Set<string>()
-          fileList.forEach(file => {
-            if (file.type === 'folder') {
-              paths.add(file.filepath) // Use display path (adjusted in workflow mode)
-              if (file.children) {
-                collectFolderPaths(file.children).forEach(path => paths.add(path))
-              }
-            }
-          })
-          return paths
-        }
-        
-        const availableFolderPaths = collectFolderPaths(processedFiles)
-        
-        // Restore previously expanded folders that still exist
-        const restoredExpanded = new Set<string>()
-        previouslyExpanded.forEach(folderPath => {
-          if (availableFolderPaths.has(folderPath)) {
-            restoredExpanded.add(folderPath)
-          }
-        })
-        
-        // If no folders were previously expanded, auto-expand level 1
-        if (restoredExpanded.size === 0) {
-          expandFoldersToLevel(processedFiles, 1)
+  // Get workflow folder path from selected workflow folder in the preset
+  // The selectedFolder.filepath is the folder path stored in the database
+  // We'll use this directly to filter the workspace
+  const workflowFolderPath = useMemo(() => {
+    if (activeWorkflowPreset?.selectedFolder?.filepath) {
+      const filepath = activeWorkflowPreset.selectedFolder.filepath
+      // The filepath from the database is the folder path (e.g., "Workflow/MyProject/" or "Workflow/MyProject")
+      // If it ends with a file (has extension), get the parent folder
+      const parts = filepath.split('/').filter(Boolean)
+      if (parts.length > 0) {
+        const lastPart = parts[parts.length - 1]
+        const isFile = lastPart.includes('.')
+        if (isFile && parts.length > 1) {
+          // It's a file, get its parent folder
+          return parts.slice(0, -1).join('/')
         } else {
-          // Restore the previously expanded folders
-          setExpandedFolders(restoredExpanded)
+          // It's already a folder - use it directly
+          return parts.join('/')
         }
-      } else {
-        setError(response.message || 'Failed to load files')
       }
-    } catch (err) {
-      console.error('Failed to fetch Planner files:', err)
-      setError(err instanceof Error ? err.message : 'Failed to fetch files')
-    } finally {
-      setLoading(false)
     }
-  }, [expandFoldersToLevel, setExpandedFolders, setLoading, setError, setFiles])
-  
-  // Function to scroll to highlighted file
-  const scrollToHighlightedFile = useCallback((filepath: string) => {
-    if (!workspaceScrollRef.current) return
-    
-    // Find the highlighted file element by looking for the data attribute or class
-    // Check both data-filepath (adjusted path) and data-original-filepath (original path)
-    // This ensures workspace tool events can scroll to files even when paths are adjusted in workflow mode
-    const highlightedElement = workspaceScrollRef.current.querySelector(`[data-filepath="${filepath}"]`) ||
-                              workspaceScrollRef.current.querySelector(`[data-original-filepath="${filepath}"]`) ||
-                              workspaceScrollRef.current.querySelector(`[data-highlighted="true"]`)
-    
-    if (highlightedElement) {
-      highlightedElement.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-        inline: 'nearest'
-      })
-    }
-  }, [])
+    return null
+  }, [activeWorkflowPreset])
   
   // Filter files to show only the workflow folder when a workflow preset is selected
   // This function collects all files/folders that are within the workflow folder path
@@ -262,30 +206,154 @@ export default function Workspace({
     
     return collectWorkflowFiles(files)
   }, [])
-
-  // Get workflow folder path from selected workflow folder in the preset
-  // The selectedFolder.filepath is the folder path stored in the database
-  // We'll use this directly to filter the workspace
-  const workflowFolderPath = useMemo(() => {
-    if (activeWorkflowPreset?.selectedFolder?.filepath) {
-      const filepath = activeWorkflowPreset.selectedFolder.filepath
-      // The filepath from the database is the folder path (e.g., "Workflow/MyProject/" or "Workflow/MyProject")
-      // If it ends with a file (has extension), get the parent folder
-      const parts = filepath.split('/').filter(Boolean)
-      if (parts.length > 0) {
-        const lastPart = parts[parts.length - 1]
-        const isFile = lastPart.includes('.')
-        if (isFile && parts.length > 1) {
-          // It's a file, get its parent folder
-          return parts.slice(0, -1).join('/')
-        } else {
-          // It's already a folder - use it directly
-          return parts.join('/')
-        }
+  
+  // Helper function to apply filtering and path adjustment to files
+  // This matches the logic in filteredFiles useMemo to ensure paths are consistent
+  const applyFilteringAndPathAdjustment = useCallback((filesToProcess: PlannerFile[]): PlannerFile[] => {
+    let result = filesToProcess
+    
+    // Only filter if we're in workflow mode and have a workflow folder path
+    // When in chat mode, show all files regardless of preset
+    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+      result = filterToWorkflowFolder(filesToProcess, workflowFolderPath, includeDownloadsFolder)
+      
+      // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
+      // Store original path in originalFilepath for API calls
+      const adjustFilePaths = (fileList: PlannerFile[]): PlannerFile[] => {
+        return fileList.map(file => {
+          let adjustedFilepath = file.filepath
+          const originalFilepath = file.filepath // Store original before adjustment
+          
+          // Normalize paths for comparison
+          const normalizePath = (path: string) => path.toLowerCase().replace(/^\/+|\/+$/g, '')
+          const filePathNormalized = normalizePath(file.filepath)
+          const workflowPathNormalized = normalizePath(workflowFolderPath)
+          
+          // Remove the workflow folder path prefix to show it as root
+          if (filePathNormalized === workflowPathNormalized || filePathNormalized.startsWith(workflowPathNormalized + '/')) {
+            // This file is within the workflow folder
+            if (filePathNormalized === workflowPathNormalized) {
+              // This is the workflow folder itself - show just the folder name
+              const folderParts = workflowFolderPath.split('/').filter(Boolean)
+              adjustedFilepath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : file.filepath
+            } else {
+              // Remove the workflow folder path prefix
+              const remaining = file.filepath.slice(workflowFolderPath.length)
+              // Remove leading slash if present
+              adjustedFilepath = remaining.startsWith('/') ? remaining.slice(1) : remaining
+              // If empty after removal, use the folder name
+              if (!adjustedFilepath) {
+                const folderParts = workflowFolderPath.split('/').filter(Boolean)
+                adjustedFilepath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : file.filepath
+              }
+            }
+          }
+          
+          if (file.type === 'folder') {
+            return {
+              ...file,
+              filepath: adjustedFilepath,
+              originalFilepath: originalFilepath, // Store original for API calls
+              children: file.children ? adjustFilePaths(file.children) : []
+            }
+          }
+          return {
+            ...file,
+            filepath: adjustedFilepath,
+            originalFilepath: originalFilepath // Store original for API calls
+          }
+        })
       }
+      
+      result = adjustFilePaths(result)
     }
-    return null
-  }, [activeWorkflowPreset])
+    
+    return result
+  }, [selectedModeCategory, workflowFolderPath, includeDownloadsFolder, filterToWorkflowFolder])
+  
+  // Fetch files from Planner
+  const fetchFiles = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      // Get current expanded folders from store directly to avoid dependency loop
+      const currentExpanded = useWorkspaceStore.getState().expandedFolders
+      const previouslyExpanded = new Set(currentExpanded)
+      
+      const response = await agentApi.getPlannerFiles()
+      if (response.success && response.data) {
+        const allFiles = response.data
+        
+        // Process hierarchical structure from API
+        const processedFiles = processHierarchicalFiles(allFiles)
+        setFiles(processedFiles)
+        
+        // Apply filtering and path adjustment to get the display paths
+        // This ensures we collect folder paths that match what's actually displayed
+        const displayFiles = applyFilteringAndPathAdjustment(processedFiles)
+        
+        // Collect all folder paths from the display files (using adjusted paths in workflow mode)
+        const collectFolderPaths = (fileList: PlannerFile[]): Set<string> => {
+          const paths = new Set<string>()
+          fileList.forEach(file => {
+            if (file.type === 'folder') {
+              paths.add(file.filepath) // Use display path (adjusted in workflow mode)
+              if (file.children) {
+                collectFolderPaths(file.children).forEach(path => paths.add(path))
+              }
+            }
+          })
+          return paths
+        }
+        
+        const availableFolderPaths = collectFolderPaths(displayFiles)
+        
+        // Restore previously expanded folders that still exist
+        const restoredExpanded = new Set<string>()
+        previouslyExpanded.forEach(folderPath => {
+          if (availableFolderPaths.has(folderPath)) {
+            restoredExpanded.add(folderPath)
+          }
+        })
+        
+        // If no folders were previously expanded, auto-expand level 1
+        if (restoredExpanded.size === 0) {
+          expandFoldersToLevel(displayFiles, 1)
+        } else {
+          // Restore the previously expanded folders
+          setExpandedFolders(restoredExpanded)
+        }
+      } else {
+        setError(response.message || 'Failed to load files')
+      }
+    } catch (err) {
+      console.error('Failed to fetch Planner files:', err)
+      setError(err instanceof Error ? err.message : 'Failed to fetch files')
+    } finally {
+      setLoading(false)
+    }
+  }, [expandFoldersToLevel, setExpandedFolders, setLoading, setError, setFiles, applyFilteringAndPathAdjustment])
+  
+  // Function to scroll to highlighted file
+  const scrollToHighlightedFile = useCallback((filepath: string) => {
+    if (!workspaceScrollRef.current) return
+    
+    // Find the highlighted file element by looking for the data attribute or class
+    // Check both data-filepath (adjusted path) and data-original-filepath (original path)
+    // This ensures workspace tool events can scroll to files even when paths are adjusted in workflow mode
+    const highlightedElement = workspaceScrollRef.current.querySelector(`[data-filepath="${filepath}"]`) ||
+                              workspaceScrollRef.current.querySelector(`[data-original-filepath="${filepath}"]`) ||
+                              workspaceScrollRef.current.querySelector(`[data-highlighted="true"]`)
+    
+    if (highlightedElement) {
+      highlightedElement.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest'
+      })
+    }
+  }, [])
 
   // Helper function to get the original filepath for API calls
   // Uses originalFilepath if available (when path was adjusted for display), otherwise uses filepath
@@ -471,6 +539,102 @@ export default function Workspace({
       }, 100)
     }
   }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile, selectedModeCategory, workflowFolderPath, filteredFiles])
+  
+  // Automatically expand workspace folder when a workflow is opened
+  useEffect(() => {
+    if (selectedModeCategory === 'workflow' && workflowFolderPath && filteredFiles.length > 0) {
+      // Small delay to ensure files are fully loaded and rendered
+      const timeoutId = setTimeout(() => {
+        // In workflow mode, the workflow folder is shown as root (paths are adjusted)
+        // We need to find the workflow folder in filtered files and expand it directly
+        // First check if the root folder is the workflow folder
+        let workflowFolder: PlannerFile | null = null
+        
+        // Check root level first (in workflow mode, the workflow folder is the root)
+        if (filteredFiles.length > 0 && filteredFiles[0].type === 'folder') {
+          const rootFolder = filteredFiles[0]
+          if (rootFolder.originalFilepath === workflowFolderPath || 
+              rootFolder.filepath === workflowFolderPath.split('/').filter(Boolean).pop()) {
+            workflowFolder = rootFolder
+          }
+        }
+        
+        // If not found at root, search recursively
+        if (!workflowFolder) {
+          const findWorkflowFolder = (fileList: PlannerFile[]): PlannerFile | null => {
+            for (const file of fileList) {
+              if (file.type === 'folder') {
+                // Check if this is the workflow folder by comparing original path
+                if (file.originalFilepath === workflowFolderPath) {
+                  return file
+                }
+                // Check children recursively
+                if (file.children && file.children.length > 0) {
+                  const found = findWorkflowFolder(file.children)
+                  if (found) return found
+                }
+              }
+            }
+            return null
+          }
+          workflowFolder = findWorkflowFolder(filteredFiles)
+        }
+        if (workflowFolder) {
+          // Directly add the workflow folder path to expandedFolders
+          // Also expand first level of children for better visibility
+          const foldersToExpand = new Set<string>([workflowFolder.filepath])
+          
+          // Add first level children folders
+          if (workflowFolder.children) {
+            workflowFolder.children.forEach(child => {
+              if (child.type === 'folder') {
+                foldersToExpand.add(child.filepath)
+              }
+            })
+          }
+          
+          // Update expanded folders - get current state and merge with new folders
+          const currentExpanded = expandedFolders
+          setExpandedFolders(new Set([...currentExpanded, ...foldersToExpand]))
+        } else {
+          // Fallback: try to expand using the adjusted folder name
+          const folderParts = workflowFolderPath.split('/').filter(Boolean)
+          const adjustedFolderPath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : workflowFolderPath
+          
+          // Find any folder matching the adjusted path
+          const findFolderByName = (fileList: PlannerFile[]): PlannerFile | null => {
+            for (const file of fileList) {
+              if (file.type === 'folder' && file.filepath === adjustedFolderPath) {
+                return file
+              }
+              if (file.children && file.children.length > 0) {
+                const found = findFolderByName(file.children)
+                if (found) return found
+              }
+            }
+            return null
+          }
+          
+          const foundFolder = findFolderByName(filteredFiles)
+          if (foundFolder) {
+            const foldersToExpand = new Set<string>([foundFolder.filepath])
+            if (foundFolder.children) {
+              foundFolder.children.forEach(child => {
+                if (child.type === 'folder') {
+                  foldersToExpand.add(child.filepath)
+                }
+              })
+            }
+            // Update expanded folders - get current state and merge with new folders
+            const currentExpanded = expandedFolders
+            setExpandedFolders(new Set([...currentExpanded, ...foldersToExpand]))
+          }
+        }
+      }, 300)
+      
+      return () => clearTimeout(timeoutId)
+    }
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandedFolders, setExpandedFolders])
   
   // Close dropdown when clicking outside
   useEffect(() => {

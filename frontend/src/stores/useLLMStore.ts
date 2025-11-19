@@ -233,7 +233,34 @@ export const useLLMStore = create<LLMState>()(
             
             // Get current state to check if user has already selected a model
             const currentState = get()
-            const hasUserSelection = currentState.primaryConfig.model_id && currentState.primaryConfig.model_id.trim() !== ''
+            // Check if user has made a selection (both provider and model_id should be set)
+            const hasUserSelection = currentState.primaryConfig.provider && 
+                                     currentState.primaryConfig.model_id && 
+                                     currentState.primaryConfig.model_id.trim() !== ''
+            
+            // Preserve user configurations from current state (loaded from localStorage)
+            // Merge backend defaults with saved config, prioritizing saved values
+            const preserveUserConfig = (savedConfig: ExtendedLLMConfiguration, defaultConfig: ExtendedLLMConfiguration): ExtendedLLMConfiguration => {
+              // Use saved config as base, only fill in missing fields from defaults
+              // Check if savedConfig has meaningful values (not just initial empty state)
+              const hasSavedModel = savedConfig?.model_id && savedConfig.model_id.trim() !== ''
+              const hasSavedFallbacks = savedConfig?.fallback_models && savedConfig.fallback_models.length > 0
+              
+              return {
+                provider: savedConfig?.provider || defaultConfig?.provider || 'openrouter',
+                // Preserve model_id from saved config (including custom models) if it exists
+                // Otherwise use default
+                model_id: hasSavedModel ? savedConfig.model_id : (defaultConfig?.model_id || ''),
+                // Preserve fallback_models from saved config if they exist
+                fallback_models: hasSavedFallbacks ? savedConfig.fallback_models : (defaultConfig?.fallback_models || []),
+                // Preserve cross_provider_fallback from saved config if it exists
+                cross_provider_fallback: savedConfig?.cross_provider_fallback || defaultConfig?.cross_provider_fallback,
+                // Preserve API key if it exists in saved config
+                api_key: savedConfig?.api_key || defaultConfig?.api_key || '',
+                // Preserve region for Bedrock
+                region: savedConfig?.region || defaultConfig?.region
+              }
+            }
             
             set({
               // Only overwrite primaryConfig if user hasn't selected a model yet
@@ -241,23 +268,29 @@ export const useLLMStore = create<LLMState>()(
               primaryConfig: hasUserSelection 
                 ? currentState.primaryConfig 
                 : defaults.primary_config,
-              openrouterConfig: defaults.openrouter_config,
-              bedrockConfig: defaults.bedrock_config,
-              openaiConfig: defaults.openai_config,
-              vertexConfig: defaults.vertex_config || {
-                provider: 'vertex',
-                model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
-                api_key: ''
-              },
-              anthropicConfig: defaults.anthropic_config || {
-                provider: 'anthropic',
-                model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
-                api_key: ''
-              },
+              openrouterConfig: preserveUserConfig(currentState.openrouterConfig, defaults.openrouter_config),
+              bedrockConfig: preserveUserConfig(currentState.bedrockConfig, defaults.bedrock_config),
+              openaiConfig: preserveUserConfig(currentState.openaiConfig, defaults.openai_config),
+              vertexConfig: preserveUserConfig(
+                currentState.vertexConfig,
+                defaults.vertex_config || {
+                  provider: 'vertex',
+                  model_id: '',
+                  fallback_models: [],
+                  cross_provider_fallback: undefined,
+                  api_key: ''
+                }
+              ),
+              anthropicConfig: preserveUserConfig(
+                currentState.anthropicConfig,
+                defaults.anthropic_config || {
+                  provider: 'anthropic',
+                  model_id: '',
+                  fallback_models: [],
+                  cross_provider_fallback: undefined,
+                  api_key: ''
+                }
+              ),
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter,
               availableOpenAIModels: defaults.available_models.openai,
@@ -510,6 +543,7 @@ export const useLLMStore = create<LLMState>()(
           bedrockConfig: state.bedrockConfig,
           openaiConfig: state.openaiConfig,
           vertexConfig: state.vertexConfig,
+          anthropicConfig: state.anthropicConfig,
           customBedrockModels: state.customBedrockModels,
           customOpenRouterModels: state.customOpenRouterModels,
           customOpenAIModels: state.customOpenAIModels,

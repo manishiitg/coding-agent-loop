@@ -3,6 +3,7 @@ import type { ToolCallStartEvent } from '../../../../generated/events'
 import { Button } from '../../../ui/Button'
 import { Textarea } from '../../../ui/Textarea'
 import { Card } from '../../../ui/Card'
+import { MarkdownRenderer } from '../../../ui/MarkdownRenderer'
 
 interface HumanFeedbackToolCallDisplayProps {
   event: ToolCallStartEvent
@@ -158,9 +159,10 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
         <div className="space-y-3">
           {/* Message from LLM */}
           <div className="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700">
-            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
-              {toolParams.message_for_user}
-            </p>
+            <MarkdownRenderer 
+              content={toolParams.message_for_user}
+              className="text-gray-700 dark:text-gray-300"
+            />
           </div>
 
           {/* Response input */}

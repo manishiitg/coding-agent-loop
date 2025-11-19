@@ -68,7 +68,6 @@ export interface ToolCallStartEvent {
   tool_name?: string;
   tool_params?: ToolParams;
   server_name?: string;
-  auto_expand?: boolean;
 }
 export interface ToolParams {
   arguments?: string;
@@ -92,7 +91,6 @@ export interface ToolCallEndEvent {
   result?: string;
   duration?: number;
   server_name?: string;
-  auto_expand?: boolean;
 }
 export interface ToolCallErrorEvent {
   timestamp?: string;
@@ -987,6 +985,9 @@ export interface OrchestratorAgentEndEvent {
     [k: string]: string;
   };
   result?: string;
+  structured_response?: {
+    [k: string]: unknown;
+  };
   success?: boolean;
   error?: string;
   duration?: number;

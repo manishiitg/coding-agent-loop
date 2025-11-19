@@ -1278,6 +1278,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Detailed LLM configuration from frontend
 			FallbackModels:        fallbackModels,
 			CrossProviderFallback: crossProviderFallback,
+			// Convert API keys from request to wrapper format
+			APIKeys: func() *agent.WrapperAPIKeys {
+				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
+					wrapperKeys := &agent.WrapperAPIKeys{
+						OpenRouter: req.LLMConfig.APIKeys.OpenRouter,
+						OpenAI:     req.LLMConfig.APIKeys.OpenAI,
+						Anthropic:  req.LLMConfig.APIKeys.Anthropic,
+						Vertex:     req.LLMConfig.APIKeys.Vertex,
+					}
+					if req.LLMConfig.APIKeys.Bedrock != nil {
+						wrapperKeys.Bedrock = &agent.WrapperBedrockConfig{
+							Region: req.LLMConfig.APIKeys.Bedrock.Region,
+						}
+					}
+					return wrapperKeys
+				}
+				return nil
+			}(),
 		}
 
 		// Set agent mode based on request

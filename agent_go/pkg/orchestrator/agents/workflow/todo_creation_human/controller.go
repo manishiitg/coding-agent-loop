@@ -3,9 +3,10 @@ package todo_creation_human
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,19 +41,6 @@ type TodoStep struct {
 	MaxIterations            int           `json:"max_iterations,omitempty"`              // max iterations (default: 10)
 	LoopDescription          string        `json:"loop_description,omitempty"`            // human-readable explanation
 	AgentConfigs             *AgentConfigs `json:"agent_configs,omitempty"`               // per-agent configuration (LLM, max turns, toggles)
-}
-
-// EnhancedPlanWithMetadata stores enhanced plan with caching metadata
-type EnhancedPlanWithMetadata struct {
-	Plan          *PlanningResponse  `json:"plan"`
-	LastUpdated   time.Time          `json:"last_updated"`
-	LearningFiles []LearningFileInfo `json:"learning_files"`
-}
-
-// LearningFileInfo stores information about a learning file for cache comparison
-type LearningFileInfo struct {
-	Filepath   string    `json:"filepath"`
-	ModifiedAt time.Time `json:"modified_at"`
 }
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
@@ -100,6 +88,12 @@ type HumanControlledTodoPlannerOrchestrator struct {
 
 	// Learning detail level preference (set once before execution, used for all learning phases)
 	learningDetailLevel string // "exact" or "general"
+
+	// Approved plan storage (for accessing run_mode during execution)
+	approvedPlan *PlanningResponse // Store approved plan to access run_mode
+
+	// Run folder management
+	selectedRunFolder string // Selected run folder name (e.g., "iteration-same", "2025-01-27-iteration-1")
 }
 
 // NewHumanControlledTodoPlannerOrchestrator creates a new human-controlled todo planner orchestrator
@@ -148,14 +142,20 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	}, nil
 }
 
-// getStepsProgressPath returns the path to steps_done.json file
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getStepsProgressPath() string {
-	return fmt.Sprintf("%s/steps_done.json", hcpo.GetWorkspacePath())
+// getStepsProgressPath returns the path to steps_done.json file in the run folder
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getStepsProgressPath() (string, error) {
+	if hcpo.selectedRunFolder == "" {
+		return "", fmt.Errorf("selectedRunFolder not set - run folder must be resolved before accessing steps_done.json")
+	}
+	return fmt.Sprintf("%s/runs/%s/steps_done.json", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder), nil
 }
 
 // loadStepProgress loads progress from steps_done.json
 func (hcpo *HumanControlledTodoPlannerOrchestrator) loadStepProgress(ctx context.Context) (*StepProgress, error) {
-	progressPath := hcpo.getStepsProgressPath()
+	progressPath, err := hcpo.getStepsProgressPath()
+	if err != nil {
+		return nil, err
+	}
 
 	content, err := hcpo.ReadWorkspaceFile(ctx, progressPath)
 	if err != nil {
@@ -173,7 +173,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) loadStepProgress(ctx context
 
 // saveStepProgress saves progress to steps_done.json
 func (hcpo *HumanControlledTodoPlannerOrchestrator) saveStepProgress(ctx context.Context, progress *StepProgress) error {
-	progressPath := hcpo.getStepsProgressPath()
+	progressPath, err := hcpo.getStepsProgressPath()
+	if err != nil {
+		return err
+	}
 
 	progress.LastUpdated = time.Now()
 
@@ -192,7 +195,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) saveStepProgress(ctx context
 
 // deleteStepProgress deletes steps_done.json file
 func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepProgress(ctx context.Context) error {
-	progressPath := hcpo.getStepsProgressPath()
+	progressPath, err := hcpo.getStepsProgressPath()
+	if err != nil {
+		return err
+	}
 
 	if err := hcpo.DeleteWorkspaceFile(ctx, progressPath); err != nil {
 		// Ignore error if file doesn't exist
@@ -233,445 +239,81 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.GetLogger().Infof("🚀 Starting human-controlled todo planning for objective: %s", objective)
 
 	// Set objective and workspace path directly
-	// WorkspacePath includes /todo_creation_human subdirectory
+	// WorkspacePath is the base workspace path (no subdirectory)
 	hcpo.SetObjective(objective)
-	hcpo.SetWorkspacePath(fmt.Sprintf("%s/todo_creation_human", workspacePath))
+	hcpo.SetWorkspacePath(workspacePath)
 
-	// PHASE 0: Variable Extraction with Human Verification (NEW)
-	// Check if variables.json already exists
+	// PHASE 0: Check both variables and plan at start (before any prompts)
+	// Check if variables.json exists - REQUIRED for planning
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
 	variablesExist, existingVariablesManifest, err := hcpo.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing variables: %w", err)
-		variablesExist = false
+		return "", fmt.Errorf("failed to check for existing variables: %w", err)
 	}
-
-	var variablesManifest *VariablesManifest
-	var templatedObjective string
-	var existingVariablesForUpdate *VariablesManifest // Store existing variables for update mode
-	var initialUpdateFeedback string                  // Store initial feedback for update mode
-
-	// If variables exist, ask user if they want to use them, extract new ones, or update existing
-	if variablesExist {
-		requestID := fmt.Sprintf("existing_variables_decision_%d", time.Now().UnixNano())
-		variableOptions := []string{
-			"Use Existing Variables",    // Option 0: Use existing variables as-is
-			"Extract New Variables",     // Option 1: Delete everything and extract new
-			"Update Existing Variables", // Option 2: Update existing variables with feedback
-		}
-		variableChoice, err := hcpo.RequestMultipleChoiceFeedback(
-			ctx,
-			requestID,
-			"Found existing variables.json. What would you like to do?",
-			variableOptions,
-			fmt.Sprintf("Variables file: %s\nFound %d variables", variablesPath, len(existingVariablesManifest.Variables)),
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
-		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing variables: %w", err)
-			// Default to using existing variables
-			variableChoice = "option0"
-		}
-
-		switch variableChoice {
-		case "option0":
-			// Use existing variables - directly use the parsed JSON
-			hcpo.GetLogger().Infof("✅ User chose to use existing variables")
-			variablesManifest = existingVariablesManifest
-			hcpo.variablesManifest = existingVariablesManifest // Store in orchestrator so formatVariableNames/Values can access it
-			templatedObjective = existingVariablesManifest.Objective
-
-		case "option1":
-			// Extract new variables - cleanup everything and extract fresh
-			hcpo.GetLogger().Infof("🔄 User chose to extract new variables, cleaning up existing variables file")
-			// Delete existing variables file to ensure clean state before extraction
-			if err := hcpo.DeleteWorkspaceFile(ctx, variablesPath); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to delete existing variables file: %v (will be overwritten during extraction)", err)
-				// Continue anyway - extraction will overwrite the file
-			} else {
-				hcpo.GetLogger().Infof("🗑️ Deleted existing variables file: %s", variablesPath)
-			}
-			variablesExist = false // Trigger variable extraction
-
-		case "option2":
-			// Update existing variables - request feedback and update with existing context
-			hcpo.GetLogger().Infof("🔄 User chose to update existing variables, requesting update feedback")
-
-			// Format existing variables for display
-			var variablesSummary strings.Builder
-			variablesSummary.WriteString(fmt.Sprintf("Current variables (%d total):\n\n", len(existingVariablesManifest.Variables)))
-			for _, variable := range existingVariablesManifest.Variables {
-				variablesSummary.WriteString(fmt.Sprintf("- **{{%s}}**: %s\n", variable.Name, variable.Description))
-				variablesSummary.WriteString(fmt.Sprintf("  - Value: %s\n", variable.Value))
-				variablesSummary.WriteString("\n")
-			}
-			variablesSummary.WriteString(fmt.Sprintf("\n**Templated Objective**:\n%s", existingVariablesManifest.Objective))
-
-			// Request human feedback about what they want to update
-			updateFeedbackID := fmt.Sprintf("variable_update_feedback_%d", time.Now().UnixNano())
-			approved, updateFeedback, err := hcpo.RequestHumanFeedback(
-				ctx,
-				updateFeedbackID,
-				"What would you like to update in the existing variables? Please describe the changes or improvements you want.",
-				fmt.Sprintf("Current variables location: %s\nFound %d variables\n\n%s\n\nYour feedback will be used to guide the update of variables while preserving unchanged ones.", variablesPath, len(existingVariablesManifest.Variables), variablesSummary.String()),
-				hcpo.getSessionID(),
-				hcpo.getWorkflowID(),
-			)
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err)
-				updateFeedback = "" // Proceed without feedback
-			} else if approved {
-				// User clicked "Approve" without providing feedback (approved=true means response was "Approve")
-				hcpo.GetLogger().Infof("ℹ️ User approved without providing update feedback, will update variables without specific guidance")
-				updateFeedback = ""
-			} else if updateFeedback != "" {
-				// User provided feedback (approved=false and feedback contains their input)
-				hcpo.GetLogger().Infof("📝 Received update feedback: %s", updateFeedback)
-			} else {
-				// Edge case: approved=false but empty feedback
-				hcpo.GetLogger().Warnf("⚠️ Unexpected feedback state: approved=%v, feedback empty, proceeding without guidance", approved)
-				updateFeedback = ""
-			}
-
-			// Don't delete variables file - keep it for update context
-			// Set flag to trigger update mode extraction (pass existing variables to extraction phase)
-			variablesExist = false // Trigger variable extraction, but with update mode
-			// Store existing variables and feedback for use in extraction loop
-			existingVariablesForUpdate = existingVariablesManifest
-			initialUpdateFeedback = updateFeedback // Store initial feedback for first extraction attempt
-
-		default:
-			// Unknown choice - default to using existing variables
-			hcpo.GetLogger().Warnf("⚠️ Unknown variable choice: %s, defaulting to use existing variables", variableChoice)
-			variablesManifest = existingVariablesManifest
-			hcpo.variablesManifest = existingVariablesManifest
-			templatedObjective = existingVariablesManifest.Objective
-		}
-	}
-
-	// Extract variables if they don't exist or user wants to re-extract
 	if !variablesExist {
-		maxVariableRevisions := 10
-		var variableFeedback string
-		var variableConversationHistory []llmtypes.MessageContent
-
-		// Use initial update feedback for first attempt if in update mode
-		if existingVariablesForUpdate != nil {
-			variableFeedback = initialUpdateFeedback
-			hcpo.GetLogger().Infof("📝 Using initial update feedback for first extraction attempt: %s", variableFeedback)
-		}
-
-		for revisionAttempt := 1; revisionAttempt <= maxVariableRevisions; revisionAttempt++ {
-			hcpo.GetLogger().Infof("🔄 Variable extraction attempt %d/%d", revisionAttempt, maxVariableRevisions)
-
-			// Run variable extraction phase (with optional human feedback and existing variables for update mode)
-			var err error
-			variablesManifest, templatedObjective, variableConversationHistory, err = hcpo.runVariableExtractionPhase(ctx, revisionAttempt, variableFeedback, variableConversationHistory, existingVariablesForUpdate)
-			if err != nil {
-				// Check if this error contains user feedback for next attempt (from non-structured response)
-				errMsg := err.Error()
-				hcpo.GetLogger().Infof("🔍 [DEBUG] Variable extraction phase error detected: %s", errMsg)
-				feedbackPrefix := "VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:"
-				if strings.Contains(errMsg, feedbackPrefix) {
-					hcpo.GetLogger().Infof("✅ [DEBUG] Detected VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK prefix in error")
-					// Extract feedback from error message (handle both wrapped and unwrapped errors)
-					parts := strings.Split(errMsg, feedbackPrefix)
-					if len(parts) > 1 {
-						extractedFeedback := strings.TrimSpace(parts[1])
-						hcpo.GetLogger().Infof("📝 Extracted user feedback from variable extraction text response: %s", extractedFeedback)
-
-						// Use extracted feedback for next iteration
-						variableFeedback = extractedFeedback
-
-						// Continue to next iteration (don't return error - this is expected behavior)
-						if revisionAttempt >= maxVariableRevisions {
-							hcpo.GetLogger().Warnf("⚠️ Max variable extraction revision attempts (%d) reached, continuing without variables", maxVariableRevisions)
-							templatedObjective = objective // Use original objective if extraction fails
-							break
-						}
-						hcpo.GetLogger().Infof("🔄 [DEBUG] Continuing to next variable extraction iteration with extracted feedback")
-						continue
-					} else {
-						hcpo.GetLogger().Warnf("⚠️ [DEBUG] Found prefix but couldn't extract feedback from error: %s", errMsg)
-					}
-				} else {
-					hcpo.GetLogger().Infof("❌ [DEBUG] Error does not contain VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK prefix, treating as real error")
-				}
-				// For other errors, log and continue without variables
-				hcpo.GetLogger().Warnf("⚠️ Variable extraction failed: %v, continuing without variables", err)
-				templatedObjective = objective // Use original objective if extraction fails
-				break
-			}
-
-			// Use the updated conversation history from the agent (already includes the agent's response)
-			// No need to manually append - the agent's updatedHistory already contains the full conversation
-			hcpo.GetLogger().Infof("✅ Extracted %d variables, templated objective: %s (conversation has %d messages)",
-				len(variablesManifest.Variables), templatedObjective, len(variableConversationHistory))
-
-			// Request human approval for extracted variables
-			approved, feedback, err := hcpo.requestVariableApproval(ctx, variablesManifest, revisionAttempt)
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Variable approval request failed: %v, will retry", err)
-				// Don't auto-approve on error - treat as need for retry
-				approved = false
-				feedback = fmt.Sprintf("Error getting approval: %v", err)
-			}
-
-			if approved {
-				hcpo.GetLogger().Infof("✅ Variables approved by human, proceeding to planning")
-				break // Exit retry loop
-			}
-
-			// Variables rejected with feedback for revision
-			hcpo.GetLogger().Infof("🔄 Variable revision requested (attempt %d/%d): %s", revisionAttempt, maxVariableRevisions, feedback)
-			variableFeedback = feedback // Store feedback for next attempt
-
-			if revisionAttempt >= maxVariableRevisions {
-				hcpo.GetLogger().Warnf("⚠️ Max variable revision attempts (%d) reached, using extracted variables", maxVariableRevisions)
-				break
-			}
-		}
+		return "", fmt.Errorf("variables.json not found at %s - variable extraction must be run first as a separate phase", variablesPath)
 	}
 
-	// Load runtime variable values if provided and switch to templated objective
-	if variablesManifest != nil {
-		if err := hcpo.loadVariableValues(ctx); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %w", err)
-		}
+	// Variables exist - use them
+	hcpo.variablesManifest = existingVariablesManifest // Store in orchestrator so formatVariableNames/Values can access it
+	templatedObjective := existingVariablesManifest.Objective
 
-		// Switch to templated objective for all subsequent phases
-		hcpo.SetObjective(templatedObjective)
-		hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
-	}
-
-	// Learning detail level is now configured per-step via AgentConfigs
-	// Each step can specify its own learning detail level, defaults to "general" if not set
-	hcpo.GetLogger().Infof("📝 Using per-step learning detail level configuration")
-
-	// Check if plan.json already exists (workspacePath now includes /todo_creation_human)
+	// Check if plan.json exists - REQUIRED for execution
 	planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
 	planExists, existingPlan, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing plan: %w", err)
-		// Continue with normal planning flow
-		planExists = false
+		return "", fmt.Errorf("failed to check for existing plan: %w", err)
+	}
+	if !planExists {
+		return "", fmt.Errorf("plan.json not found at %s - planning must be run first as a separate phase", planPath)
 	}
 
-	var breakdownSteps []TodoStep
-	var initialPlanningFeedback string               // Store feedback for plan updates
-	var approvedPlan *PlanningResponse               // Store approved plan for learning integration
-	var existingPlanForFirstUpdate *PlanningResponse // Store existing plan for option3 (Update Existing Plan)
+	// Plan exists - use it
+	hcpo.GetLogger().Infof("📋 Found existing plan.json at %s with %d steps", planPath, len(existingPlan.Steps))
 
-	if planExists {
-		hcpo.GetLogger().Infof("📋 Found existing plan.json at %s", planPath)
-
-		// Safety check: Ensure plan has steps
-		if len(existingPlan.Steps) == 0 {
-			hcpo.GetLogger().Errorf("❌ Existing plan has no steps")
-			return "", fmt.Errorf("existing plan has no steps")
-		}
-
-		// Convert existing plan to TodoStep format and emit event BEFORE asking user choice
-		// This allows user to see the plan before making a decision
-		breakdownSteps = hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
-		hcpo.GetLogger().Infof("✅ Converted existing plan: %d steps extracted", len(breakdownSteps))
-		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
-
-		// Request human decision: use existing plan, create new plan, or update existing plan
-		requestID := fmt.Sprintf("existing_plan_decision_%d", time.Now().UnixNano())
-		planOptions := []string{
-			"Use Existing Plan",    // Option 0: Use existing plan as-is
-			"Create New Plan",      // Option 1: Delete everything and create new plan
-			"Update Existing Plan", // Option 2: Create new plan but keep existing artifacts
-		}
-		planChoice, err := hcpo.RequestMultipleChoiceFeedback(
-			ctx,
-			requestID,
-			"Found existing plan.json. What would you like to do?",
-			planOptions,
-			fmt.Sprintf("Plan location: %s\nFound %d steps", planPath, len(existingPlan.Steps)),
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
-		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing plan: %w", err)
-			// Default to using existing plan
-			planChoice = "option0"
-		}
-
-		switch planChoice {
-		case "option0":
-			// Use existing plan - directly use the parsed JSON (no approval needed since user explicitly chose to use it)
-			// Note: breakdownSteps and event emission already done before the switch statement
-			hcpo.GetLogger().Infof("✅ User chose to use existing plan, proceeding directly to learning integration")
-
-			// Proceed directly to learning integration then execution (no approval needed)
-			hcpo.GetLogger().Infof("✅ Existing plan ready for learning integration: %d steps", len(breakdownSteps))
-			// Store approved plan for learning integration - this will skip the planning phase below
-			approvedPlan = existingPlan
-			// Keep planExists = true to prevent planning phase from running
-			// The planning phase is skipped when approvedPlan is already set
-
-		case "option1":
-			// Create new plan - cleanup everything and create fresh plan
-			hcpo.GetLogger().Infof("🔄 User chose to create new plan, cleaning up existing plan and related files")
-			// Clean up existing plan and all related execution artifacts
-			if err := hcpo.cleanupExistingPlanArtifacts(ctx, workspacePath); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to cleanup existing plan artifacts: %v (will continue anyway)", err)
-			} else {
-				hcpo.GetLogger().Infof("🗑️ Successfully cleaned up existing plan artifacts")
-			}
-			planExists = false
-
-		case "option2":
-			// Update existing plan - create new plan but keep artifacts (no cleanup)
-			hcpo.GetLogger().Infof("🔄 User chose to update existing plan, creating new plan but keeping existing artifacts")
-
-			// Note: Learning integration cache removal no longer needed - execution agent auto-discovers files
-
-			// Request human feedback about what they want to update in the plan
-			updateFeedbackID := fmt.Sprintf("plan_update_feedback_%d", time.Now().UnixNano())
-			approved, updateFeedback, err := hcpo.RequestHumanFeedback(
-				ctx,
-				updateFeedbackID,
-				"What would you like to update in the existing plan? Please describe the changes or improvements you want.",
-				fmt.Sprintf("Current plan location: %s\nFound %d steps\n\nYour feedback will be used to guide the creation of an updated plan while preserving existing validation, learning, and execution artifacts.", planPath, len(existingPlan.Steps)),
-				hcpo.getSessionID(),
-				hcpo.getWorkflowID(),
-			)
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err)
-				initialPlanningFeedback = "" // Proceed without feedback
-			} else if approved {
-				// User clicked "Approve" without providing feedback (approved=true means response was "Approve")
-				hcpo.GetLogger().Infof("ℹ️ User approved without providing update feedback, will create updated plan without specific guidance")
-				initialPlanningFeedback = ""
-			} else if updateFeedback != "" {
-				// User provided feedback (approved=false and feedback contains their input)
-				hcpo.GetLogger().Infof("📝 Received update feedback: %s", updateFeedback)
-				initialPlanningFeedback = updateFeedback // Store for use in planning phase
-			} else {
-				// Edge case: approved=false but empty feedback
-				hcpo.GetLogger().Warnf("⚠️ Unexpected feedback state: approved=%v, feedback empty, proceeding without guidance", approved)
-				initialPlanningFeedback = ""
-			}
-
-			// Don't cleanup - just set planExists to false so new plan will be created
-			// Existing artifacts in validation/, learnings/, execution/ will be preserved
-			planExists = false
-			// Store existing plan to pass to planning phase for updating
-			existingPlanForFirstUpdate = existingPlan
-
-		default:
-			// Unknown choice - default to using existing plan
-			hcpo.GetLogger().Warnf("⚠️ Unknown plan choice: %s, defaulting to use existing plan", planChoice)
-			// planExists remains true - will use existing plan
-			// Store approved plan to skip planning phase
-			approvedPlan = existingPlan
-		}
+	// Safety check: Ensure plan has steps
+	if len(existingPlan.Steps) == 0 {
+		hcpo.GetLogger().Errorf("❌ Existing plan has no steps")
+		return "", fmt.Errorf("existing plan has no steps")
 	}
 
-	// Only run planning phase if:
-	// 1. No existing plan exists (planExists = false), OR
-	// 2. User wants to create/update plan (approvedPlan is nil - meaning option1 was not selected)
-	if !planExists && approvedPlan == nil {
-		hcpo.GetLogger().Infof("🔄 No existing plan found, creating new plan to execute objective")
-
-		// NOTE: Don't delete existing progress here - only delete when actually starting new execution
-		// This prevents losing progress if planning fails or if user chooses to use existing plan
-
-		// Phase 1: Planning → Approval loop
-		maxPlanRevisions := 20 // Allow up to 20 plan revisions
-		// Initialize with initial planning feedback (e.g., from "Update Existing Plan" option)
-		humanFeedback := initialPlanningFeedback
-		var planningConversationHistory []llmtypes.MessageContent
-		// Note: approvedPlan is already declared in outer scope (line 327)
-		// Do NOT redeclare it here to avoid shadowing
-		var err error
-
-		for revisionAttempt := 1; revisionAttempt <= maxPlanRevisions; revisionAttempt++ {
-			hcpo.GetLogger().Infof("🔄 Plan creation/approval attempt %d/%d", revisionAttempt, maxPlanRevisions)
-
-			// Phase 1: Generate JSON plan directly (with optional human feedback)
-			// Pass existing plan if this is a revision (to update it) OR if this is the first attempt with an existing plan (option3)
-			var existingPlanForUpdate *PlanningResponse
-			if revisionAttempt == 1 && existingPlanForFirstUpdate != nil {
-				// First attempt with existing plan (option3: Update Existing Plan)
-				existingPlanForUpdate = existingPlanForFirstUpdate
-			} else if revisionAttempt > 1 && approvedPlan != nil {
-				// Subsequent revision attempts (user rejected and provided feedback)
-				existingPlanForUpdate = approvedPlan
-			}
-			approvedPlan, planningConversationHistory, err = hcpo.runPlanningPhase(ctx, revisionAttempt, humanFeedback, planningConversationHistory, existingPlanForUpdate)
-			if err != nil {
-				// Check if this error contains user feedback for next attempt (from non-structured response)
-				errMsg := err.Error()
-				hcpo.GetLogger().Infof("🔍 [DEBUG] Planning phase error detected: %s", errMsg)
-				feedbackPrefix := "PLANNING_TEXT_RESPONSE_FEEDBACK:"
-				if strings.Contains(errMsg, feedbackPrefix) {
-					hcpo.GetLogger().Infof("✅ [DEBUG] Detected PLANNING_TEXT_RESPONSE_FEEDBACK prefix in error")
-					// Extract feedback from error message (handle both wrapped and unwrapped errors)
-					// Error might be: "PLANNING_TEXT_RESPONSE_FEEDBACK:feedback" or "planning phase failed: PLANNING_TEXT_RESPONSE_FEEDBACK:feedback"
-					parts := strings.Split(errMsg, feedbackPrefix)
-					if len(parts) > 1 {
-						extractedFeedback := strings.TrimSpace(parts[1])
-						hcpo.GetLogger().Infof("📝 Extracted user feedback from planning text response: %s", extractedFeedback)
-
-						// Use extracted feedback for next iteration
-						humanFeedback = extractedFeedback
-
-						// Continue to next iteration (don't return error - this is expected behavior)
-						if revisionAttempt >= maxPlanRevisions {
-							return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
-						}
-						hcpo.GetLogger().Infof("🔄 [DEBUG] Continuing to next planning iteration with extracted feedback")
-						continue
-					} else {
-						hcpo.GetLogger().Warnf("⚠️ [DEBUG] Found prefix but couldn't extract feedback from error: %s", errMsg)
-					}
-				} else {
-					hcpo.GetLogger().Infof("❌ [DEBUG] Error does not contain PLANNING_TEXT_RESPONSE_FEEDBACK prefix, treating as real error")
-				}
-				// For other errors, return as-is
-				return "", fmt.Errorf("planning phase failed: %w", err)
-			}
-
-			// Safety check: Ensure plan has steps
-			if len(approvedPlan.Steps) == 0 {
-				return "", fmt.Errorf("new plan has no steps: planning agent returned empty steps array")
-			}
-
-			// Convert approved plan steps to TodoStep format for execution
-			breakdownSteps = hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
-			hcpo.GetLogger().Infof("✅ Converted new plan: %d steps extracted", len(breakdownSteps))
-
-			// Emit todo steps extracted event
-			hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "new_plan")
-
-			// Request human approval for JSON plan (after event emission)
-			approvedInternal, feedbackInternal, err := hcpo.requestPlanApproval(ctx, revisionAttempt)
-			if err != nil {
-				return "", fmt.Errorf("plan approval request failed: %w", err)
-			}
-
-			if approvedInternal {
-				hcpo.GetLogger().Infof("✅ JSON plan approved by human, proceeding to learning integration with %d steps", len(breakdownSteps))
-				break // Exit retry loop and continue to learning integration
-			}
-
-			// Plan rejected with feedback for revision
-			hcpo.GetLogger().Infof("🔄 Plan revision requested (attempt %d/%d): %s", revisionAttempt, maxPlanRevisions, feedbackInternal)
-			humanFeedback = feedbackInternal // Store feedback for next iteration
-
-			if revisionAttempt >= maxPlanRevisions {
-				return "", fmt.Errorf("max plan revision<|uniquepaddingtoken122|> attempts (%d) reached", maxPlanRevisions)
-			}
-		}
-
-		// Plan approved, proceed to learning integration then execution
-		// approvedPlan is already set in the loop above
+	// Load runtime variable values if provided and switch to templated objective
+	if err := hcpo.loadVariableValues(ctx); err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %w", err)
 	}
+
+	// Switch to templated objective for all subsequent phases
+	hcpo.SetObjective(templatedObjective)
+	hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
+
+	// Emit both events together
+	hcpo.GetLogger().Infof("📋 Found both existing variables.json and plan.json - emitting both events together")
+	hcpo.emitVariablesExtractedEvent(ctx, existingVariablesManifest.Variables, existingVariablesManifest.Objective)
+
+	// Convert existing plan to TodoStep format and emit TodoStepsExtractedEvent
+	breakdownSteps := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
+	hcpo.GetLogger().Infof("✅ Converted existing plan: %d steps extracted", len(breakdownSteps))
+	hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
+
+	// Store approved plan for access during execution
+	hcpo.approvedPlan = existingPlan
+
+	// Resolve run folder early (after plan approval, before early progress check)
+	// This ensures run folder is available for steps_done.json operations
+	runMode := "use_same_run"
+	if hcpo.approvedPlan != nil && hcpo.approvedPlan.RunMode != "" {
+		runMode = hcpo.approvedPlan.RunMode
+		hcpo.GetLogger().Infof("📁 Using run_mode from approved plan: %s", runMode)
+	} else {
+		hcpo.GetLogger().Infof("📁 No run_mode in approved plan, defaulting to 'use_same_run'")
+	}
+
+	selectedRunFolder, err := hcpo.resolveRunFolder(ctx, hcpo.GetWorkspacePath(), runMode)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve run folder: %w", err)
+	}
+	hcpo.selectedRunFolder = selectedRunFolder // Store for use in progress operations and execution
+	hcpo.GetLogger().Infof("📁 Selected run folder: %s", selectedRunFolder)
 
 	// Note: Learning integration phase removed - execution agent now auto-discovers learning files and scripts
 
@@ -698,12 +340,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					"Fast Execute All Steps Again", // Option 0: Re-execute all steps
 					"Skip Execution",               // Option 1: Skip to writer phase
 				}
+				progressPath, _ := hcpo.getStepsProgressPath()
+				progressInfo := fmt.Sprintf("Last updated: %s", earlyProgress.LastUpdated.Format("2006-01-02 15:04:05"))
+				if progressPath != "" {
+					progressInfo = fmt.Sprintf("Progress file: %s\n%s", progressPath, progressInfo)
+				}
 				choice, err := hcpo.RequestMultipleChoiceFeedback(
 					ctx,
 					requestID,
 					fmt.Sprintf("All steps are already completed (%d/%d). What would you like to do?", len(earlyProgress.CompletedStepIndices), earlyProgress.TotalSteps),
 					options,
-					fmt.Sprintf("Progress file: %s\nLast updated: %s", hcpo.getStepsProgressPath(), earlyProgress.LastUpdated.Format("2006-01-02 15:04:05")),
+					progressInfo,
 					hcpo.getSessionID(),
 					hcpo.getWorkflowID(),
 				)
@@ -745,46 +392,61 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			// Plan changed - ask user what to do (only once)
 			hcpo.GetLogger().Warnf("⚠️ Total steps changed (previous: %d, current: %d), prompting user for decision",
 				earlyProgress.TotalSteps, len(breakdownSteps))
-			choice, err := hcpo.handlePlanChange(ctx, earlyProgress, len(breakdownSteps))
-			planChangeHandled = true // Mark that we've already handled plan change
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for plan change: %w, defaulting to start from beginning", err)
-				earlyProgress = nil // Default to start fresh
+
+			// Get run mode from approved plan (consistent with run folder resolution)
+			runMode := "use_same_run"
+			if hcpo.approvedPlan != nil && hcpo.approvedPlan.RunMode != "" {
+				runMode = hcpo.approvedPlan.RunMode
+				hcpo.GetLogger().Infof("📁 Using run_mode from approved plan: %s", runMode)
 			} else {
-				switch choice {
-				case "option0": // Keep old progress (try to match)
-					hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
-					// Keep earlyProgress as-is, will be handled later
-				case "option1": // Delete old progress and start fresh
-					hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
-					// Initialize fresh progress with new total steps
-					if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
+				hcpo.GetLogger().Infof("📁 No run_mode in approved plan, defaulting to 'use_same_run'")
+			}
+
+			// Check if we should ask the question (only when reusing existing folder)
+			shouldAsk := hcpo.shouldAskDeleteOldProgress(ctx, hcpo.GetWorkspacePath(), runMode)
+			if !shouldAsk {
+				hcpo.GetLogger().Infof("📁 Run mode '%s' will create new folder - skipping 'Delete old progress' question, old progress in old folder will be preserved", runMode)
+				// Don't delete old progress file - it's in a different folder and won't interfere
+				// Just clean up execution artifacts for the new folder (which will be created later)
+				// Note: We don't call cleanupExecutionArtifactsForFreshStart here because it would try to clean
+				// the folder that will be created, which doesn't exist yet. The cleanup will happen when needed.
+				// Clear earlyProgress so we start fresh in the new folder
+				earlyProgress = nil
+				planChangeHandled = true
+			} else {
+				// Ask user what to do
+				choice, err := hcpo.handlePlanChange(ctx, earlyProgress, len(breakdownSteps))
+				planChangeHandled = true // Mark that we've already handled plan change
+				if err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for plan change: %w, defaulting to KEEP old progress (preserving user data)", err)
+					// Keep earlyProgress as-is to preserve user data - don't delete progress file
+					// User can manually delete if needed
+				} else {
+					switch choice {
+					case "option0": // Keep old progress (try to match)
+						hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
+						// Keep earlyProgress as-is, will be handled later
+					case "option1": // Delete old progress and start fresh
+						hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
+						// Delete old progress file first
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+						}
+						// Clean up execution artifacts for fresh start (handles both new and old structure)
+						if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
+						}
+						// Initialize fresh progress with new total steps
+						if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
+						}
+						// Note: learnings/ folder is preserved - deleted manually only
+						earlyProgress = nil
+					default:
+						hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to KEEP old progress (preserving user data)", choice)
+						// Keep earlyProgress as-is to preserve user data - don't delete progress file
+						// User can manually delete if needed
 					}
-					// Clean up execution artifacts for fresh start
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory")
-					}
-					// Note: learnings/ folder is preserved - deleted manually only
-					earlyProgress = nil
-				default:
-					hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to delete old progress", choice)
-					// Initialize fresh progress with new total steps
-					if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
-					}
-					// Clean up execution artifacts for fresh start
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory")
-					}
-					// Note: learnings/ folder is preserved - deleted manually only
-					earlyProgress = nil
 				}
 			}
 		}
@@ -817,6 +479,59 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		}
 	}
 
+	// Ask for run options when starting fresh (no existing progress)
+	// This ensures users can choose run options even when creating a new run folder
+	if existingProgress == nil && startFromStep == 0 {
+		hcpo.GetLogger().Infof("🆕 Starting fresh execution - asking for run options")
+
+		requestID := fmt.Sprintf("fresh_start_options_%d", time.Now().UnixNano())
+		freshStartOptions := []string{
+			"Start from Beginning",               // Option 0: Normal execution
+			"Fast Execute all steps",             // Option 1: Fast execute all steps
+			"Start from Beginning without Human", // Option 2: Skip human feedback
+		}
+
+		choice, err := hcpo.RequestMultipleChoiceFeedback(
+			ctx,
+			requestID,
+			fmt.Sprintf("Starting fresh execution with %d steps. How would you like to proceed?", len(breakdownSteps)),
+			freshStartOptions,
+			"No existing progress found. This is a fresh start.",
+			hcpo.getSessionID(),
+			hcpo.getWorkflowID(),
+		)
+		if err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for fresh start options: %w, defaulting to normal execution", err)
+			choice = "option0" // Default to normal execution
+		}
+
+		// Track fast execute mode and skip human input mode
+		fastExecuteMode := false
+		fastExecuteEndStep := -1
+		skipHumanInput := false
+
+		switch choice {
+		case "option0": // Start from beginning (normal execution)
+			hcpo.GetLogger().Infof("✅ User chose normal execution from beginning")
+			// No changes needed - defaults are correct
+		case "option1": // Fast execute all steps
+			hcpo.GetLogger().Infof("⚡ User chose fast execute mode for all steps")
+			fastExecuteMode = true
+			fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute all steps
+			hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", fastExecuteEndStep)
+		case "option2": // Start from beginning without human input
+			hcpo.GetLogger().Infof("⚡ User chose to start from beginning without human input")
+			skipHumanInput = true
+		default:
+			hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to normal execution", choice)
+			// Defaults are already set
+		}
+
+		// Store fast execute mode and skip human input mode for use in execution loop
+		hcpo.SetFastExecuteMode(fastExecuteMode, fastExecuteEndStep)
+		hcpo.SetSkipHumanInput(skipHumanInput)
+	}
+
 	// Process existing progress if available
 	if err == nil && existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
 		hcpo.GetLogger().Infof("📊 Found existing progress: %d/%d steps completed",
@@ -828,46 +543,60 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			// Plan changed - ask user what to do
 			hcpo.GetLogger().Warnf("⚠️ Plan has changed (previous: %d steps, current: %d steps), prompting user for decision",
 				existingProgress.TotalSteps, len(breakdownSteps))
-			choice, err := hcpo.handlePlanChange(ctx, existingProgress, len(breakdownSteps))
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for plan change: %w, defaulting to start from beginning", err)
-				existingProgress = nil // Default to start fresh
+
+			// Get run mode from approved plan (consistent with run folder resolution)
+			runMode := "use_same_run"
+			if hcpo.approvedPlan != nil && hcpo.approvedPlan.RunMode != "" {
+				runMode = hcpo.approvedPlan.RunMode
+				hcpo.GetLogger().Infof("📁 Using run_mode from approved plan: %s", runMode)
 			} else {
-				switch choice {
-				case "option0": // Keep old progress (try to match)
-					hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
-					// Keep existingProgress as-is, continue processing below
-					// Note: Step matching logic may not work perfectly, but we'll try
-				case "option1": // Delete old progress and start fresh
-					hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
-					// Initialize fresh progress with new total steps
-					if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
+				hcpo.GetLogger().Infof("📁 No run_mode in approved plan, defaulting to 'use_same_run'")
+			}
+
+			// Check if we should ask the question (only when reusing existing folder)
+			shouldAsk := hcpo.shouldAskDeleteOldProgress(ctx, hcpo.GetWorkspacePath(), runMode)
+			if !shouldAsk {
+				hcpo.GetLogger().Infof("📁 Run mode '%s' will create new folder - skipping 'Delete old progress' question, old progress in old folder will be preserved", runMode)
+				// Don't delete old progress file - it's in a different folder and won't interfere
+				// Just clean up execution artifacts for the new folder (which will be created later)
+				// Note: We don't call cleanupExecutionArtifactsForFreshStart here because it would try to clean
+				// the folder that will be created, which doesn't exist yet. The cleanup will happen when needed.
+				// Clear existingProgress so we start fresh in the new folder
+				existingProgress = nil
+			} else {
+				// Ask user what to do
+				choice, err := hcpo.handlePlanChange(ctx, existingProgress, len(breakdownSteps))
+				if err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for plan change: %w, defaulting to KEEP old progress (preserving user data)", err)
+					// Keep existingProgress as-is to preserve user data - don't delete progress file
+					// User can manually delete if needed
+				} else {
+					switch choice {
+					case "option0": // Keep old progress (try to match)
+						hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
+						// Keep existingProgress as-is, continue processing below
+						// Note: Step matching logic may not work perfectly, but we'll try
+					case "option1": // Delete old progress and start fresh
+						hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
+						// Delete old progress file first
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+						}
+						// Clean up execution artifacts for fresh start (handles both new and old structure)
+						if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
+						}
+						// Initialize fresh progress with new total steps
+						if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
+						}
+						// Note: learnings/ folder is preserved - deleted manually only
+						existingProgress = nil
+					default:
+						hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to KEEP old progress (preserving user data)", choice)
+						// Keep existingProgress as-is to preserve user data - don't delete progress file
+						// User can manually delete if needed
 					}
-					// Clean up execution artifacts for fresh start
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory")
-					}
-					// Note: learnings/ folder is preserved - deleted manually only
-					existingProgress = nil
-				default:
-					hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to delete old progress", choice)
-					// Initialize fresh progress with new total steps
-					if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
-					}
-					// Clean up execution artifacts for fresh start
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory")
-					}
-					// Note: learnings/ folder is preserved - deleted manually only
-					existingProgress = nil
 				}
 			}
 		}
@@ -927,12 +656,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					"Fast Execute All Steps Again", // Option 0: Re-execute all steps
 					"Skip Execution",               // Option 1: Skip to writer phase
 				}
+				progressPath, _ := hcpo.getStepsProgressPath()
+				progressInfo := fmt.Sprintf("Last updated: %s", existingProgress.LastUpdated.Format("2006-01-02 15:04:05"))
+				if progressPath != "" {
+					progressInfo = fmt.Sprintf("Progress file: %s\n%s", progressPath, progressInfo)
+				}
 				choice, err := hcpo.RequestMultipleChoiceFeedback(
 					ctx,
 					requestID,
 					fmt.Sprintf("All steps are already completed (%d/%d). What would you like to do?", len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps),
 					options,
-					fmt.Sprintf("Progress file: %s\nLast updated: %s", hcpo.getStepsProgressPath(), existingProgress.LastUpdated.Format("2006-01-02 15:04:05")),
+					progressInfo,
 					hcpo.getSessionID(),
 					hcpo.getWorkflowID(),
 				)
@@ -1013,19 +747,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					if err := hcpo.deleteStepProgress(ctx); err != nil {
 						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
 					}
-					// Clean up execution artifacts for fresh start
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+					// Get run mode from approved plan if available, otherwise default
+					runMode := "use_same_run"
+					if hcpo.approvedPlan != nil && hcpo.approvedPlan.RunMode != "" {
+						runMode = hcpo.approvedPlan.RunMode
+						hcpo.GetLogger().Infof("📁 Using run_mode from approved plan: %s", runMode)
 					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory")
+						hcpo.GetLogger().Infof("📁 No run_mode in approved plan, defaulting to 'use_same_run'")
 					}
-					// Clean up validation artifacts
-					validationDir := fmt.Sprintf("%s/validation", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up validation directory")
+					// Clean up execution artifacts for fresh start (handles both new and old structure)
+					if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
 					}
 					// Note: learnings/ folder is preserved - deleted manually only
 					existingProgress = nil
@@ -1099,19 +831,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					if err := hcpo.deleteStepProgress(ctx); err != nil {
 						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
 					}
-					// Clean up execution artifacts for fresh start
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+					// Get run mode from approved plan if available, otherwise default
+					runMode := "use_same_run"
+					if hcpo.approvedPlan != nil && hcpo.approvedPlan.RunMode != "" {
+						runMode = hcpo.approvedPlan.RunMode
+						hcpo.GetLogger().Infof("📁 Using run_mode from approved plan: %s", runMode)
 					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory")
+						hcpo.GetLogger().Infof("📁 No run_mode in approved plan, defaulting to 'use_same_run'")
 					}
-					// Clean up validation artifacts
-					validationDir := fmt.Sprintf("%s/validation", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up validation directory")
+					// Clean up execution artifacts for fresh start (handles both new and old structure)
+					if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
 					}
 					// Note: learnings/ folder is preserved - deleted manually only
 					existingProgress = nil
@@ -1142,9 +872,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 	// Initialize progress tracking if not already loaded
 	if existingProgress == nil {
-		existingProgress = &StepProgress{
-			CompletedStepIndices: []int{},
-			TotalSteps:           len(breakdownSteps),
+		// Initialize and save fresh progress file
+		if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
+			// Continue anyway with in-memory progress
+			existingProgress = &StepProgress{
+				CompletedStepIndices: []int{},
+				TotalSteps:           len(breakdownSteps),
+			}
+		} else {
+			// Create in-memory progress object matching what was saved
+			existingProgress = &StepProgress{
+				CompletedStepIndices: []int{},
+				TotalSteps:           len(breakdownSteps),
+				LastUpdated:          time.Now(),
+			}
 		}
 	}
 
@@ -1159,205 +901,267 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	return "Todo planning complete.", nil
 }
 
-// runPlanningPhase generates JSON plan directly
-// conversationHistory is updated in-place to accumulate across iterations
-// Returns the generated PlanningResponse and updated conversation history
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent, existingPlan *PlanningResponse) (*PlanningResponse, []llmtypes.MessageContent, error) {
-	planningTemplateVars := map[string]string{
-		"Objective":     hcpo.GetObjective(),
-		"WorkspacePath": hcpo.GetWorkspacePath(),
-		// Human feedback is passed directly as userMessage parameter to ExecuteStructured
-		// It will be included in the update prompt template when in UPDATE mode
+// resolveRunFolder determines which run folder to use based on the run mode
+// Returns the selected run folder name (e.g., "iteration-same", "2025-01-27-iteration-1", "2025-01-27-initial")
+func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolder(ctx context.Context, workspacePath, runMode string) (string, error) {
+	runsPath := fmt.Sprintf("%s/runs", workspacePath)
+
+	// Get current date for dated folders
+	today := time.Now().Format("2006-01-02")
+
+	// Default to "use_same_run" if runMode is empty
+	if runMode == "" {
+		runMode = "use_same_run"
+		hcpo.GetLogger().Infof("📁 No run_mode specified, defaulting to 'use_same_run'")
 	}
 
-	// Always pass plan.json contents in template - never let agent read from workspace
-	// Use the provided existingPlan parameter if available (for UPDATE mode), otherwise nil (for CREATE mode)
-	// Do NOT check disk as fallback - this prevents accidentally using old plans when creating new ones
-	var planToUse *PlanningResponse
-	if existingPlan != nil {
-		planToUse = existingPlan
-		hcpo.GetLogger().Infof("📄 Using provided existing plan with %d steps (UPDATE mode)", len(existingPlan.Steps))
-	} else {
-		planToUse = nil
-		hcpo.GetLogger().Infof("📝 No existing plan provided - creating new plan (CREATE mode)")
-	}
-
-	// Serialize plan to JSON and pass in template (prevents agent from reading workspace)
-	if planToUse != nil {
-		existingPlanJSON, err := json.MarshalIndent(planToUse, "", "  ")
-		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to marshal existing plan to JSON: %v", err)
-		} else {
-			planningTemplateVars["ExistingPlanJSON"] = string(existingPlanJSON)
-			hcpo.GetLogger().Infof("✅ Passing plan contents in template (prevents workspace file reads)")
+	switch runMode {
+	case "use_same_run":
+		// Check if runs directory exists
+		exists, _ := hcpo.workspaceFileExists(ctx, runsPath)
+		if !exists {
+			// Create iteration-same run folder
+			selectedFolder := "iteration-same"
+			if err := hcpo.createRunFolderStructure(ctx, fmt.Sprintf("%s/%s", runsPath, selectedFolder)); err != nil {
+				return "", err
+			}
+			return selectedFolder, nil
 		}
-	}
 
-	// Add variable names if available (planning agent should preserve variable placeholders)
-	if variableNames := hcpo.formatVariableNames(); variableNames != "" {
-		planningTemplateVars["VariableNames"] = variableNames
-		hcpo.GetLogger().Infof("✅ Passing variable names to planning agent (for placeholder preservation)")
-	}
-
-	// Determine user message based on mode
-	// - For CREATE mode: Use "Generate plan"
-	// - For UPDATE mode: Use human feedback if provided, otherwise "Generate plan"
-	var userMessage string
-	if existingPlan != nil {
-		// UPDATE mode: Use human feedback as user message
-		if humanFeedback != "" && strings.TrimSpace(humanFeedback) != "" {
-			userMessage = humanFeedback
-		} else {
-			userMessage = "Generate plan" // Fallback if no human feedback
+		// List existing run folders
+		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
+		if err != nil || len(existingFolders) == 0 {
+			// Create iteration-same folder if none exist
+			selectedFolder := "iteration-same"
+			if err := hcpo.createRunFolderStructure(ctx, fmt.Sprintf("%s/%s", runsPath, selectedFolder)); err != nil {
+				return "", err
+			}
+			return selectedFolder, nil
 		}
-	} else {
-		// CREATE mode: Use static message for first-time plan generation
-		userMessage = "Generate plan"
-	}
 
-	// Create fresh planning agent with proper context
-	planningAgent, err := hcpo.createPlanningAgent(ctx, "planning", 0, iteration)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create planning agent: %w", err)
-	}
+		// Return the latest folder (alphabetically sorted, so latest date/name)
+		sort.Strings(existingFolders)
+		return existingFolders[len(existingFolders)-1], nil
 
-	// Execute planning agent using structured output
-	planningAgentTyped, ok := planningAgent.(*HumanControlledTodoPlannerPlanningAgent)
-	if !ok {
-		return nil, nil, fmt.Errorf("failed to cast planning agent to correct type")
-	}
+	case "create_new_runs_always":
+		// Always create a new dated folder with incremental number
+		counter := 1
+		for {
+			selectedFolder := fmt.Sprintf("%s-iteration-%d", today, counter)
+			fullPath := fmt.Sprintf("%s/%s", runsPath, selectedFolder)
 
-	planResponse, updatedConversationHistory, err := planningAgentTyped.ExecuteStructured(ctx, planningTemplateVars, conversationHistory, userMessage)
-	if err != nil {
-		// Debug: Log the error type and message
-		hcpo.GetLogger().Infof("🔍 [DEBUG] Planning agent ExecuteStructured returned error: %T, message: %s", err, err.Error())
-		hcpo.GetLogger().Infof("🔍 [DEBUG] IsNonStructuredResponseError check: %v", agents.IsNonStructuredResponseError(err))
-
-		// Check if this is a non-structured response error (text response instead of structured output)
-		if agents.IsNonStructuredResponseError(err) {
-			hcpo.GetLogger().Infof("✅ [DEBUG] Detected NonStructuredResponseError in runPlanningPhase")
-			var nonStructuredErr *agents.NonStructuredResponseError
-			if errors.As(err, &nonStructuredErr) {
-				// Display the text response to the user and request feedback
-				hcpo.GetLogger().Infof("📝 Planning agent returned conversational text instead of structured output. Displaying to user for feedback.")
-
-				// Generate unique request ID
-				requestID := fmt.Sprintf("planning_text_response_%d_%d", iteration, time.Now().UnixNano())
-
-				// Display the text response and request feedback
-				approved, feedback, feedbackErr := hcpo.RequestHumanFeedback(
-					ctx,
-					requestID,
-					"The planning agent provided the following response instead of a structured plan. Please provide feedback to help it generate a proper structured plan:",
-					nonStructuredErr.TextResponse,
-					hcpo.getSessionID(),
-					hcpo.getWorkflowID(),
-				)
-
-				if feedbackErr != nil {
-					return nil, nil, fmt.Errorf("failed to request human feedback for planning text response: %w", feedbackErr)
+			exists, _ := hcpo.workspaceFileExists(ctx, fullPath)
+			if !exists {
+				if err := hcpo.createRunFolderStructure(ctx, fullPath); err != nil {
+					return "", err
 				}
+				return selectedFolder, nil
+			}
+			counter++
+		}
 
-				// If user approved (clicked Approve button), treat as no feedback and continue
-				// Otherwise, use the feedback for next attempt
-				if approved {
-					hcpo.GetLogger().Infof("✅ User approved planning text response, but no structured plan was generated. This is unexpected - returning error.")
-					return nil, nil, fmt.Errorf("planning agent returned text response but user approved without providing feedback to generate structured plan")
-				}
+	case "create_new_run_once_daily":
+		// Check if today's folder exists
+		prefix := today + "-"
+		existingFolders, _ := hcpo.listRunFolders(ctx, runsPath)
 
-				// User provided feedback - return a special error that the loop can detect and handle
-				// Use a specific error prefix that the loop will recognize
-				// The updated history from the agent's response is included so conversation continues properly
-				feedbackError := fmt.Errorf("PLANNING_TEXT_RESPONSE_FEEDBACK:%s", feedback)
-				hcpo.GetLogger().Infof("🔄 [DEBUG] Returning feedback error from runPlanningPhase: %s", feedbackError.Error())
-				return nil, nonStructuredErr.UpdatedHistory, feedbackError
+		// Look for today's folder
+		for _, folder := range existingFolders {
+			if strings.HasPrefix(folder, prefix) {
+				hcpo.GetLogger().Infof("📁 Using existing today's run folder: %s", folder)
+				return folder, nil
 			}
 		}
-		// For other errors, return as-is
-		return nil, nil, fmt.Errorf("planning failed: %w", err)
-	}
 
-	// Save JSON plan to file manually
-	planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
-
-	// Create backup of existing plan.json before updating
-	backupPath := fmt.Sprintf("%s/planning/plan_backup.json", hcpo.GetWorkspacePath())
-	existingPlanContent, err := hcpo.ReadWorkspaceFile(ctx, planPath)
-	if err == nil {
-		// Existing plan.json found - create backup
-		if err := hcpo.WriteWorkspaceFile(ctx, backupPath, existingPlanContent); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to create plan backup: %v (continuing anyway)", err)
-		} else {
-			hcpo.GetLogger().Infof("💾 Created backup of existing plan.json at %s", backupPath)
+		// Create new folder for today
+		selectedFolder := fmt.Sprintf("%s-initial", today)
+		fullPath := fmt.Sprintf("%s/%s", runsPath, selectedFolder)
+		if err := hcpo.createRunFolderStructure(ctx, fullPath); err != nil {
+			return "", err
 		}
-	} else {
-		// No existing plan.json (first time creation) - no backup needed
-		hcpo.GetLogger().Infof("📝 No existing plan.json found - creating new plan (no backup needed)")
+		return selectedFolder, nil
+
+	default:
+		return "", fmt.Errorf("unknown run mode: %s", runMode)
 	}
-
-	planJSON, err := json.MarshalIndent(planResponse, "", "  ")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal plan to JSON: %w", err)
-	}
-
-	if err := hcpo.WriteWorkspaceFile(ctx, planPath, string(planJSON)); err != nil {
-		return nil, nil, fmt.Errorf("failed to save plan.json: %w", err)
-	}
-
-	// Note: Learning integration cache removal no longer needed - execution agent auto-discovers files
-
-	hcpo.GetLogger().Infof("✅ JSON plan created successfully and saved to %s (%d steps, conversation has %d messages)", planPath, len(planResponse.Steps), len(updatedConversationHistory))
-
-	return planResponse, updatedConversationHistory, nil
 }
 
-// convertPlanStepsToTodoSteps converts PlanStep to TodoStep format
-// Merges agent configs from step_config.json by step index matching
-func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(ctx context.Context, planSteps []PlanStep) []TodoStep {
-	// Read step configs from step_config.json
-	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
+// workspaceFileExists checks if a file or directory exists in the workspace
+func (hcpo *HumanControlledTodoPlannerOrchestrator) workspaceFileExists(ctx context.Context, path string) (bool, error) {
+	// Try to read a .keep file to check if directory exists
+	_, err := hcpo.ReadWorkspaceFile(ctx, fmt.Sprintf("%s/.keep", path))
+	if err == nil {
+		return true, nil
+	}
+
+	// Try to read the path directly (for files)
+	_, err = hcpo.ReadWorkspaceFile(ctx, path)
+	if err == nil {
+		return true, nil
+	}
+
+	// Check if it exists by listing parent directory (for both files and directories)
+	parent := filepath.Dir(path)
+	filename := filepath.Base(path)
+
+	// List files and directories in parent using BaseOrchestrator method
+	items, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, parent)
+	if err == nil {
+		for _, item := range items {
+			if item == filename {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// listRunFolders lists existing run folder names
+func (hcpo *HumanControlledTodoPlannerOrchestrator) listRunFolders(ctx context.Context, runsPath string) ([]string, error) {
+	// Use BaseOrchestrator's ListWorkspaceDirectories function
+	return hcpo.BaseOrchestrator.ListWorkspaceDirectories(ctx, runsPath)
+}
+
+// createRunFolderStructure creates the basic structure for a run folder
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createRunFolderStructure(ctx context.Context, runPath string) error {
+	// Create .keep file to ensure directory is created
+	keepFile := fmt.Sprintf("%s/.keep", runPath)
+	if err := hcpo.WriteWorkspaceFile(ctx, keepFile, "# This file ensures the run folder exists"); err != nil {
+		return fmt.Errorf("failed to create run folder: %w", err)
+	}
+
+	// The actual folder creation will happen when files are written
+	hcpo.GetLogger().Infof("✅ Created run folder structure: %s", runPath)
+	return nil
+}
+
+// determineRunFolderForCleanup determines which run folder will be used (if any) without creating it
+// Returns: (runFolderName, shouldCleanSpecificFolder, error)
+// - runFolderName: The folder name that will be used (empty if new folder will be created)
+// - shouldCleanSpecificFolder: Whether we should clean a specific folder (true if reusing existing folder)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) determineRunFolderForCleanup(ctx context.Context, workspacePath, runMode string) (string, bool, error) {
+	runsPath := fmt.Sprintf("%s/runs", workspacePath)
+	today := time.Now().Format("2006-01-02")
+
+	// Default to "use_same_run" if runMode is empty
+	if runMode == "" {
+		runMode = "use_same_run"
+	}
+
+	switch runMode {
+	case "use_same_run":
+		// Check if runs directory exists
+		exists, _ := hcpo.workspaceFileExists(ctx, runsPath)
+		if !exists {
+			// Will create "iteration-same" - no existing folder to clean
+			return "", false, nil
+		}
+
+		// List existing run folders
+		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
+		if err != nil || len(existingFolders) == 0 {
+			// Will create "iteration-same" - no existing folder to clean
+			return "", false, nil
+		}
+
+		// Will reuse the latest folder - should clean it
+		sort.Strings(existingFolders)
+		return existingFolders[len(existingFolders)-1], true, nil
+
+	case "create_new_runs_always":
+		// Always creates new folder - no specific folder to clean
+		return "", false, nil
+
+	case "create_new_run_once_daily":
+		// Check if today's folder exists
+		prefix := today + "-"
+		existingFolders, _ := hcpo.listRunFolders(ctx, runsPath)
+
+		// Look for today's folder
+		for _, folder := range existingFolders {
+			if strings.HasPrefix(folder, prefix) {
+				// Will reuse today's folder - should clean it
+				return folder, true, nil
+			}
+		}
+
+		// Will create new folder for today - no existing folder to clean
+		return "", false, nil
+
+	default:
+		return "", false, fmt.Errorf("unknown run mode: %s", runMode)
+	}
+}
+
+// shouldAskDeleteOldProgress determines if we should ask the "Delete old progress" question
+// Returns true only when we're reusing an existing folder that might have old progress
+func (hcpo *HumanControlledTodoPlannerOrchestrator) shouldAskDeleteOldProgress(ctx context.Context, workspacePath, runMode string) bool {
+	_, shouldClean, err := hcpo.determineRunFolderForCleanup(ctx, workspacePath, runMode)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to read step_config.json: %v (using defaults for all steps)", err)
-		stepConfigs = &StepConfigFile{Steps: []StepConfig{}}
+		hcpo.GetLogger().Warnf("⚠️ Failed to determine run folder for cleanup check: %v, defaulting to ask question", err)
+		return true // Default to asking if we can't determine
+	}
+	return shouldClean
+}
+
+// cleanupExecutionArtifactsForFreshStart cleans execution and validation artifacts based on run mode
+// This handles both new runs folder structure and old structure for backward compatibility
+func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsForFreshStart(ctx context.Context, workspacePath, runMode string) error {
+	hcpo.GetLogger().Infof("🧹 Starting cleanup of execution artifacts for fresh start (run_mode: %s)", runMode)
+
+	// Determine which run folder will be used (if any)
+	runFolderName, shouldCleanSpecificFolder, err := hcpo.determineRunFolderForCleanup(ctx, workspacePath, runMode)
+	if err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to determine run folder for cleanup: %v, will only clean old structure", err)
+		shouldCleanSpecificFolder = false
 	}
 
-	// Match configs by step index (0-based)
-	matchedConfigs := MatchStepConfigs(planSteps, stepConfigs)
-	hcpo.GetLogger().Infof("📋 Matched %d/%d step configs from step_config.json", len(matchedConfigs), len(planSteps))
+	// Clean specific run folder if we're reusing it
+	if shouldCleanSpecificFolder && runFolderName != "" {
+		hcpo.GetLogger().Infof("📁 Cleaning specific run folder: %s", runFolderName)
+		runFolderPath := fmt.Sprintf("%s/runs/%s", workspacePath, runFolderName)
 
-	todoSteps := make([]TodoStep, len(planSteps))
-	for i, step := range planSteps {
-		// Get matched config for this step (may be nil if no match)
-		var agentConfigs *AgentConfigs
-		if config, found := matchedConfigs[i]; found {
-			agentConfigs = config
+		// Clean execution directory in run folder
+		executionDir := fmt.Sprintf("%s/execution", runFolderPath)
+		if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory in run folder: %w", err)
+		} else {
+			hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory in run folder: %s", executionDir)
 		}
 
-		// Validation is required for loop steps to check loop conditions
-		// Ensure validation is not disabled for loop steps
-		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation {
-			hcpo.GetLogger().Warnf("⚠️ Step '%s' is a loop step but has validation disabled - enabling validation (required for loop condition checks)", step.Title)
-			// Create a copy of configs with validation enabled
-			enabledConfigs := *agentConfigs
-			enabledConfigs.DisableValidation = false
-			agentConfigs = &enabledConfigs
+		// Clean validation directory in run folder
+		validationDir := fmt.Sprintf("%s/validation", runFolderPath)
+		if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory in run folder: %w", err)
+		} else {
+			hcpo.GetLogger().Infof("🗑️ Cleaned up validation directory in run folder: %s", validationDir)
 		}
-
-		// Convert FlexibleContextOutput to string for TodoStep
-		todoSteps[i] = TodoStep{
-			Title:               step.Title,
-			Description:         step.Description,
-			SuccessCriteria:     step.SuccessCriteria,
-			ContextDependencies: step.ContextDependencies,
-			ContextOutput:       step.ContextOutput.String(), // Convert FlexibleContextOutput to string
-			HasLoop:             step.HasLoop,
-			LoopCondition:       step.LoopCondition,
-			MaxIterations:       step.MaxIterations,
-			LoopDescription:     step.LoopDescription,
-			AgentConfigs:        agentConfigs, // Merged from step_config.json (validation enforced for loops)
-		}
+	} else {
+		hcpo.GetLogger().Infof("📁 No specific run folder to clean (will create new folder or use new structure)")
 	}
-	return todoSteps
+
+	// Always clean old structure for backward compatibility
+	hcpo.GetLogger().Infof("🧹 Cleaning old structure for backward compatibility")
+
+	// Clean old execution directory
+	oldExecutionDir := fmt.Sprintf("%s/execution", workspacePath)
+	if err := hcpo.CleanupDirectory(ctx, oldExecutionDir, "execution"); err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup old execution directory: %w", err)
+	} else {
+		hcpo.GetLogger().Infof("🗑️ Cleaned up old execution directory: %s", oldExecutionDir)
+	}
+
+	// Clean old validation directory
+	oldValidationDir := fmt.Sprintf("%s/validation", workspacePath)
+	if err := hcpo.CleanupDirectory(ctx, oldValidationDir, "validation"); err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup old validation directory: %w", err)
+	} else {
+		hcpo.GetLogger().Infof("🗑️ Cleaned up old validation directory: %s", oldValidationDir)
+	}
+
+	hcpo.GetLogger().Infof("✅ Completed cleanup of execution artifacts for fresh start")
+	return nil
 }
 
 // runExecutionPhase executes the plan steps one by one
@@ -1374,6 +1178,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	// Learning detail level is now configured per-step via AgentConfigs
 	// Each step can specify its own learning detail level, defaults to "general" if not set
 	hcpo.GetLogger().Infof("📝 Using per-step learning detail level configuration")
+
+	// Run folder should already be resolved early (after plan approval)
+	if hcpo.selectedRunFolder == "" {
+		return nil, fmt.Errorf("run folder not resolved - this should have been set after plan approval")
+	}
+	hcpo.GetLogger().Infof("📁 Using resolved run folder: %s", hcpo.selectedRunFolder)
 
 	// Track human feedback across all steps for continuous improvement
 	var humanFeedbackHistory []string
@@ -1427,8 +1237,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 			// Prepare template variables for this specific step with individual fields
 			// RESOLVE VARIABLES: Replace {{VARS}} with actual values for execution
-			// Execution agent workspace path is the execution subdirectory (folder guard validates against this)
-			executionWorkspacePath := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+			// Execution agent workspace path includes run folder: workspacePath/runs/{selectedRunFolder}/execution
+			runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+			executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 			learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
 			templateVars := map[string]string{
 				"StepTitle":           hcpo.resolveVariables(step.Title),
@@ -1663,12 +1474,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 						}
 
 						// Prepare validation template variables with individual fields
+						// Use run folder path if available
+						var validationWorkspacePath string
+						if hcpo.selectedRunFolder != "" {
+							validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+						} else {
+							validationWorkspacePath = hcpo.GetWorkspacePath()
+						}
 						validationTemplateVars := map[string]string{
 							"StepTitle":           step.Title,
 							"StepDescription":     step.Description,
 							"StepSuccessCriteria": step.SuccessCriteria,
 							"StepContextOutput":   step.ContextOutput,
-							"WorkspacePath":       hcpo.GetWorkspacePath(),
+							"WorkspacePath":       validationWorkspacePath,
 							"ExecutionHistory":    shared.FormatConversationHistory(executionConversationHistory),
 						}
 
@@ -2008,273 +1826,6 @@ func max(slice []int) int {
 	return maxVal
 }
 
-// runVariableExtractionPhase extracts variables from objective (with optional human feedback and existing variables for update mode)
-// Returns: (manifest, templatedObjective, updatedConversationHistory, error)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runVariableExtractionPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent, existingVariables *VariablesManifest) (*VariablesManifest, string, []llmtypes.MessageContent, error) {
-	if existingVariables != nil {
-		hcpo.GetLogger().Infof("🔍 Starting variable extraction in UPDATE mode (attempt %d)", iteration)
-	} else {
-		hcpo.GetLogger().Infof("🔍 Starting variable extraction from objective (attempt %d)", iteration)
-	}
-
-	// Create variable extraction agent
-	extractionAgent, err := hcpo.createVariableExtractionAgent(ctx)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create variable extraction agent: %w", err)
-	}
-
-	// Prepare template variables
-	extractionTemplateVars := map[string]string{
-		"Objective":     hcpo.GetObjective(),
-		"WorkspacePath": hcpo.GetWorkspacePath(),
-	}
-
-	// Add existing variables JSON if in update mode (similar to planning agent's ExistingPlanJSON)
-	if existingVariables != nil {
-		existingVariablesJSON, err := json.MarshalIndent(existingVariables, "", "  ")
-		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to marshal existing variables to JSON: %v", err)
-		} else {
-			extractionTemplateVars["ExistingVariablesJSON"] = string(existingVariablesJSON)
-			hcpo.GetLogger().Infof("✅ Passing existing variables contents in template (UPDATE mode)")
-		}
-	}
-
-	// Determine user message based on whether this is first attempt or revision
-	// - For first attempt: Use "Extract variables..." instruction
-	// - For revisions: Use human feedback if provided, otherwise use instruction
-	var userMessage string
-	if humanFeedback != "" && strings.TrimSpace(humanFeedback) != "" {
-		// Revision attempt: Use human feedback as user message
-		userMessage = humanFeedback
-		hcpo.GetLogger().Infof("📝 Using human feedback as user message for variable extraction (attempt %d)", iteration)
-	} else {
-		// First attempt: Use static instruction
-		userMessage = "Extract variables from the objective and call submit_variable_extraction_response tool with the structured output."
-		hcpo.GetLogger().Infof("📝 Using default instruction for variable extraction (attempt %d)", iteration)
-	}
-
-	// Execute variable extraction using structured output via tool
-	extractionAgentTyped, ok := extractionAgent.(*VariableExtractionAgent)
-	if !ok {
-		return nil, "", nil, fmt.Errorf("failed to cast variable extraction agent to correct type")
-	}
-
-	manifest, updatedHistory, err := extractionAgentTyped.ExecuteStructured(ctx, extractionTemplateVars, conversationHistory, userMessage)
-	if err != nil {
-		// Check if this is a non-structured response error (text response instead of structured output)
-		if agents.IsNonStructuredResponseError(err) {
-			var nonStructuredErr *agents.NonStructuredResponseError
-			if errors.As(err, &nonStructuredErr) {
-				// Display the text response to the user and request feedback
-				hcpo.GetLogger().Infof("📝 Variable extraction agent returned conversational text instead of structured output. Displaying to user for feedback.")
-
-				// Generate unique request ID
-				requestID := fmt.Sprintf("variable_extraction_text_response_%d_%d", iteration, time.Now().UnixNano())
-
-				// Display the text response and request feedback
-				approved, feedback, feedbackErr := hcpo.RequestHumanFeedback(
-					ctx,
-					requestID,
-					"The variable extraction agent provided the following response instead of a structured output. Please provide feedback to help it generate a proper structured response:",
-					nonStructuredErr.TextResponse,
-					hcpo.getSessionID(),
-					hcpo.getWorkflowID(),
-				)
-
-				if feedbackErr != nil {
-					return nil, "", nil, fmt.Errorf("failed to request human feedback for variable extraction text response: %w", feedbackErr)
-				}
-
-				// If user approved (clicked Approve button), treat as no feedback and continue
-				// Otherwise, use the feedback for next attempt
-				if approved {
-					hcpo.GetLogger().Infof("✅ User approved variable extraction text response, but no structured output was generated. This is unexpected - returning error.")
-					return nil, "", nil, fmt.Errorf("variable extraction agent returned text response but user approved without providing feedback to generate structured output")
-				}
-
-				// User provided feedback - return a special error that the loop can detect and handle
-				// Use a specific error prefix that the loop will recognize
-				// The updated history from the agent's response is included so conversation continues properly
-				feedbackError := fmt.Errorf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", feedback)
-				hcpo.GetLogger().Infof("🔄 [DEBUG] Returning feedback error from runVariableExtractionPhase: %s", feedbackError.Error())
-				return nil, "", nonStructuredErr.UpdatedHistory, feedbackError
-			}
-		}
-		// For other errors, return as-is
-		return nil, "", nil, fmt.Errorf("variable extraction failed: %w", err)
-	}
-
-	// Store manifest in orchestrator for future use
-	hcpo.variablesManifest = manifest
-	hcpo.templatedObjective = manifest.Objective
-
-	// Save to file for persistence and debugging (optional but useful)
-	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
-	variablesJSON, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to marshal variables manifest to JSON: %v (continuing anyway)", err)
-	} else {
-		if err := hcpo.WriteWorkspaceFile(ctx, variablesPath, string(variablesJSON)); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to save variables.json to file: %v (continuing anyway)", err)
-		} else {
-			hcpo.GetLogger().Infof("💾 Saved variables.json to %s for persistence", variablesPath)
-		}
-	}
-
-	hcpo.GetLogger().Infof("✅ Extracted %d variables from objective (conversation has %d messages)", len(manifest.Variables), len(updatedHistory))
-	return manifest, manifest.Objective, updatedHistory, nil
-}
-
-// requestVariableApproval requests human approval for extracted variables
-func (hcpo *HumanControlledTodoPlannerOrchestrator) requestVariableApproval(ctx context.Context, manifest *VariablesManifest, revisionAttempt int) (bool, string, error) {
-	hcpo.GetLogger().Infof("⏸️ Requesting human approval for extracted variables (attempt %d)", revisionAttempt)
-
-	// Format variables for display
-	var variablesSummary strings.Builder
-	variablesSummary.WriteString(fmt.Sprintf("Extracted %d variables from objective:\n\n", len(manifest.Variables)))
-
-	for _, variable := range manifest.Variables {
-		variablesSummary.WriteString(fmt.Sprintf("- **{{%s}}**: %s\n", variable.Name, variable.Description))
-		variablesSummary.WriteString(fmt.Sprintf("  - Value: %s\n", variable.Value))
-		variablesSummary.WriteString("\n")
-	}
-
-	variablesSummary.WriteString(fmt.Sprintf("\n**Templated Objective**:\n%s", manifest.Objective))
-
-	// Generate unique request ID
-	requestID := fmt.Sprintf("variable_approval_%d_%d", revisionAttempt, time.Now().UnixNano())
-
-	// Use common human feedback function
-	return hcpo.RequestHumanFeedback(
-		ctx,
-		requestID,
-		fmt.Sprintf("Please review the extracted variables (attempt %d). Are these correct or do you want to provide feedback for refinement?", revisionAttempt),
-		variablesSummary.String(),
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
-}
-
-// createVariableExtractionAgent creates the variable extraction agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createVariableExtractionAgent(ctx context.Context) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from workspace (read-only), writes only to variables
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	variablesPath := fmt.Sprintf("%s/variables", baseWorkspacePath)
-
-	// Read from base workspace (to understand objective), write only to variables folder
-	// Note: Using base workspace as read path allows reading from root, but we restrict writes to variables/
-	readPaths := []string{baseWorkspacePath}
-	writePaths := []string{variablesPath}
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for variable extraction agent - Read paths: %v, Write paths: %v (variables automatically readable via writePaths)", readPaths, writePaths)
-
-	agent, err := hcpo.CreateAndSetupStandardAgentWithCustomServers(
-		ctx,
-		"variable-extraction-agent",
-		"variable_extraction",
-		0, // No step number
-		0, // No iteration
-		hcpo.GetMaxTurns(),
-		agents.OutputFormatStructured,
-		[]string{mcpclient.NoServers}, // No MCP servers needed - pure LLM extraction
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewVariableExtractionAgent(config, logger, tracer, eventBridge)
-		},
-		hcpo.WorkspaceTools,
-		hcpo.WorkspaceToolExecutors,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create variable extraction agent: %w", err)
-	}
-
-	return agent, nil
-}
-
-// loadVariableValues loads runtime variable values from variables.json
-// LoadVariableValues loads variable values from variables.json file
-// Public method that accepts BaseOrchestrator, workspacePath, and runWorkspacePath as parameters
-func LoadVariableValues(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath string) (map[string]string, error) {
-	// Try to load from run folder first (run-specific variables), then fallback to workspace default
-	runVariablesPath := fmt.Sprintf("%s/variables/variables.json", runWorkspacePath)
-	todoCreationVariablesPath := fmt.Sprintf("%s/todo_creation_human/variables/variables.json", workspacePath)
-
-	var variablesContent string
-	var err error
-
-	// Try run folder first
-	variablesContent, err = bo.ReadWorkspaceFile(ctx, runVariablesPath)
-	if err != nil {
-		// Fallback to todo_creation_human folder
-		variablesContent, err = bo.ReadWorkspaceFile(ctx, todoCreationVariablesPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read variables.json from both locations: %w", err)
-		}
-		bo.GetLogger().Infof("📁 Loaded variables from todo_creation_human folder: %s", todoCreationVariablesPath)
-	} else {
-		bo.GetLogger().Infof("📁 Loaded variables from runs folder: %s", runVariablesPath)
-	}
-
-	// Parse variables.json to get current values
-	var manifest VariablesManifest
-	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
-	}
-
-	// Load values into the variableValues map
-	variableValues := make(map[string]string)
-	for _, variable := range manifest.Variables {
-		variableValues[variable.Name] = variable.Value
-	}
-
-	bo.GetLogger().Infof("✅ Loaded variable values from variables.json: %d variables", len(variableValues))
-	return variableValues, nil
-}
-
-// loadVariableValues is a private wrapper that uses receiver fields (for backward compatibility)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) loadVariableValues(ctx context.Context) error {
-	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
-	if err != nil {
-		return err
-	}
-	hcpo.variableValues = variableValues
-	return nil
-}
-
-// ResolveVariables replaces {{VARIABLE}} placeholders with actual values
-// Public method that accepts variableValues as parameter
-func ResolveVariables(text string, variableValues map[string]string) string {
-	if variableValues == nil {
-		return text // No variables to resolve
-	}
-
-	resolved := text
-	for varName, varValue := range variableValues {
-		placeholder := fmt.Sprintf("{{%s}}", varName)
-		resolved = strings.ReplaceAll(resolved, placeholder, varValue)
-	}
-	return resolved
-}
-
-// resolveVariables is a private wrapper that uses receiver fields (for backward compatibility)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveVariables(text string) string {
-	return ResolveVariables(text, hcpo.variableValues)
-}
-
-// ResolveVariablesArray resolves variables in an array of strings
-// Public method that accepts variableValues as parameter
-func ResolveVariablesArray(arr []string, variableValues map[string]string) []string {
-	if variableValues == nil {
-		return arr // No variables to resolve
-	}
-
-	resolved := make([]string, len(arr))
-	for i, item := range arr {
-		resolved[i] = ResolveVariables(item, variableValues)
-	}
-	return resolved
-}
-
 // sanitizeTitleForAgentName sanitizes a step title for use in agent names
 // - Removes step number prefixes (e.g., "Step 4:", "Step 5 -", "Step 3.")
 // - Removes/replaces special characters (colons, slashes, etc.)
@@ -2313,53 +1864,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) sanitizeTitleForAgentName(ti
 	}
 
 	return sanitized
-}
-
-// FormatVariableNames formats the variables manifest into a human-readable string for agent prompts
-// Public method that accepts manifest as parameter
-func FormatVariableNames(manifest *VariablesManifest) string {
-	if manifest == nil || len(manifest.Variables) == 0 {
-		return "" // No variables to format
-	}
-
-	var builder strings.Builder
-	builder.WriteString("\n")
-	for _, variable := range manifest.Variables {
-		builder.WriteString(fmt.Sprintf("- {{%s}} - %s\n", variable.Name, variable.Description))
-	}
-	return builder.String()
-}
-
-// formatVariableNames is a private wrapper that uses receiver fields (for backward compatibility)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) formatVariableNames() string {
-	return FormatVariableNames(hcpo.variablesManifest)
-}
-
-// FormatVariableValues formats the variables manifest with their actual values for agent prompts
-// Public method that accepts manifest and variableValues as parameters
-func FormatVariableValues(manifest *VariablesManifest, variableValues map[string]string) string {
-	if manifest == nil || len(manifest.Variables) == 0 {
-		return "" // No variables to format
-	}
-
-	var builder strings.Builder
-	builder.WriteString("\n")
-	for _, variable := range manifest.Variables {
-		// Get the actual resolved value from variableValues map if available
-		actualValue := variable.Value
-		if variableValues != nil {
-			if resolvedValue, exists := variableValues[variable.Name]; exists {
-				actualValue = resolvedValue
-			}
-		}
-		builder.WriteString(fmt.Sprintf("- {{%s}} = %s - %s\n", variable.Name, actualValue, variable.Description))
-	}
-	return builder.String()
-}
-
-// formatVariableValues is a private wrapper that uses receiver fields (for backward compatibility)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) formatVariableValues() string {
-	return FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues)
 }
 
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
@@ -2611,47 +2115,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestHumanFeedback(ctx con
 	)
 }
 
-// Agent creation methods - reuse from base orchestrator
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from learnings (read-only) and planning (via writePaths), writes only to planning
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
-	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
-
-	// Only specify learnings in readPaths - planning is automatically readable since it's in writePaths
-	readPaths := []string{learningsPath}
-	writePaths := []string{planningPath}
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths)
-
-	// Use CreateAndSetupStandardAgentWithCustomServers instead of CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt
-	// because system prompt is passed directly to ExecuteStructuredWithInputProcessor() in planning_agent.go
-	agent, err := hcpo.CreateAndSetupStandardAgentWithCustomServers(
-		ctx,
-		"human-controlled-planning-agent",
-		phase,
-		step,
-		iteration,
-		hcpo.GetMaxTurns(),
-		agents.OutputFormatStructured,
-		[]string{mcpclient.NoServers}, // No MCP servers needed - pure LLM planning agent
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewHumanControlledTodoPlannerPlanningAgent(config, logger, tracer, eventBridge)
-		},
-		hcpo.WorkspaceTools,
-		hcpo.WorkspaceToolExecutors,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create planning agent: %w", err)
-	}
-
-	return agent, nil
-}
-
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from learnings (read-only) and execution (via writePaths), writes only to execution
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	executionWorkspacePath := fmt.Sprintf("%s/execution", baseWorkspacePath)
+	// Use run folder if available, otherwise use base workspace (backward compatibility)
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 
 	// Only specify learnings in readPaths - execution is automatically readable since it's in writePaths
@@ -2798,8 +2272,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionAgent(ctx con
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from execution (read-only) and validation (via writePaths), writes only to validation
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	executionPath := fmt.Sprintf("%s/execution", baseWorkspacePath)
-	validationPath := fmt.Sprintf("%s/validation", baseWorkspacePath)
+	// Use run folder if available, otherwise use base workspace (backward compatibility)
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	validationPath := fmt.Sprintf("%s/validation", runWorkspacePath)
 
 	// Only specify execution in readPaths - validation is automatically readable since it's in writePaths
 	readPaths := []string{executionPath}
@@ -3220,48 +2701,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 	return agent, nil
 }
 
-// EmitTodoStepsExtractedEvent emits an event when todo steps are extracted from a plan
-// Public method that accepts BaseOrchestrator and other parameters
-func EmitTodoStepsExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrchestrator, extractedSteps []TodoStep, planSource, extractionMethod, runFolder, workspacePath string) {
-	if bo.GetContextAwareBridge() == nil {
-		return
-	}
-
-	// Create event data
-	eventData := &TodoStepsExtractedEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		TotalStepsExtracted: len(extractedSteps),
-		ExtractedSteps:      extractedSteps,
-		ExtractionMethod:    extractionMethod,
-		PlanSource:          planSource,
-		WorkspacePath:       workspacePath,
-		RunFolder:           runFolder,
-	}
-
-	// Create unified event wrapper
-	unifiedEvent := &events.AgentEvent{
-		Type:      events.TodoStepsExtracted,
-		Timestamp: time.Now(),
-		Data:      eventData,
-	}
-
-	// Emit through the context-aware bridge
-	bridge := bo.GetContextAwareBridge()
-	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %w", err)
-	} else {
-		bo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
-	}
-}
-
-// emitTodoStepsExtractedEvent is a private wrapper that uses receiver fields (for backward compatibility)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []TodoStep, planSource string) {
-	// Use default extraction method and workspace path from orchestrator
-	EmitTodoStepsExtractedEvent(ctx, hcpo.BaseOrchestrator, extractedSteps, planSource, "structured_breakdown_agent", "", hcpo.GetWorkspacePath())
-}
-
 // Execute implements the Orchestrator interface
 func (hcpo *HumanControlledTodoPlannerOrchestrator) Execute(ctx context.Context, objective string, workspacePath string, options map[string]interface{}) (string, error) {
 	// Validate that no options are provided since this orchestrator doesn't use them
@@ -3329,113 +2768,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) IsSkipHumanInput() bool {
 	return hcpo.skipHumanInput
 }
 
-// checkExistingPlan checks if a plan.json file already exists in the workspace and returns the parsed plan if found
-// Uses the generic ReadWorkspaceFile function from base orchestrator
-func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingPlan(ctx context.Context, planPath string) (bool, *PlanningResponse, error) {
-	hcpo.GetLogger().Infof("🔍 Checking for existing plan at %s", planPath)
-
-	// Use the generic ReadWorkspaceFile function from base orchestrator
-	planContent, err := hcpo.ReadWorkspaceFile(ctx, planPath)
-	if err != nil {
-		// Check if it's a "file not found" error vs other errors
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Infof("📋 No existing plan found: %v", err)
-			return false, nil, nil
-		}
-		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
-	}
-
-	// Parse JSON content to PlanningResponse
-	var planResponse PlanningResponse
-	if err := json.Unmarshal([]byte(planContent), &planResponse); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to parse existing plan.json: %v", err)
-		return false, nil, fmt.Errorf("failed to parse plan.json: %w", err)
-	}
-
-	hcpo.GetLogger().Infof("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps))
-	return true, &planResponse, nil
-}
-
-// checkExistingVariables checks if variables.json already exists and loads it
-func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingVariables(ctx context.Context, variablesPath string) (bool, *VariablesManifest, error) {
-	hcpo.GetLogger().Infof("🔍 Checking for existing variables at %s", variablesPath)
-
-	// Try to read variables.json
-	variablesContent, err := hcpo.ReadWorkspaceFile(ctx, variablesPath)
-	if err != nil {
-		// Check if it's a "file not found" error
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Infof("📋 No existing variables found: %w", err)
-			return false, nil, nil
-		}
-		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing variables: %w", err)
-	}
-
-	// Parse the existing variables manifest
-	var manifest VariablesManifest
-	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to parse existing variables.json: %w", err)
-		return false, nil, fmt.Errorf("failed to parse variables.json: %w", err)
-	}
-
-	hcpo.GetLogger().Infof("✅ Found existing variables.json with %d variables", len(manifest.Variables))
-	return true, &manifest, nil
-}
-
-// cleanupExistingPlanArtifacts deletes existing plan.json, steps_done.json, and all files in learnings/, execution/, and validation/ directories
-// This is called when user chooses to create a new plan instead of using existing one
-func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts(ctx context.Context, workspacePath string) error {
-	hcpo.GetLogger().Infof("🧹 Starting cleanup of existing plan artifacts")
-
-	basePath := fmt.Sprintf("%s/todo_creation_human", workspacePath)
-
-	// 1. Delete plan.json file
-	planJSONPath := fmt.Sprintf("%s/planning/plan.json", basePath)
-	if err := hcpo.DeleteWorkspaceFile(ctx, planJSONPath); err != nil {
-		// Ignore "file not found" errors, but log others
-		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Warnf("⚠️ Failed to delete plan.json: %w", err)
-		}
-	} else {
-		hcpo.GetLogger().Infof("🗑️ Deleted plan.json: %s", planJSONPath)
-	}
-
-	// 1.5. Delete plan_learnings.json cache (since plan structure will change)
-	planLearningsPath := fmt.Sprintf("%s/planning/plan_learnings.json", basePath)
-	if err := hcpo.DeleteWorkspaceFile(ctx, planLearningsPath); err != nil {
-		// Ignore "file not found" errors, but log others
-		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Warnf("⚠️ Failed to delete plan_learnings.json: %w", err)
-		}
-	} else {
-		hcpo.GetLogger().Infof("🗑️ Deleted plan_learnings.json: %s", planLearningsPath)
-	}
-
-	// 2. Delete all files in validation/ directory
-	validationDir := fmt.Sprintf("%s/validation", basePath)
-	if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory: %w", err)
-	}
-
-	// 3. Note: learnings/ folder is preserved - deleted manually only
-
-	// 4. Delete all files in execution/ directory
-	executionDir := fmt.Sprintf("%s/execution", basePath)
-	if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
-	}
-
-	// 5. Delete steps_done.json progress file
-	if err := hcpo.deleteStepProgress(ctx); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %w", err)
-	}
-
-	hcpo.GetLogger().Infof("✅ Cleanup of existing plan artifacts completed")
-	return nil
-}
-
 // formatValidationResponseForTemplate formats validation response data for inclusion in template variables
 // This makes validation output available to the execution agent via ValidationFeedback template variable
 func (hcpo *HumanControlledTodoPlannerOrchestrator) formatValidationResponseForTemplate(validationResponse *ValidationResponse, context string) string {
@@ -3482,25 +2814,3 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatValidationResponseForT
 }
 
 // conversation history formatting moved to shared.FormatConversationHistory
-
-// requestPlanApproval requests human approval for the generated plan
-// Returns: (approved bool, feedback string, error)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) requestPlanApproval(
-	ctx context.Context,
-	revisionAttempt int,
-) (bool, string, error) {
-	hcpo.GetLogger().Infof("⏸️ Requesting human approval for plan (attempt %d)", revisionAttempt)
-
-	// Generate unique request ID
-	requestID := fmt.Sprintf("plan_approval_%d_%d", time.Now().UnixNano(), revisionAttempt)
-
-	// Use common human feedback function
-	return hcpo.RequestHumanFeedback(
-		ctx,
-		requestID,
-		"Please review the plan and provide approval or feedback",
-		"", // No additional context for plan approval
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
-}

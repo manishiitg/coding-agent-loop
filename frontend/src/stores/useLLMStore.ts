@@ -280,8 +280,9 @@ export const useLLMStore = create<LLMState>()(
         // API key testing
         testAPIKey: async (provider, apiKey, modelId?: string) => {
           try {
-            // Only check for empty API key for non-Bedrock providers
-            if (provider !== 'bedrock' && !apiKey.trim()) {
+            // Only check for empty API key for providers that require it (not bedrock, not vertex)
+            // Vertex supports OAuth fallback, so API key is optional
+            if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
               return { valid: false, error: 'API key is empty' }
             }
             
@@ -289,9 +290,14 @@ export const useLLMStore = create<LLMState>()(
               provider
             }
             
-            // Only include api_key for non-Bedrock providers
+            // Only include api_key for providers that need it (not bedrock, optional for vertex)
             if (provider !== 'bedrock') {
+              // For vertex, only include api_key if provided (OAuth fallback will be used if not)
+              if (provider === 'vertex' && apiKey.trim()) {
+                request.api_key = apiKey
+              } else if (provider !== 'vertex') {
               request.api_key = apiKey
+              }
             }
             
             // Add model ID for all providers when validating

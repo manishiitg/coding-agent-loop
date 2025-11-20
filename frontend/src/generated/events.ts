@@ -68,6 +68,7 @@ export interface ToolCallStartEvent {
   tool_name?: string;
   tool_params?: ToolParams;
   server_name?: string;
+  auto_expand?: boolean;
 }
 export interface ToolParams {
   arguments?: string;
@@ -91,6 +92,7 @@ export interface ToolCallEndEvent {
   result?: string;
   duration?: number;
   server_name?: string;
+  auto_expand?: boolean;
 }
 export interface ToolCallErrorEvent {
   timestamp?: string;

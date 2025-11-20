@@ -267,6 +267,7 @@ type ToolCallStartEvent struct {
 	ToolName   string     `json:"tool_name"`
 	ToolParams ToolParams `json:"tool_params"`
 	ServerName string     `json:"server_name"`
+	AutoExpand bool       `json:"auto_expand"` // If true, frontend should expand content by default
 }
 
 func (e *ToolCallStartEvent) GetEventType() EventType {
@@ -286,6 +287,7 @@ type ToolCallEndEvent struct {
 	Result     string        `json:"result"`
 	Duration   time.Duration `json:"duration"`
 	ServerName string        `json:"server_name"`
+	AutoExpand bool          `json:"auto_expand"` // If true, frontend should expand content by default
 }
 
 func (e *ToolCallEndEvent) GetEventType() EventType {

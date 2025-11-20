@@ -38,14 +38,6 @@ export const getWorkflowPhaseById = async (id: string): Promise<APIWorkflowPhase
   return phases.find(phase => phase.id === id)
 }
 
-// Legacy constants for backward compatibility (will be deprecated)
-export const WORKFLOW_PHASES = {
-  PRE_VERIFICATION: 'pre-verification',
-  POST_VERIFICATION: 'post-verification',
-  POST_VERIFICATION_TODO_REFINEMENT: 'post-verification-todo-refinement'
-} as const
-
-
 // Workflow status messages
 export const WORKFLOW_MESSAGES = {
   CHECKING_STATUS: 'Checking workflow status for preset:',
@@ -58,6 +50,17 @@ export const WORKFLOW_MESSAGES = {
   CLEARED_STATE: 'Cleared all workflow state'
 } as const
 
-// Type definitions based on constants
-export type WorkflowPhase = typeof WORKFLOW_PHASES[keyof typeof WORKFLOW_PHASES]
-export type WorkflowStatus = typeof WORKFLOW_PHASES[keyof typeof WORKFLOW_PHASES] // Same as WorkflowPhase
+// Helper to get the first phase ID from backend (used as default)
+export const getDefaultWorkflowPhase = async (): Promise<string> => {
+  try {
+    const phases = await getWorkflowPhases()
+    return phases.length > 0 ? phases[0].id : 'variable-extraction'
+  } catch (error) {
+    console.error('[WORKFLOW] Failed to get default phase:', error)
+    return 'variable-extraction' // Fallback
+  }
+}
+
+// Type definitions - workflow phase is now a string (dynamic from backend)
+export type WorkflowPhase = string
+export type WorkflowStatus = string

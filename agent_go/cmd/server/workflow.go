@@ -221,16 +221,23 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 	}
 
 	// Return success response
+	workflowResponse := map[string]interface{}{
+		"id":              workflow.ID,
+		"preset_query_id": workflow.PresetQueryID,
+		"workflow_status": workflow.WorkflowStatus,
+		"created_at":      workflow.CreatedAt,
+		"updated_at":      workflow.UpdatedAt,
+	}
+
+	// Include selected_options if present
+	if workflow.SelectedOptions != nil {
+		workflowResponse["selected_options"] = workflow.SelectedOptions
+	}
+
 	response := map[string]interface{}{
-		"success": true,
-		"workflow": map[string]interface{}{
-			"id":              workflow.ID,
-			"preset_query_id": workflow.PresetQueryID,
-			"workflow_status": workflow.WorkflowStatus,
-			"created_at":      workflow.CreatedAt,
-			"updated_at":      workflow.UpdatedAt,
-		},
-		"message": "Workflow updated successfully",
+		"success":  true,
+		"workflow": workflowResponse,
+		"message":  "Workflow updated successfully",
 	}
 
 	w.Header().Set("Content-Type", "application/json")

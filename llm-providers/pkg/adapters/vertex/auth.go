@@ -60,24 +60,7 @@ func GetAccessToken(ctx context.Context, logger interfaces.Logger) (string, erro
 		logger.Debugf("gcloud auth failed: %v", err)
 	}
 
-	// Method 2: Try service account JSON
-	token, err = getServiceAccountToken(ctx, logger)
-	if err == nil && token != "" {
-		// Cache the token (service account tokens typically expire in 1 hour)
-		globalTokenCache.mu.Lock()
-		globalTokenCache.token = token
-		globalTokenCache.expiresAt = time.Now().Add(55 * time.Minute)
-		globalTokenCache.mu.Unlock()
-		if logger != nil {
-			logger.Infof("✅ Authenticated using service account")
-		}
-		return token, nil
-	}
-	if logger != nil {
-		logger.Debugf("Service account auth failed: %v", err)
-	}
-
-	// Method 3: Try Application Default Credentials
+	// Method 2: Try Application Default Credentials
 	token, err = getADCToken(ctx, logger)
 	if err == nil && token != "" {
 		// Cache the token

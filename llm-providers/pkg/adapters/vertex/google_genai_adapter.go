@@ -13,6 +13,7 @@ import (
 
 	"llm-providers/interfaces"
 	"llm-providers/llmtypes"
+	"llm-providers/pkg/utils"
 
 	"google.golang.org/genai"
 )
@@ -58,7 +59,77 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 
 	// Convert messages from llmtypes format to genai format
 	genaiContents := make([]*genai.Content, 0, len(messages))
-	for _, msg := range messages {
+
+	// Track function calls from previous AI message to ensure function responses match
+	var previousFunctionCallIDs []string
+
+	if g.logger != nil {
+		g.logger.Debugf("🔍 [GEMINI] Processing %d messages for conversion", len(messages))
+	}
+
+	// CRITICAL FIX: Combine consecutive Tool messages that follow an AI message with function calls
+	// Gemini requires ALL function responses to be in a SINGLE message, matching the order of function calls
+	combinedMessages := make([]llmtypes.MessageContent, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+
+		// If this is a Tool message and the previous message (in original array) was an AI message with function calls
+		if msg.Role == llmtypes.ChatMessageTypeTool && i > 0 {
+			prevMsg := messages[i-1]
+			if prevMsg.Role == llmtypes.ChatMessageTypeAI {
+				// Check if previous message has function calls
+				hasFunctionCalls := false
+				for _, part := range prevMsg.Parts {
+					if _, ok := part.(llmtypes.ToolCall); ok {
+						hasFunctionCalls = true
+						break
+					}
+				}
+
+				// If previous message has function calls, combine this and following Tool messages
+				if hasFunctionCalls {
+					combinedParts := make([]llmtypes.ContentPart, 0)
+
+					// Collect all ToolCallResponse parts from consecutive Tool messages
+					j := i
+					for j < len(messages) && messages[j].Role == llmtypes.ChatMessageTypeTool {
+						for _, part := range messages[j].Parts {
+							if _, ok := part.(llmtypes.ToolCallResponse); ok {
+								combinedParts = append(combinedParts, part)
+							}
+						}
+						j++
+					}
+
+					// Create a single combined Tool message
+					if len(combinedParts) > 0 {
+						combinedMessages = append(combinedMessages, llmtypes.MessageContent{
+							Role:  llmtypes.ChatMessageTypeTool,
+							Parts: combinedParts,
+						})
+						if g.logger != nil {
+							g.logger.Debugf("🔍 [GEMINI] Combined %d Tool messages (indices %d-%d) into single message with %d responses",
+								j-i, i, j-1, len(combinedParts))
+						}
+						// Skip the individual Tool messages we just combined
+						i = j - 1
+						continue
+					}
+				}
+			}
+		}
+
+		// Add message as-is if not combined
+		combinedMessages = append(combinedMessages, msg)
+	}
+
+	// Use combined messages for processing
+	messages = combinedMessages
+	if g.logger != nil {
+		g.logger.Debugf("🔍 [GEMINI] After combining: %d messages (reduced from original)", len(messages))
+	}
+
+	for msgIdx, msg := range messages {
 		// 🔍 DETECTION & FIX: Check for mixed Text + ToolCall parts (can cause Gemini empty responses)
 		// If detected, split into separate messages automatically
 		hasText := false
@@ -141,8 +212,150 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 				}
 			}
 
+			// Track function calls from the tool-call-only message
+			if len(toolCallParts) > 0 {
+				previousFunctionCallIDs = nil // Reset
+				for _, tc := range toolCallParts {
+					if toolCall, ok := tc.(llmtypes.ToolCall); ok {
+						previousFunctionCallIDs = append(previousFunctionCallIDs, toolCall.ID)
+						if g.logger != nil {
+							g.logger.Debugf("🔍 [GEMINI] Message %d: Tracked function call ID: %s (name: %s)", msgIdx, toolCall.ID, toolCall.FunctionCall.Name)
+						}
+					}
+				}
+				if g.logger != nil {
+					g.logger.Debugf("🔍 [GEMINI] Message %d: Tracked %d function calls total", msgIdx, len(previousFunctionCallIDs))
+				}
+			}
+
 			// Skip processing the original mixed message
 			continue
+		}
+
+		// Check if this is a Tool message with function responses
+		// Gemini requires function responses to match previous function calls in count and order
+		if msg.Role == llmtypes.ChatMessageTypeTool {
+			// Extract function responses from this message
+			var functionResponses []llmtypes.ToolCallResponse
+			for _, part := range msg.Parts {
+				if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
+					functionResponses = append(functionResponses, toolResp)
+				}
+			}
+
+			if g.logger != nil {
+				g.logger.Debugf("🔍 [GEMINI] Message %d (Tool): Found %d function responses, previous function calls: %d",
+					msgIdx, len(functionResponses), len(previousFunctionCallIDs))
+				for i, resp := range functionResponses {
+					g.logger.Debugf("🔍 [GEMINI]   Response %d: ToolCallID=%s", i+1, resp.ToolCallID)
+				}
+				for i, callID := range previousFunctionCallIDs {
+					g.logger.Debugf("🔍 [GEMINI]   Expected call %d: ID=%s", i+1, callID)
+				}
+			}
+
+			// If we have previous function calls, ensure responses match exactly
+			// Gemini requires: number of function response parts = number of function call parts
+			if len(previousFunctionCallIDs) > 0 {
+				// Create a map of response IDs for quick lookup
+				responseMap := make(map[string]llmtypes.ToolCallResponse)
+				for _, resp := range functionResponses {
+					responseMap[resp.ToolCallID] = resp
+				}
+
+				// Reorder responses to match the exact order of function calls
+				// Only include responses that match a function call
+				orderedResponses := make([]llmtypes.ContentPart, 0, len(previousFunctionCallIDs))
+				missingCount := 0
+				for _, callID := range previousFunctionCallIDs {
+					if resp, found := responseMap[callID]; found {
+						orderedResponses = append(orderedResponses, resp)
+					} else {
+						// Missing response - Gemini requires exact match, so we need to handle this
+						missingCount++
+						if g.logger != nil {
+							g.logger.Errorf("⚠️ [GEMINI] Function response missing for call ID: %s (required for Gemini API)", callID)
+						}
+					}
+				}
+
+				// Log warnings for responses that don't match any call IDs
+				for _, resp := range functionResponses {
+					found := false
+					for _, callID := range previousFunctionCallIDs {
+						if resp.ToolCallID == callID {
+							found = true
+							break
+						}
+					}
+					if !found {
+						if g.logger != nil {
+							g.logger.Errorf("⚠️ [GEMINI] Function response with ID %s doesn't match any previous function call (will be skipped)", resp.ToolCallID)
+						}
+					}
+				}
+
+				// Gemini requires exact match - if we have missing responses, log error
+				if missingCount > 0 {
+					if g.logger != nil {
+						g.logger.Errorf("❌ [GEMINI] Function response count mismatch: expected %d responses, got %d. Missing %d responses. This will cause API error.",
+							len(previousFunctionCallIDs), len(orderedResponses), missingCount)
+					}
+				}
+
+				// Update message parts with ordered responses (only matching ones)
+				// Note: If responses don't match exactly, Gemini will return an error
+				// but we'll send what we have in the correct order
+				if len(orderedResponses) > 0 {
+					if g.logger != nil {
+						g.logger.Debugf("🔍 [GEMINI] Message %d: Reordered %d responses to match %d function calls",
+							msgIdx, len(orderedResponses), len(previousFunctionCallIDs))
+					}
+					msg.Parts = orderedResponses
+				} else {
+					// No matching responses - this will cause an error, but we'll let Gemini handle it
+					if g.logger != nil {
+						g.logger.Errorf("❌ [GEMINI] No matching function responses found for %d function calls", len(previousFunctionCallIDs))
+					}
+				}
+
+				// CRITICAL: Gemini requires EXACT match - if counts don't match, we must not send the message
+				if len(orderedResponses) != len(previousFunctionCallIDs) {
+					if g.logger != nil {
+						g.logger.Errorf("❌ [GEMINI] CRITICAL: Function response count mismatch - expected %d, got %d. Skipping this message to avoid API error.",
+							len(previousFunctionCallIDs), len(orderedResponses))
+					}
+					// Skip this message entirely - don't add it to genaiContents
+					previousFunctionCallIDs = nil
+					continue
+				}
+			} else if len(functionResponses) > 0 {
+				// We have responses but no previous function calls tracked
+				if g.logger != nil {
+					g.logger.Errorf("⚠️ [GEMINI] Message %d: Found %d function responses but no previous function calls tracked",
+						msgIdx, len(functionResponses))
+				}
+			}
+
+			// Clear previous function calls after processing responses
+			previousFunctionCallIDs = nil
+		}
+
+		// Track function calls from AI messages for next iteration
+		if msg.Role == llmtypes.ChatMessageTypeAI {
+			previousFunctionCallIDs = nil // Reset
+			for _, part := range msg.Parts {
+				if toolCall, ok := part.(llmtypes.ToolCall); ok {
+					previousFunctionCallIDs = append(previousFunctionCallIDs, toolCall.ID)
+					if g.logger != nil {
+						g.logger.Debugf("🔍 [GEMINI] Message %d (AI): Tracked function call ID: %s (name: %s)",
+							msgIdx, toolCall.ID, toolCall.FunctionCall.Name)
+					}
+				}
+			}
+			if len(previousFunctionCallIDs) > 0 && g.logger != nil {
+				g.logger.Debugf("🔍 [GEMINI] Message %d (AI): Tracked %d function calls total", msgIdx, len(previousFunctionCallIDs))
+			}
 		}
 
 		// Normal processing for messages without mixed parts
@@ -193,8 +406,22 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 
 	// Convert tools if provided
 	if len(opts.Tools) > 0 {
-		genaiTools := convertTools(opts.Tools)
+		if g.logger != nil {
+			g.logger.Infof("🔍 [VERTEX] Converting %d tools to Gemini format", len(opts.Tools))
+			for i, tool := range opts.Tools {
+				if tool.Function != nil {
+					g.logger.Infof("🔍 [VERTEX] Tool %d: Name=%s, Description length=%d, HasParameters=%v",
+						i+1, tool.Function.Name, len(tool.Function.Description), tool.Function.Parameters != nil)
+				}
+			}
+		}
+		genaiTools := convertTools(opts.Tools, g.logger)
 		config.Tools = genaiTools
+		if g.logger != nil && genaiTools != nil && len(genaiTools) > 0 {
+			if len(genaiTools[0].FunctionDeclarations) > 0 {
+				g.logger.Infof("🔍 [VERTEX] Converted to %d function declarations in 1 Tool", len(genaiTools[0].FunctionDeclarations))
+			}
+		}
 
 		// Handle tool choice
 		if opts.ToolChoice != nil {
@@ -243,6 +470,8 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 			if hadMixedMessages {
 				g.logger.Debugf("⚠️ [REQUEST_ID: %s] ERROR occurred after detecting mixed TextContent+ToolCall messages - correlation check", requestID)
 			}
+			// Log the raw error first to capture exact API response
+			g.logger.Errorf("🔍 [REQUEST_ID: %s] [GEMINI/VERTEX] Raw error from GenAI SDK - Type: %T, Error: %v", requestID, err, err)
 			g.logErrorDetails(requestID, modelID, messages, config, opts, err, result)
 			g.logRawResponse(requestID, modelID, result, err)
 		}
@@ -346,47 +575,7 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 	}
 
 	// Extract token usage if available
-	if usage != nil {
-		inputTokens := int(usage.PromptTokenCount)
-		outputTokens := int(usage.CandidatesTokenCount)
-		var totalTokens int
-		if usage.TotalTokenCount > 0 {
-			totalTokens = int(usage.TotalTokenCount)
-		} else {
-			totalTokens = int(usage.PromptTokenCount + usage.CandidatesTokenCount)
-		}
-
-		genInfo := &llmtypes.GenerationInfo{
-			InputTokens:  &inputTokens,
-			OutputTokens: &outputTokens,
-			TotalTokens:  &totalTokens,
-		}
-
-		// Cache token information
-		if usage.CachedContentTokenCount > 0 {
-			cachedTokens := int(usage.CachedContentTokenCount)
-			genInfo.CachedContentTokens = &cachedTokens
-
-			// Calculate cache discount percentage (0.0 to 1.0)
-			if usage.PromptTokenCount > 0 {
-				cacheDiscount := float64(usage.CachedContentTokenCount) / float64(usage.PromptTokenCount)
-				genInfo.CacheDiscount = &cacheDiscount
-			}
-		}
-
-		// Additional token counts if available
-		if usage.ToolUsePromptTokenCount > 0 {
-			toolUseTokens := int(usage.ToolUsePromptTokenCount)
-			genInfo.ToolUsePromptTokens = &toolUseTokens
-		}
-
-		if usage.ThoughtsTokenCount > 0 {
-			thoughtsTokens := int(usage.ThoughtsTokenCount)
-			genInfo.ThoughtsTokens = &thoughtsTokens
-		}
-
-		choice.GenerationInfo = genInfo
-	}
+	choice.GenerationInfo = utils.ExtractGenerationInfoFromVertexUsage(usage)
 
 	return &llmtypes.ContentResponse{
 		Choices: []*llmtypes.ContentChoice{choice},
@@ -410,10 +599,29 @@ func convertRole(role string) string {
 }
 
 // convertTools converts llmtypes tools to genai tools
-func convertTools(llmTools []llmtypes.Tool) []*genai.Tool {
-	genaiTools := make([]*genai.Tool, 0, len(llmTools))
-	for _, tool := range llmTools {
+// IMPORTANT: Gemini API requires all function declarations to be in a single Tool
+// unless all tools are search tools. We combine all functions into one Tool.
+func convertTools(llmTools []llmtypes.Tool, logger interfaces.Logger) []*genai.Tool {
+	if len(llmTools) == 0 {
+		return nil
+	}
+
+	// Collect all function declarations
+	functionDeclarations := make([]*genai.FunctionDeclaration, 0, len(llmTools))
+
+	for i, tool := range llmTools {
 		if tool.Function == nil {
+			if logger != nil {
+				logger.Errorf("⚠️ [VERTEX] Tool %d has nil Function, skipping", i+1)
+			}
+			continue
+		}
+
+		// Validate function name (Gemini requires valid function names)
+		if tool.Function.Name == "" {
+			if logger != nil {
+				logger.Errorf("❌ [VERTEX] Tool %d has empty function name, skipping", i+1)
+			}
 			continue
 		}
 
@@ -449,18 +657,82 @@ func convertTools(llmTools []llmtypes.Tool) []*genai.Tool {
 					paramsMap[k] = v
 				}
 			}
+
+			// Validate schema before conversion
+			if logger != nil {
+				logger.Infof("🔍 [VERTEX] Validating schema for function %s", tool.Function.Name)
+				validateSchemaForGemini(paramsMap, tool.Function.Name, logger)
+			}
+
 			schema := convertJSONSchemaToSchema(paramsMap)
 			if schema != nil {
 				functionDef.Parameters = schema
+				if logger != nil {
+					logger.Infof("🔍 [VERTEX] Function %s: Schema converted successfully", tool.Function.Name)
+				}
+			} else {
+				if logger != nil {
+					logger.Errorf("⚠️ [VERTEX] Function %s: Schema conversion returned nil", tool.Function.Name)
+				}
+			}
+		} else {
+			if logger != nil {
+				logger.Infof("🔍 [VERTEX] Function %s: No parameters", tool.Function.Name)
 			}
 		}
 
-		genaiTools = append(genaiTools, &genai.Tool{
-			FunctionDeclarations: []*genai.FunctionDeclaration{functionDef},
-		})
+		functionDeclarations = append(functionDeclarations, functionDef)
+		if logger != nil {
+			logger.Infof("🔍 [VERTEX] Added function declaration %d: %s", len(functionDeclarations), tool.Function.Name)
+		}
 	}
 
-	return genaiTools
+	// Combine all function declarations into a single Tool
+	// This is required by Gemini API: multiple tools are only supported
+	// when they are all search tools, otherwise all functions must be in one Tool
+	if len(functionDeclarations) > 0 {
+		return []*genai.Tool{
+			{
+				FunctionDeclarations: functionDeclarations,
+			},
+		}
+	}
+
+	return nil
+}
+
+// validateSchemaForGemini validates JSON Schema for common issues that cause MALFORMED_FUNCTION_CALL
+func validateSchemaForGemini(schema map[string]interface{}, functionName string, logger interfaces.Logger) {
+	if schema == nil {
+		return
+	}
+
+	// Check for array types without items (required by Gemini)
+	if props, ok := schema["properties"].(map[string]interface{}); ok {
+		for propName, propValue := range props {
+			if propMap, ok := propValue.(map[string]interface{}); ok {
+				if propType, ok := propMap["type"].(string); ok && propType == "array" {
+					if _, hasItems := propMap["items"]; !hasItems {
+						logger.Errorf("❌ [VERTEX] Function %s: Property '%s' is array type but missing 'items' field - this will cause MALFORMED_FUNCTION_CALL", functionName, propName)
+					}
+				}
+				// Recursively check nested objects
+				if propType, ok := propMap["type"].(string); ok && propType == "object" {
+					if nestedProps, ok := propMap["properties"].(map[string]interface{}); ok {
+						validateSchemaForGemini(map[string]interface{}{"properties": nestedProps}, functionName+"."+propName, logger)
+					}
+				}
+			}
+		}
+	}
+
+	// Check for invalid type values
+	if schemaType, ok := schema["type"].(string); ok {
+		validTypes := map[string]bool{"object": true, "array": true, "string": true, "number": true, "integer": true, "boolean": true, "null": true}
+		if !validTypes[schemaType] {
+			logger.Errorf("⚠️ [VERTEX] Function %s: Schema has invalid type '%s'", functionName, schemaType)
+		}
+	}
 }
 
 // convertJSONSchemaToSchema converts a JSON Schema map to genai.Schema
@@ -583,27 +855,50 @@ func convertToolChoice(toolChoice interface{}) *genai.ToolConfig {
 // hadMixedMessages is used to check correlation with empty content errors
 func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Logger, hadMixedMessages bool) *llmtypes.ContentResponse {
 	if result == nil {
+		if logger != nil {
+			logger.Errorf("⚠️ [VERTEX] convertResponse received nil result")
+		}
 		return &llmtypes.ContentResponse{
 			Choices: []*llmtypes.ContentChoice{},
 		}
 	}
 
+	if logger != nil {
+		logger.Debugf("🔍 [VERTEX] convertResponse - Candidates count: %d, hadMixedMessages: %v", len(result.Candidates), hadMixedMessages)
+	}
+
 	choices := make([]*llmtypes.ContentChoice, 0, len(result.Candidates))
 
 	for i, candidate := range result.Candidates {
-		choice := &llmtypes.ContentChoice{}
+		if logger != nil {
+			logger.Debugf("🔍 [VERTEX] Processing candidate %d/%d", i+1, len(result.Candidates))
+		}
+
+		choice := &llmtypes.ContentChoice{
+			ToolCalls: []llmtypes.ToolCall{}, // Initialize as empty slice, not nil
+		}
 
 		// Extract text content and tool calls from parts
 		var textParts []string
 		var toolCalls []llmtypes.ToolCall
 
 		if candidate.Content != nil {
-			for _, part := range candidate.Content.Parts {
+			if logger != nil {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: Content is not nil, Parts count: %d", i, len(candidate.Content.Parts))
+			}
+
+			for j, part := range candidate.Content.Parts {
 				if part.Text != "" {
 					textParts = append(textParts, part.Text)
+					if logger != nil {
+						logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Found text content (length: %d)", i, j, len(part.Text))
+					}
 				}
 
 				if part.FunctionCall != nil {
+					if logger != nil {
+						logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Found FunctionCall - Name: %s", i, j, part.FunctionCall.Name)
+					}
 					// 🔧 FIX: Generate ToolCallID for FunctionCall
 					// Gemini's FunctionCall doesn't include an ID field, so we generate one.
 					// This ID is used later when creating ToolCallResponse to match
@@ -619,8 +914,15 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 						},
 					}
 					toolCalls = append(toolCalls, toolCall)
+					if logger != nil {
+						logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s", i, j, toolCall.ID, toolCall.FunctionCall.Name)
+					}
+				} else if logger != nil {
+					logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: No FunctionCall (Text: %q, Text length: %d)", i, j, part.Text, len(part.Text))
 				}
 			}
+		} else if logger != nil {
+			logger.Debugf("🔍 [VERTEX] Candidate %d: Content is nil", i)
 		}
 
 		// Combine text parts - use Text() helper if available
@@ -632,9 +934,17 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 				}
 				choice.Content += text
 			}
+			if logger != nil {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: Combined %d text parts into content (length: %d)", i, len(textParts), len(choice.Content))
+			}
 		} else if result.Text() != "" {
 			// Fallback to using result.Text() helper
 			choice.Content = result.Text()
+			if logger != nil {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: Used result.Text() fallback (length: %d)", i, len(choice.Content))
+			}
+		} else if logger != nil {
+			logger.Debugf("🔍 [VERTEX] Candidate %d: No text content found (textParts: %d, result.Text(): %q)", i, len(textParts), result.Text())
 		}
 
 		// 🆕 LOG EMPTY CONTENT WARNING - Detailed logging when content is empty
@@ -664,6 +974,12 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 				logger.Errorf("   ⚠️ FinishReason is MAX_TOKENS - Token limit reached, content may be truncated")
 			} else if finishReason == "RECITATION" {
 				logger.Errorf("   ⚠️ FinishReason is RECITATION - Content blocked due to recitation concerns")
+			} else if finishReason == "MALFORMED_FUNCTION_CALL" {
+				logger.Errorf("   ❌ FinishReason is MALFORMED_FUNCTION_CALL - This indicates a problem with function declarations:")
+				logger.Errorf("      - Missing 'items' field in array parameters (most common)")
+				logger.Errorf("      - Invalid schema structure")
+				logger.Errorf("      - Invalid function names or descriptions")
+				logger.Errorf("      - Check tool conversion logs above for validation errors")
 			}
 			// Note: SAFETY blocks typically return API errors, not empty content, so we don't check for SAFETY here
 			logger.Errorf("   result.Text() fallback: %q (length: %d)", result.Text(), len(result.Text()))
@@ -674,68 +990,59 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 		// Set tool calls if any
 		if len(toolCalls) > 0 {
 			choice.ToolCalls = toolCalls
+			if logger != nil {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: Set %d tool calls from candidate.Content.Parts", i, len(toolCalls))
+				for j, tc := range toolCalls {
+					logger.Debugf("🔍 [VERTEX] Candidate %d, ToolCall %d: ID=%s, Name=%s", i, j+1, tc.ID, tc.FunctionCall.Name)
+				}
+			}
 		} else {
 			// Also check result.FunctionCalls() helper
+			if logger != nil {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: No tool calls found in candidate.Content.Parts, checking result.FunctionCalls() fallback", i)
+			}
 			if funcCalls := result.FunctionCalls(); len(funcCalls) > 0 {
+				if logger != nil {
+					logger.Debugf("🔍 [VERTEX] Candidate %d: Found %d function calls via result.FunctionCalls() fallback", i, len(funcCalls))
+				}
 				toolCalls = make([]llmtypes.ToolCall, 0, len(funcCalls))
-				for _, fc := range funcCalls {
+				for k, fc := range funcCalls {
 					// 🔧 FIX: Generate ToolCallID for FunctionCall (same as above)
 					// This ensures consistent ID generation for all FunctionCalls
-					toolCalls = append(toolCalls, llmtypes.ToolCall{
+					toolCall := llmtypes.ToolCall{
 						ID:   generateToolCallID(),
 						Type: "function",
 						FunctionCall: &llmtypes.FunctionCall{
 							Name:      fc.Name,
 							Arguments: convertArgumentsToString(fc.Args),
 						},
-					})
+					}
+					toolCalls = append(toolCalls, toolCall)
+					if logger != nil {
+						logger.Debugf("🔍 [VERTEX] Candidate %d, Fallback FunctionCall %d: Created ToolCall - ID: %s, Name: %s", i, k+1, toolCall.ID, toolCall.FunctionCall.Name)
+					}
 				}
 				choice.ToolCalls = toolCalls
+				if logger != nil {
+					logger.Debugf("🔍 [VERTEX] Candidate %d: Set %d tool calls from result.FunctionCalls() fallback", i, len(toolCalls))
+				}
+			} else if logger != nil {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: No function calls found in result.FunctionCalls() fallback either", i)
+			}
+		}
+
+		// Final state logging for empty content cases
+		if choice.Content == "" && logger != nil {
+			logger.Debugf("🔍 [VERTEX] Candidate %d FINAL STATE - Content: empty, ToolCalls: %d", i, len(choice.ToolCalls))
+			if len(choice.ToolCalls) > 0 {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: This is a VALID tool call response (empty content but tool calls present)", i)
+			} else {
+				logger.Debugf("🔍 [VERTEX] Candidate %d: This is an INVALID response (empty content AND no tool calls)", i)
 			}
 		}
 
 		// Extract token usage if available
-		if result.UsageMetadata != nil {
-			inputTokens := int(result.UsageMetadata.PromptTokenCount)
-			outputTokens := int(result.UsageMetadata.CandidatesTokenCount)
-			var totalTokens int
-			if result.UsageMetadata.TotalTokenCount > 0 {
-				totalTokens = int(result.UsageMetadata.TotalTokenCount)
-			} else {
-				totalTokens = int(result.UsageMetadata.PromptTokenCount + result.UsageMetadata.CandidatesTokenCount)
-			}
-
-			genInfo := &llmtypes.GenerationInfo{
-				InputTokens:  &inputTokens,
-				OutputTokens: &outputTokens,
-				TotalTokens:  &totalTokens,
-			}
-
-			// Cache token information
-			if result.UsageMetadata.CachedContentTokenCount > 0 {
-				cachedTokens := int(result.UsageMetadata.CachedContentTokenCount)
-				genInfo.CachedContentTokens = &cachedTokens
-
-				// Calculate cache discount percentage (0.0 to 1.0)
-				if result.UsageMetadata.PromptTokenCount > 0 {
-					cacheDiscount := float64(result.UsageMetadata.CachedContentTokenCount) / float64(result.UsageMetadata.PromptTokenCount)
-					genInfo.CacheDiscount = &cacheDiscount
-				}
-			}
-
-			// Additional token counts if available
-			if result.UsageMetadata.ToolUsePromptTokenCount > 0 {
-				toolUseTokens := int(result.UsageMetadata.ToolUsePromptTokenCount)
-				genInfo.ToolUsePromptTokens = &toolUseTokens
-			}
-
-			if result.UsageMetadata.ThoughtsTokenCount > 0 {
-				thoughtsTokens := int(result.UsageMetadata.ThoughtsTokenCount)
-				genInfo.ThoughtsTokens = &thoughtsTokens
-			}
-
-			choice.GenerationInfo = genInfo
-		}
+		choice.GenerationInfo = utils.ExtractGenerationInfoFromVertexUsage(result.UsageMetadata)
 
 		// Set stop reason
 		if candidate.FinishReason != "" {
@@ -743,6 +1050,15 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 		}
 
 		choices = append(choices, choice)
+	}
+
+	// Final summary logging
+	if logger != nil {
+		logger.Debugf("🔍 [VERTEX] convertResponse COMPLETE - Returning %d choices", len(choices))
+		for i, ch := range choices {
+			logger.Debugf("🔍 [VERTEX] Choice %d: Content length: %d, ToolCalls: %d, StopReason: %q",
+				i, len(ch.Content), len(ch.ToolCalls), ch.StopReason)
+		}
 	}
 
 	return &llmtypes.ContentResponse{
@@ -1025,8 +1341,30 @@ func (g *GoogleGenAIAdapter) logErrorDetails(requestID, modelID string, messages
 	errorInfo := map[string]interface{}{
 		"request_id":    requestID,
 		"error":         err.Error(),
+		"error_type":    fmt.Sprintf("%T", err),
 		"model_id":      modelID,
 		"message_count": len(messages),
+	}
+
+	// Try to extract more error details by unwrapping
+	errorChain := []string{err.Error()}
+	currentErr := err
+	for i := 0; i < 10; i++ { // Limit unwrapping depth
+		// Try to unwrap the error
+		if unwrapper, ok := currentErr.(interface{ Unwrap() error }); ok {
+			unwrapped := unwrapper.Unwrap()
+			if unwrapped == nil {
+				break
+			}
+			errorChain = append(errorChain, unwrapped.Error())
+			currentErr = unwrapped
+		} else {
+			break
+		}
+	}
+	if len(errorChain) > 1 {
+		errorInfo["error_chain"] = errorChain
+		errorInfo["full_error_chain"] = strings.Join(errorChain, " -> ")
 	}
 
 	// Add config summary

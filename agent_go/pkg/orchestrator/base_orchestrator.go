@@ -1064,6 +1064,7 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 			Arguments: string(argsJSON),
 		},
 		ServerName: "workspace", // Internal workspace tool
+		AutoExpand: false,       // Keep collapsed by default for orchestrator file operations
 	}
 
 	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
@@ -1187,6 +1188,7 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 		Result:     string(resultJSON),
 		Duration:   duration,
 		ServerName: "workspace",
+		AutoExpand: false, // Keep collapsed by default for orchestrator file operations
 	}
 	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
@@ -1464,6 +1466,7 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 			Arguments: string(argsJSON),
 		},
 		ServerName: "workspace", // Internal workspace tool
+		AutoExpand: false,       // Keep collapsed by default for orchestrator file operations
 	}
 
 	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
@@ -1534,6 +1537,7 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 		Result:     fmt.Sprintf("Successfully wrote file (%d characters)", len(content)),
 		Duration:   duration,
 		ServerName: "workspace",
+		AutoExpand: false, // Keep collapsed by default for orchestrator file operations
 	}
 	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
@@ -1565,6 +1569,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 			Arguments: string(argsJSON),
 		},
 		ServerName: "workspace", // Internal workspace tool
+		AutoExpand: false,       // Keep collapsed by default for orchestrator file operations
 	}
 
 	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
@@ -1651,6 +1656,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		Result:     resultStr,
 		Duration:   duration,
 		ServerName: "workspace",
+		AutoExpand: false, // Keep collapsed by default for orchestrator file operations
 	}
 	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
@@ -1786,6 +1792,176 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 	}
 
 	return nil
+}
+
+// ListWorkspaceDirectories lists all directories in a given path
+// Returns a slice of directory names (not full paths)
+func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPath string) ([]string, error) {
+	bo.GetLogger().Infof("📁 Listing directories in: %s", dirPath)
+
+	// Use list_workspace_files to enumerate directories
+	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
+	if !exists {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor not found, returning empty list")
+		return []string{}, nil
+	}
+
+	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor has wrong type, returning empty list")
+		return []string{}, nil
+	}
+
+	// Call list_workspace_files with max_depth: 1 to only get immediate children
+	listArgs := map[string]interface{}{
+		"folder":    dirPath,
+		"max_depth": 1, // Only list immediate children (directories)
+	}
+
+	fileListJSON, err := listExecutor(ctx, listArgs)
+	if err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err)
+		return []string{}, nil // Don't fail - directory may be empty or not exist
+	}
+
+	// Parse the JSON response to extract file paths
+	var filesList []map[string]interface{}
+	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err)
+		// Try alternative format - might be a single object with a "files" array
+		var altFormat map[string]interface{}
+		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil {
+			if filesArray, ok := altFormat["files"].([]interface{}); ok {
+				for _, fileInterface := range filesArray {
+					if fileMap, ok := fileInterface.(map[string]interface{}); ok {
+						filesList = append(filesList, fileMap)
+					}
+				}
+			}
+		}
+		if len(filesList) == 0 {
+			bo.GetLogger().Infof("ℹ️ No files found in %s directory (may be empty)", dirPath)
+			return []string{}, nil
+		}
+	}
+
+	// Extract only directories (folders) from the list
+	var directoryNames []string
+	for _, fileInfo := range filesList {
+		filepath, ok := fileInfo["filepath"].(string)
+		if !ok || filepath == "" {
+			continue
+		}
+
+		// Check if it's a directory
+		isDirectory, ok := fileInfo["is_directory"].(bool)
+		if !ok || !isDirectory {
+			continue
+		}
+
+		// Skip the directory itself (if filepath equals dirPath)
+		if filepath == dirPath {
+			continue
+		}
+
+		// Extract directory name (last part of path)
+		// filepath will be like "workspace/runs/initial" or "runs/initial"
+		// We want just "initial"
+		dirName := filepath
+		if strings.Contains(dirName, "/") {
+			parts := strings.Split(dirName, "/")
+			dirName = parts[len(parts)-1]
+		}
+
+		// Skip if it's empty
+		if dirName != "" {
+			directoryNames = append(directoryNames, dirName)
+		}
+	}
+
+	bo.GetLogger().Infof("📁 Found %d directories: %v", len(directoryNames), directoryNames)
+	return directoryNames, nil
+}
+
+// ListWorkspaceFiles lists all files and directories in a given path
+// Returns a slice of file/directory names (not full paths)
+func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath string) ([]string, error) {
+	bo.GetLogger().Infof("📁 Listing files and directories in: %s", dirPath)
+
+	// Use list_workspace_files to enumerate files and directories
+	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
+	if !exists {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor not found, returning empty list")
+		return []string{}, nil
+	}
+
+	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor has wrong type, returning empty list")
+		return []string{}, nil
+	}
+
+	// Call list_workspace_files with max_depth: 1 to only get immediate children
+	listArgs := map[string]interface{}{
+		"folder":    dirPath,
+		"max_depth": 1, // Only list immediate children
+	}
+
+	fileListJSON, err := listExecutor(ctx, listArgs)
+	if err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err)
+		return []string{}, nil // Don't fail - directory may be empty or not exist
+	}
+
+	// Parse the JSON response to extract file paths
+	var filesList []map[string]interface{}
+	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err)
+		// Try alternative format - might be a single object with a "files" array
+		var altFormat map[string]interface{}
+		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil {
+			if filesArray, ok := altFormat["files"].([]interface{}); ok {
+				for _, fileInterface := range filesArray {
+					if fileMap, ok := fileInterface.(map[string]interface{}); ok {
+						filesList = append(filesList, fileMap)
+					}
+				}
+			}
+		}
+		if len(filesList) == 0 {
+			bo.GetLogger().Infof("ℹ️ No files found in %s directory (may be empty)", dirPath)
+			return []string{}, nil
+		}
+	}
+
+	// Extract file and directory names (last part of path)
+	var names []string
+	for _, fileInfo := range filesList {
+		filepath, ok := fileInfo["filepath"].(string)
+		if !ok || filepath == "" {
+			continue
+		}
+
+		// Skip the directory itself (if filepath equals dirPath)
+		if filepath == dirPath {
+			continue
+		}
+
+		// Extract name (last part of path)
+		name := filepath
+		if strings.Contains(name, "/") {
+			parts := strings.Split(name, "/")
+			name = parts[len(parts)-1]
+		}
+
+		// Skip if it's empty
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+
+	bo.GetLogger().Infof("📁 Found %d files/directories: %v", len(names), names)
+	return names, nil
 }
 
 // getToolNamesByCategory returns a set of tool names for a given category

@@ -132,6 +132,7 @@ import {
   IndependentStepsSelectedEventDisplay,
   TodoStepsExtractedEventDisplay
 } from './orchestrator'
+import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
 
 import {
   WorkflowStartEvent,
@@ -164,6 +165,7 @@ import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay, type BlockingHumanFeedbackEvent } from './BlockingHumanFeedbackDisplay'
 import type { RequestHumanFeedbackEvent } from '../../generated/events'
+import type { TodoStepsExtractedEvent } from '../../generated/events-bridge'
 
 
 interface EventDispatcherProps {
@@ -385,7 +387,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
 
     // Todo Steps Events
     case 'todo_steps_extracted':
-      return <TodoStepsExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+      return <TodoStepsExtractedEventDisplay event={extractEventData<TodoStepsExtractedEvent>(event.data)} />
+
+    // Variables Events
+    case 'variables_extracted':
+      return <VariablesExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
 
     // Default case for unknown event types
     default:

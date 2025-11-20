@@ -232,6 +232,8 @@ export interface PlannerFile {
   children?: PlannerFile[];
   depth?: number;
   is_image?: boolean;
+  // Store original path when filepath is adjusted for display (e.g., in workflow mode)
+  originalFilepath?: string;
 }
 
 export interface PlannerFileContent {

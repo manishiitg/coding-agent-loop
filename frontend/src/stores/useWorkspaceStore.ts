@@ -79,6 +79,18 @@ interface WorkspaceState {
   openDeleteAllFilesDialog: (folder: PlannerFile) => void
   closeDeleteAllFilesDialog: () => void
   
+  // Move Dialog
+  moveDialog: {
+    isOpen: boolean
+    item: PlannerFile | null
+    destinationPath: string
+    commitMessage: string
+    isLoading: boolean
+  }
+  setMoveDialog: (dialog: Partial<WorkspaceState['moveDialog']>) => void
+  openMoveDialog: (item: PlannerFile) => void
+  closeMoveDialog: () => void
+  
   // Actions Dropdown
   showActionsDropdown: boolean
   setShowActionsDropdown: (show: boolean) => void
@@ -99,6 +111,7 @@ interface WorkspaceState {
   
   // Folder expansion
   expandedFolders: Set<string>
+  setExpandedFolders: (folders: Set<string>) => void
   expandFoldersForFile: (filepath: string) => void
   toggleFolder: (folderPath: string) => void
   expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number) => void
@@ -144,6 +157,13 @@ const initialState = {
   deleteAllFilesDialog: {
     isOpen: false,
     folder: null,
+    isLoading: false
+  },
+  moveDialog: {
+    isOpen: false,
+    item: null,
+    destinationPath: '',
+    commitMessage: '',
     isLoading: false
   },
   showActionsDropdown: false,
@@ -287,6 +307,31 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         deleteAllFilesDialog: {
           isOpen: false,
           folder: null,
+          isLoading: false
+        }
+      }),
+      
+      // Move Dialog
+      setMoveDialog: (dialog) => set((state) => ({
+        moveDialog: { ...state.moveDialog, ...dialog }
+      })),
+      openMoveDialog: (item) => {
+        set({
+          moveDialog: {
+            isOpen: true,
+            item,
+            destinationPath: '',
+            commitMessage: '',
+            isLoading: false
+          }
+        })
+      },
+      closeMoveDialog: () => set({
+        moveDialog: {
+          isOpen: false,
+          item: null,
+          destinationPath: '',
+          commitMessage: '',
           isLoading: false
         }
       }),
@@ -528,6 +573,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
       
       // Folder expansion methods
+      setExpandedFolders: (folders: Set<string>) => {
+        set({ expandedFolders: folders })
+      },
+      
       expandFoldersForFile: (filepath: string) => {
         const foldersToExpand = extractFolderPaths(filepath)
         

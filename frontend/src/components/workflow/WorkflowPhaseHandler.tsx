@@ -333,10 +333,6 @@ const WorkflowStatesOverview: React.FC<{
               )}
             </div>
             
-            {/* Todo Planner Step Progress for Planning & Todo Creation phase */}
-            {phase.id === currentPhase && phase.id === 'pre-verification' && (
-              <TodoPlannerStepProgress currentPhase={currentPhase} />
-            )}
             
             {/* Options for current phase */}
             {phase.id === currentPhase && phase.options && phase.options.length > 0 && (

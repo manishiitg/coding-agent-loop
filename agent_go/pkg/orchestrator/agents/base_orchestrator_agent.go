@@ -233,55 +233,34 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 
 	// Auto-emit agent end event with structured response
 	var resultStr string
-	var structuredResponse map[string]interface{}
+	var structuredResponse map[string]interface{} // Will be nil for conversational responses
 	var finalErr error
 
 	if err != nil {
 		resultStr = "Error: " + err.Error()
 		finalErr = err
+		// structuredResponse remains nil for errors
 	} else if !result.HasStructuredOutput {
-		// Return the actual conversational input from the LLM
+		// Conversational response - no structured output
+		// structuredResponse remains nil (explicitly)
 		conversationalInput := result.TextResponse
 		if conversationalInput == "" {
 			conversationalInput = "LLM returned empty response (no tool call detected)"
 		}
-		resultStr = fmt.Sprintf("Conversational input detected (not structured output): %s", conversationalInput)
-		// Don't create finalErr here - let it fall through to create NonStructuredResponseError below
-		// Don't emit event here - it will be emitted at line 272, but we'll return NonStructuredResponseError before that
-	} else {
-		// Marshal structured response to JSON for both Result field and StructuredResponse map
-		resultBytes, marshalErr := json.Marshal(result.StructuredResult)
-		if marshalErr == nil {
-			// Set Result field to the JSON string of the structured response
-			resultStr = string(resultBytes)
+		resultStr = conversationalInput // Use conversational input directly, not wrapped
 
-			// Also unmarshal to map for StructuredResponse field
-			var responseMap map[string]interface{}
-			if unmarshalErr := json.Unmarshal(resultBytes, &responseMap); unmarshalErr == nil {
-				structuredResponse = responseMap
-			} else {
-				boa.logger.Warnf("⚠️ Failed to unmarshal structured response for event: %v", unmarshalErr)
-			}
-		} else {
-			// Fallback to generic message if marshaling fails
-			resultStr = fmt.Sprintf("Generated %s structured output (marshaling failed: %v)", boa.agentType, marshalErr)
-			boa.logger.Warnf("⚠️ Failed to marshal structured response for event: %v", marshalErr)
-		}
-	}
+		// Log for debugging
+		boa.logger.Infof("🔍 [DEBUG] Non-structured response detected - HasStructuredOutput: %v, TextResponse length: %d", result.HasStructuredOutput, len(conversationalInput))
 
-	// Only emit event if we're not returning a NonStructuredResponseError (which will be handled below)
-	// For non-structured responses, we'll return the error before emitting the event
-	if !result.HasStructuredOutput {
-		// Return NonStructuredResponseError immediately - don't emit event here
-		// The event will be emitted by the caller if needed
-		var zero T
-		conversationalInput := result.TextResponse
-		if conversationalInput == "" {
-			conversationalInput = "LLM returned empty response (no tool call detected)"
-		}
+		// Emit agent end event with conversational response before returning error
+		// This ensures the frontend shows the conversational output, not the previous tool
+		// Explicitly pass nil for structuredResponse to ensure it's not set
+		boa.emitAgentEndEventWithStructuredResponse(ctx, templateVars, resultStr, nil, nil, duration)
+
 		// Return a special error type that includes the text response and updated history
 		// This allows callers to handle non-structured responses gracefully by displaying
 		// the text to the user and asking for further feedback
+		var zero T
 		return zero, updatedHistory, &NonStructuredResponseError{
 			TextResponse:   conversationalInput,
 			UpdatedHistory: updatedHistory,
@@ -465,6 +444,13 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 		agentName = boa.baseAgent.GetName()
 	}
 
+	// Log for debugging - check if structuredResponse is being set when it shouldn't be
+	hasStructuredResponse := len(structuredResponse) > 0
+	boa.logger.Infof("🔍 [DEBUG] Emitting agent end event - Result length: %d, HasStructuredResponse: %v, Error: %v", len(result), hasStructuredResponse, err != nil)
+	if hasStructuredResponse {
+		boa.logger.Infof("🔍 [DEBUG] StructuredResponse keys: %v", getMapKeys(structuredResponse))
+	}
+
 	eventData := &events.OrchestratorAgentEndEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp:     time.Now(),
@@ -474,7 +460,7 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 		AgentName:          agentName,
 		InputData:          templateVars,
 		Result:             result,
-		StructuredResponse: structuredResponse,
+		StructuredResponse: structuredResponse, // This will be nil for conversational responses
 		Success:            err == nil,
 		Error: func() string {
 			if err != nil {
@@ -490,6 +476,15 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentEnd, eventData)
+}
+
+// getMapKeys returns the keys of a map for debugging
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // createLLM creates an LLM instance based on the agent configuration

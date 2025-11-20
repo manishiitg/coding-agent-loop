@@ -4,7 +4,7 @@ import { Button } from '../../ui/Button';
 import LLMSelectionDropdown from '../../LLMSelectionDropdown';
 import { ToolSelectionSection } from '../../ToolSelectionSection';
 import { usePresetApplication } from '../../../stores/useGlobalPresetStore';
-import type { TodoStep, AgentConfigs, AgentLLMConfig } from '../../../generated/events-bridge';
+import type { TodoStepWithConfigs, AgentConfigs, AgentLLMConfig } from '../../../utils/stepConfigMatching';
 import type { LLMOption } from '../../../types/llm';
 import { useLLMStore } from '../../../stores/useLLMStore';
 import { 
@@ -14,9 +14,9 @@ import {
 } from '../../../utils/customToolNames';
 
 interface StepEditPanelProps {
-  step: TodoStep;
+  step: TodoStepWithConfigs;
   stepIndex: number;
-  onSave: (updatedStep: TodoStep) => Promise<void>;
+  onSave: (updatedStep: TodoStepWithConfigs) => Promise<void>;
   onCancel: () => void;
   isSaving?: boolean;
   presetServers?: string[]; // Preset's selected servers (subset to show in UI)
@@ -95,19 +95,28 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     new Set(['basic_workspace', 'advanced_workspace', 'plus_tools'])
   );
 
-  // Track the step index to detect when step changes
-  const prevStepIndexRef = useRef<number>(stepIndex);
+  // Track the step to detect when step changes (using title + index as stable identifier)
+  // This ensures state resets properly when switching between different steps
+  const stepIdentifier = `${step.title || ''}-${stepIndex}`;
+  const prevStepIdentifierRef = useRef<string>(stepIdentifier);
 
-  // Sync state only when step index changes (different step)
+  // Sync state when step changes (different step identifier)
   // This prevents infinite loops by only syncing when we switch to a different step
   useEffect(() => {
-    const isDifferentStep = prevStepIndexRef.current !== stepIndex;
+    const isDifferentStep = prevStepIdentifierRef.current !== stepIdentifier;
     
     if (isDifferentStep) {
-      const currentConfigs = step.agent_configs;
+      const currentConfigs = step.agent_configs || {};
+      
+      // Reset agentConfigs state from step's config
+      // Force enable validation for loop steps
+      const newAgentConfigs: AgentConfigs = step.has_loop && currentConfigs.disable_validation
+        ? { ...currentConfigs, disable_validation: false }
+        : currentConfigs;
+      setAgentConfigs(newAgentConfigs);
       
       // Update servers: use step config if available, otherwise preset defaults
-      if (currentConfigs?.selected_servers && currentConfigs.selected_servers.length > 0) {
+      if (currentConfigs.selected_servers && currentConfigs.selected_servers.length > 0) {
         // Check if NO_SERVERS is in the config
         setSelectedServers(currentConfigs.selected_servers);
       } else {
@@ -115,17 +124,21 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       }
 
       // Update tools: use step config if available, otherwise preset defaults
-      if (currentConfigs?.selected_tools && currentConfigs.selected_tools.length > 0) {
+      if (currentConfigs.selected_tools && currentConfigs.selected_tools.length > 0) {
         setSelectedTools(currentConfigs.selected_tools);
       } else {
         setSelectedTools(currentPresetTools || []);
       }
 
+      // Reset expanded categories when step changes
+      setExpandedToolCategories(new Set());
+      setExpandedWorkspaceSubCategories(new Set(['basic_workspace', 'advanced_workspace', 'plus_tools']));
+
       // Update ref for next comparison
-      prevStepIndexRef.current = stepIndex;
+      prevStepIdentifierRef.current = stepIdentifier;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepIndex]); // Only depend on stepIndex to prevent infinite loops
+  }, [stepIdentifier, step.agent_configs, presetServers, currentPresetTools]); // Include stepIdentifier and relevant dependencies
 
   // Helper to convert AgentLLMConfig to LLMOption
   const llmConfigToOption = (config: AgentLLMConfig | undefined): LLMOption | null => {
@@ -265,7 +278,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       },
     });
 
-    const updatedStep: TodoStep = {
+    const updatedStep: TodoStepWithConfigs = {
       ...step,
       agent_configs: finalConfigs,
     };
@@ -668,9 +681,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <select
                       value={agentConfigs.learning_detail_level || 'general'}
                       onChange={(e) => {
-                        setAgentConfigs((prev) => ({
+                        const value = e.target.value as 'exact' | 'general' | 'none';
+                        setAgentConfigs((prev): AgentConfigs => ({
                           ...prev,
-                          learning_detail_level: e.target.value,
+                          learning_detail_level: value,
                         }));
                       }}
                       className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1"

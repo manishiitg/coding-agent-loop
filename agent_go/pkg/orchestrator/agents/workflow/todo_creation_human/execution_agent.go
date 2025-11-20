@@ -82,6 +82,9 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 	currentDate := now.Format("2006-01-02")
 	currentTime := now.Format("15:04:05")
 
+	// Get memory requirements
+	memoryRequirements := GetTodoCreationHumanMemoryRequirements()
+
 	// Define the system prompt template
 	templateStr := `# Execution Agent
 
@@ -105,6 +108,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 - **ONLY** context output files in {{.WorkspacePath}}/ (e.g., {{.WorkspacePath}}/step_X_results.md)
 - **NO** writing outside {{.WorkspacePath}} or to workspace root
 - **NO** validation reports (validation agent handles those)
+
+` + memoryRequirements + `
 
 ## 📝 EVIDENCE COLLECTION (When to Gather Evidence)
 

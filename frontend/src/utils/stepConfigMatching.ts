@@ -2,7 +2,7 @@ import type { TodoStep } from '../generated/events-bridge';
 
 // AgentLLMConfig represents LLM configuration for an agent
 export interface AgentLLMConfig {
-  provider?: 'openai' | 'bedrock' | 'openrouter' | 'vertex';
+  provider?: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic';
   model_id?: string;
 }
 
@@ -20,8 +20,7 @@ export interface AgentConfigs {
   learning_detail_level?: 'exact' | 'general' | 'none';
   selected_servers?: string[];
   selected_tools?: string[];
-  enabled_custom_tool_categories?: string[];
-  enabled_custom_tools?: string[];
+  enabled_custom_tools?: string[]; // Format: "category:tool" or "category:*" (e.g., "workspace_tools:*", "human_tools:human_feedback")
   enable_large_output_virtual_tools?: boolean;
 }
 
@@ -63,48 +62,6 @@ export interface StepConfigFile {
   steps: StepConfig[];
 }
 
-/**
- * Ensures all steps in step_config.json have IDs
- * Generates IDs from step titles if not already present
- */
-export function addIDsToStepConfigs(stepConfigFile: StepConfigFile): void {
-  for (const stepConfig of stepConfigFile.steps) {
-    if (!stepConfig.id && stepConfig.title) {
-      stepConfig.id = generateStepId(stepConfig.title);
-    }
-  }
-}
-
-/**
- * Generates a stable ID from a step title
- * Uses a simple hash-like approach to create a consistent ID
- */
-export function generateStepId(title: string): string {
-  if (!title) {
-    return '';
-  }
-  
-  // Create a URL-friendly slug from the title
-  const slug = title
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, '') // Remove special characters
-    .replace(/\s+/g, '-')      // Replace spaces with hyphens
-    .replace(/-+/g, '-')       // Replace multiple hyphens with single
-    .replace(/^-|-$/g, '');    // Remove leading/trailing hyphens
-  
-  // Add a simple hash to ensure uniqueness (first 8 chars of a hash)
-  // This helps avoid collisions while keeping IDs readable
-  let hash = 0;
-  for (let i = 0; i < title.length; i++) {
-    const char = title.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  const hashStr = Math.abs(hash).toString(36).substring(0, 8);
-  
-  return `${slug}-${hashStr}`;
-}
 
 /**
  * Matches new plan steps with existing configs by ID only
@@ -126,25 +83,19 @@ export function matchStepConfigs(
   }
 
   // Match new steps to old configs by ID only
-  // Use step.id directly if available (from backend), otherwise generate from title
+  // Steps always have IDs from backend - throw error if missing
   for (let i = 0; i < newSteps.length; i++) {
     const step = newSteps[i];
     
-    // Match by ID - use step.id directly if available
-    // Check if step has id property (TodoStepWithConfigs has id, TodoStep might not)
+    // Match by ID - step.id is required (always provided by backend)
     const stepId = (step as TodoStepWithConfigs).id;
-    if (stepId) {
-      const config = idConfigMap.get(stepId);
-      if (config) {
-        result.set(i, config);
-      }
-    } else if (step.title) {
-      // Fallback: generate ID from title (should not happen if backend always provides IDs)
-      const generatedId = generateStepId(step.title);
-      const config = idConfigMap.get(generatedId);
-      if (config) {
-        result.set(i, config);
-      }
+    if (!stepId) {
+      throw new Error(`Step at index ${i} is missing required ID field. Step title: "${step.title || 'unknown'}"`);
+    }
+    
+    const config = idConfigMap.get(stepId);
+    if (config) {
+      result.set(i, config);
     }
     // If not found, step won't have config (use defaults)
   }
@@ -183,51 +134,4 @@ export interface PlanningResponse {
   [key: string]: unknown;             // Allow other fields for flexibility
 }
 
-/**
- * @deprecated This function is no longer needed - backend always provides IDs
- * Kept for backward compatibility with old plan.json files that might not have IDs
- * Recursively adds IDs to all steps in a plan if not already present
- */
-export function addIDsToPlanSteps(steps: PlanStep[]): void {
-  for (let i = 0; i < steps.length; i++) {
-    // Add ID to top-level step if not already present
-    if (!steps[i].id && steps[i].title) {
-      steps[i].id = generateStepId(steps[i].title);
-    }
-
-    // Recursively add IDs to branch steps
-    const ifTrueSteps = steps[i].if_true_steps;
-    if (ifTrueSteps && ifTrueSteps.length > 0 && steps[i].title) {
-      addIDsToBranchSteps(ifTrueSteps, steps[i].title, 'true');
-    }
-    const ifFalseSteps = steps[i].if_false_steps;
-    if (ifFalseSteps && ifFalseSteps.length > 0 && steps[i].title) {
-      addIDsToBranchSteps(ifFalseSteps, steps[i].title, 'false');
-    }
-  }
-}
-
-/**
- * @deprecated This function is no longer needed - backend always provides IDs
- * Recursively adds IDs to branch steps if not already present
- */
-function addIDsToBranchSteps(steps: PlanStep[], parentTitle: string, branchType: 'true' | 'false'): void {
-  for (let i = 0; i < steps.length; i++) {
-    // Generate ID: parent-title + branch-type + nested-index + branch-title
-    if (!steps[i].id && steps[i].title && parentTitle) {
-      const idInput = `${parentTitle}-${branchType}-${i}-${steps[i].title}`;
-      steps[i].id = generateStepId(idInput);
-    }
-
-    // Recursively add IDs to nested branch steps
-    const ifTrueSteps = steps[i].if_true_steps;
-    if (ifTrueSteps && ifTrueSteps.length > 0 && steps[i].title) {
-      addIDsToBranchSteps(ifTrueSteps, steps[i].title, 'true');
-    }
-    const ifFalseSteps = steps[i].if_false_steps;
-    if (ifFalseSteps && ifFalseSteps.length > 0 && steps[i].title) {
-      addIDsToBranchSteps(ifFalseSteps, steps[i].title, 'false');
-    }
-  }
-}
 

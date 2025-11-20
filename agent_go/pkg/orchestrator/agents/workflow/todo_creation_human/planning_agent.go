@@ -119,8 +119,7 @@ type AddPlanStep struct {
 
 // PlanningResponse represents the structured response from planning
 type PlanningResponse struct {
-	Steps   []PlanStep `json:"steps"`
-	RunMode string     `json:"run_mode,omitempty"` // "use_same_run", "create_new_runs_always", "create_new_run_once_daily"
+	Steps []PlanStep `json:"steps"`
 }
 
 // PartialPlanStep represents a partial update to a plan step (used only in tool schemas)
@@ -226,6 +225,10 @@ func getAddPlanStepsSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this new step. Generate a unique, URL-friendly ID based on the step title (e.g., 'deploy-application' from 'Deploy Application')."
+						},
 						"title": {
 							"type": "string",
 							"description": "Short, clear title for the new step"
@@ -268,7 +271,7 @@ func getAddPlanStepsSchema() string {
 							"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
 						}
 					},
-					"required": ["title", "description", "success_criteria", "has_loop", "insert_after_step_id"]
+					"required": ["id", "title", "description", "success_criteria", "has_loop", "insert_after_step_id"]
 				},
 				"description": "New steps to add to the plan. Provide complete step definitions with all required fields. Each step must specify insert_after_step_id to indicate where to insert it in the plan."
 			}
@@ -299,6 +302,10 @@ func getConvertStepToConditionalSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'verify-deployment-health' from 'Verify Deployment Health')."
+						},
 						"title": {"type": "string"},
 						"description": {"type": "string"},
 						"success_criteria": {"type": "string"},
@@ -314,15 +321,19 @@ func getConvertStepToConditionalSchema() string {
 						"if_true_steps": {"type": "array", "items": {"type": "object"}},
 						"if_false_steps": {"type": "array", "items": {"type": "object"}}
 					},
-					"required": ["title", "description", "success_criteria", "has_loop"]
+					"required": ["id", "title", "description", "success_criteria", "has_loop"]
 				},
-				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] if no true branch steps."
+				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] if no true branch steps. Each step MUST include an 'id' field."
 			},
 			"if_false_steps": {
 				"type": "array",
 				"items": {
 					"type": "object",
 					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'rollback-deployment' from 'Rollback Deployment')."
+						},
 						"title": {"type": "string"},
 						"description": {"type": "string"},
 						"success_criteria": {"type": "string"},
@@ -338,9 +349,9 @@ func getConvertStepToConditionalSchema() string {
 						"if_true_steps": {"type": "array", "items": {"type": "object"}},
 						"if_false_steps": {"type": "array", "items": {"type": "object"}}
 					},
-					"required": ["title", "description", "success_criteria", "has_loop"]
+					"required": ["id", "title", "description", "success_criteria", "has_loop"]
 				},
-				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] if no false branch steps."
+				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] if no false branch steps. Each step MUST include an 'id' field."
 			}
 		},
 		"required": ["step_id", "condition_question", "if_true_steps", "if_false_steps"]
@@ -366,6 +377,10 @@ func getAddBranchStepsSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'verify-deployment-health' from 'Verify Deployment Health')."
+						},
 						"title": {"type": "string"},
 						"description": {"type": "string"},
 						"success_criteria": {"type": "string"},
@@ -381,9 +396,9 @@ func getAddBranchStepsSchema() string {
 						"if_true_steps": {"type": "array", "items": {"type": "object"}},
 						"if_false_steps": {"type": "array", "items": {"type": "object"}}
 					},
-					"required": ["title", "description", "success_criteria", "has_loop"]
+					"required": ["id", "title", "description", "success_criteria", "has_loop"]
 				},
-				"description": "REQUIRED: New steps to add to the specified branch. Provide complete step definitions."
+				"description": "REQUIRED: New steps to add to the specified branch. Provide complete step definitions with IDs."
 			}
 		},
 		"required": ["parent_step_id", "branch_type", "new_steps"]
@@ -486,9 +501,9 @@ func getConvertConditionalToRegularSchema() string {
 	return `{
 		"type": "object",
 		"properties": {
-			"step_title": {
+			"step_id": {
 				"type": "string",
-				"description": "REQUIRED: The exact title of the conditional step to convert back to regular. Must match exactly (case-sensitive, preserve whitespace). This will remove all conditional properties and branch steps."
+				"description": "REQUIRED: The ID of the conditional step to convert back to regular. Use the step's id field from the plan. This will remove all conditional properties and branch steps."
 			}
 		},
 		"required": ["step_id"]
@@ -516,15 +531,17 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 }
 
 // writePlanToFile writes PlanningResponse to plan.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
-// Automatically adds IDs to all steps before saving for consistency with step_config.json
+// Validates that all steps have IDs before saving (planning agent should always generate them)
 func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
 	planPath := filepath.Join(workspacePath, "planning", "plan.json")
 
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
 
-	// Add IDs to all steps before saving (for consistency with step_config.json)
-	addIDsToPlanSteps(plan.Steps)
+	// Validate that all steps have IDs (planning agent should always generate them)
+	if err := validatePlanStepIDs(plan.Steps); err != nil {
+		return fmt.Errorf("plan validation failed: %w", err)
+	}
 
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
@@ -676,11 +693,6 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 					},
 					"required": ["title", "description", "success_criteria", "has_loop"]
 				}
-			},
-			"run_mode": {
-				"type": "string",
-				"enum": ["use_same_run", "create_new_runs_always", "create_new_run_once_daily"],
-				"description": "Run mode for execution: 'use_same_run' (reuse latest run folder), 'create_new_runs_always' (always create new), 'create_new_run_once_daily' (one per day). Default: 'use_same_run'"
 			}
 		},
 		"required": ["steps"]
@@ -878,7 +890,12 @@ func createAddPlanStepsExecutor(workspacePath string, logger utils.ExtendedLogge
 		// Track which positions we need to insert at (grouped by insertion point)
 		insertionPoints := make(map[int][]PlanStep) // original index -> steps to insert after this index
 
-		for _, addStep := range addSteps {
+		for i, addStep := range addSteps {
+			// Validate that step has ID (LLM should always provide it)
+			if addStep.PlanStep.ID == "" {
+				return "", fmt.Errorf("step at index %d in new_steps is missing required ID field. Step title: %q", i, addStep.PlanStep.Title)
+			}
+
 			var afterIndex int
 			var found bool
 
@@ -1304,6 +1321,13 @@ func createAddBranchStepsExecutor(workspacePath string, logger utils.ExtendedLog
 
 		if !parentStep.HasCondition {
 			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
+		}
+
+		// Validate that all new branch steps have IDs (required for config matching)
+		for i, newStep := range newSteps {
+			if newStep.ID == "" {
+				return "", fmt.Errorf("branch step at index %d is missing required ID field. Step title: %q", i, newStep.Title)
+			}
 		}
 
 		// Validate nesting depth for new steps (starting from depth 1 since they're being added to a conditional)

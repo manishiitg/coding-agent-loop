@@ -330,8 +330,8 @@ func buildHierarchicalStructure(documents []models.Document, queryFolder string)
 		doc := &documents[i]
 
 		if doc.Type == "folder" {
-			// This is a folder - add to root if it's a top-level folder or the queried folder
-			if doc.Folder == "" || (queryFolder != "" && doc.FilePath == queryFolder) {
+			// This is a folder - add to root if it's a top-level folder, the queried folder itself, or a direct child of the queried folder
+			if doc.Folder == "" || (queryFolder != "" && (doc.FilePath == queryFolder || doc.Folder == queryFolder)) {
 				// Add the folder pointer to root items
 				rootItems = append(rootItems, folderMap[doc.FilePath])
 			}

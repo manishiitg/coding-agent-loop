@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
 export interface BlockingHumanFeedbackEvent {
   question?: string
@@ -169,9 +170,9 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
               ✅ Feedback Submitted
             </h3>
             
-            <p className="text-xs text-green-700 dark:text-green-300 mb-3">
-              {question}
-            </p>
+            <div className="text-xs text-green-700 dark:text-green-300 mb-3">
+              <MarkdownRenderer content={question} className="text-xs" />
+            </div>
 
             {/* Context Information */}
             {context && (
@@ -179,8 +180,8 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
                 <h4 className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-2">
                   Context:
                 </h4>
-                <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-                  {context}
+                <div className="text-xs text-gray-700 dark:text-gray-300">
+                  <MarkdownRenderer content={context} className="text-xs" />
                 </div>
               </div>
             )}
@@ -217,9 +218,9 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
             Human Feedback Required
           </h3>
           
-          <p className="text-xs text-yellow-700 dark:text-yellow-300 mb-3">
-            {question}
-          </p>
+          <div className="text-xs text-yellow-700 dark:text-yellow-300 mb-3">
+            <MarkdownRenderer content={question} className="text-xs" />
+          </div>
 
           {/* Context Information */}
           {context && (
@@ -227,8 +228,8 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
               <h4 className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-2">
                 Context:
               </h4>
-              <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-                {context}
+              <div className="text-xs text-gray-700 dark:text-gray-300">
+                <MarkdownRenderer content={context} className="text-xs" />
               </div>
             </div>
           )}

@@ -105,7 +105,24 @@ type GetEventsResponse struct {
 }
 
 // PresetLLMConfig represents LLM configuration stored with presets
+// Supports both legacy single default model and new agent-specific defaults
 type PresetLLMConfig struct {
+	// Legacy: Single default model (for backward compatibility)
+	Provider string `json:"provider,omitempty"` // openrouter, bedrock, openai, vertex, anthropic
+	ModelID  string `json:"model_id,omitempty"`
+
+	// New: Agent-specific default models (takes priority over legacy fields)
+	ExecutionLLM          *AgentLLMConfig `json:"execution_llm,omitempty"`           // Default for execution agents
+	ValidationLLM         *AgentLLMConfig `json:"validation_llm,omitempty"`          // Default for validation agents
+	LearningLLM           *AgentLLMConfig `json:"learning_llm,omitempty"`            // Default for learning agents
+	PlanningLLM           *AgentLLMConfig `json:"planning_llm,omitempty"`            // Default for planning agent
+	VariableExtractionLLM *AgentLLMConfig `json:"variable_extraction_llm,omitempty"` // Default for variable extraction agent
+	AnonymizationLLM      *AgentLLMConfig `json:"anonymization_llm,omitempty"`       // Default for anonymization agent
+	PlanImprovementLLM    *AgentLLMConfig `json:"plan_improvement_llm,omitempty"`    // Default for plan improvement agent
+}
+
+// AgentLLMConfig represents LLM configuration for a specific agent type
+type AgentLLMConfig struct {
 	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex, anthropic
 	ModelID  string `json:"model_id"`
 }

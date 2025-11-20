@@ -21,6 +21,10 @@ interface EventNode {
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  // Track sessions that user has manually expanded - these should never be auto-collapsed
+  const [manuallyExpandedSessions, setManuallyExpandedSessions] = useState<Set<string>>(new Set());
+  // Track previously seen session keys to detect truly new sessions
+  const previousSessionKeysRef = React.useRef<Set<string>>(new Set());
   
   // Display all events in normal list
   const displayEvents = events;
@@ -192,31 +196,49 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   }, [events, getAgentSessionKey]);
 
   // Initialize collapsed sessions with all found session keys (all collapsed by default)
-  // This runs only when new sessions are found (not when collapsedSessions changes)
+  // This runs only when NEW sessions are found (not when collapsedSessions changes)
+  // Never auto-collapse sessions that user has manually expanded
   React.useEffect(() => {
     if (findEventsBetweenStartEnd.size > 0) {
       const allSessionKeys = Array.from(findEventsBetweenStartEnd.keys());
-      const newCollapsed = new Set(collapsedSessions);
-      let hasNewSessions = false;
+      const currentSessionKeys = new Set(allSessionKeys);
+      const previousSessionKeys = previousSessionKeysRef.current;
       
-      // Add any new session keys that aren't already in collapsedSessions
-      // This preserves user's manual expand/collapse choices
-      allSessionKeys.forEach(key => {
-        if (!newCollapsed.has(key)) {
-          newCollapsed.add(key);
-          hasNewSessions = true;
+      // Find truly new sessions (ones we haven't seen before)
+      const newSessionKeys = allSessionKeys.filter(key => !previousSessionKeys.has(key));
+      
+      // Update ref to track current session keys for next comparison
+      previousSessionKeysRef.current = currentSessionKeys;
+      
+      // Only process if there are genuinely new sessions
+      if (newSessionKeys.length > 0) {
+        const newCollapsed = new Set(collapsedSessions);
+        let hasNewSessionsToCollapse = false;
+        
+        // Only auto-collapse NEW sessions that haven't been manually expanded
+        newSessionKeys.forEach(key => {
+          // Never auto-collapse if user has manually expanded this session
+          if (!manuallyExpandedSessions.has(key)) {
+            if (!newCollapsed.has(key)) {
+              newCollapsed.add(key);
+              hasNewSessionsToCollapse = true;
+            }
+          }
+        });
+        
+        // Only update if there are new sessions to collapse
+        if (hasNewSessionsToCollapse) {
+          setCollapsedSessions(newCollapsed);
         }
-      });
-      
-      // Only update if there are new sessions to collapse
-      if (hasNewSessions) {
-        setCollapsedSessions(newCollapsed);
       }
+    } else {
+      // Reset ref when no sessions found
+      previousSessionKeysRef.current = new Set();
     }
-    // Only depend on findEventsBetweenStartEnd, not collapsedSessions
-    // This prevents re-adding sessions that the user explicitly expanded
+    // Depend on findEventsBetweenStartEnd to detect new sessions
+    // Depend on manuallyExpandedSessions to respect user choices
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findEventsBetweenStartEnd]);
+  }, [findEventsBetweenStartEnd, manuallyExpandedSessions]);
 
 
   const toggleNode = (eventId: string) => {
@@ -231,12 +253,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
 
   const toggleAgentSession = (sessionKey: string) => {
     const newCollapsed = new Set(collapsedSessions);
+    const newManuallyExpanded = new Set(manuallyExpandedSessions);
+    
     if (newCollapsed.has(sessionKey)) {
+      // User is expanding - mark as manually expanded
       newCollapsed.delete(sessionKey);
+      newManuallyExpanded.add(sessionKey);
     } else {
+      // User is collapsing - remove from manually expanded (user wants it collapsed)
       newCollapsed.add(sessionKey);
+      newManuallyExpanded.delete(sessionKey);
     }
+    
     setCollapsedSessions(newCollapsed);
+    setManuallyExpandedSessions(newManuallyExpanded);
   };
 
   const renderEventNode = (node: EventNode): React.ReactNode => {

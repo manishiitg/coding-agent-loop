@@ -75,7 +75,6 @@ export interface ToolCallStartEvent {
   tool_name?: string;
   tool_params?: ToolParams;
   server_name?: string;
-  auto_expand?: boolean;
 }
 export interface ToolParams {
   arguments?: string;
@@ -99,7 +98,6 @@ export interface ToolCallEndEvent {
   result?: string;
   duration?: number;
   server_name?: string;
-  auto_expand?: boolean;
 }
 export interface ToolCallErrorEvent {
   timestamp?: string;
@@ -1018,6 +1016,9 @@ export interface OrchestratorAgentEndEvent {
     [k: string]: string;
   };
   result?: string;
+  structured_response?: {
+    [k: string]: unknown;
+  };
   success?: boolean;
   error?: string;
   duration?: number;
@@ -1100,6 +1101,7 @@ export interface TodoStepsExtractedEvent {
   plan_source?: string;
 }
 export interface TodoStep {
+  id?: string;
   title?: string;
   description?: string;
   success_criteria?: string;
@@ -1108,20 +1110,4 @@ export interface TodoStep {
   context_output?: string;
   success_patterns?: string[];
   failure_patterns?: string[];
-  /**
-   * Whether this step needs to loop until condition is met
-   */
-  has_loop?: boolean;
-  /**
-   * Condition that must be met to exit the loop (required when has_loop is true)
-   */
-  loop_condition?: string;
-  /**
-   * Maximum number of loop iterations allowed (default: 10)
-   */
-  max_iterations?: number;
-  /**
-   * Human-readable explanation of the loop behavior
-   */
-  loop_description?: string;
 }

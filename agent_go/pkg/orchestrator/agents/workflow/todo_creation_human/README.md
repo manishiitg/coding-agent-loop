@@ -8,21 +8,78 @@ Multi-agent system creating validated todo lists via step-by-step execution, lea
 
 ## ⚡ Quick Reference
 
-| Phase | Agent | Output | Human Decision |
-|-------|-------|--------|---------------|
-| **0** | Variable Extraction | `variables.json` | Use/Extract new |
-| **1** | Planning | `plan.json` | Use/Create/Update (max 20 rev) |
-| **1.5** | Learning Integration | Enhanced `plan.json` | - |
-| **2** | Execute → Validate → Learn | Step results | Approve/Re-execute/Stop |
-| **3** | Writer → Critique | `todo_final.md` | Final approval |
+| Phase | Agent | Output | Human Decision | Manager |
+|-------|-------|--------|---------------|---------|
+| **0** | Variable Extraction | `variables.json` | Use/Extract new | `VariableManager` ✅ |
+| **1** | Planning | `plan.json` | Use/Create/Update (max 20 rev) | - |
+| **1.5** | Learning Integration | Enhanced `plan.json` | - | - |
+| **2** | Execute → Validate → Learn | Step results | Approve/Re-execute/Stop | - |
+| **2.5** | Anonymize Learnings | Anonymized learnings | Confirm replacements | `AnonymizationManager` ✅ |
+| **2.6** | Plan Improvement | Feedback report | Review feedback | `PlanImprovementManager` ✅ |
+| **3** | Writer → Critique | `todo_final.md` | Final approval | - |
 
 **Retry Limits**: Execution (3), Plan (20), Critique (3)  
 **Progress**: Auto-saved in `steps_done.json`  
-**Loop Support**: Iterative execution until condition met (max iterations configurable)
+**Loop Support**: Iterative execution until condition met (max iterations configurable)  
+**Independence**: ✅ = Independent manager (no orchestrator dependency), ⚠️ = Uses full orchestrator
 
 ---
 
 ## 🏗️ Architecture
+
+### Manager-Based Architecture
+
+The orchestrator uses **dedicated managers** for independent workflow phases, enabling complete decoupling and reusability:
+
+| Phase | Manager | Status | Description |
+|-------|---------|--------|-------------|
+| **Variable Extraction** | `VariableManager` | ✅ Independent | Manages variable extraction and validation independently |
+| **Anonymization** | `AnonymizationManager` | ✅ Independent | Manages learnings anonymization independently |
+| **Plan Improvement** | `PlanImprovementManager` | ✅ Independent | Manages plan improvement analysis independently |
+| **Planning** | - | ⚠️ Orchestrator | Uses full orchestrator (complex dependencies) |
+| **Execution** | - | ⚠️ Orchestrator | Main orchestrator method |
+
+**Key Benefits**:
+- **Decoupling**: Managers operate independently without creating full orchestrator
+- **Reusability**: Managers can be used directly in `workflow_orchestrator.go`
+- **Consistency**: All managers follow the same pattern and use `CreateAndSetupStandardAgentWithConfig`
+- **LLM Config**: Proper preservation of `FallbackModels`, `CrossProviderFallback`, and `APIKeys`
+- **No Dependencies**: Independent phases don't depend on each other's code
+
+**Manager Structure**:
+```go
+type VariableManager struct {
+    *orchestrator.BaseOrchestrator
+    presetVariableExtractionLLM *AgentLLMConfig
+    sessionID  string
+    workflowID string
+}
+
+type AnonymizationManager struct {
+    *orchestrator.BaseOrchestrator
+    presetAnonymizationLLM *AgentLLMConfig
+}
+
+type PlanImprovementManager struct {
+    *orchestrator.BaseOrchestrator
+    presetPlanImprovementLLM *AgentLLMConfig
+}
+```
+
+**Usage in Workflow Orchestrator**:
+```go
+// Variable Extraction - Direct manager usage
+variableManager := todo_creation_human.NewVariableManager(...)
+result, err := variableManager.ExtractVariablesOnly(ctx, objective, workspacePath)
+
+// Anonymization - Direct manager usage
+anonymizationManager := todo_creation_human.NewAnonymizationManager(...)
+result, err := anonymizationManager.AnonymizeLearningsOnly(ctx, workspacePath)
+
+// Plan Improvement - Direct manager usage
+planImprovementManager := todo_creation_human.NewPlanImprovementManager(...)
+result, err := planImprovementManager.PlanImprovementOnly(ctx, workspacePath)
+```
 
 ### Main Workflow
 
@@ -277,17 +334,19 @@ flowchart TD
 
 ## 🤖 Agents Overview
 
-| # | Agent | Purpose | Key Files |
-|---|-------|---------|-----------|
-| 1 | **Variable Extraction** | Extract & verify `{{VARS}}` | `variables.json` |
-| 2 | **Planning** | Generate JSON execution plan | `plan.json` |
-| 3 | **Learning Integration** | Enhance plan with patterns | `plan.json` |
-| 4 | **Execution** | Execute step (retry x3) | Context outputs |
-| 5 | **Validation** | Verify success criteria | `validation/*.md` |
-| 6 | **Success Learning** | Capture what worked | `learnings/*.md` |
-| 7 | **Failure Learning** | Root cause analysis | `learnings/*.md` |
-| 8 | **Writer** | Synthesize final todo | `todo_final.md` |
-| 9 | **Critique** | Quality validation (x3) | - |
+| # | Agent | Purpose | Key Files | Manager |
+|---|-------|---------|-----------|---------|
+| 1 | **Variable Extraction** | Extract & verify `{{VARS}}` | `variables.json` | `VariableManager` ✅ |
+| 2 | **Planning** | Generate JSON execution plan | `plan.json` | - |
+| 3 | **Learning Integration** | Enhance plan with patterns | `plan.json` | - |
+| 4 | **Execution** | Execute step (retry x3) | Context outputs | - |
+| 5 | **Validation** | Verify success criteria | `validation/*.md` | - |
+| 6 | **Success Learning** | Capture what worked | `learnings/*.md` | - |
+| 7 | **Failure Learning** | Root cause analysis | `learnings/*.md` | - |
+| 8 | **Anonymization** | Replace values with variables | `learnings/*.md`, `learnings/scripts/*.py` | `AnonymizationManager` ✅ |
+| 9 | **Plan Improvement** | Analyze execution & provide feedback | `plan_improvement_feedback.md` | `PlanImprovementManager` ✅ |
+| 10 | **Writer** | Synthesize final todo | `todo_final.md` | - |
+| 11 | **Critique** | Quality validation (x3) | - | - |
 
 ---
 
@@ -347,6 +406,28 @@ workspace/
 - **PASS** → Success Learning (capture patterns)
 - **FAIL** → Failure Learning (root cause + retry guidance)
 **Human Options**: Approve / Re-execute / Stop
+
+### Phase 2.5: Anonymize Learnings
+**Flow**: Scan learnings → Identify values → Request confirmation → Replace with variables  
+**Manager**: `AnonymizationManager` (✅ Independent)  
+**Purpose**: Replace actual values in learnings with `{{VARIABLE_NAME}}` placeholders for reusability  
+**Process**:
+- Scans `learnings/` folder (both `.md` and `.py` files)
+- Uses fuzzy matching to find values matching known variables
+- **Requires human confirmation** before making any file modifications
+- Replaces values in-place with variable placeholders
+**Dependencies**: Requires `variables.json` from Phase 0
+
+### Phase 2.6: Plan Improvement
+**Flow**: Analyze execution → Review plan → Ask questions → Generate feedback  
+**Manager**: `PlanImprovementManager` (✅ Independent)  
+**Purpose**: Analyze execution results and provide feedback for improving the plan  
+**Process**:
+- Reads execution results from `runs/` folder
+- Analyzes `plan.json` structure and execution patterns
+- **Uses human_feedback tool** to ask clarifying questions
+- Generates comprehensive feedback report with improvement suggestions
+**Dependencies**: Requires `plan.json` from Phase 1 and execution results from Phase 2
 
 ### Phase 2: Loop Execution & Validation (Detailed)
 

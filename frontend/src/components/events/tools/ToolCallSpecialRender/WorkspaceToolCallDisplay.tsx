@@ -34,8 +34,8 @@ const isMarkdownContent = (content: string): boolean => {
 }
 
 export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> = ({ event }) => {
-  // Use auto_expand flag from event if available, otherwise default to true
-  const [showContent, setShowContent] = useState(event.auto_expand !== undefined ? event.auto_expand : true)
+  // Always expanded by default
+  const [showContent, setShowContent] = useState(true)
   
   if (!event.tool_params?.arguments) {
     return null

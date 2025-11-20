@@ -448,9 +448,24 @@ export interface UpdateChatSessionRequest {
 }
 
 // Preset LLM Configuration types
-export interface PresetLLMConfig {
+export interface AgentLLMConfig {
   provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
   model_id: string
+}
+
+export interface PresetLLMConfig {
+  // Legacy: Single default model (for backward compatibility)
+  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  model_id?: string
+
+  // New: Agent-specific default models (takes priority over legacy fields)
+  execution_llm?: AgentLLMConfig        // Default for execution agents
+  validation_llm?: AgentLLMConfig       // Default for validation agents
+  learning_llm?: AgentLLMConfig         // Default for learning agents
+  planning_llm?: AgentLLMConfig         // Default for planning agent
+  variable_extraction_llm?: AgentLLMConfig // Default for variable extraction agent
+  anonymization_llm?: AgentLLMConfig    // Default for anonymization agent
+  plan_improvement_llm?: AgentLLMConfig // Default for plan improvement agent
 }
 
 // Preset Query API types

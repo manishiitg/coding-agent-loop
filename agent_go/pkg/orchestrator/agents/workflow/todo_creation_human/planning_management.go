@@ -9,10 +9,7 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
@@ -29,6 +26,51 @@ type EnhancedPlanWithMetadata struct {
 type LearningFileInfo struct {
 	Filepath   string    `json:"filepath"`
 	ModifiedAt time.Time `json:"modified_at"`
+}
+
+// validatePlanStepIDs recursively validates that all steps have IDs
+// Throws error if any step is missing an ID
+func validatePlanStepIDs(steps []PlanStep) error {
+	for i := range steps {
+		if steps[i].ID == "" {
+			return fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, steps[i].Title)
+		}
+
+		// Recursively validate branch steps
+		if len(steps[i].IfTrueSteps) > 0 {
+			if err := validateBranchStepIDs(steps[i].IfTrueSteps, steps[i].Title, "true"); err != nil {
+				return err
+			}
+		}
+		if len(steps[i].IfFalseSteps) > 0 {
+			if err := validateBranchStepIDs(steps[i].IfFalseSteps, steps[i].Title, "false"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateBranchStepIDs recursively validates that all branch steps have IDs
+func validateBranchStepIDs(steps []PlanStep, parentTitle, branchType string) error {
+	for i := range steps {
+		if steps[i].ID == "" {
+			return fmt.Errorf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, steps[i].Title)
+		}
+
+		// Recursively validate nested branch steps
+		if len(steps[i].IfTrueSteps) > 0 {
+			if err := validateBranchStepIDs(steps[i].IfTrueSteps, steps[i].Title, "true"); err != nil {
+				return err
+			}
+		}
+		if len(steps[i].IfFalseSteps) > 0 {
+			if err := validateBranchStepIDs(steps[i].IfFalseSteps, steps[i].Title, "false"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // runPlanningPhase generates JSON plan directly
@@ -66,7 +108,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	}
 
 	// Add variable names if available (planning agent should preserve variable placeholders)
-	if variableNames := hcpo.formatVariableNames(); variableNames != "" {
+	if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {
 		planningTemplateVars["VariableNames"] = variableNames
 		hcpo.GetLogger().Infof("✅ Passing variable names to planning agent (for placeholder preservation)")
 	}
@@ -193,6 +235,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 
 	// Only save plan for CREATE mode - UPDATE mode already saved it via tools
 	if !isUpdateMode {
+		// Validate that all steps have IDs (planning agent should always generate them)
+		if err := validatePlanStepIDs(planResponse.Steps); err != nil {
+			return nil, nil, fmt.Errorf("plan validation failed: %w", err)
+		}
+
 		// Save JSON plan to file manually
 		planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
 
@@ -204,6 +251,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 		if err := hcpo.WriteWorkspaceFile(ctx, planPath, string(planJSON)); err != nil {
 			return nil, nil, fmt.Errorf("failed to save plan.json: %w", err)
 		}
+		// Note: IDs are added above before marshaling, so they're included in the saved file
 
 		// Note: Learning integration cache removal no longer needed - execution agent auto-discovers files
 
@@ -229,26 +277,70 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Infof("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths)
 
+	// Determine LLM config: Priority: preset default > orchestrator default
+	var llmConfigToUse *orchestrator.LLMConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	if hcpo.presetPlanningLLM != nil && hcpo.presetPlanningLLM.Provider != "" && hcpo.presetPlanningLLM.ModelID != "" {
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:       hcpo.presetPlanningLLM.Provider,
+			ModelID:        hcpo.presetPlanningLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Infof("🔧 Using preset default planning LLM: %s/%s", hcpo.presetPlanningLLM.Provider, hcpo.presetPlanningLLM.ModelID)
+	} else {
+		llmConfigToUse = orchestratorLLMConfig
+		hcpo.GetLogger().Infof("🔧 Using orchestrator default planning LLM: %s/%s", hcpo.GetProvider(), hcpo.GetModel())
+	}
+
 	// Use CreateAndSetupStandardAgentWithCustomServers instead of CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt
 	// because system prompt is passed directly to ExecuteStructuredWithInputProcessor() in planning_agent.go
 	// Planning agent doesn't need custom tools - it only uses structured output tool
-	agent, err := hcpo.CreateAndSetupStandardAgentWithCustomServers(
-		ctx,
-		"human-controlled-planning-agent",
-		phase,
-		step,
-		iteration,
-		hcpo.GetMaxTurns(),
-		agents.OutputFormatStructured,
-		[]string{mcpclient.NoServers}, // No MCP servers needed - pure LLM planning agent
-		func(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewHumanControlledTodoPlannerPlanningAgent(config, logger, tracer, eventBridge)
-		},
-		[]llmtypes.Tool{},        // Empty - planning agent doesn't need custom tools
-		map[string]interface{}{}, // Empty - planning agent doesn't need custom tool executors
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create planning agent: %w", err)
+	// Create agent config with custom LLM
+	agentConfig := hcpo.CreateStandardAgentConfigWithLLM("human-controlled-planning-agent", hcpo.GetMaxTurns(), agents.OutputFormatStructured, llmConfigToUse)
+	agentConfig.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM planning agent
+
+	// Disable large output virtual tools for planning agent
+	disabled := false
+	agentConfig.EnableLargeOutputVirtualTools = &disabled
+	hcpo.GetLogger().Infof("🔧 Disabling large output virtual tools for planning agent")
+
+	// Create agent using provided factory function
+	agent := NewHumanControlledTodoPlannerPlanningAgent(agentConfig, hcpo.GetLogger(), hcpo.GetTracer(), hcpo.GetContextAwareBridge())
+
+	// Initialize and setup agent
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize planning agent: %w", err)
+	}
+
+	// Validate essentials and connect event bridge
+	eventBridge := hcpo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("context-aware event bridge is nil for planning agent")
+	}
+
+	hcpo.GetLogger().Infof("🔍 Checking agent structure for planning agent")
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, fmt.Errorf("base agent is nil for planning agent")
+	}
+
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, fmt.Errorf("MCP agent is nil for planning agent")
+	}
+
+	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
+	baseAgentName := baseAgent.GetName()
+	if cab, ok := eventBridge.(interface {
+		SetOrchestratorContext(phase string, step, iteration int, agentName string)
+	}); ok {
+		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		mcpAgent.AddEventListener(eventBridge)
+		hcpo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+	} else {
+		mcpAgent.AddEventListener(eventBridge)
+		hcpo.GetLogger().Infof("🔗 Connected event bridge to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
 	}
 
 	return agent, nil
@@ -306,12 +398,92 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestPlanApproval(
 
 // convertPlanStepsToTodoSteps converts PlanStep to TodoStep format
 // Merges agent configs from step_config.json by step index matching
+// convertBranchSteps converts a slice of PlanStep to TodoStep (helper for recursive conversion)
+// stepConfigs: step configs file for matching branch step configs by ID
+func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) []TodoStep {
+	if len(planSteps) == 0 {
+		return nil
+	}
+	todoSteps := make([]TodoStep, len(planSteps))
+	for i := range planSteps {
+		step := planSteps[i]
+		// Steps always have IDs from backend - match config by step ID
+		var agentConfigs *AgentConfigs
+		if step.ID == "" {
+			// Log warning for steps without IDs (they won't be able to match configs)
+			// This can happen with old plans or if IDs weren't properly set
+			// Note: This is a warning, not an error - step will use default configs
+		} else if stepConfigs != nil {
+			// Debug: Log what we're searching for
+			// Note: Can't use logger here, but we can add debug info later if needed
+			agentConfigs = MatchStepConfigByID(step.ID, stepConfigs)
+			// Config will be nil if not found (expected for new steps without saved configs)
+			// Config will be non-nil if found (branch step will use its own configs)
+		} else {
+			// stepConfigs is nil - branch step will use default configs
+		}
+
+		// Validation is required for loop steps to check loop conditions
+		// Ensure validation is not disabled for loop steps
+		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation {
+			// Create a copy of configs with validation enabled
+			enabledConfigs := *agentConfigs
+			enabledConfigs.DisableValidation = false
+			agentConfigs = &enabledConfigs
+		}
+
+		// Recursively convert nested branch steps
+		var ifTrueSteps []TodoStep
+		if len(step.IfTrueSteps) > 0 {
+			ifTrueSteps = convertBranchSteps(step.IfTrueSteps, stepConfigs)
+		}
+
+		var ifFalseSteps []TodoStep
+		if len(step.IfFalseSteps) > 0 {
+			ifFalseSteps = convertBranchSteps(step.IfFalseSteps, stepConfigs)
+		}
+
+		todoSteps[i] = TodoStep{
+			ID:                  step.ID, // Copy ID from PlanStep for frontend matching
+			Title:               step.Title,
+			Description:         step.Description,
+			SuccessCriteria:     step.SuccessCriteria,
+			ContextDependencies: step.ContextDependencies,
+			ContextOutput:       step.ContextOutput.String(),
+			HasLoop:             step.HasLoop,
+			LoopCondition:       step.LoopCondition,
+			MaxIterations:       step.MaxIterations,
+			LoopDescription:     step.LoopDescription,
+			HasCondition:        step.HasCondition,
+			ConditionQuestion:   step.ConditionQuestion,
+			ConditionContext:    step.ConditionContext,
+			IfTrueSteps:         ifTrueSteps,
+			IfFalseSteps:        ifFalseSteps,
+			AgentConfigs:        agentConfigs, // Matched from step_config.json by ID
+		}
+	}
+	return todoSteps
+}
+
 func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(ctx context.Context, planSteps []PlanStep) []TodoStep {
 	// Read step configs from step_config.json
 	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 	if err != nil {
 		hcpo.GetLogger().Warnf("⚠️ Failed to read step_config.json: %v (using defaults for all steps)", err)
 		stepConfigs = &StepConfigFile{Steps: []StepConfig{}}
+	}
+
+	// Log available config IDs for debugging
+	if stepConfigs != nil && len(stepConfigs.Steps) > 0 {
+		configIDs := make([]string, 0, len(stepConfigs.Steps))
+		for _, config := range stepConfigs.Steps {
+			if config.ID != "" {
+				configIDs = append(configIDs, config.ID)
+			}
+		}
+		hcpo.GetLogger().Infof("📋 Available config IDs in step_config.json: %v", configIDs)
+	} else {
+		hcpo.GetLogger().Infof("📋 No step configs available (step_config.json is empty or not found)")
 	}
 
 	// Match configs by step index (0-based)
@@ -336,8 +508,38 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			agentConfigs = &enabledConfigs
 		}
 
+		// Convert branch steps recursively
+		var ifTrueSteps []TodoStep
+		if len(step.IfTrueSteps) > 0 {
+			hcpo.GetLogger().Infof("🔍 Converting %d if_true branch steps for step '%s' (ID: %s)", len(step.IfTrueSteps), step.Title, step.ID)
+			ifTrueSteps = convertBranchSteps(step.IfTrueSteps, stepConfigs)
+			// Log config matching results for branch steps
+			for _, branchStep := range ifTrueSteps {
+				if branchStep.AgentConfigs != nil {
+					hcpo.GetLogger().Infof("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID)
+				} else {
+					hcpo.GetLogger().Infof("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID)
+				}
+			}
+		}
+
+		var ifFalseSteps []TodoStep
+		if len(step.IfFalseSteps) > 0 {
+			hcpo.GetLogger().Infof("🔍 Converting %d if_false branch steps for step '%s' (ID: %s)", len(step.IfFalseSteps), step.Title, step.ID)
+			ifFalseSteps = convertBranchSteps(step.IfFalseSteps, stepConfigs)
+			// Log config matching results for branch steps
+			for _, branchStep := range ifFalseSteps {
+				if branchStep.AgentConfigs != nil {
+					hcpo.GetLogger().Infof("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID)
+				} else {
+					hcpo.GetLogger().Infof("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID)
+				}
+			}
+		}
+
 		// Convert FlexibleContextOutput to string for TodoStep
 		todoSteps[i] = TodoStep{
+			ID:                  step.ID, // Copy ID from PlanStep for frontend matching
 			Title:               step.Title,
 			Description:         step.Description,
 			SuccessCriteria:     step.SuccessCriteria,
@@ -347,6 +549,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			LoopCondition:       step.LoopCondition,
 			MaxIterations:       step.MaxIterations,
 			LoopDescription:     step.LoopDescription,
+			HasCondition:        step.HasCondition,
+			ConditionQuestion:   step.ConditionQuestion,
+			ConditionContext:    step.ConditionContext,
+			IfTrueSteps:         ifTrueSteps,
+			IfFalseSteps:        ifFalseSteps,
 			AgentConfigs:        agentConfigs, // Merged from step_config.json (validation enforced for loops)
 		}
 	}
@@ -493,7 +700,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 
 	// Check if variables.json exists - REQUIRED for planning
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
-	variablesExist, existingVariablesManifest, err := hcpo.checkExistingVariables(ctx, variablesPath)
+	variablesExist, existingVariablesManifest, err := hcpo.variableManager.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to check for existing variables: %w", err)
 	}
@@ -508,8 +715,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
 
 	// Load runtime variable values if provided
-	if err := hcpo.loadVariableValues(ctx); err != nil {
+	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
+	if err != nil {
 		hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %w", err)
+	} else {
+		hcpo.variableValues = variableValues
 	}
 
 	// Check if plan.json already exists

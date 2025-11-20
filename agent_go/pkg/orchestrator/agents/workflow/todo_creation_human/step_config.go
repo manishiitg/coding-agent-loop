@@ -12,7 +12,7 @@ import (
 
 // StepConfig represents a single step's configuration in step_config.json
 type StepConfig struct {
-	Index        int           `json:"index"`           // Step index (0-based) - primary key for matching
+	ID           string        `json:"id"`              // Stable step ID (from plan.json) - required identifier
 	Title        string        `json:"title,omitempty"` // Step title (optional, for reference/display only)
 	AgentConfigs *AgentConfigs `json:"agent_configs,omitempty"`
 }
@@ -89,25 +89,57 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 	return nil
 }
 
-// MatchStepConfigs matches new plan steps with existing configs by step index
+// MatchStepConfigs matches new plan steps with existing configs by ID only
 // Returns a map of step index -> matched AgentConfigs
 func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*AgentConfigs {
 	result := make(map[int]*AgentConfigs)
 
-	// Create a lookup map from old config indices to configs
-	oldConfigMap := make(map[int]*AgentConfigs)
+	// Create lookup map: ID -> config
+	idConfigMap := make(map[string]*AgentConfigs)
+
 	for i := range oldConfigs.Steps {
-		index := oldConfigs.Steps[i].Index
-		oldConfigMap[index] = oldConfigs.Steps[i].AgentConfigs
+		if oldConfigs.Steps[i].AgentConfigs != nil && oldConfigs.Steps[i].ID != "" {
+			idConfigMap[oldConfigs.Steps[i].ID] = oldConfigs.Steps[i].AgentConfigs
+		}
 	}
 
-	// Match new steps to old configs by index (0-based)
+	// Match new steps to old configs by ID only
+	// Steps always have IDs from backend - throw error if missing
 	for i := range newSteps {
-		if config, found := oldConfigMap[i]; found {
+		// Use existing step ID (required) - steps always have IDs from plan.json
+		stepID := newSteps[i].ID
+		if stepID == "" {
+			// This should never happen - steps always have IDs from backend
+			// Log error but don't crash - just skip matching for this step
+			// In production, this indicates a bug in plan generation
+			continue
+		}
+
+		// Match config by ID
+		config := idConfigMap[stepID]
+		if config != nil {
 			result[i] = config
 		}
 		// If not found, result[i] will be nil (no config for this step)
 	}
 
 	return result
+}
+
+// MatchStepConfigByID matches a step config by ID (for branch steps)
+// stepID: the step ID to match (from plan.json)
+// Returns the matched AgentConfigs or nil if not found
+func MatchStepConfigByID(stepID string, oldConfigs *StepConfigFile) *AgentConfigs {
+	if stepID == "" {
+		return nil
+	}
+
+	// Look up by ID
+	for i := range oldConfigs.Steps {
+		if oldConfigs.Steps[i].ID == stepID {
+			return oldConfigs.Steps[i].AgentConfigs
+		}
+	}
+
+	return nil
 }

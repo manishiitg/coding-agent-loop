@@ -60,6 +60,22 @@ type Config struct {
 	Logger utils.ExtendedLogger
 	// Context for LLM initialization (optional, uses background with timeout if not provided)
 	Context context.Context
+	// API keys for providers (optional, falls back to environment variables if not provided)
+	APIKeys *ProviderAPIKeys
+}
+
+// ProviderAPIKeys holds API keys for different providers
+type ProviderAPIKeys struct {
+	OpenRouter *string
+	OpenAI     *string
+	Anthropic  *string
+	Vertex     *string
+	Bedrock    *BedrockConfig
+}
+
+// BedrockConfig holds Bedrock-specific configuration
+type BedrockConfig struct {
+	Region string
 }
 
 // InitializeLLM creates and initializes an LLM based on the provider configuration
@@ -304,9 +320,17 @@ func IsO3O4Model(modelID string) bool {
 
 // initializeOpenAI creates and configures an OpenAI LLM instance
 func initializeOpenAI(config Config) (llmtypes.Model, error) {
+	// Get API key from config or environment variable
+	apiKey := ""
+	if config.APIKeys != nil && config.APIKeys.OpenAI != nil && *config.APIKeys.OpenAI != "" {
+		apiKey = *config.APIKeys.OpenAI
+	} else {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+
 	// Check for API key
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is required for OpenAI provider")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is required for OpenAI provider (not found in config or environment)")
 	}
 
 	// LLM Initialization event data - use typed structure directly
@@ -332,7 +356,7 @@ func initializeOpenAI(config Config) (llmtypes.Model, error) {
 
 	// Create OpenAI client using official SDK
 	client := openaisdk.NewClient(
-		option.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
+		option.WithAPIKey(apiKey),
 	)
 
 	// Create OpenAI adapter
@@ -372,10 +396,16 @@ func initializeAnthropic(config Config) (llmtypes.Model, error) {
 	// Emit LLM initialization start event
 	emitLLMInitializationStart(config.Tracers, string(config.Provider), config.ModelID, config.Temperature, config.TraceID, llmMetadata)
 
-	// Get API key from environment
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	// Get API key from config or environment variable
+	apiKey := ""
+	if config.APIKeys != nil && config.APIKeys.Anthropic != nil && *config.APIKeys.Anthropic != "" {
+		apiKey = *config.APIKeys.Anthropic
+	} else {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
+
 	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is required")
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY is required for Anthropic provider (not found in config or environment)")
 	}
 
 	// Use provided model or default
@@ -429,9 +459,17 @@ func initializeOpenRouter(config Config) (llmtypes.Model, error) {
 	// Emit LLM initialization start event
 	emitLLMInitializationStart(config.Tracers, string(config.Provider), config.ModelID, config.Temperature, config.TraceID, llmMetadata)
 
+	// Get API key from config or environment variable
+	apiKey := ""
+	if config.APIKeys != nil && config.APIKeys.OpenRouter != nil && *config.APIKeys.OpenRouter != "" {
+		apiKey = *config.APIKeys.OpenRouter
+	} else {
+		apiKey = os.Getenv("OPEN_ROUTER_API_KEY")
+	}
+
 	// Check for API key
-	if os.Getenv("OPEN_ROUTER_API_KEY") == "" {
-		return nil, fmt.Errorf("OPEN_ROUTER_API_KEY environment variable is required for OpenRouter provider")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPEN_ROUTER_API_KEY is required for OpenRouter provider (not found in config or environment)")
 	}
 
 	// Set default model if not specified
@@ -447,11 +485,11 @@ func initializeOpenRouter(config Config) (llmtypes.Model, error) {
 	logger.Infof("🔧 [DEBUG] Creating OpenRouter LLM with OpenAI client...")
 	logger.Infof("🔧 [DEBUG] Model: %s", modelID)
 	logger.Infof("🔧 [DEBUG] Base URL: https://openrouter.ai/api/v1")
-	logger.Infof("🔧 [DEBUG] API Key present: %v", os.Getenv("OPEN_ROUTER_API_KEY") != "")
+	logger.Infof("🔧 [DEBUG] API Key present: %v", apiKey != "")
 
 	// Create OpenAI SDK client with OpenRouter base URL
 	clientOptions := []option.RequestOption{
-		option.WithAPIKey(os.Getenv("OPEN_ROUTER_API_KEY")),
+		option.WithAPIKey(apiKey),
 		option.WithBaseURL("https://openrouter.ai/api/v1"),
 	}
 
@@ -571,12 +609,19 @@ func initializeVertexGemini(config Config, modelID string, logger utils.Extended
 		ctx = context.Background()
 	}
 
-	// Check for API key from environment first
+	// Check for API key from config or environment first
 	logger.Infof("🔐 [VERTEX AUTH] Checking authentication methods for model: %s", modelID)
-	apiKey := os.Getenv("VERTEX_API_KEY")
-	if apiKey == "" {
-		// Try alternative environment variable names
-		apiKey = os.Getenv("GOOGLE_API_KEY")
+	apiKey := ""
+	if config.APIKeys != nil && config.APIKeys.Vertex != nil && *config.APIKeys.Vertex != "" {
+		apiKey = *config.APIKeys.Vertex
+		logger.Infof("🔑 [VERTEX AUTH] Using API key from config")
+	} else {
+		// Try environment variables
+		apiKey = os.Getenv("VERTEX_API_KEY")
+		if apiKey == "" {
+			// Try alternative environment variable names
+			apiKey = os.Getenv("GOOGLE_API_KEY")
+		}
 	}
 
 	var client *genai.Client

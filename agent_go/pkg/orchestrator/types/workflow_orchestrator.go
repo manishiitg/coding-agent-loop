@@ -68,6 +68,24 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Execute the approved plan using MCP tools. This phase runs after both variable extraction and planning are complete.",
 				Options:     []WorkflowPhaseOption{}, // No options for execution phase
 			},
+			{
+				ID:          "anonymize-learnings",
+				Title:       "Anonymize Learnings",
+				Description: "Scan the learnings folder (both .md files and Python scripts) to identify actual values that match known variables, request human confirmation, and replace them with variable placeholders for reusability across different environments.",
+				Options:     []WorkflowPhaseOption{}, // No options for anonymization phase
+			},
+			{
+				ID:          "plan-improvement",
+				Title:       "Plan Improvement",
+				Description: "Analyze execution results, plan.json, learnings folder, and validation reports to provide feedback and suggestions for improving the plan based on real execution outcomes.",
+				Options:     []WorkflowPhaseOption{}, // No options for plan improvement phase
+			},
+			{
+				ID:          "plan-learnings-alignment",
+				Title:       "Plan-Learnings Alignment",
+				Description: "Check alignment between plan.json and learnings folder. Identifies orphaned learning files (for deleted steps), missing learnings (for new steps), and provides options to manage mismatches.",
+				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
+			},
 		},
 	}
 }
@@ -108,6 +126,15 @@ func HandleWorkflowConstants(w http.ResponseWriter, r *http.Request) {
 type WorkflowOrchestrator struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
+
+	// Preset-level agent defaults (used when step config doesn't specify)
+	presetExecutionLLM          *todo_creation_human.AgentLLMConfig // Default for execution agents
+	presetValidationLLM         *todo_creation_human.AgentLLMConfig // Default for validation agents
+	presetLearningLLM           *todo_creation_human.AgentLLMConfig // Default for learning agents
+	presetPlanningLLM           *todo_creation_human.AgentLLMConfig // Default for planning agent
+	presetVariableExtractionLLM *todo_creation_human.AgentLLMConfig // Default for variable extraction agent
+	presetAnonymizationLLM      *todo_creation_human.AgentLLMConfig // Default for anonymization agent
+	presetPlanImprovementLLM    *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
 }
 
 // Human verification types
@@ -161,6 +188,7 @@ func NewWorkflowOrchestrator(
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
+	presetLLMConfig *database.PresetLLMConfig, // Optional preset LLM config for agent defaults
 ) (*WorkflowOrchestrator, error) {
 
 	// Create base orchestrator
@@ -184,9 +212,106 @@ func NewWorkflowOrchestrator(
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
 	}
 
+	// Extract agent-specific defaults from preset LLM config
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM *todo_creation_human.AgentLLMConfig
+	if presetLLMConfig != nil {
+		// Use agent-specific defaults if available, otherwise fall back to legacy single default
+		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
+			presetExecutionLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.ExecutionLLM.Provider,
+				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for execution
+			presetExecutionLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.ValidationLLM != nil && presetLLMConfig.ValidationLLM.Provider != "" && presetLLMConfig.ValidationLLM.ModelID != "" {
+			presetValidationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.ValidationLLM.Provider,
+				ModelID:  presetLLMConfig.ValidationLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for validation
+			presetValidationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.LearningLLM != nil && presetLLMConfig.LearningLLM.Provider != "" && presetLLMConfig.LearningLLM.ModelID != "" {
+			presetLearningLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.LearningLLM.Provider,
+				ModelID:  presetLLMConfig.LearningLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for learning
+			presetLearningLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.PlanningLLM != nil && presetLLMConfig.PlanningLLM.Provider != "" && presetLLMConfig.PlanningLLM.ModelID != "" {
+			presetPlanningLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.PlanningLLM.Provider,
+				ModelID:  presetLLMConfig.PlanningLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for planning
+			presetPlanningLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.VariableExtractionLLM != nil && presetLLMConfig.VariableExtractionLLM.Provider != "" && presetLLMConfig.VariableExtractionLLM.ModelID != "" {
+			presetVariableExtractionLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.VariableExtractionLLM.Provider,
+				ModelID:  presetLLMConfig.VariableExtractionLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for variable extraction
+			presetVariableExtractionLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.AnonymizationLLM != nil && presetLLMConfig.AnonymizationLLM.Provider != "" && presetLLMConfig.AnonymizationLLM.ModelID != "" {
+			presetAnonymizationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.AnonymizationLLM.Provider,
+				ModelID:  presetLLMConfig.AnonymizationLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for anonymization
+			presetAnonymizationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.PlanImprovementLLM != nil && presetLLMConfig.PlanImprovementLLM.Provider != "" && presetLLMConfig.PlanImprovementLLM.ModelID != "" {
+			presetPlanImprovementLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.PlanImprovementLLM.Provider,
+				ModelID:  presetLLMConfig.PlanImprovementLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for plan improvement
+			presetPlanImprovementLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+	}
+
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
-		BaseOrchestrator: baseOrchestrator,
+		BaseOrchestrator:            baseOrchestrator,
+		presetExecutionLLM:          presetExecutionLLM,
+		presetValidationLLM:         presetValidationLLM,
+		presetLearningLLM:           presetLearningLLM,
+		presetPlanningLLM:           presetPlanningLLM,
+		presetVariableExtractionLLM: presetVariableExtractionLLM,
+		presetAnonymizationLLM:      presetAnonymizationLLM,
+		presetPlanImprovementLLM:    presetPlanImprovementLLM,
 	}
 
 	return wo, nil
@@ -218,6 +343,21 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runPlanningOnly(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "anonymize-learnings" {
+		wo.GetLogger().Infof("🔒 Routing to anonymize learnings phase (workflowStatus: %s)", workflowStatus)
+		return wo.runAnonymization(ctx, objective, selectedOptions)
+	}
+
+	if workflowStatus == "plan-improvement" {
+		wo.GetLogger().Infof("📊 Routing to plan improvement phase (workflowStatus: %s)", workflowStatus)
+		return wo.runPlanImprovement(ctx, objective, selectedOptions)
+	}
+
+	if workflowStatus == "plan-learnings-alignment" {
+		wo.GetLogger().Infof("🔍 Routing to plan-learnings alignment phase (workflowStatus: %s)", workflowStatus)
+		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
+	}
+
 	// All other workflow statuses (pre-verification) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	wo.GetLogger().Infof("🚀 Routing to execution phase (workflowStatus: %s)", workflowStatus)
@@ -228,30 +368,16 @@ func (wo *WorkflowOrchestrator) executeFlow(
 func (wo *WorkflowOrchestrator) runVariableExtraction(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Infof("🔍 Starting Variable Extraction Phase")
 
-	// Create human controlled planner orchestrator (needed for variable extraction)
-	llmConfig := wo.GetLLMConfig()
-	todoPlannerAgent, err := todo_creation_human.NewHumanControlledTodoPlannerOrchestrator(
-		wo.GetProvider(),
-		wo.GetModel(),
-		wo.GetTemperature(),
-		wo.GetAgentMode(),
-		wo.GetSelectedServers(),
-		wo.GetSelectedTools(),
-		wo.GetMCPConfigPath(),
-		llmConfig,
-		wo.GetMaxTurns(),
-		wo.GetLogger(),
-		wo.GetTracer(),
-		wo.GetContextAwareBridge(),
-		wo.WorkspaceTools,
-		wo.WorkspaceToolExecutors,
+	// Create variable manager directly (independent from controller)
+	variableManager := todo_creation_human.NewVariableManager(
+		wo.BaseOrchestrator,
+		wo.presetVariableExtractionLLM,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
 	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
-	}
 
 	// Run only variable extraction
-	result, err := todoPlannerAgent.ExtractVariablesOnly(ctx, objective, wo.GetWorkspacePath())
+	result, err := variableManager.ExtractVariablesOnly(ctx, objective, wo.GetWorkspacePath())
 	if err != nil {
 		return "", fmt.Errorf("variable extraction failed: %w", err)
 	}
@@ -281,6 +407,13 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.GetContextAwareBridge(),
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
+		wo.presetExecutionLLM, // Pass preset defaults
+		wo.presetValidationLLM,
+		wo.presetLearningLLM,
+		wo.presetPlanningLLM,
+		wo.presetVariableExtractionLLM,
+		wo.presetAnonymizationLLM,
+		wo.presetPlanImprovementLLM,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -293,6 +426,69 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 	}
 
 	wo.GetLogger().Infof("✅ Planning completed successfully")
+	return result, nil
+}
+
+// runAnonymization runs only the anonymization phase
+func (wo *WorkflowOrchestrator) runAnonymization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Infof("🔒 Starting Anonymize Learnings Phase")
+
+	// Create anonymization manager directly (independent from controller)
+	anonymizationManager := todo_creation_human.NewAnonymizationManager(
+		wo.BaseOrchestrator,
+		wo.presetAnonymizationLLM,
+	)
+
+	// Run only anonymization
+	result, err := anonymizationManager.AnonymizeLearningsOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("anonymization failed: %w", err)
+	}
+
+	wo.GetLogger().Infof("✅ Anonymization completed successfully")
+	return result, nil
+}
+
+// runPlanImprovement runs only the plan improvement phase
+func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Infof("📊 Starting Plan Improvement Phase")
+
+	// Create plan improvement manager directly (independent from controller)
+	planImprovementManager := todo_creation_human.NewPlanImprovementManager(
+		wo.BaseOrchestrator,
+		wo.presetPlanImprovementLLM,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Run only plan improvement
+	result, err := planImprovementManager.PlanImprovementOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("plan improvement failed: %w", err)
+	}
+
+	wo.GetLogger().Infof("✅ Plan improvement completed successfully")
+	return result, nil
+}
+
+// runPlanLearningsAlignment runs only the plan-learnings alignment check phase
+func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Infof("🔍 Starting Plan-Learnings Alignment Phase")
+
+	// Create plan learnings alignment manager directly (independent from controller)
+	alignmentManager := todo_creation_human.NewPlanLearningsAlignmentManager(
+		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Run only alignment check
+	result, err := alignmentManager.CheckAlignmentOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("plan-learnings alignment check failed: %w", err)
+	}
+
+	wo.GetLogger().Infof("✅ Plan-learnings alignment check completed successfully")
 	return result, nil
 }
 
@@ -326,6 +522,13 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetContextAwareBridge(),
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
+		wo.presetExecutionLLM, // Pass preset defaults
+		wo.presetValidationLLM,
+		wo.presetLearningLLM,
+		wo.presetPlanningLLM,
+		wo.presetVariableExtractionLLM,
+		wo.presetAnonymizationLLM,
+		wo.presetPlanImprovementLLM,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -438,6 +641,9 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"variable-extraction",                  // Variable extraction phase
 					"planning",                             // Planning phase
 					database.WorkflowStatusPreVerification, // Execution phase
+					"anonymize-learnings",                  // Anonymize learnings phase
+					"plan-improvement",                     // Plan improvement phase
+					"plan-learnings-alignment",             // Plan-learnings alignment phase
 				}
 				valid := false
 				for _, status := range validStatuses {

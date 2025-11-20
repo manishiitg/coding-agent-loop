@@ -101,6 +101,22 @@ func convertConfig(config Config) llmproviders.Config {
 		logger = &LoggerAdapter{logger: nil}
 	}
 
+	// Convert API keys if provided
+	var providerAPIKeys *llmproviders.ProviderAPIKeys
+	if config.APIKeys != nil {
+		providerAPIKeys = &llmproviders.ProviderAPIKeys{
+			OpenRouter: config.APIKeys.OpenRouter,
+			OpenAI:     config.APIKeys.OpenAI,
+			Anthropic:  config.APIKeys.Anthropic,
+			Vertex:     config.APIKeys.Vertex,
+		}
+		if config.APIKeys.Bedrock != nil {
+			providerAPIKeys.Bedrock = &llmproviders.BedrockConfig{
+				Region: config.APIKeys.Bedrock.Region,
+			}
+		}
+	}
+
 	return llmproviders.Config{
 		Provider:       llmproviders.Provider(config.Provider),
 		ModelID:        config.ModelID,
@@ -111,6 +127,7 @@ func convertConfig(config Config) llmproviders.Config {
 		MaxRetries:     config.MaxRetries,
 		Logger:         logger,
 		Context:        config.Context,
+		APIKeys:        providerAPIKeys,
 	}
 }
 
@@ -184,6 +201,25 @@ func convertContentPart(part llmtypes.ContentPart) llmprovidertypes.ContentPart 
 			SourceType: p.SourceType,
 			MediaType:  p.MediaType,
 			Data:       p.Data,
+		}
+	case llmtypes.ToolCall:
+		result := llmprovidertypes.ToolCall{
+			ID:   p.ID,
+			Type: p.Type,
+		}
+		if p.FunctionCall != nil {
+			result.FunctionCall = &llmprovidertypes.FunctionCall{
+				Name:      p.FunctionCall.Name,
+				Arguments: p.FunctionCall.Arguments,
+			}
+		}
+		result.ThoughtSignature = p.ThoughtSignature
+		return result
+	case llmtypes.ToolCallResponse:
+		return llmprovidertypes.ToolCallResponse{
+			ToolCallID: p.ToolCallID,
+			Name:       p.Name,
+			Content:    p.Content,
 		}
 	default:
 		return part
@@ -347,8 +383,9 @@ func convertContentChoice(choice *llmprovidertypes.ContentChoice) *llmtypes.Cont
 // convertToolCall converts llm-providers ToolCall to agent_go ToolCall
 func convertToolCall(tc llmprovidertypes.ToolCall) llmtypes.ToolCall {
 	result := llmtypes.ToolCall{
-		ID:   tc.ID,
-		Type: tc.Type,
+		ID:               tc.ID,
+		Type:             tc.Type,
+		ThoughtSignature: tc.ThoughtSignature, // CRITICAL: Preserve thought signature for Gemini 3 Pro
 	}
 	if tc.FunctionCall != nil {
 		result.FunctionCall = convertFunctionCall(tc.FunctionCall)

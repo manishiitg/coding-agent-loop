@@ -56,6 +56,22 @@ type Config struct {
 	Logger interfaces.Logger
 	// Context for LLM initialization (optional, uses background with timeout if not provided)
 	Context context.Context
+	// API keys for providers (optional, falls back to environment variables if not provided)
+	APIKeys *ProviderAPIKeys
+}
+
+// ProviderAPIKeys holds API keys for different providers
+type ProviderAPIKeys struct {
+	OpenRouter *string
+	OpenAI     *string
+	Anthropic  *string
+	Vertex     *string
+	Bedrock    *BedrockConfig
+}
+
+// BedrockConfig holds Bedrock-specific configuration
+type BedrockConfig struct {
+	Region string
 }
 
 // InitializeLLM creates and initializes an LLM based on the provider configuration
@@ -779,14 +795,21 @@ func initializeVertexAnthropic(config Config, modelID string, logger interfaces.
 func initializeVertexGemini(config Config, modelID string, logger interfaces.Logger) (llmtypes.Model, error) {
 	logger.Infof("Initializing Vertex AI (Gemini) LLM with API key - model_id: %s", modelID)
 
-	// Check for API key from environment
-	apiKey := os.Getenv("VERTEX_API_KEY")
-	if apiKey == "" {
-		// Try alternative environment variable names
-		apiKey = os.Getenv("GOOGLE_API_KEY")
+	// Check for API key from config first, then environment
+	apiKey := ""
+	if config.APIKeys != nil && config.APIKeys.Vertex != nil && *config.APIKeys.Vertex != "" {
+		apiKey = *config.APIKeys.Vertex
+		logger.Infof("🔑 [VERTEX AUTH] Using API key from config")
+	} else {
+		// Try environment variables
+		apiKey = os.Getenv("VERTEX_API_KEY")
+		if apiKey == "" {
+			// Try alternative environment variable names
+			apiKey = os.Getenv("GOOGLE_API_KEY")
+		}
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY environment variable is required for Gemini models")
+		return nil, fmt.Errorf("VERTEX_API_KEY or GOOGLE_API_KEY is required for Gemini models (not found in config or environment)")
 	}
 
 	// Use provided context or use background context

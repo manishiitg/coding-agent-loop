@@ -6,16 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
 
 	"mcp-agent/agent_go/pkg/orchestrator"
 )
 
 // StepConfig represents a single step's configuration in step_config.json
 type StepConfig struct {
-	ID           string        `json:"id"`              // Stable step ID (generated from title) - required identifier
+	ID           string        `json:"id"`              // Stable step ID (from plan.json) - required identifier
 	Title        string        `json:"title,omitempty"` // Step title (optional, for reference/display only)
 	AgentConfigs *AgentConfigs `json:"agent_configs,omitempty"`
 }
@@ -92,48 +89,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 	return nil
 }
 
-// GenerateStepID generates a stable ID from a step title
-// Uses a simple hash-like approach to create a consistent ID
-func GenerateStepID(title string) string {
-	if title == "" {
-		return ""
-	}
-
-	// Create a URL-friendly slug from the title
-	slug := strings.ToLower(strings.TrimSpace(title))
-	// Remove special characters
-	reg := regexp.MustCompile(`[^\w\s-]`)
-	slug = reg.ReplaceAllString(slug, "")
-	// Replace spaces with hyphens
-	slug = strings.ReplaceAll(slug, " ", "-")
-	// Replace multiple hyphens with single
-	reg2 := regexp.MustCompile(`-+`)
-	slug = reg2.ReplaceAllString(slug, "-")
-	// Remove leading/trailing hyphens
-	slug = strings.Trim(slug, "-")
-
-	// Add a simple hash to ensure uniqueness (first 8 chars of a hash)
-	// This matches the frontend implementation: Math.abs(hash).toString(36).substring(0, 8)
-	hash := 0
-	for i := 0; i < len(title); i++ {
-		char := int(title[i])
-		hash = ((hash << 5) - hash) + char
-		// Note: In JavaScript, `hash & hash` converts to 32-bit signed integer
-		// In Go, this is redundant but we keep the same calculation for consistency
-	}
-	// Convert to absolute value and base 36 (matching frontend)
-	absHash := hash
-	if absHash < 0 {
-		absHash = -absHash
-	}
-	hashStr := strconv.FormatInt(int64(absHash), 36)
-	if len(hashStr) > 8 {
-		hashStr = hashStr[:8]
-	}
-
-	return fmt.Sprintf("%s-%s", slug, hashStr)
-}
-
 // MatchStepConfigs matches new plan steps with existing configs by ID only
 // Returns a map of step index -> matched AgentConfigs
 func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*AgentConfigs {
@@ -149,14 +104,21 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*
 	}
 
 	// Match new steps to old configs by ID only
+	// Steps always have IDs from backend - throw error if missing
 	for i := range newSteps {
-		// Match by ID (if step has a title)
-		if newSteps[i].Title != "" {
-			stepID := GenerateStepID(newSteps[i].Title)
-			config := idConfigMap[stepID]
-			if config != nil {
-				result[i] = config
-			}
+		// Use existing step ID (required) - steps always have IDs from plan.json
+		stepID := newSteps[i].ID
+		if stepID == "" {
+			// This should never happen - steps always have IDs from backend
+			// Log error but don't crash - just skip matching for this step
+			// In production, this indicates a bug in plan generation
+			continue
+		}
+
+		// Match config by ID
+		config := idConfigMap[stepID]
+		if config != nil {
+			result[i] = config
 		}
 		// If not found, result[i] will be nil (no config for this step)
 	}
@@ -165,19 +127,12 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*
 }
 
 // MatchStepConfigByID matches a step config by ID (for branch steps)
-// parentTitle: title of the parent step
-// branchType: "true" or "false"
-// nestedIndex: index of the branch step within the branch
-// branchTitle: title of the branch step
+// stepID: the step ID to match (from plan.json)
 // Returns the matched AgentConfigs or nil if not found
-func MatchStepConfigByID(parentTitle, branchType string, nestedIndex int, branchTitle string, oldConfigs *StepConfigFile) *AgentConfigs {
-	if branchTitle == "" {
+func MatchStepConfigByID(stepID string, oldConfigs *StepConfigFile) *AgentConfigs {
+	if stepID == "" {
 		return nil
 	}
-
-	// Generate ID: parent-title + branch-type + nested-index + branch-title
-	idInput := fmt.Sprintf("%s-%s-%d-%s", parentTitle, branchType, nestedIndex, branchTitle)
-	stepID := GenerateStepID(idInput)
 
 	// Look up by ID
 	for i := range oldConfigs.Steps {

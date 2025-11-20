@@ -274,21 +274,21 @@ export const useLLMStore = create<LLMState>()(
               vertexConfig: preserveUserConfig(
                 currentState.vertexConfig,
                 defaults.vertex_config || {
-                  provider: 'vertex',
-                  model_id: '',
-                  fallback_models: [],
-                  cross_provider_fallback: undefined,
-                  api_key: ''
+                provider: 'vertex',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
                 }
               ),
               anthropicConfig: preserveUserConfig(
                 currentState.anthropicConfig,
                 defaults.anthropic_config || {
-                  provider: 'anthropic',
-                  model_id: '',
-                  fallback_models: [],
-                  cross_provider_fallback: undefined,
-                  api_key: ''
+                provider: 'anthropic',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
                 }
               ),
               availableBedrockModels: defaults.available_models.bedrock,

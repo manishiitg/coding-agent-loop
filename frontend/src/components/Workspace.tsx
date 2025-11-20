@@ -105,6 +105,9 @@ export default function Workspace({
   // Ref for the workspace scrollable container
   const workspaceScrollRef = useRef<HTMLDivElement>(null)
   
+  // Track which workflow preset we've already auto-expanded to prevent re-expansion
+  const autoExpandedWorkflowRef = useRef<string | null>(null)
+  
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
   const emptyLoadingSet = useMemo(() => new Set<string>(), [])
   
@@ -540,101 +543,120 @@ export default function Workspace({
     }
   }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile, selectedModeCategory, workflowFolderPath, filteredFiles])
   
-  // Automatically expand workspace folder when a workflow is opened
+  // Automatically expand workspace folder when a workflow is first opened
+  // Only runs once per workflow preset to allow manual open/close afterward
   useEffect(() => {
     if (selectedModeCategory === 'workflow' && workflowFolderPath && filteredFiles.length > 0) {
-      // Small delay to ensure files are fully loaded and rendered
-      const timeoutId = setTimeout(() => {
-        // In workflow mode, the workflow folder is shown as root (paths are adjusted)
-        // We need to find the workflow folder in filtered files and expand it directly
-        // First check if the root folder is the workflow folder
-        let workflowFolder: PlannerFile | null = null
-        
-        // Check root level first (in workflow mode, the workflow folder is the root)
-        if (filteredFiles.length > 0 && filteredFiles[0].type === 'folder') {
-          const rootFolder = filteredFiles[0]
-          if (rootFolder.originalFilepath === workflowFolderPath || 
-              rootFolder.filepath === workflowFolderPath.split('/').filter(Boolean).pop()) {
-            workflowFolder = rootFolder
-          }
-        }
-        
-        // If not found at root, search recursively
-        if (!workflowFolder) {
-          const findWorkflowFolder = (fileList: PlannerFile[]): PlannerFile | null => {
-            for (const file of fileList) {
-              if (file.type === 'folder') {
-                // Check if this is the workflow folder by comparing original path
-                if (file.originalFilepath === workflowFolderPath) {
-                  return file
-                }
-                // Check children recursively
-                if (file.children && file.children.length > 0) {
-                  const found = findWorkflowFolder(file.children)
-                  if (found) return found
-                }
-              }
+      // Check if we've already auto-expanded for this workflow preset
+      const workflowPresetId = activeWorkflowPreset?.id || workflowFolderPath
+      
+      // Only auto-expand if we haven't done it for this workflow yet
+      if (autoExpandedWorkflowRef.current !== workflowPresetId) {
+        // Small delay to ensure files are fully loaded and rendered
+        const timeoutId = setTimeout(() => {
+          // In workflow mode, the workflow folder is shown as root (paths are adjusted)
+          // We need to find the workflow folder in filtered files and expand it directly
+          // First check if the root folder is the workflow folder
+          let workflowFolder: PlannerFile | null = null
+          
+          // Check root level first (in workflow mode, the workflow folder is the root)
+          if (filteredFiles.length > 0 && filteredFiles[0].type === 'folder') {
+            const rootFolder = filteredFiles[0]
+            if (rootFolder.originalFilepath === workflowFolderPath || 
+                rootFolder.filepath === workflowFolderPath.split('/').filter(Boolean).pop()) {
+              workflowFolder = rootFolder
             }
-            return null
-          }
-          workflowFolder = findWorkflowFolder(filteredFiles)
-        }
-        if (workflowFolder) {
-          // Directly add the workflow folder path to expandedFolders
-          // Also expand first level of children for better visibility
-          const foldersToExpand = new Set<string>([workflowFolder.filepath])
-          
-          // Add first level children folders
-          if (workflowFolder.children) {
-            workflowFolder.children.forEach(child => {
-              if (child.type === 'folder') {
-                foldersToExpand.add(child.filepath)
-              }
-            })
           }
           
-          // Update expanded folders - get current state and merge with new folders
-          const currentExpanded = expandedFolders
-          setExpandedFolders(new Set([...currentExpanded, ...foldersToExpand]))
-        } else {
-          // Fallback: try to expand using the adjusted folder name
-          const folderParts = workflowFolderPath.split('/').filter(Boolean)
-          const adjustedFolderPath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : workflowFolderPath
-          
-          // Find any folder matching the adjusted path
-          const findFolderByName = (fileList: PlannerFile[]): PlannerFile | null => {
-            for (const file of fileList) {
-              if (file.type === 'folder' && file.filepath === adjustedFolderPath) {
-                return file
+          // If not found at root, search recursively
+          if (!workflowFolder) {
+            const findWorkflowFolder = (fileList: PlannerFile[]): PlannerFile | null => {
+              for (const file of fileList) {
+                if (file.type === 'folder') {
+                  // Check if this is the workflow folder by comparing original path
+                  if (file.originalFilepath === workflowFolderPath) {
+                    return file
+                  }
+                  // Check children recursively
+                  if (file.children && file.children.length > 0) {
+                    const found = findWorkflowFolder(file.children)
+                    if (found) return found
+                  }
+                }
               }
-              if (file.children && file.children.length > 0) {
-                const found = findFolderByName(file.children)
-                if (found) return found
-              }
+              return null
             }
-            return null
+            workflowFolder = findWorkflowFolder(filteredFiles)
           }
           
-          const foundFolder = findFolderByName(filteredFiles)
-          if (foundFolder) {
-            const foldersToExpand = new Set<string>([foundFolder.filepath])
-            if (foundFolder.children) {
-              foundFolder.children.forEach(child => {
+          if (workflowFolder) {
+            // Directly add the workflow folder path to expandedFolders
+            // Also expand first level of children for better visibility
+            const foldersToExpand = new Set<string>([workflowFolder.filepath])
+            
+            // Add first level children folders
+            if (workflowFolder.children) {
+              workflowFolder.children.forEach(child => {
                 if (child.type === 'folder') {
                   foldersToExpand.add(child.filepath)
                 }
               })
             }
+            
             // Update expanded folders - get current state and merge with new folders
-            const currentExpanded = expandedFolders
+            // Use getState to avoid dependency on expandedFolders
+            const currentExpanded = useWorkspaceStore.getState().expandedFolders
             setExpandedFolders(new Set([...currentExpanded, ...foldersToExpand]))
+            
+            // Mark this workflow as auto-expanded
+            autoExpandedWorkflowRef.current = workflowPresetId
+          } else {
+            // Fallback: try to expand using the adjusted folder name
+            const folderParts = workflowFolderPath.split('/').filter(Boolean)
+            const adjustedFolderPath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : workflowFolderPath
+            
+            // Find any folder matching the adjusted path
+            const findFolderByName = (fileList: PlannerFile[]): PlannerFile | null => {
+              for (const file of fileList) {
+                if (file.type === 'folder' && file.filepath === adjustedFolderPath) {
+                  return file
+                }
+                if (file.children && file.children.length > 0) {
+                  const found = findFolderByName(file.children)
+                  if (found) return found
+                }
+              }
+              return null
+            }
+            
+            const foundFolder = findFolderByName(filteredFiles)
+            if (foundFolder) {
+              const foldersToExpand = new Set<string>([foundFolder.filepath])
+              if (foundFolder.children) {
+                foundFolder.children.forEach(child => {
+                  if (child.type === 'folder') {
+                    foldersToExpand.add(child.filepath)
+                  }
+                })
+              }
+              // Update expanded folders - get current state and merge with new folders
+              // Use getState to avoid dependency on expandedFolders
+              const currentExpanded = useWorkspaceStore.getState().expandedFolders
+              setExpandedFolders(new Set([...currentExpanded, ...foldersToExpand]))
+              
+              // Mark this workflow as auto-expanded
+              autoExpandedWorkflowRef.current = workflowPresetId
+            }
           }
-        }
-      }, 300)
-      
-      return () => clearTimeout(timeoutId)
+        }, 300)
+        
+        return () => clearTimeout(timeoutId)
+      }
+    } else if (selectedModeCategory !== 'workflow') {
+      // Reset the auto-expanded ref when switching away from workflow mode
+      autoExpandedWorkflowRef.current = null
     }
-  }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandedFolders, setExpandedFolders])
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, setExpandedFolders, activeWorkflowPreset?.id])
   
   // Close dropdown when clicking outside
   useEffect(() => {

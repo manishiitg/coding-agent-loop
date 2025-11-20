@@ -3,8 +3,8 @@ import { StepEditPanel } from "./StepEditPanel";
 import { agentApi } from "../../../services/api";
 import { usePresetApplication } from "../../../stores/useGlobalPresetStore";
 import type { TodoStepsExtractedEvent } from "../../../generated/events-bridge";
-import type { TodoStepWithConfigs, AgentConfigs, StepConfig, StepConfigFile, PlanningResponse, PlanStep } from "../../../utils/stepConfigMatching";
-import { generateStepId } from "../../../utils/stepConfigMatching";
+import type { TodoStepWithConfigs, AgentConfigs, StepConfig, StepConfigFile, PlanningResponse } from "../../../utils/stepConfigMatching";
+import type { PresetLLMConfig } from "../../../services/api-types";
 import ConfirmationDialog from "../../ui/ConfirmationDialog";
 import { Edit2, Trash2, Save, X, ChevronDown, ChevronRight } from "lucide-react";
 
@@ -30,8 +30,10 @@ interface TodoStepsExtractedEventDisplayProps {
 export const TodoStepsExtractedEventDisplay: React.FC<
   TodoStepsExtractedEventDisplayProps
 > = ({ event }) => {
-  // Get preset's selected servers to pass to step configs (for filtering available servers)
-  const { currentPresetServers } = usePresetApplication();
+  // Get preset's selected servers and LLM config to pass to step configs
+  const { currentPresetServers, getActivePreset } = usePresetApplication();
+  const activePreset = getActivePreset('workflow');
+  const presetLLMConfig = activePreset?.llmConfig;
   
   // Use local state to track steps with saved configs
   const [steps, setSteps] = useState<TodoStepWithConfigs[]>(() => {
@@ -44,10 +46,6 @@ export const TodoStepsExtractedEventDisplay: React.FC<
   const [expandedStepIndex, setExpandedStepIndex] = useState<number | null>(null);
   // Track config source (default)
   const [configSource, setConfigSource] = useState<'default' | 'unknown'>('unknown');
-  // Run mode state
-  const [runMode, setRunMode] = useState<string>('use_same_run');
-  const [isLoadingRunMode, setIsLoadingRunMode] = useState(true);
-  const [isSavingRunMode, setIsSavingRunMode] = useState(false);
   
   // Edit state management
   const [editingStepIndex, setEditingStepIndex] = useState<number | null>(null);
@@ -103,142 +101,6 @@ export const TodoStepsExtractedEventDisplay: React.FC<
     checkConfigSource();
   }, [event, getStepConfigFilePath]);
 
-  // Handle migration from plan.json to step_config.json on mount (one-time)
-  // Backend already merges configs before emitting the event, so we just use event.extracted_steps
-  useEffect(() => {
-    const handleMigration = async () => {
-      const workspacePath = getWorkspacePath(event);
-      if (!workspacePath) {
-        return;
-      }
-      
-      const stepConfigFilePath = getStepConfigFilePath();
-      const planFilePath = `${workspacePath}/planning/plan.json`;
-
-      try {
-        // Check if step_config.json exists
-        let stepConfigExists = false;
-        try {
-          const stepConfigResponse = await agentApi.getPlannerFileContent(stepConfigFilePath);
-          if (stepConfigResponse.success && stepConfigResponse.data) {
-            stepConfigExists = true;
-          }
-        } catch {
-          // step_config.json doesn't exist yet
-        }
-
-        // Migration: If step_config.json doesn't exist, check plan.json for agent_configs
-        if (!stepConfigExists) {
-          try {
-            const planResponse = await agentApi.getPlannerFileContent(planFilePath);
-            if (planResponse.success && planResponse.data) {
-              const plan: PlanningResponse = JSON.parse(planResponse.data.content);
-              
-              // Check if plan.json has agent_configs that need migration
-              if (plan.steps && Array.isArray(plan.steps)) {
-                // Type for plan step during migration (may have agent_configs from old format)
-                type PlanStepWithConfigs = {
-                  title?: string;
-                  agent_configs?: AgentConfigs;
-                  [key: string]: unknown;
-                };
-                
-                const stepsWithConfigs = (plan.steps as PlanStepWithConfigs[]).filter(
-                  (step) => step.agent_configs && Object.keys(step.agent_configs).length > 0
-                );
-                
-                if (stepsWithConfigs.length > 0) {
-                  console.log(`Migrating ${stepsWithConfigs.length} step configs from plan.json to step_config.json`);
-                  
-                  // Migrate configs to step_config.json - generate IDs from titles
-                  const stepConfigFile: StepConfigFile = {
-                    steps: (plan.steps as PlanStepWithConfigs[]).map((step) => {
-                      const title = step.title || '';
-                      return {
-                        id: title ? generateStepId(title) : generateStepId(`step-${Math.random().toString(36).substring(7)}`),
-                        title: title,
-                        agent_configs: step.agent_configs,
-                      };
-                    }).filter((config) => config.agent_configs && Object.keys(config.agent_configs).length > 0),
-                  };
-                  
-                  // Write step_config.json
-                  const stepConfigContent = JSON.stringify(stepConfigFile, null, 2);
-                  await agentApi.updatePlannerFile(
-                    stepConfigFilePath,
-                    stepConfigContent,
-                    "Migrated agent_configs from plan.json to step_config.json"
-                  );
-                  
-                  // Remove agent_configs from plan.json
-                  const cleanedPlan: PlanningResponse = {
-                    ...plan,
-                    steps: (plan.steps as PlanStepWithConfigs[]).map((step) => {
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      const { agent_configs, ...stepWithoutConfigs } = step;
-                      return stepWithoutConfigs as PlanStep;
-                    }),
-                  };
-                  
-                  const cleanedPlanContent = JSON.stringify(cleanedPlan, null, 2);
-                  await agentApi.updatePlannerFile(
-                    planFilePath,
-                    cleanedPlanContent,
-                    "Removed agent_configs from plan.json (migrated to step_config.json)"
-                  );
-                  
-                  console.log("Migration completed successfully");
-                }
-              }
-            }
-          } catch (error) {
-            console.error("Migration failed (continuing with defaults):", error);
-            // Continue even if migration fails
-          }
-        }
-      } catch (error) {
-        console.log("Error during migration check:", error);
-        // Continue even if migration check fails
-      }
-    };
-
-    handleMigration();
-  }, [event, getStepConfigFilePath]);
-
-  // Load run_mode from plan.json on mount
-  useEffect(() => {
-    const loadRunMode = async () => {
-      const workspacePath = getWorkspacePath(event);
-      if (!workspacePath) {
-        setIsLoadingRunMode(false);
-        return;
-      }
-
-      try {
-        const planFilePath = `${workspacePath}/planning/plan.json`;
-        const planResponse = await agentApi.getPlannerFileContent(planFilePath);
-        if (planResponse.success && planResponse.data) {
-          const plan: PlanningResponse = JSON.parse(planResponse.data.content);
-          
-          if (plan.run_mode && typeof plan.run_mode === 'string') {
-            setRunMode(plan.run_mode);
-          } else {
-            // Default to 'use_same_run' if not present
-            setRunMode('use_same_run');
-          }
-        } else {
-          setRunMode('use_same_run');
-        }
-      } catch (error) {
-        console.error("Failed to load run_mode from plan.json:", error);
-        setRunMode('use_same_run');
-      } finally {
-        setIsLoadingRunMode(false);
-      }
-    };
-
-    loadRunMode();
-  }, [event]);
 
   // Load and apply step_config.json configs (including branch steps) after event loads
   useEffect(() => {
@@ -283,72 +145,32 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         });
 
         // Recursively apply configs to steps
-        // parentStep: parent step for branch steps (to generate unique IDs)
-        const applyConfigsToStep = (step: TodoStepWithConfigs, stepIndex: number, parentStep?: TodoStepWithConfigs, branchType?: 'true' | 'false', nestedIndex?: number): TodoStepWithConfigs => {
-          // Get config for this step: try ID first, then fall back to index
-          let config: AgentConfigs | undefined;
-          let stepId: string | undefined;
+        // parentStep: parent step for branch steps (for context)
+        const applyConfigsToStep = (step: TodoStepWithConfigs, stepIndex: number, parentStep?: TodoStepWithConfigs, branchType?: 'true' | 'false'): TodoStepWithConfigs => {
+          // Steps always have IDs from backend - throw error if missing
+          if (!step.id) {
+            throw new Error(
+              `Step is missing required ID field. Step title: "${step.title || 'unknown'}", ` +
+              `stepIndex: ${stepIndex}, parentStep: ${parentStep?.title || 'none'}, ` +
+              `branchType: ${branchType || 'none'}`
+            );
+          }
           
-          if (parentStep && branchType !== undefined && nestedIndex !== undefined) {
-            // Branch step: match by ID
-            // Use step.id directly if available (from backend), otherwise generate from title
-            if (step.id) {
-              stepId = step.id;
-              if (stepId) {
-                config = idConfigMap.get(stepId);
-              }
-            } else if (step.title && parentStep.title) {
-              // Fallback: generate ID (should not happen if backend always provides IDs)
-              const idInput = `${parentStep.title}-${branchType}-${nestedIndex}-${step.title}`;
-              stepId = generateStepId(idInput);
-              config = idConfigMap.get(stepId);
-              
-              // Debug: Log matching attempt for all branch steps
-              console.log('[TodoStepsExtractedEvent] applyConfigsToStep - Branch step matching:', {
-                stepIndex,
-                parentTitle: parentStep.title,
-                branchType,
-                nestedIndex,
-                stepTitle: step.title,
-                idInput,
-                generatedId: stepId,
-                foundInMap: idConfigMap.has(stepId),
-                foundConfig: !!config,
-                executionLLM: config?.execution_llm?.model_id,
-                existingConfig: step.agent_configs?.execution_llm?.model_id,
-                allAvailableIds: Array.from(idConfigMap.keys()).filter(id => 
-                  id.includes(parentStep.title || '') || id.includes(step.title || '')
-                ),
-              });
-              
-              // Note: Branch steps are matched by ID only (no index fallback needed)
-            }
-          } else {
-            // Top-level step: match by ID only
-            // Use step.id directly if available (from backend), otherwise generate from title
-            if (step.id) {
-              stepId = step.id;
-              if (stepId) {
-                config = idConfigMap.get(stepId);
-              }
-            } else if (step.title) {
-              // Fallback: generate ID from title (should not happen if backend always provides IDs)
-              stepId = generateStepId(step.title);
-              config = idConfigMap.get(stepId);
-            }
-            // Debug logging for step index 1
-            if (stepIndex === 1) {
-              console.log('[TodoStepsExtractedEvent] applyConfigsToStep - Top-level step 1:', {
-                stepIndex,
-                stepTitle: step.title,
-                generatedId: stepId,
-                foundInMap: stepId ? idConfigMap.has(stepId) : false,
-                foundConfig: !!config,
-                executionLLM: config?.execution_llm?.model_id,
-                existingConfig: step.agent_configs?.execution_llm?.model_id,
-                allAvailableIds: Array.from(idConfigMap.keys()),
-              });
-            }
+          const stepId = step.id;
+          const config = idConfigMap.get(stepId);
+          
+          // Debug logging for step index 1
+          if (stepIndex === 1 && !parentStep) {
+            console.log('[TodoStepsExtractedEvent] applyConfigsToStep - Top-level step 1:', {
+              stepIndex,
+              stepTitle: step.title,
+              stepId,
+              foundInMap: idConfigMap.has(stepId),
+              foundConfig: !!config,
+              executionLLM: config?.execution_llm?.model_id,
+              existingConfig: step.agent_configs?.execution_llm?.model_id,
+              allAvailableIds: Array.from(idConfigMap.keys()),
+            });
           }
 
           // Create updated step with config
@@ -380,7 +202,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                   branchStepHasConfig: !!branchStep.agent_configs,
                 });
               }
-              return applyConfigsToStep(branchStep, stepIndex, step, 'true', idx);
+              return applyConfigsToStep(branchStep, stepIndex, step, 'true');
             });
           }
 
@@ -396,7 +218,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                   branchStepHasConfig: !!branchStep.agent_configs,
                 });
               }
-              return applyConfigsToStep(branchStep, stepIndex, step, 'false', idx);
+              return applyConfigsToStep(branchStep, stepIndex, step, 'false');
             });
           }
 
@@ -639,111 +461,35 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         stepTitle,
         stepIndex,
         stepPath,
+        updatedStepId: updatedStep.id,
         updatedStepTitle: updatedStep.title,
         hasTitle: !!updatedStep.title,
+        hasId: !!updatedStep.id,
       });
       
-      // Generate step ID from title (stable identifier)
-      // For branch steps, we need parent step context - get it from the steps array
-      let stepId: string | undefined;
-      if (stepTitle) {
-        if (stepPath) {
-          // Branch step: need parent step title for unique ID
-          // Extract parent step index from path (e.g., "step-2-if-true-0" -> parent is step index 1)
-          const pathMatch = stepPath.match(/^step-(\d+)-if-(true|false)-(\d+)/);
-          if (pathMatch) {
-            const parentStepIndex = parseInt(pathMatch[1]) - 1; // Convert to 0-based
-            const branchType = pathMatch[2];
-            const nestedIndex = pathMatch[3];
-            
-            // Get parent step title
-            const parentStep = steps[parentStepIndex];
-            const parentTitle = parentStep?.title || `step-${parentStepIndex + 1}`;
-            
-            // Generate unique ID: parent-title + branch-type + nested-index + branch-title
-            const idInput = `${parentTitle}-${branchType}-${nestedIndex}-${stepTitle}`;
-            stepId = generateStepId(idInput);
-            console.log('[TodoStepsExtractedEvent] handleSaveStep - Branch step ID generation:', {
-              parentStepIndex,
-              parentTitle,
-              branchType,
-              nestedIndex,
-              stepTitle,
-              idInput,
-              generatedId: stepId,
-            });
-          } else {
-            // Fallback: use path + title if path format is unexpected
-            stepId = generateStepId(`${stepPath}-${stepTitle}`);
-            console.log('[TodoStepsExtractedEvent] handleSaveStep - Branch step ID (fallback):', {
-              stepPath,
-              stepTitle,
-              generatedId: stepId,
-            });
-          }
-        } else {
-          // Top-level step: ID from title only
-          stepId = generateStepId(stepTitle);
-          console.log('[TodoStepsExtractedEvent] handleSaveStep - Top-level step ID generation:', {
-            stepTitle,
-            generatedId: stepId,
-          });
-        }
-      } else {
-        console.warn('[TodoStepsExtractedEvent] handleSaveStep - WARNING: No step title, cannot generate ID!', {
-          stepTitle,
-          updatedStepTitle: updatedStep.title,
-        });
-      }
-      
-      // Match existing config by ID only
-      let existingConfigIndex: number = -1;
-      let existingId: string | undefined;
-      
-      // Match by ID
-      if (stepId) {
-        existingConfigIndex = stepConfigFile.steps.findIndex(
-          (step) => step.id === stepId
+      // Steps always have IDs from backend - throw error if missing
+      if (!updatedStep.id) {
+        throw new Error(
+          `Cannot save step config: step is missing required ID field. ` +
+          `Step title: "${stepTitle}", stepIndex: ${stepIndex}, stepPath: ${stepPath || 'none'}`
         );
       }
       
-      // If found, preserve the existing ID (don't regenerate if title changed)
-      if (existingConfigIndex >= 0 && stepConfigFile.steps[existingConfigIndex].id) {
-        existingId = stepConfigFile.steps[existingConfigIndex].id;
-      }
-
-      // Determine the ID to use: existing ID (preserves ID even when title changes), or generate new one
-      let finalId: string;
-      if (existingId) {
-        finalId = existingId; // Preserve existing ID
-        console.log('[TodoStepsExtractedEvent] handleSaveStep - Using existing ID:', existingId);
-      } else if (stepId) {
-        finalId = stepId; // New step, use generated ID
-        console.log('[TodoStepsExtractedEvent] handleSaveStep - Using generated ID:', stepId);
-      } else {
-        // This should not happen if step has a title, but generate ID as fallback
-        console.warn('[TodoStepsExtractedEvent] handleSaveStep - WARNING: No ID generated, using fallback!', {
-          stepTitle,
-          stepId,
-          existingId,
-          stepPath,
-          updatedStepTitle: updatedStep.title,
-          hasTitle: !!updatedStep.title,
-        });
-        // Try to generate ID from updatedStep.title as fallback
-        if (updatedStep.title) {
-          finalId = stepPath 
-            ? generateStepId(`${stepPath}-${updatedStep.title}`)
-            : generateStepId(updatedStep.title);
-          console.log('[TodoStepsExtractedEvent] handleSaveStep - Generated fallback ID:', finalId);
-        } else if (stepTitle) {
-          // Last resort: generate ID directly from stepTitle
-          finalId = generateStepId(stepTitle);
-          console.log('[TodoStepsExtractedEvent] handleSaveStep - Generated ID as last resort:', finalId);
-        } else {
-          throw new Error('Cannot create step config without ID: step has no title');
-        }
-      }
+      const stepId = updatedStep.id;
+      
+      // Match existing config by ID only
+      const existingConfigIndex = stepConfigFile.steps.findIndex(
+        (step) => step.id === stepId
+      );
+      
+      // Use step ID from plan.json (always present)
+      const finalId = stepId;
+      
+      console.log('[TodoStepsExtractedEvent] handleSaveStep - Using step ID:', {
+        finalId,
+        source: 'from plan.json',
+        existingConfigFound: existingConfigIndex >= 0,
+      });
       
       // Build step config object (ID is required)
       const stepConfig: StepConfig = {
@@ -975,72 +721,6 @@ export const TodoStepsExtractedEventDisplay: React.FC<
             )}
           </div>
         </div>
-        {/* Run Mode Selector */}
-        <div className="mt-2 flex items-center gap-2 flex-wrap">
-          <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
-            Run Mode:
-          </label>
-          <select
-            value={runMode}
-            onChange={(e) => setRunMode(e.target.value)}
-            disabled={isLoadingRunMode || isSavingRunMode}
-            className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <option value="use_same_run">Use Same Run</option>
-            <option value="create_new_runs_always">Create New Runs Always</option>
-            <option value="create_new_run_once_daily">Create New Run Once Daily</option>
-          </select>
-          <button
-            onClick={async () => {
-              const workspacePath = getWorkspacePath(event);
-              if (!workspacePath) {
-                alert("Workspace path is not available");
-                return;
-              }
-
-              setIsSavingRunMode(true);
-              try {
-                const planFilePath = `${workspacePath}/planning/plan.json`;
-                
-                // Read current plan.json
-                const planResponse = await agentApi.getPlannerFileContent(planFilePath);
-                if (!planResponse.success || !planResponse.data) {
-                  throw new Error("Failed to read plan.json");
-                }
-
-                const plan: PlanningResponse = JSON.parse(planResponse.data.content);
-                
-                // Update run_mode
-                const updatedPlan = {
-                  ...plan,
-                  run_mode: runMode,
-                };
-
-                const updatedContent = JSON.stringify(updatedPlan, null, 2);
-                const saveResponse = await agentApi.updatePlannerFile(
-                  planFilePath,
-                  updatedContent,
-                  `Updated run_mode to ${runMode}`
-                );
-
-                if (!saveResponse.success) {
-                  throw new Error(saveResponse.message || "Failed to save run_mode");
-                }
-
-                console.log(`Run mode updated to: ${runMode}`);
-              } catch (error) {
-                console.error("Failed to save run_mode:", error);
-                alert(`Failed to save run mode: ${error instanceof Error ? error.message : "Unknown error"}`);
-              } finally {
-                setIsSavingRunMode(false);
-              }
-            }}
-            disabled={isLoadingRunMode || isSavingRunMode}
-            className="px-2 py-1 text-xs font-medium bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-md transition-colors"
-          >
-            {isSavingRunMode ? "Saving..." : "Save"}
-          </button>
-        </div>
       </div>
 
       {/* Steps List */}
@@ -1066,6 +746,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                     stepIndex={index}
                     eventId={eventId}
                     currentPresetServers={currentPresetServers}
+                    presetLLMConfig={presetLLMConfig}
                     onEditStep={handleEditStep}
                     onDeleteStep={setStepToDelete}
                     onSaveStep={handleSaveStep}
@@ -1378,6 +1059,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                   onCancel={() => {}} // No cancel needed since it's always visible
                   isSaving={isSaving}
                   presetServers={currentPresetServers}
+                  presetLLMConfig={presetLLMConfig}
                   isExpanded={expandedStepIndex === index}
                   onToggleExpanded={(expanded) => {
                     // If expanding, set this step as expanded (closes others)
@@ -1422,6 +1104,7 @@ interface ConditionalStepCardProps {
   stepIndex: number;
   eventId: string;
   currentPresetServers: string[];
+  presetLLMConfig?: PresetLLMConfig | null;
   onEditStep: (index: number) => Promise<void>;
   onDeleteStep: (index: number) => void;
   onSaveStep: (updatedStep: TodoStepWithConfigs, index: number, path?: string) => Promise<void>;
@@ -1450,6 +1133,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
   stepIndex,
   eventId,
   currentPresetServers,
+  presetLLMConfig,
   onEditStep,
   onDeleteStep,
   onSaveStep,
@@ -1713,6 +1397,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
                   onCancel={() => {}}
                   isSaving={isSaving}
                   presetServers={currentPresetServers}
+                  presetLLMConfig={presetLLMConfig}
                   isExpanded={isConfigExpanded}
                   onToggleExpanded={(expanded) => {
                     setExpandedBranchStepConfigs(prev => {
@@ -1732,7 +1417,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
         </div>
       </div>
     );
-  }, [stepIndex, eventId, expandedNestedSteps, expandedBranchStepConfigs, toggleNestedStep, onSaveStep, currentPresetServers, isSaving]);
+  }, [stepIndex, eventId, expandedNestedSteps, expandedBranchStepConfigs, toggleNestedStep, onSaveStep, currentPresetServers, presetLLMConfig, isSaving]);
 
   return (
     <div className="bg-white dark:bg-gray-800 border-l-4 border-purple-500 border border-purple-200 dark:border-purple-700 rounded-md p-3">
@@ -2037,6 +1722,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
         onCancel={() => {}}
         isSaving={isSaving}
         presetServers={currentPresetServers}
+        presetLLMConfig={presetLLMConfig}
         isExpanded={expandedStepIndex === stepIndex}
         onToggleExpanded={(expanded) => {
           setExpandedStepIndex(expanded ? stepIndex : null);

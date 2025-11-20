@@ -953,19 +953,31 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors := createCustomTools()
 
-		// Load selected tools from preset if available (for workflow agents)
+		// Load selected tools and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
+		var presetLLMConfig *database.PresetLLMConfig
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
 			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-			if err == nil && preset.SelectedTools != "" {
-				if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-					log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
-				} else {
-					if len(selectedTools) > 0 {
-						log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+			if err == nil {
+				// Load selected tools
+				if preset.SelectedTools != "" {
+					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
 					} else {
-						log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						if len(selectedTools) > 0 {
+							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+						} else {
+							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						}
+					}
+				}
+				// Load preset LLM config for agent defaults
+				if len(preset.LLMConfig) > 0 {
+					if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
+						log.Printf("[PRESET LLM] Failed to parse preset LLM config: %w", err)
+					} else {
+						log.Printf("[PRESET LLM] Loaded preset LLM config with agent defaults")
 					}
 				}
 			}
@@ -999,6 +1011,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			allExecutors,        // customToolExecutors
 			req.LLMConfig,       // llmConfig
 			req.MaxTurns,        // maxTurns
+			presetLLMConfig,     // preset LLM config for agent defaults
 		)
 		if err != nil {
 			log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %w", err)

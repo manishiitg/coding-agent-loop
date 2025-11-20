@@ -87,6 +87,9 @@ type OrchestratorAgentConfig struct {
 
 	// Large output virtual tools configuration
 	EnableLargeOutputVirtualTools *bool `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
+
+	// System prompt configuration
+	OverwriteSystemPrompt *bool `json:"overwrite_system_prompt,omitempty"` // Overwrite (true) or append (false) system prompt during execution (default: false if nil)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

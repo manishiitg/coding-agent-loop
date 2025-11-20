@@ -397,17 +397,17 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
             {/* Right Content - Provider Configuration */}
             <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
               {activeTab === 'openrouter' && (
-              <OpenRouterSection
-                config={openrouterConfig}
+            <OpenRouterSection
+              config={openrouterConfig}
                 onUpdate={handleOpenrouterConfigUpdate}
-                onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openrouter', apiKey, modelId)}
-                apiKeyStatus={apiKeyStatus.openrouter}
-                apiKeyError={apiKeyErrors.openrouter}
-                isPrimary={primaryConfig.provider === 'openrouter'}
-                onSetPrimary={() => handleSetPrimaryProvider('openrouter')}
-                getAvailableModelsForProvider={getAvailableModelsForProvider}
-                currentProvider="openrouter"
-              />
+              onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openrouter', apiKey, modelId)}
+              apiKeyStatus={apiKeyStatus.openrouter}
+              apiKeyError={apiKeyErrors.openrouter}
+              isPrimary={primaryConfig.provider === 'openrouter'}
+              onSetPrimary={() => handleSetPrimaryProvider('openrouter')}
+              getAvailableModelsForProvider={getAvailableModelsForProvider}
+              currentProvider="openrouter"
+            />
               )}
 
               {activeTab === 'bedrock' && (

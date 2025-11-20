@@ -467,6 +467,31 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 
 	// Convert response from genai format to llmtypes format
 	convertedResp := convertResponse(result, g.logger, hadMixedMessages)
+
+	// Log full raw response if we detect problematic finish reasons (even if no error)
+	// This helps debug issues like UNEXPECTED_TOOL_CALL, MALFORMED_FUNCTION_CALL, etc.
+	if result != nil && len(result.Candidates) > 0 {
+		firstCandidate := result.Candidates[0]
+		finishReason := string(firstCandidate.FinishReason)
+		// Log raw response for problematic finish reasons that might indicate API issues
+		if finishReason == "UNEXPECTED_TOOL_CALL" || finishReason == "MALFORMED_FUNCTION_CALL" {
+			if g.logger != nil {
+				g.logger.Warnf("⚠️ [REQUEST_ID: %s] Detected problematic FinishReason: %q - Logging full raw API response", requestID, finishReason)
+			}
+			g.logRawResponse(requestID, modelID, result, nil)
+		}
+		// Also log if content is empty (which might indicate other issues)
+		if convertedResp != nil && len(convertedResp.Choices) > 0 {
+			firstChoice := convertedResp.Choices[0]
+			if firstChoice.Content == "" && finishReason != "" && finishReason != "STOP" {
+				if g.logger != nil {
+					g.logger.Warnf("⚠️ [REQUEST_ID: %s] Empty content with FinishReason: %q - Logging full raw API response", requestID, finishReason)
+				}
+				g.logRawResponse(requestID, modelID, result, nil)
+			}
+		}
+	}
+
 	return convertedResp, nil
 }
 
@@ -885,6 +910,12 @@ func convertResponse(result *genai.GenerateContentResponse, logger utils.Extende
 				logger.Errorf("      - Invalid schema structure")
 				logger.Errorf("      - Invalid function names or descriptions")
 				logger.Errorf("      - Check tool conversion logs above for validation errors")
+			} else if finishReason == "UNEXPECTED_TOOL_CALL" {
+				logger.Errorf("   ❌ FinishReason is UNEXPECTED_TOOL_CALL - This indicates a problem with tool call format:")
+				logger.Errorf("      - Invalid thought signature format (most likely for Gemini 3 Pro)")
+				logger.Errorf("      - Tool call structure doesn't match expected format")
+				logger.Errorf("      - Thought signature may be incorrectly formatted or missing required fields")
+				logger.Errorf("      - Check thought signature extraction and inclusion logs above")
 			}
 			// Note: SAFETY blocks typically return API errors, not empty content, so we don't check for SAFETY here
 			logger.Errorf("   result.Text() fallback: %q (length: %d)", result.Text(), len(result.Text()))
@@ -1427,6 +1458,20 @@ func (g *GoogleGenAIAdapter) logRawResponse(requestID, modelID string, result *g
 		g.logger.Infof("🔍 [REQUEST_ID: %s] RAW VERTEX RESPONSE SUMMARY (JSON):\n   %s", requestID, jsonStr)
 	} else {
 		g.logger.Warnf("⚠️ [REQUEST_ID: %s] Failed to serialize response summary to JSON: %v", requestID, err)
+	}
+
+	// Try to log the complete raw response as JSON for maximum debugging
+	// This captures everything including PromptFeedback, SafetyRatings, and any error details
+	if resultJSON, err := json.MarshalIndent(result, "   ", "  "); err == nil {
+		jsonStr := string(resultJSON)
+		// For very large responses, truncate but keep important parts
+		if len(jsonStr) > 10000 {
+			// Keep first 5000 chars and last 5000 chars
+			jsonStr = jsonStr[:5000] + "\n   ... (truncated, total length: " + fmt.Sprintf("%d", len(jsonStr)) + " bytes) ...\n   " + jsonStr[len(jsonStr)-5000:]
+		}
+		g.logger.Infof("🔍 [REQUEST_ID: %s] COMPLETE RAW VERTEX API RESPONSE (FULL JSON):\n   %s", requestID, jsonStr)
+	} else {
+		g.logger.Debugf("🔍 [REQUEST_ID: %s] Could not serialize complete response to JSON (may have unexported fields): %v", requestID, err)
 	}
 }
 

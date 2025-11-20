@@ -7,7 +7,7 @@ import { Folder, Plus, X, Settings } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import type { CustomPreset } from '../types/preset';
-import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
+import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
@@ -41,6 +41,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
+  // Agent-specific LLM configs (for workflow mode)
+  const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
+  const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
+  const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
+  const [planningLLM, setPlanningLLM] = useState<AgentLLMConfig | null>(null);
+  const [variableExtractionLLM, setVariableExtractionLLM] = useState<AgentLLMConfig | null>(null);
+  const [anonymizationLLM, setAnonymizationLLM] = useState<AgentLLMConfig | null>(null);
+  const [planImprovementLLM, setPlanImprovementLLM] = useState<AgentLLMConfig | null>(null);
 
   // Store subscriptions - using selectors for stable references
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -83,10 +91,19 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedTools(editingPreset.selectedTools || []); // NEW
       setAgentMode(editingPreset.agentMode || 'simple');
       setSelectedFolder(editingPreset.selectedFolder || null);
-      setLlmConfig(editingPreset.llmConfig || {
+      const presetLLM = editingPreset.llmConfig || {
         provider: primaryConfig.provider,
         model_id: primaryConfig.model_id
-      });
+      };
+      setLlmConfig(presetLLM);
+      // Load agent-specific configs if available
+      setExecutionLLM(presetLLM.execution_llm || null);
+      setValidationLLM(presetLLM.validation_llm || null);
+      setLearningLLM(presetLLM.learning_llm || null);
+      setPlanningLLM(presetLLM.planning_llm || null);
+      setVariableExtractionLLM(presetLLM.variable_extraction_llm || null);
+      setAnonymizationLLM(presetLLM.anonymization_llm || null);
+      setPlanImprovementLLM(presetLLM.plan_improvement_llm || null);
     } else {
       setLabel('');
       setQuery('');
@@ -97,10 +114,19 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setAgentMode(defaultMode);
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
-      setLlmConfig({
+      const defaultLLM = {
         provider: primaryConfig.provider,
         model_id: primaryConfig.model_id
-      });
+      };
+      setLlmConfig(defaultLLM);
+      // Initialize agent-specific configs to null (will use legacy default)
+      setExecutionLLM(null);
+      setValidationLLM(null);
+      setLearningLLM(null);
+      setPlanningLLM(null);
+      setVariableExtractionLLM(null);
+      setAnonymizationLLM(null);
+      setPlanImprovementLLM(null);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
@@ -149,11 +175,25 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         agentMode: effectiveAgentMode
       });
       
-      // Use the local LLM config (either from editing preset or user selection)
-      onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, llmConfig || undefined);
+      // Build LLM config with agent-specific defaults for workflow mode
+      let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
+      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || planningLLM || variableExtractionLLM || anonymizationLLM || planImprovementLLM)) {
+        // For workflow mode, include agent-specific configs
+        finalLLMConfig = {
+          ...(llmConfig || {}),
+          execution_llm: executionLLM || undefined,
+          validation_llm: validationLLM || undefined,
+          learning_llm: learningLLM || undefined,
+          planning_llm: planningLLM || undefined,
+          variable_extraction_llm: variableExtractionLLM || undefined,
+          anonymization_llm: anonymizationLLM || undefined,
+          plan_improvement_llm: planImprovementLLM || undefined,
+        };
+      }
+      onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, finalLLMConfig);
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, planningLLM, variableExtractionLLM, anonymizationLLM, planImprovementLLM, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -257,23 +297,189 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                 </label>
                 <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
                   <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                        Select LLM for this preset
-                      </label>
-                      <LLMSelectionDropdown
-                        availableLLMs={availableLLMs}
-                        selectedLLM={currentLLMOption}
-                        onLLMSelect={handleLLMSelect}
-                        onRefresh={refreshAvailableLLMs}
-                        disabled={false}
-                        inModal={true}
-                        openDirection="down"
-                      />
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      This preset will use the selected LLM configuration
-                    </div>
+                    {effectiveAgentMode === 'workflow' ? (
+                      <>
+                        {/* Workflow mode: Show agent-specific LLM selections */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Execution Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={executionLLM ? availableLLMs.find(llm => 
+                              llm.provider === executionLLM.provider && llm.model === executionLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setExecutionLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for execution agents (used when step config doesn't specify)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Validation Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={validationLLM ? availableLLMs.find(llm => 
+                              llm.provider === validationLLM.provider && llm.model === validationLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setValidationLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for validation agents (used when step config doesn't specify)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Learning Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={learningLLM ? availableLLMs.find(llm => 
+                              llm.provider === learningLLM.provider && llm.model === learningLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setLearningLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for learning agents (used when step config doesn't specify)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Planning Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={planningLLM ? availableLLMs.find(llm =>
+                              llm.provider === planningLLM.provider && llm.model === planningLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setPlanningLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for planning agent (used for plan generation)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Variable Extraction Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={variableExtractionLLM ? availableLLMs.find(llm =>
+                              llm.provider === variableExtractionLLM.provider && llm.model === variableExtractionLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setVariableExtractionLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for variable extraction agent (used for variable extraction)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Anonymization Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={anonymizationLLM ? availableLLMs.find(llm =>
+                              llm.provider === anonymizationLLM.provider && llm.model === anonymizationLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setAnonymizationLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for anonymization agent (used for anonymizing learnings)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Plan Improvement Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={planImprovementLLM ? availableLLMs.find(llm =>
+                              llm.provider === planImprovementLLM.provider && llm.model === planImprovementLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setPlanImprovementLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for plan improvement agent (used for analyzing execution and providing feedback)
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">
+                          Step-specific configs in step_config.json take priority over these defaults
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* Simple mode: Show single LLM selection */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Select LLM for this preset
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={currentLLMOption}
+                            onLLMSelect={handleLLMSelect}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          This preset will use the selected LLM configuration
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

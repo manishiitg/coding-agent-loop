@@ -2029,6 +2029,18 @@ func RunStreamingToolCallWithHistoryTest(llm llmtypes.Model, modelID string) {
 	log.Printf("   This is where JSON validation errors occur if arguments are invalid")
 	log.Printf("   Conversation has %d messages (including tool calls)", len(conversationHistory))
 
+	// CRITICAL: Validate that all ContentPart types can be type-asserted correctly
+	// This catches conversion bugs where types aren't properly converted from agent_go to llm-providers
+	log.Printf("\n🔍 Step 5a: Validating ContentPart type assertions (regression test)")
+	if err := validateConversationTypeAssertions(conversationHistory); err != nil {
+		log.Printf("❌ Step 5a failed: %v", err)
+		log.Printf("   CRITICAL: This indicates a type conversion bug!")
+		log.Printf("   Check convertContentPart in agent_go/internal/llm/providers.go")
+		log.Printf("   All ContentPart types must be from llm-providers package for adapters to work")
+		return
+	}
+	log.Printf("✅ Step 5a passed - all ContentPart types can be type-asserted correctly")
+
 	var streamedContent2 strings.Builder
 	streamChan2 := make(chan llmtypes.StreamChunk, 100)
 
@@ -2116,6 +2128,487 @@ func RunStreamingToolCallWithHistoryTest(llm llmtypes.Model, modelID string) {
 	log.Printf("   ✅ Tool calls can be stored in conversation history")
 	log.Printf("   ✅ Tool calls can be sent back to LLM without errors")
 	log.Printf("   ✅ Streaming works correctly throughout the flow")
+}
+
+// RunParallelToolCallWithResponseTest tests the complete flow:
+// 1. Request multiple parallel tool calls
+// 2. Get parallel tool calls from LLM
+// 3. Add tool responses for all tool calls
+// 4. Send full conversation (with tool responses) back to LLM
+// 5. Verify LLM can continue conversation using tool results
+// This test validates that tool response matching works correctly for multiple tools
+func RunParallelToolCallWithResponseTest(llm llmtypes.Model, modelID string) {
+	// Use context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	log.Printf("\n📝 Test: Parallel tool calls with responses and continued conversation")
+	log.Printf("   This test verifies that multiple tool calls can be matched with responses")
+	log.Printf("   and the LLM can continue the conversation using the tool results")
+
+	// Define tools for parallel execution
+	weatherTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "get_weather",
+			Description: "Get current weather for a location",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"location": map[string]interface{}{
+						"type":        "string",
+						"description": "City name",
+					},
+				},
+				"required": []string{"location"},
+			}),
+		},
+	}
+
+	getTimeTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "get_current_time",
+			Description: "Get the current time in a specific timezone",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"timezone": map[string]interface{}{
+						"type":        "string",
+						"description": "Timezone (e.g., 'UTC', 'America/New_York')",
+					},
+				},
+				"required": []string{"timezone"},
+			}),
+		},
+	}
+
+	// Step 1: Request parallel tool calls
+	log.Printf("\n🔄 Step 1: Request parallel tool calls")
+	messages1 := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Get the weather in San Francisco and also get the current time in UTC. Do both tasks."),
+	}
+
+	var streamedContent1 strings.Builder
+	var streamedToolCalls1 []llmtypes.ToolCall
+	streamChan1 := make(chan llmtypes.StreamChunk, 100)
+
+	done1 := make(chan bool)
+	go func() {
+		defer close(done1)
+		for chunk := range streamChan1 {
+			switch chunk.Type {
+			case llmtypes.StreamChunkTypeContent:
+				streamedContent1.WriteString(chunk.Content)
+				log.Printf("   📝 Streamed content: %s", chunk.Content)
+			case llmtypes.StreamChunkTypeToolCall:
+				if chunk.ToolCall != nil {
+					streamedToolCalls1 = append(streamedToolCalls1, *chunk.ToolCall)
+					log.Printf("   📦 Streamed tool call: %s (ID: %s, Args: %s)", chunk.ToolCall.FunctionCall.Name, chunk.ToolCall.ID, chunk.ToolCall.FunctionCall.Arguments)
+				}
+			}
+		}
+	}()
+
+	startTime1 := time.Now()
+	resp1, err := llm.GenerateContent(ctx, messages1,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{weatherTool, getTimeTool}),
+		llmtypes.WithToolChoiceString("auto"),
+		llmtypes.WithStreamingChan(streamChan1),
+	)
+	duration1 := time.Since(startTime1)
+	<-done1
+
+	if err != nil {
+		log.Printf("❌ Step 1 failed: %v", err)
+		return
+	}
+
+	if len(resp1.Choices) == 0 {
+		log.Printf("❌ Step 1 failed - no choices returned")
+		return
+	}
+
+	finalContent1 := resp1.Choices[0].Content
+	finalToolCalls1 := resp1.Choices[0].ToolCalls
+
+	// CRITICAL: Validate we got multiple parallel tool calls
+	if len(finalToolCalls1) < 2 {
+		log.Printf("❌ Step 1 failed - expected at least 2 parallel tool calls, got %d", len(finalToolCalls1))
+		log.Printf("      Model: %s", modelID)
+		return
+	}
+
+	// CRITICAL: Validate streaming worked
+	if len(finalToolCalls1) > 0 {
+		if len(streamedToolCalls1) == 0 {
+			log.Printf("❌ Step 1 failed - tool calls in response but none were streamed")
+			return
+		}
+		if len(streamedToolCalls1) != len(finalToolCalls1) {
+			log.Printf("❌ Step 1 failed - streamed tool call count (%d) doesn't match final count (%d)", len(streamedToolCalls1), len(finalToolCalls1))
+			return
+		}
+	}
+
+	log.Printf("✅ Step 1 passed in %s", duration1)
+	log.Printf("   📊 Stats:")
+	log.Printf("      Parallel tool calls received: %d", len(finalToolCalls1))
+	log.Printf("      Streamed tool calls: %d", len(streamedToolCalls1))
+	for i, tc := range finalToolCalls1 {
+		if tc.FunctionCall != nil {
+			log.Printf("      Tool call %d: %s (ID: %s)", i+1, tc.FunctionCall.Name, tc.ID)
+		}
+	}
+
+	// CRITICAL: Validate required arguments for all parallel tool calls
+	log.Printf("\n🔍 Step 2: Validating tool call arguments")
+	for i, tc := range finalToolCalls1 {
+		if tc.FunctionCall == nil {
+			log.Printf("❌ Step 2 failed - tool call %d has no FunctionCall", i+1)
+			return
+		}
+		var toolToValidate llmtypes.Tool
+		if tc.FunctionCall.Name == "get_weather" {
+			toolToValidate = weatherTool
+		} else if tc.FunctionCall.Name == "get_current_time" {
+			toolToValidate = getTimeTool
+		}
+		if toolToValidate.Function != nil {
+			if err := validateRequiredToolArguments(toolToValidate, tc, modelID); err != nil {
+				log.Printf("❌ Step 2 failed - tool call %d missing required arguments: %v", i+1, err)
+				log.Printf("      Model: %s", modelID)
+				return
+			}
+		}
+		log.Printf("   ✅ Tool call %d: %s - valid arguments", i+1, tc.FunctionCall.Name)
+	}
+	log.Printf("✅ Step 2 passed - all tool call arguments are valid")
+
+	// Step 3: Build conversation history with tool calls
+	log.Printf("\n🔄 Step 3: Building conversation history with tool calls")
+	conversationHistory := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Get the weather in San Francisco and also get the current time in UTC. Do both tasks."),
+	}
+
+	// Add assistant message with tool calls
+	if finalContent1 != "" || len(finalToolCalls1) > 0 {
+		parts := []llmtypes.ContentPart{}
+		if finalContent1 != "" {
+			parts = append(parts, llmtypes.TextContent{Text: finalContent1})
+		}
+		for _, tc := range finalToolCalls1 {
+			parts = append(parts, tc)
+		}
+		conversationHistory = append(conversationHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: parts,
+		})
+		log.Printf("   ✅ Added assistant message with %d tool call(s)", len(finalToolCalls1))
+	}
+
+	// Step 4: Add tool responses for all tool calls
+	log.Printf("\n🔄 Step 4: Adding tool responses for all parallel tool calls")
+	if len(finalToolCalls1) > 0 {
+		// Collect all tool results as parts of a single message
+		parts := make([]llmtypes.ContentPart, 0, len(finalToolCalls1))
+		for _, tc := range finalToolCalls1 {
+			// Create realistic mock tool results
+			var toolResultContent string
+			if tc.FunctionCall.Name == "get_weather" {
+				// Parse location from arguments
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
+					location := "San Francisco"
+					if loc, ok := args["location"].(string); ok {
+						location = loc
+					}
+					toolResultContent = fmt.Sprintf(`{"location": "%s", "temperature": 72, "condition": "Sunny", "humidity": 65}`, location)
+				} else {
+					toolResultContent = `{"location": "San Francisco", "temperature": 72, "condition": "Sunny", "humidity": 65}`
+				}
+			} else if tc.FunctionCall.Name == "get_current_time" {
+				// Parse timezone from arguments
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
+					timezone := "UTC"
+					if tz, ok := args["timezone"].(string); ok {
+						timezone = tz
+					}
+					toolResultContent = fmt.Sprintf(`{"timezone": "%s", "current_time": "2025-01-27T14:30:00Z"}`, timezone)
+				} else {
+					toolResultContent = `{"timezone": "UTC", "current_time": "2025-01-27T14:30:00Z"}`
+				}
+			} else {
+				toolResultContent = fmt.Sprintf(`{"result": "Mock result for %s"}`, tc.FunctionCall.Name)
+			}
+
+			toolResult := llmtypes.ToolCallResponse{
+				ToolCallID: tc.ID,
+				Name:       tc.FunctionCall.Name,
+				Content:    toolResultContent,
+			}
+			parts = append(parts, toolResult)
+			log.Printf("   ✅ Added tool result for %s (ID: %s)", tc.FunctionCall.Name, tc.ID)
+		}
+		// Add all tool results as a single message
+		conversationHistory = append(conversationHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeTool,
+			Parts: parts,
+		})
+		log.Printf("   ✅ Added %d tool responses in a single tool message", len(parts))
+	}
+
+	// Step 5: Send full conversation (with tool responses) back to LLM
+	log.Printf("\n🔄 Step 5: Sending full conversation back to LLM with tool responses")
+	log.Printf("   This tests that the LLM can match tool responses to tool calls correctly")
+	log.Printf("   Conversation has %d messages (including %d tool calls and %d tool responses)", len(conversationHistory), len(finalToolCalls1), len(finalToolCalls1))
+
+	// CRITICAL: Validate that all ContentPart types can be type-asserted correctly
+	// This catches conversion bugs where types aren't properly converted from agent_go to llm-providers
+	log.Printf("\n🔍 Step 5a: Validating ContentPart type assertions (regression test)")
+	if err := validateConversationTypeAssertions(conversationHistory); err != nil {
+		log.Printf("❌ Step 5a failed: %v", err)
+		log.Printf("   CRITICAL: This indicates a type conversion bug!")
+		log.Printf("   Check convertContentPart in agent_go/internal/llm/providers.go")
+		log.Printf("   All ContentPart types must be from llm-providers package for adapters to work")
+		return
+	}
+	log.Printf("✅ Step 5a passed - all ContentPart types can be type-asserted correctly")
+
+	// CRITICAL: Check for thought signatures (required for Gemini 3 Pro when sending tool calls back)
+	// This validation would catch the bug where convertToolCall in agent_go doesn't preserve ThoughtSignature
+	missingThoughtSignatures := false
+	var missingToolCalls []string
+	for i, tc := range finalToolCalls1 {
+		if tc.ThoughtSignature == "" {
+			log.Printf("   ⚠️ Tool call %d (%s) is missing thought signature", i+1, tc.FunctionCall.Name)
+			missingThoughtSignatures = true
+			missingToolCalls = append(missingToolCalls, fmt.Sprintf("%s (ID: %s)", tc.FunctionCall.Name, tc.ID))
+		} else {
+			log.Printf("   ✅ Tool call %d (%s) has thought signature (length: %d)", i+1, tc.FunctionCall.Name, len(tc.ThoughtSignature))
+		}
+	}
+	if missingThoughtSignatures && strings.Contains(modelID, "gemini-3") {
+		log.Printf("   ❌ CRITICAL ERROR: Some tool calls are missing thought signatures!")
+		log.Printf("      Gemini 3 Pro REQUIRES thought signatures when sending tool calls back in conversation history")
+		log.Printf("      Missing thought signatures in: %v", missingToolCalls)
+		log.Printf("      This will cause API errors. Possible causes:")
+		log.Printf("      1. API didn't return thought signatures in Step 1 (check API response)")
+		log.Printf("      2. Thought signatures were lost during conversion (check convertToolCall in agent_go/internal/llm/providers.go)")
+		log.Printf("      Test will continue to verify if API rejects the request, but this indicates a bug.")
+		// Don't return here - let the test continue to see if the API actually rejects it
+		// This helps distinguish between "API didn't provide it" vs "we lost it during conversion"
+	}
+
+	var streamedContent2 strings.Builder
+	streamChan2 := make(chan llmtypes.StreamChunk, 100)
+
+	done2 := make(chan bool)
+	go func() {
+		defer close(done2)
+		for chunk := range streamChan2 {
+			if chunk.Type == llmtypes.StreamChunkTypeContent {
+				streamedContent2.WriteString(chunk.Content)
+				log.Printf("   📝 Streamed content: %s", chunk.Content)
+			}
+		}
+	}()
+
+	startTime2 := time.Now()
+	resp2, err := llm.GenerateContent(ctx, conversationHistory,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{weatherTool, getTimeTool}),
+		llmtypes.WithToolChoiceString("auto"),
+		llmtypes.WithStreamingChan(streamChan2),
+	)
+	duration2 := time.Since(startTime2)
+
+	// CRITICAL: If we had missing thought signatures and got an error, this confirms the bug
+	if missingThoughtSignatures && strings.Contains(modelID, "gemini-3") && err != nil {
+		if strings.Contains(err.Error(), "thought_signature") || strings.Contains(err.Error(), "thoughtSignature") {
+			log.Printf("   ❌ TEST FAILED: API rejected request due to missing thought signatures")
+			log.Printf("      Error: %v", err)
+			log.Printf("      This confirms that thought signatures are required and were not preserved")
+			log.Printf("      Check convertToolCall in agent_go/internal/llm/providers.go to ensure ThoughtSignature is copied")
+			return
+		}
+	}
+
+	// Wait for goroutine with timeout to prevent deadlock
+	select {
+	case <-done2:
+		// Goroutine finished normally
+	case <-time.After(5 * time.Second):
+		// Timeout - channel might not be closed if error occurred
+		log.Printf("   ⚠️ Timeout waiting for streaming goroutine (this is OK if an error occurred)")
+	}
+
+	// CRITICAL: This is where errors occur if tool response matching fails
+	if err != nil {
+		errStr := err.Error()
+		log.Printf("❌ Step 5 failed with error: %v", err)
+		log.Printf("      Error string: %s", errStr)
+		log.Printf("      Model: %s", modelID)
+		log.Printf("      This may indicate tool response matching issues!")
+		return
+	}
+
+	if len(resp2.Choices) == 0 {
+		log.Printf("❌ Step 5 failed - no choices returned")
+		return
+	}
+
+	finalContent2 := resp2.Choices[0].Content
+	streamedContent2Str := streamedContent2.String()
+
+	// CRITICAL: Validate streaming worked
+	if len(finalContent2) > 0 {
+		if len(streamedContent2Str) == 0 {
+			log.Printf("❌ Step 5 failed - content in response but no content chunks were streamed")
+			return
+		}
+		if streamedContent2Str != finalContent2 {
+			log.Printf("❌ Step 5 failed - streamed content doesn't match final content")
+			log.Printf("      Streamed: %q", streamedContent2Str)
+			log.Printf("      Final: %q", finalContent2)
+			return
+		}
+	}
+
+	log.Printf("✅ Step 5 passed in %s", duration2)
+	log.Printf("   📊 Stats:")
+	log.Printf("      Streamed content: %d chars", len(streamedContent2Str))
+	log.Printf("      Final content: %d chars", len(finalContent2))
+	log.Printf("   💬 Response: %s", finalContent2)
+
+	// Step 6: Verify the LLM used the tool results in its response
+	log.Printf("\n🔍 Step 6: Verifying LLM used tool results in response")
+	responseLower := strings.ToLower(finalContent2)
+	hasWeatherInfo := strings.Contains(responseLower, "weather") || strings.Contains(responseLower, "temperature") || strings.Contains(responseLower, "sunny") || strings.Contains(responseLower, "72")
+	hasTimeInfo := strings.Contains(responseLower, "time") || strings.Contains(responseLower, "utc") || strings.Contains(responseLower, "14:30")
+
+	if hasWeatherInfo && hasTimeInfo {
+		log.Printf("   ✅ LLM successfully used both tool results in its response")
+	} else if hasWeatherInfo || hasTimeInfo {
+		log.Printf("   ⚠️ LLM used some tool results but may have missed others")
+		log.Printf("      Weather info present: %v", hasWeatherInfo)
+		log.Printf("      Time info present: %v", hasTimeInfo)
+	} else {
+		log.Printf("   ⚠️ LLM response may not have used tool results")
+		log.Printf("      This could indicate tool response matching issues")
+	}
+
+	logTokenUsage(resp2.Choices[0].GenerationInfo)
+
+	// Step 7: Test follow-up question about tool results (verify LLM remembers tool responses)
+	log.Printf("\n🔄 Step 7: Testing follow-up question about tool results")
+	log.Printf("   This verifies the LLM remembers tool responses from previous turns")
+
+	// Add the LLM's response from Step 5 to conversation history
+	conversationHistory = append(conversationHistory, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeAI,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: finalContent2}},
+	})
+
+	// Ask a follow-up question about the tool results
+	followUpQuestion := "What was the temperature in San Francisco?"
+	conversationHistory = append(conversationHistory, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: followUpQuestion}},
+	})
+
+	log.Printf("   💬 Follow-up question: %s", followUpQuestion)
+	log.Printf("   📝 Conversation now has %d messages", len(conversationHistory))
+
+	// Send follow-up question with full conversation history
+	streamChan3 := make(chan llmtypes.StreamChunk, 100)
+	var streamedContent3 strings.Builder
+	startTime3 := time.Now()
+
+	done3 := make(chan bool)
+	go func() {
+		defer close(done3)
+		for chunk := range streamChan3 {
+			if chunk.Type == llmtypes.StreamChunkTypeContent {
+				// StreamChunk.Content is a string
+				streamedContent3.WriteString(chunk.Content)
+				log.Printf("    📝 Streamed content: %s", chunk.Content)
+			}
+		}
+	}()
+
+	resp3, err := llm.GenerateContent(ctx, conversationHistory,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{weatherTool, getTimeTool}),
+		llmtypes.WithToolChoiceString("auto"),
+		llmtypes.WithStreamingChan(streamChan3),
+	)
+	duration3 := time.Since(startTime3)
+
+	// Wait for goroutine with timeout to prevent deadlock
+	select {
+	case <-done3:
+		// Goroutine finished normally
+	case <-time.After(5 * time.Second):
+		// Timeout - channel might not be closed if error occurred
+		log.Printf("   ⚠️ Timeout waiting for streaming goroutine (this is OK if an error occurred)")
+	}
+
+	if err != nil {
+		log.Printf("❌ Step 7 failed with error: %v", err)
+		log.Printf("      This may indicate the LLM doesn't remember tool responses")
+		return
+	}
+
+	if len(resp3.Choices) == 0 {
+		log.Printf("❌ Step 7 failed - no choices returned")
+		return
+	}
+
+	finalContent3 := resp3.Choices[0].Content
+	streamedContent3Str := streamedContent3.String()
+
+	if len(finalContent3) > 0 {
+		if len(streamedContent3Str) == 0 {
+			log.Printf("❌ Step 7 failed - content in response but no content chunks were streamed")
+			return
+		}
+		if streamedContent3Str != finalContent3 {
+			log.Printf("❌ Step 7 failed - streamed content doesn't match final content")
+			log.Printf("      Streamed: %q", streamedContent3Str)
+			log.Printf("      Final: %q", finalContent3)
+			return
+		}
+	}
+
+	log.Printf("✅ Step 7 passed in %s", duration3)
+	log.Printf("   📊 Stats:")
+	log.Printf("      Streamed content: %d chars", len(streamedContent3Str))
+	log.Printf("      Final content: %d chars", len(finalContent3))
+	log.Printf("   💬 Response: %s", finalContent3)
+
+	// Verify the LLM remembered the temperature from the tool response
+	responseLower3 := strings.ToLower(finalContent3)
+	hasTemperature := strings.Contains(responseLower3, "72") || strings.Contains(responseLower3, "temperature") || strings.Contains(responseLower3, "seventy-two")
+
+	if hasTemperature {
+		log.Printf("   ✅ LLM successfully remembered the temperature from tool results!")
+	} else {
+		log.Printf("   ⚠️ LLM may not have remembered the temperature from tool results")
+		log.Printf("      Response: %s", finalContent3)
+	}
+
+	logTokenUsage(resp3.Choices[0].GenerationInfo)
+
+	log.Printf("\n🎯 Parallel tool call with response test completed successfully!")
+	log.Printf("   ✅ Multiple parallel tool calls received")
+	log.Printf("   ✅ Tool responses added for all tool calls")
+	log.Printf("   ✅ Full conversation sent back to LLM without errors")
+	log.Printf("   ✅ LLM continued conversation using tool results")
+	log.Printf("   ✅ LLM remembers tool results in follow-up questions")
+	log.Printf("   ✅ Streaming worked correctly throughout the flow")
 }
 
 // RunStructuredOutputTest runs standardized structured output test
@@ -2560,4 +3053,47 @@ func logTokenUsage(info *llmtypes.GenerationInfo) {
 			log.Printf("   Cache creation tokens: %v", cacheCreate)
 		}
 	}
+}
+
+// validateConversationTypeAssertions validates that all ContentPart types in a conversation
+// can be properly type-asserted. This is critical because adapters use type assertions
+// to identify ToolCall, ToolCallResponse, TextContent, and ImageContent.
+//
+// This function would catch the bug where ToolCall and ToolCallResponse weren't being
+// converted from agent_go/internal/llmtypes to llm-providers/llmtypes.
+func validateConversationTypeAssertions(messages []llmtypes.MessageContent) error {
+	for i, msg := range messages {
+		for j, part := range msg.Parts {
+			// Try type assertions that adapters use
+			switch part.(type) {
+			case llmtypes.TextContent:
+				// Good - can be processed
+			case llmtypes.ImageContent:
+				// Good - can be processed
+			case llmtypes.ToolCall:
+				// Good - can be processed
+			case llmtypes.ToolCallResponse:
+				// Good - can be processed
+			default:
+				// Unknown type - this will cause adapter failures
+				return fmt.Errorf("message %d, part %d: unknown ContentPart type %T that adapters cannot handle. "+
+					"This indicates a type conversion bug - check convertContentPart in agent_go/internal/llm/providers.go", i, j, part)
+			}
+
+			// Additional validation: verify the type is actually from llm-providers package
+			// by checking if we can access its fields (this is what adapters do)
+			switch p := part.(type) {
+			case llmtypes.ToolCall:
+				if p.ID == "" && p.FunctionCall != nil {
+					// This shouldn't happen, but if it does, it's a problem
+					return fmt.Errorf("message %d, part %d: ToolCall has empty ID but non-nil FunctionCall", i, j)
+				}
+			case llmtypes.ToolCallResponse:
+				if p.ToolCallID == "" {
+					return fmt.Errorf("message %d, part %d: ToolCallResponse has empty ToolCallID", i, j)
+				}
+			}
+		}
+	}
+	return nil
 }

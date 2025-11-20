@@ -59,9 +59,10 @@ type StreamChunk struct {
 
 // ToolCall represents a tool/function call request
 type ToolCall struct {
-	ID           string
-	Type         string
-	FunctionCall *FunctionCall
+	ID               string
+	Type             string
+	FunctionCall     *FunctionCall
+	ThoughtSignature string // For Gemini 3 Pro: thought signature from extra_content.google.thought_signature
 }
 
 // FunctionCall represents a function call with name and arguments

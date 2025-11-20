@@ -186,6 +186,7 @@ All providers have **identical test coverage** using the same standardized tests
 | Streaming Func | `anthropic-streaming-func` | Function calling with streaming |
 | Streaming Multi-Turn | `anthropic-streaming-multiturn` | Multi-turn conversation streaming |
 | Streaming Cancellation | `anthropic-streaming-cancellation` | Streaming cancellation handling |
+| Parallel Tool Response | `anthropic-parallel-tool-response` | Parallel tool calls with responses and continued conversation |
 
 **Example:**
 ```bash
@@ -195,6 +196,7 @@ All providers have **identical test coverage** using the same standardized tests
 ./bin/llm-test anthropic-image
 ./bin/llm-test anthropic-streaming-content
 ./bin/llm-test anthropic-streaming-mixed
+./bin/llm-test anthropic-parallel-tool-response --model claude-haiku-4-5-20251001
 ```
 
 #### OpenAI (`openai-*`)
@@ -213,6 +215,7 @@ All providers have **identical test coverage** using the same standardized tests
 | Streaming Func | `openai-streaming-func` | Function calling with streaming |
 | Streaming Multi-Turn | `openai-streaming-multiturn` | Multi-turn conversation streaming |
 | Streaming Cancellation | `openai-streaming-cancellation` | Streaming cancellation handling |
+| Parallel Tool Response | `openai-parallel-tool-response` | Parallel tool calls with responses and continued conversation |
 
 **Example:**
 ```bash
@@ -240,6 +243,7 @@ All providers have **identical test coverage** using the same standardized tests
 | Streaming Multi-Turn | `bedrock-streaming-multiturn` | Multi-turn conversation streaming |
 | Streaming Cancellation | `bedrock-streaming-cancellation` | Streaming cancellation handling |
 | Streaming Tool Call History | `bedrock-streaming-toolcall-history` | Tool call with conversation history |
+| Parallel Tool Response | `bedrock-parallel-tool-response` | Parallel tool calls with responses and continued conversation |
 
 **Example:**
 ```bash
@@ -250,6 +254,7 @@ All providers have **identical test coverage** using the same standardized tests
 ./bin/llm-test bedrock-streaming-content
 ./bin/llm-test bedrock-streaming-mixed
 ./bin/llm-test bedrock-streaming-toolcall-history
+./bin/llm-test bedrock-parallel-tool-response
 ```
 
 #### OpenRouter (`openrouter-*`)
@@ -285,6 +290,7 @@ All providers have **identical test coverage** using the same standardized tests
 | Streaming Mixed | `vertex-streaming-mixed` | Mixed content/tool call streaming |
 | Streaming Multi-Turn | `vertex-streaming-multiturn` | Multi-turn conversation streaming |
 | Streaming Cancellation | `vertex-streaming-cancellation` | Streaming cancellation handling |
+| Parallel Tool Response | `vertex-parallel-tool-response` | Parallel tool calls with responses and continued conversation |
 
 **Example:**
 ```bash
@@ -294,6 +300,7 @@ All providers have **identical test coverage** using the same standardized tests
 ./bin/llm-test vertex-image
 ./bin/llm-test vertex-streaming-content
 ./bin/llm-test vertex-streaming-mixed
+./bin/llm-test vertex-parallel-tool-response --model gemini-3-pro-preview
 ```
 
 ### Standardized Test Features
@@ -353,6 +360,13 @@ Streaming tests validate real-time response streaming capabilities across provid
    - Tests basic content streaming without tool calls
    - Validates that streamed chunks match final response
    - Tests both short and longer content generation
+
+2. **Parallel Tool Call with Response** (`*-parallel-tool-response`)
+   - Tests complete flow: parallel tool calls → tool responses → continued conversation
+   - Validates tool response matching for multiple parallel tools
+   - Ensures LLM can continue conversation using tool results
+   - Tests thought signature handling (for Gemini 3 Pro)
+   - Available for: Vertex AI (other providers can be added)
    - Verifies chunk ordering and completeness
 
 2. **Tool Call Streaming** (`*-streaming-tool-call`)
@@ -391,15 +405,22 @@ Streaming tests validate real-time response streaming capabilities across provid
    - Validates streaming with previous tool call results
    - **Available**: Bedrock only
 
+9. **Parallel Tool Call with Response** (`*-parallel-tool-response`)
+   - Tests complete flow: parallel tool calls → tool responses → continued conversation
+   - Validates tool response matching for multiple parallel tools
+   - Ensures LLM can continue conversation using tool results
+   - Tests thought signature handling (for Gemini 3 Pro)
+   - **Available**: Vertex AI (other providers can be added)
+
 #### Streaming Test Coverage by Provider
 
-| Provider | Content | Tool Call | Mixed | Parallel | Func | Multi-Turn | Cancellation | History |
-|----------|---------|-----------|-------|----------|------|------------|--------------|---------|
-| **Anthropic** | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **OpenAI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **Bedrock** | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **OpenRouter** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Vertex AI** | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Provider | Content | Tool Call | Mixed | Parallel | Func | Multi-Turn | Cancellation | History | Parallel Response |
+|----------|---------|-----------|-------|----------|------|------------|--------------|---------|-------------------|
+| **Anthropic** | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| **OpenAI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| **Bedrock** | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **OpenRouter** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Vertex AI** | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ |
 
 **Note**: OpenRouter does not currently support streaming tests. Vertex AI has partial streaming support (content, mixed, multi-turn, and cancellation only).
 

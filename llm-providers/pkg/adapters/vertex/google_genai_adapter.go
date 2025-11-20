@@ -63,8 +63,21 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 	// Track function calls from previous AI message to ensure function responses match
 	var previousFunctionCallIDs []string
 
+	// Build a map of all function call IDs to their tool names for matching responses from previous turns
+	allFunctionCallIDs := make(map[string]string) // ID -> tool name
+	for _, msg := range messages {
+		if msg.Role == llmtypes.ChatMessageTypeAI {
+			for _, part := range msg.Parts {
+				if toolCall, ok := part.(llmtypes.ToolCall); ok {
+					allFunctionCallIDs[toolCall.ID] = toolCall.FunctionCall.Name
+				}
+			}
+		}
+	}
+
 	if g.logger != nil {
-		g.logger.Debugf("🔍 [GEMINI] Processing %d messages for conversion", len(messages))
+		g.logger.Debugf("🔍 [GEMINI] Processing %d messages for conversion, found %d total function calls in conversation history",
+			len(messages), len(allFunctionCallIDs))
 	}
 
 	// CRITICAL FIX: Combine consecutive Tool messages that follow an AI message with function calls
@@ -184,7 +197,7 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 						Parts: textOnlyParts,
 					}
 					// Convert and add text-only message
-					genaiParts := g.convertMessageParts(textMsg.Parts)
+					genaiParts := g.convertMessageParts(textMsg.Parts, modelID)
 					if len(genaiParts) > 0 {
 						role := convertRole(string(textMsg.Role))
 						genaiContents = append(genaiContents, &genai.Content{
@@ -202,7 +215,7 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 					Parts: toolCallParts,
 				}
 				// Convert and add tool-call-only message
-				genaiParts := g.convertMessageParts(toolCallMsg.Parts)
+				genaiParts := g.convertMessageParts(toolCallMsg.Parts, modelID)
 				if len(genaiParts) > 0 {
 					role := convertRole(string(toolCallMsg.Role))
 					genaiContents = append(genaiContents, &genai.Content{
@@ -256,84 +269,156 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 
 			// If we have previous function calls, ensure responses match exactly
 			// Gemini requires: number of function response parts = number of function call parts
+			// IMPORTANT: Gemini matches responses to calls by POSITION/ORDER, not by ID
 			if len(previousFunctionCallIDs) > 0 {
-				// Create a map of response IDs for quick lookup
+				// First, try to match by ID (for proper association)
 				responseMap := make(map[string]llmtypes.ToolCallResponse)
 				for _, resp := range functionResponses {
 					responseMap[resp.ToolCallID] = resp
 				}
 
-				// Reorder responses to match the exact order of function calls
-				// Only include responses that match a function call
+				// Try to match responses to calls by ID
 				orderedResponses := make([]llmtypes.ContentPart, 0, len(previousFunctionCallIDs))
-				missingCount := 0
+				matchedByID := 0
 				for _, callID := range previousFunctionCallIDs {
 					if resp, found := responseMap[callID]; found {
 						orderedResponses = append(orderedResponses, resp)
+						matchedByID++
 					} else {
-						// Missing response - Gemini requires exact match, so we need to handle this
-						missingCount++
-						if g.logger != nil {
-							g.logger.Errorf("⚠️ [GEMINI] Function response missing for call ID: %s (required for Gemini API)", callID)
-						}
+						// ID not found - will use order-based fallback
+						orderedResponses = append(orderedResponses, nil) // placeholder
 					}
 				}
 
-				// Log warnings for responses that don't match any call IDs
-				for _, resp := range functionResponses {
-					found := false
+				// If ID matching failed, fall back to order-based matching
+				// This handles cases where IDs don't match but we have the right number of responses
+				if matchedByID < len(previousFunctionCallIDs) && len(functionResponses) == len(previousFunctionCallIDs) {
+					if g.logger != nil {
+						g.logger.Debugf("🔍 [GEMINI] ID matching incomplete (%d/%d matched), falling back to order-based matching", matchedByID, len(previousFunctionCallIDs))
+					}
+					// Use responses in order (Gemini matches by position)
+					orderedResponses = make([]llmtypes.ContentPart, 0, len(functionResponses))
+					for _, resp := range functionResponses {
+						orderedResponses = append(orderedResponses, resp)
+					}
+				} else if matchedByID == 0 && len(functionResponses) == len(previousFunctionCallIDs) {
+					// No IDs matched but count matches - use order-based
+					if g.logger != nil {
+						g.logger.Debugf("🔍 [GEMINI] No IDs matched, using order-based matching (%d responses for %d calls)", len(functionResponses), len(previousFunctionCallIDs))
+					}
+					orderedResponses = make([]llmtypes.ContentPart, 0, len(functionResponses))
+					for _, resp := range functionResponses {
+						orderedResponses = append(orderedResponses, resp)
+					}
+				} else if matchedByID < len(previousFunctionCallIDs) {
+					// Some IDs matched but not all - use what we have, fill missing with order
+					if g.logger != nil {
+						g.logger.Debugf("🔍 [GEMINI] Partial ID matching (%d/%d), using hybrid approach", matchedByID, len(previousFunctionCallIDs))
+					}
+					// Remove nil placeholders and use order for unmatched
+					orderedResponses = make([]llmtypes.ContentPart, 0, len(functionResponses))
+					usedResponses := make(map[int]bool)
+					// First add matched responses
 					for _, callID := range previousFunctionCallIDs {
-						if resp.ToolCallID == callID {
-							found = true
-							break
+						if resp, found := responseMap[callID]; found {
+							orderedResponses = append(orderedResponses, resp)
+							// Find which response index this was
+							for j, r := range functionResponses {
+								if r.ToolCallID == resp.ToolCallID {
+									usedResponses[j] = true
+									break
+								}
+							}
 						}
 					}
-					if !found {
-						if g.logger != nil {
-							g.logger.Errorf("⚠️ [GEMINI] Function response with ID %s doesn't match any previous function call (will be skipped)", resp.ToolCallID)
+					// Then add unmatched responses in order
+					for i, resp := range functionResponses {
+						if !usedResponses[i] {
+							orderedResponses = append(orderedResponses, resp)
 						}
 					}
 				}
 
-				// Gemini requires exact match - if we have missing responses, log error
-				if missingCount > 0 {
-					if g.logger != nil {
-						g.logger.Errorf("❌ [GEMINI] Function response count mismatch: expected %d responses, got %d. Missing %d responses. This will cause API error.",
-							len(previousFunctionCallIDs), len(orderedResponses), missingCount)
-					}
-				}
-
-				// Update message parts with ordered responses (only matching ones)
-				// Note: If responses don't match exactly, Gemini will return an error
-				// but we'll send what we have in the correct order
-				if len(orderedResponses) > 0 {
-					if g.logger != nil {
-						g.logger.Debugf("🔍 [GEMINI] Message %d: Reordered %d responses to match %d function calls",
-							msgIdx, len(orderedResponses), len(previousFunctionCallIDs))
-					}
-					msg.Parts = orderedResponses
-				} else {
-					// No matching responses - this will cause an error, but we'll let Gemini handle it
-					if g.logger != nil {
-						g.logger.Errorf("❌ [GEMINI] No matching function responses found for %d function calls", len(previousFunctionCallIDs))
-					}
-				}
-
-				// CRITICAL: Gemini requires EXACT match - if counts don't match, we must not send the message
+				// Check if we have the right number of responses
 				if len(orderedResponses) != len(previousFunctionCallIDs) {
 					if g.logger != nil {
-						g.logger.Errorf("❌ [GEMINI] CRITICAL: Function response count mismatch - expected %d, got %d. Skipping this message to avoid API error.",
+						g.logger.Errorf("❌ [GEMINI] Function response count mismatch - expected %d, got %d. This may cause API error.",
 							len(previousFunctionCallIDs), len(orderedResponses))
 					}
-					// Skip this message entirely - don't add it to genaiContents
-					previousFunctionCallIDs = nil
-					continue
+					// Still try to send what we have - Gemini might handle it
+					if len(orderedResponses) == 0 {
+						// No responses at all - skip this message
+						previousFunctionCallIDs = nil
+						continue
+					}
+				}
+
+				// Update message parts with ordered responses
+				if len(orderedResponses) > 0 {
+					if g.logger != nil {
+						g.logger.Debugf("🔍 [GEMINI] Message %d: Using %d responses for %d function calls (matched by ID: %d)",
+							msgIdx, len(orderedResponses), len(previousFunctionCallIDs), matchedByID)
+					}
+					msg.Parts = orderedResponses
 				}
 			} else if len(functionResponses) > 0 {
-				// We have responses but no previous function calls tracked
+				// We have responses but no previous function calls tracked in the immediately previous message
+				// Gemini requires function responses to match the IMMEDIATELY previous function calls
+				// Even if these responses match function calls from earlier turns, Gemini will reject them
+				// So we must convert them to text so the LLM can see them
 				if g.logger != nil {
-					g.logger.Errorf("⚠️ [GEMINI] Message %d: Found %d function responses but no previous function calls tracked",
+					g.logger.Errorf("⚠️ [GEMINI] Message %d: Found %d function responses but no immediately previous function calls. "+
+						"Gemini requires responses to match immediately previous calls, so converting to text so LLM can see them.",
 						msgIdx, len(functionResponses))
+					for i, resp := range functionResponses {
+						contentPreview := resp.Content
+						if len(contentPreview) > 100 {
+							contentPreview = contentPreview[:100] + "..."
+						}
+						matched := ""
+						if _, exists := allFunctionCallIDs[resp.ToolCallID]; exists {
+							matched = fmt.Sprintf(" (matches call from earlier turn: %s)", allFunctionCallIDs[resp.ToolCallID])
+						} else {
+							matched = " (no matching call found)"
+						}
+						g.logger.Debugf("🔍 [GEMINI]   Response %d: ToolCallID=%s, Name=%s, Content preview: %s%s",
+							i+1, resp.ToolCallID, resp.Name, contentPreview, matched)
+					}
+				}
+				// Convert all tool responses to text messages so Gemini can see them
+				// Format: "Tool [name] returned: [content]"
+				textParts := make([]llmtypes.ContentPart, 0, len(functionResponses))
+				for _, resp := range functionResponses {
+					textContent := fmt.Sprintf("Tool %s returned: %s", resp.Name, resp.Content)
+					textParts = append(textParts, llmtypes.TextContent{Text: textContent})
+					if g.logger != nil {
+						contentPreview := resp.Content
+						if len(contentPreview) > 50 {
+							contentPreview = contentPreview[:50] + "..."
+						}
+						g.logger.Debugf("🔍 [GEMINI]   Converting response to text: Tool %s returned: %s",
+							resp.Name, contentPreview)
+					}
+				}
+				// Replace tool response parts with text parts
+				msg.Parts = textParts
+				// Change role to user so it's visible in conversation history
+				msg.Role = llmtypes.ChatMessageTypeHuman
+				if g.logger != nil {
+					g.logger.Infof("✅ [GEMINI] Converted %d tool responses to text message (role changed from Tool to Human, %d text parts)",
+						len(functionResponses), len(textParts))
+					// Verify the conversion
+					for i, part := range msg.Parts {
+						if textPart, ok := part.(llmtypes.TextContent); ok {
+							preview := textPart.Text
+							if len(preview) > 100 {
+								preview = preview[:100] + "..."
+							}
+							g.logger.Debugf("🔍 [GEMINI]   Text part %d: %s", i+1, preview)
+						} else {
+							g.logger.Errorf("❌ [GEMINI]   Part %d is not TextContent! Type: %T", i+1, part)
+						}
+					}
 				}
 			}
 
@@ -360,14 +445,85 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 
 		// Normal processing for messages without mixed parts
 		// Use convertMessageParts helper to handle all part types including ImageContent
-		genaiParts := g.convertMessageParts(msg.Parts)
+		if g.logger != nil {
+			g.logger.Infof("🔍 [GEMINI] Message %d (role: %s): Converting %d parts", msgIdx, msg.Role, len(msg.Parts))
+			for i, part := range msg.Parts {
+				switch p := part.(type) {
+				case llmtypes.TextContent:
+					preview := p.Text
+					if len(preview) > 50 {
+						preview = preview[:50] + "..."
+					}
+					g.logger.Infof("🔍 [GEMINI]   Part %d: TextContent: %s", i+1, preview)
+				case llmtypes.ToolCallResponse:
+					contentPreview := p.Content
+					if len(contentPreview) > 50 {
+						contentPreview = contentPreview[:50] + "..."
+					}
+					g.logger.Infof("🔍 [GEMINI]   Part %d: ToolCallResponse: ToolCallID=%s, Name=%s, Content: %s",
+						i+1, p.ToolCallID, p.Name, contentPreview)
+				case llmtypes.ToolCall:
+					if p.FunctionCall != nil {
+						g.logger.Infof("🔍 [GEMINI]   Part %d: ToolCall: ID=%s, Name=%s, Arguments length=%d",
+							i+1, p.ID, p.FunctionCall.Name, len(p.FunctionCall.Arguments))
+					} else {
+						g.logger.Errorf("❌ [GEMINI]   Part %d: ToolCall: ID=%s, FunctionCall is nil!", i+1, p.ID)
+					}
+				default:
+					g.logger.Infof("🔍 [GEMINI]   Part %d: Unknown type: %T", i+1, part)
+				}
+			}
+		}
+
+		genaiParts := g.convertMessageParts(msg.Parts, modelID)
+
+		if g.logger != nil {
+			g.logger.Infof("🔍 [GEMINI] Message %d (role: %s): convertMessageParts returned %d genai parts",
+				msgIdx, msg.Role, len(genaiParts))
+		}
 
 		if len(genaiParts) > 0 {
 			role := convertRole(string(msg.Role))
+
+			// Log tool responses being sent to Gemini
+			if msg.Role == llmtypes.ChatMessageTypeTool {
+				if g.logger != nil {
+					for _, part := range msg.Parts {
+						if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
+							contentPreview := toolResp.Content
+							if len(contentPreview) > 100 {
+								contentPreview = contentPreview[:100] + "..."
+							}
+							g.logger.Infof("✅ [GEMINI] Sending tool response to Gemini - ToolCallID: %s, Name: %s, Content: %s",
+								toolResp.ToolCallID, toolResp.Name, contentPreview)
+						}
+					}
+				}
+			}
+
 			genaiContents = append(genaiContents, &genai.Content{
 				Role:  role,
 				Parts: genaiParts,
 			})
+		} else {
+			// Message with no parts after conversion - log details for debugging
+			if g.logger != nil {
+				g.logger.Errorf("❌ [GEMINI] Message %d (role: %s) has no parts after conversion! Original parts count: %d",
+					msgIdx, msg.Role, len(msg.Parts))
+				for i, part := range msg.Parts {
+					g.logger.Errorf("❌ [GEMINI]   Part %d: type=%T", i+1, part)
+					if textPart, ok := part.(llmtypes.TextContent); ok {
+						preview := textPart.Text
+						if len(preview) > 100 {
+							preview = preview[:100] + "..."
+						}
+						g.logger.Errorf("❌ [GEMINI]     Text content: %s", preview)
+					} else if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
+						g.logger.Errorf("❌ [GEMINI]     Tool response: ToolCallID=%s, Name=%s, Content length=%d",
+							toolResp.ToolCallID, toolResp.Name, len(toolResp.Content))
+					}
+				}
+			}
 		}
 	}
 
@@ -456,61 +612,17 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 		}
 	}
 
-	// Check if streaming is requested
-	if opts.StreamChan != nil {
-		return g.generateContentStreaming(ctx, modelID, genaiContents, config, opts, hadMixedMessages, requestID, messages)
-	}
-
-	// Call Google GenAI API (non-streaming)
-	result, err := g.client.Models.GenerateContent(ctx, modelID, genaiContents, config)
-
-	if err != nil {
-		// Log error with input and response details (including request ID for correlation)
-		if g.logger != nil {
-			if hadMixedMessages {
-				g.logger.Debugf("⚠️ [REQUEST_ID: %s] ERROR occurred after detecting mixed TextContent+ToolCall messages - correlation check", requestID)
-			}
-			// Log the raw error first to capture exact API response
-			g.logger.Errorf("🔍 [REQUEST_ID: %s] [GEMINI/VERTEX] Raw error from GenAI SDK - Type: %T, Error: %v", requestID, err, err)
-			g.logErrorDetails(requestID, modelID, messages, config, opts, err, result)
-			g.logRawResponse(requestID, modelID, result, err)
-		}
-		return nil, fmt.Errorf("genai generate content: %w", err)
-	}
-
-	// Convert response from genai format to llmtypes format
-	convertedResp := convertResponse(result, g.logger, hadMixedMessages)
-
-	// Log full raw response if we detect problematic finish reasons (even if no error)
-	// This helps debug issues like UNEXPECTED_TOOL_CALL, MALFORMED_FUNCTION_CALL, etc.
-	if result != nil && len(result.Candidates) > 0 {
-		firstCandidate := result.Candidates[0]
-		finishReason := string(firstCandidate.FinishReason)
-		// Log raw response for problematic finish reasons that might indicate API issues
-		if finishReason == "UNEXPECTED_TOOL_CALL" || finishReason == "MALFORMED_FUNCTION_CALL" {
-			if g.logger != nil {
-				g.logger.Warnf("⚠️ [REQUEST_ID: %s] Detected problematic FinishReason: %q - Logging full raw API response", requestID, finishReason)
-			}
-			g.logRawResponse(requestID, modelID, result, nil)
-		}
-		// Also log if content is empty (which might indicate other issues)
-		if convertedResp != nil && len(convertedResp.Choices) > 0 {
-			firstChoice := convertedResp.Choices[0]
-			if firstChoice.Content == "" && finishReason != "" && finishReason != "STOP" {
-				if g.logger != nil {
-					g.logger.Warnf("⚠️ [REQUEST_ID: %s] Empty content with FinishReason: %q - Logging full raw API response", requestID, finishReason)
-				}
-				g.logRawResponse(requestID, modelID, result, nil)
-			}
-		}
-	}
-
-	return convertedResp, nil
+	// Use streaming path for both streaming and non-streaming requests
+	// For non-streaming (StreamChan == nil), the streaming function will accumulate tokens
+	// without sending chunks to the channel, ensuring consistent thought signature handling
+	return g.generateContentStreaming(ctx, modelID, genaiContents, config, opts, hadMixedMessages, requestID, messages)
 }
 
 // generateContentStreaming handles streaming responses from Google GenAI API
+// It works for both streaming (StreamChan != nil) and non-streaming (StreamChan == nil) requests
+// For non-streaming, it accumulates tokens without sending chunks to the channel
 func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, modelID string, genaiContents []*genai.Content, config *genai.GenerateContentConfig, opts *llmtypes.CallOptions, hadMixedMessages bool, requestID string, messages []llmtypes.MessageContent) (*llmtypes.ContentResponse, error) {
-	// Ensure channel is closed when done
+	// Ensure channel is closed when done (only if streaming was requested)
 	defer func() {
 		if opts.StreamChan != nil {
 			close(opts.StreamChan)
@@ -524,6 +636,7 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 	var accumulatedContent strings.Builder
 	var accumulatedToolCalls []llmtypes.ToolCall
 	var usage *genai.GenerateContentResponseUsageMetadata
+	var sharedThoughtSignature string // For parallel tool calls, share thought signature across all
 
 	// Process streaming responses
 	for response, err := range stream {
@@ -541,6 +654,31 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 
 		// Process candidates
 		for _, candidate := range response.Candidates {
+			// First pass: Extract thought signature from any part (for parallel calls)
+			if candidate.Content != nil {
+				for _, part := range candidate.Content.Parts {
+					if part.FunctionCall != nil {
+						thoughtSig := extractThoughtSignature(part, g.logger)
+						if thoughtSig != "" && sharedThoughtSignature == "" {
+							sharedThoughtSignature = thoughtSig
+							if g.logger != nil {
+								g.logger.Infof("✅ [VERTEX] Found thought signature in streaming part (function call: %s), will share with all parallel tool calls", part.FunctionCall.Name)
+							}
+						}
+					} else if part.Text == "" {
+						// Check empty text parts too
+						thoughtSig := extractThoughtSignature(part, g.logger)
+						if thoughtSig != "" && sharedThoughtSignature == "" {
+							sharedThoughtSignature = thoughtSig
+							if g.logger != nil {
+								g.logger.Infof("✅ [VERTEX] Found thought signature in streaming empty text part, will share with all parallel tool calls")
+							}
+						}
+					}
+				}
+			}
+
+			// Second pass: Extract content and tool calls
 			if candidate.Content != nil {
 				for _, part := range candidate.Content.Parts {
 					// Extract text content and stream immediately
@@ -560,12 +698,23 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 
 					// Extract function calls (tool calls)
 					if part.FunctionCall != nil {
+						// Extract thought signature from this specific part first
+						thoughtSignature := extractThoughtSignature(part, g.logger)
+						// If not found in this part, use the shared one (for parallel calls)
+						if thoughtSignature == "" && sharedThoughtSignature != "" {
+							thoughtSignature = sharedThoughtSignature
+							if g.logger != nil {
+								g.logger.Debugf("🔍 [VERTEX] Using shared thought signature for streaming tool call %s (from another part)", part.FunctionCall.Name)
+							}
+						}
+
 						// Generate tool call ID
 						toolCallID := generateToolCallID()
 						argsJSON := convertArgumentsToString(part.FunctionCall.Args)
 						toolCall := llmtypes.ToolCall{
-							ID:   toolCallID,
-							Type: "function",
+							ID:               toolCallID,
+							Type:             "function",
+							ThoughtSignature: thoughtSignature,
 							FunctionCall: &llmtypes.FunctionCall{
 								Name:      part.FunctionCall.Name,
 								Arguments: argsJSON,
@@ -906,12 +1055,50 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 		// Extract text content and tool calls from parts
 		var textParts []string
 		var toolCalls []llmtypes.ToolCall
+		var sharedThoughtSignature string // For parallel tool calls, share thought signature across all
 
 		if candidate.Content != nil {
 			if logger != nil {
 				logger.Debugf("🔍 [VERTEX] Candidate %d: Content is not nil, Parts count: %d", i, len(candidate.Content.Parts))
 			}
 
+			// Check candidate-level metadata for thought signature (might be at candidate level, not part level)
+			if logger != nil {
+				candidateJSON, _ := json.Marshal(candidate)
+				var candidateMap map[string]interface{}
+				if err := json.Unmarshal(candidateJSON, &candidateMap); err == nil {
+					logger.Debugf("🔍 [VERTEX] Candidate %d keys: %v", i, getMapKeysForDebug(candidateMap))
+					// Check for thought signature at candidate level
+					if thoughtSig, ok := candidateMap["thoughtSignature"].(string); ok && thoughtSig != "" {
+						sharedThoughtSignature = thoughtSig
+						logger.Infof("✅ [VERTEX] Found thought signature at candidate level (length: %d)", len(thoughtSig))
+					}
+				}
+			}
+
+			// First pass: Extract thought signature from any part (for parallel calls, it might be in the first one)
+			for j, part := range candidate.Content.Parts {
+				if part.FunctionCall != nil {
+					thoughtSig := extractThoughtSignature(part, logger)
+					if thoughtSig != "" && sharedThoughtSignature == "" {
+						sharedThoughtSignature = thoughtSig
+						if logger != nil {
+							logger.Infof("✅ [VERTEX] Found thought signature in part %d (function call: %s), will share with all parallel tool calls", j, part.FunctionCall.Name)
+						}
+					}
+				} else if part.Text == "" {
+					// Check empty text parts too
+					thoughtSig := extractThoughtSignature(part, logger)
+					if thoughtSig != "" && sharedThoughtSignature == "" {
+						sharedThoughtSignature = thoughtSig
+						if logger != nil {
+							logger.Infof("✅ [VERTEX] Found thought signature in empty text part %d, will share with all parallel tool calls", j)
+						}
+					}
+				}
+			}
+
+			// Second pass: Extract all tool calls and assign shared thought signature
 			for j, part := range candidate.Content.Parts {
 				if part.Text != "" {
 					textParts = append(textParts, part.Text)
@@ -924,8 +1111,15 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 					if logger != nil {
 						logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Found FunctionCall - Name: %s", i, j, part.FunctionCall.Name)
 					}
-					// Extract thought signature from ExtraContent for Gemini 3 Pro
+					// Extract thought signature from this specific part first
 					thoughtSignature := extractThoughtSignature(part, logger)
+					// If not found in this part, use the shared one (for parallel calls)
+					if thoughtSignature == "" && sharedThoughtSignature != "" {
+						thoughtSignature = sharedThoughtSignature
+						if logger != nil {
+							logger.Debugf("🔍 [VERTEX] Using shared thought signature for tool call %s (from another part)", part.FunctionCall.Name)
+						}
+					}
 
 					// 🔧 FIX: Generate ToolCallID for FunctionCall
 					// Gemini's FunctionCall doesn't include an ID field, so we generate one.
@@ -945,9 +1139,9 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 					toolCalls = append(toolCalls, toolCall)
 					if logger != nil {
 						if thoughtSignature != "" {
-							logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s, ThoughtSignature: present", i, j, toolCall.ID, toolCall.FunctionCall.Name)
+							logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s, ThoughtSignature: present (length: %d)", i, j, toolCall.ID, toolCall.FunctionCall.Name, len(thoughtSignature))
 						} else {
-							logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s", i, j, toolCall.ID, toolCall.FunctionCall.Name)
+							logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s, ThoughtSignature: missing", i, j, toolCall.ID, toolCall.FunctionCall.Name)
 						}
 					}
 				} else {
@@ -1267,21 +1461,234 @@ func convertArgumentsToString(args map[string]interface{}) string {
 }
 
 // convertMessageParts is a helper to convert llmtypes parts to genai parts
-func (g *GoogleGenAIAdapter) convertMessageParts(parts []llmtypes.ContentPart) []*genai.Part {
+// modelID is passed to check if we're using Gemini 3 Pro (which requires thought signatures)
+func (g *GoogleGenAIAdapter) convertMessageParts(parts []llmtypes.ContentPart, modelID string) []*genai.Part {
 	genaiParts := make([]*genai.Part, 0)
+
+	if g.logger != nil {
+		g.logger.Infof("🔍 [GEMINI] convertMessageParts called with %d parts", len(parts))
+	}
 
 	// Track the first function call in this message (for parallel calls, only first needs thought signature)
 	firstFunctionCallIndex := -1
+	var sharedThoughtSignature string // Find thought signature from any tool call to share with ALL calls
+	var toolCallCount int             // Count total tool calls in this message
+
 	for i, part := range parts {
-		if _, ok := part.(llmtypes.ToolCall); ok {
+		if toolCall, ok := part.(llmtypes.ToolCall); ok {
+			toolCallCount++
 			if firstFunctionCallIndex == -1 {
 				firstFunctionCallIndex = i
 			}
-			break
+			// Collect thought signature from any tool call (for parallel calls, they should share it)
+			if toolCall.ThoughtSignature != "" && sharedThoughtSignature == "" {
+				sharedThoughtSignature = toolCall.ThoughtSignature
+				if g.logger != nil {
+					g.logger.Infof("✅ [GEMINI] Found thought signature in tool call %s (index: %d, length: %d), will share with all %d tool calls",
+						toolCall.FunctionCall.Name, i, len(toolCall.ThoughtSignature), toolCallCount)
+				}
+			}
+		}
+	}
+
+	// Log summary of thought signature collection
+	// CRITICAL: For Gemini 3 Pro, ALL tool calls MUST have thought signatures
+	isGemini3Pro := strings.Contains(modelID, "gemini-3")
+	if toolCallCount > 0 && g.logger != nil {
+		if sharedThoughtSignature != "" {
+			g.logger.Infof("✅ [GEMINI] Collected shared thought signature (length: %d) for %d tool calls", len(sharedThoughtSignature), toolCallCount)
+		} else {
+			if isGemini3Pro {
+				g.logger.Errorf("❌ [GEMINI] CRITICAL ERROR: Found %d tool calls but NO thought signatures! Gemini 3 Pro REQUIRES thought signatures for all function calls", toolCallCount)
+				g.logger.Errorf("   This will cause API errors. Check if thought signatures are being preserved from API responses.")
+			} else {
+				g.logger.Debugf("⚠️ [GEMINI] Found %d tool calls but NO thought signatures (not required for non-Gemini-3 models)", toolCallCount)
+			}
 		}
 	}
 
 	for i, part := range parts {
+		// Log the actual type before switching
+		if g.logger != nil {
+			g.logger.Infof("🔍 [GEMINI] convertMessageParts: Processing part %d, type: %T", i, part)
+		}
+
+		// Use reflection to get the actual type name for debugging
+		partType := fmt.Sprintf("%T", part)
+		if g.logger != nil {
+			g.logger.Infof("🔍 [GEMINI] Part type string: %s", partType)
+		}
+
+		// Try multiple type assertion approaches
+		// First try direct assertion
+		if toolCall, ok := part.(llmtypes.ToolCall); ok {
+			if g.logger != nil {
+				g.logger.Infof("🔍 [GEMINI] Matched ToolCall case (via assertion), ID=%s", toolCall.ID)
+			}
+			// Handle ToolCall
+			if toolCall.FunctionCall == nil {
+				if g.logger != nil {
+					g.logger.Errorf("❌ [GEMINI] ToolCall at index %d has nil FunctionCall! ID: %s", i, toolCall.ID)
+				}
+				continue
+			}
+			argsMap := parseJSONObject(toolCall.FunctionCall.Arguments)
+			if g.logger != nil {
+				g.logger.Infof("🔍 [GEMINI] Converting ToolCall: ID=%s, Name=%s, Args length=%d",
+					toolCall.ID, toolCall.FunctionCall.Name, len(toolCall.FunctionCall.Arguments))
+			}
+			genaiPart := genai.NewPartFromFunctionCall(toolCall.FunctionCall.Name, argsMap)
+			if genaiPart == nil {
+				if g.logger != nil {
+					g.logger.Errorf("❌ [GEMINI] Failed to create genai.Part from ToolCall: ID=%s, Name=%s", toolCall.ID, toolCall.FunctionCall.Name)
+				}
+				continue
+			}
+
+			// Handle thought signature
+			// CRITICAL: Gemini 3 Pro requires ALL function calls to have thought signatures
+			// when sending them back in conversation history, not just the first one
+			thoughtSignature := toolCall.ThoughtSignature
+			if thoughtSignature == "" {
+				// Use shared thought signature if this tool call doesn't have one
+				if sharedThoughtSignature != "" {
+					thoughtSignature = sharedThoughtSignature
+					if g.logger != nil {
+						g.logger.Infof("🔍 [GEMINI] Tool call %s (index %d) missing thought signature, using shared one (length: %d)",
+							toolCall.FunctionCall.Name, i, len(sharedThoughtSignature))
+					}
+				} else {
+					if g.logger != nil {
+						g.logger.Errorf("❌ [GEMINI] Tool call %s (index %d) is missing thought signature AND no shared signature available!",
+							toolCall.FunctionCall.Name, i)
+						g.logger.Errorf("   This will cause Gemini 3 Pro to reject the request. Tool call ID: %s", toolCall.ID)
+					}
+				}
+			} else {
+				if g.logger != nil {
+					g.logger.Debugf("✅ [GEMINI] Tool call %s (index %d) has its own thought signature (length: %d)",
+						toolCall.FunctionCall.Name, i, len(thoughtSignature))
+				}
+			}
+
+			// Inject thought signature into ALL function calls (required for Gemini 3 Pro)
+			// CRITICAL: If we don't have a thought signature, we MUST fail for Gemini 3 Pro
+			if thoughtSignature != "" {
+				genaiPartJSON, err := json.Marshal(genaiPart)
+				if err == nil {
+					var partMap map[string]interface{}
+					if err := json.Unmarshal(genaiPartJSON, &partMap); err == nil {
+						partMap["thoughtSignature"] = thoughtSignature
+						if partMap["extra_content"] == nil {
+							partMap["extra_content"] = make(map[string]interface{})
+						}
+						extraContent := partMap["extra_content"].(map[string]interface{})
+						if extraContent["google"] == nil {
+							extraContent["google"] = make(map[string]interface{})
+						}
+						google := extraContent["google"].(map[string]interface{})
+						google["thought_signature"] = thoughtSignature
+						updatedJSON, err := json.Marshal(partMap)
+						if err == nil {
+							var updatedPart genai.Part
+							if err := json.Unmarshal(updatedJSON, &updatedPart); err == nil {
+								genaiPart = &updatedPart
+								if g.logger != nil {
+									g.logger.Debugf("✅ [GEMINI] Injected thought signature into tool call %s (index %d, length: %d)", toolCall.FunctionCall.Name, i, len(thoughtSignature))
+								}
+							}
+						}
+					}
+				}
+			} else {
+				// CRITICAL: For Gemini 3 Pro, we MUST have thought signatures
+				// Don't append the part if it's missing - this will cause API errors
+				if g.logger != nil {
+					g.logger.Errorf("❌ [GEMINI] CRITICAL: Tool call %s (index %d, ID: %s) is missing thought signature!",
+						toolCall.FunctionCall.Name, i, toolCall.ID)
+					g.logger.Errorf("   Cannot send this tool call to Gemini 3 Pro - it will be rejected by the API")
+					g.logger.Errorf("   This indicates that thought signatures were not preserved from the original API response")
+				}
+				// Still append it - the API will reject it with a clear error message
+				// This is better than silently dropping tool calls
+			}
+
+			genaiParts = append(genaiParts, genaiPart)
+			continue
+		}
+
+		// Try ToolCallResponse assertion
+		if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
+			if g.logger != nil {
+				g.logger.Infof("🔍 [GEMINI] Matched ToolCallResponse case (via assertion), ToolCallID=%s", toolResp.ToolCallID)
+			}
+			// Handle ToolCallResponse
+			contentPreview := toolResp.Content
+			if len(contentPreview) > 50 {
+				contentPreview = contentPreview[:50] + "..."
+			}
+			if g.logger != nil {
+				g.logger.Infof("🔍 [GEMINI] Converting ToolCallResponse: ToolCallID=%s, Name=%s, Content: %s",
+					toolResp.ToolCallID, toolResp.Name, contentPreview)
+			}
+			responseMap := map[string]interface{}{
+				"result": toolResp.Content,
+			}
+			genaiPart := genai.NewPartFromFunctionResponse(toolResp.ToolCallID, responseMap)
+			if genaiPart == nil {
+				if g.logger != nil {
+					g.logger.Errorf("❌ [GEMINI] Failed to create genai.Part from ToolCallResponse: ToolCallID=%s, Name=%s", toolResp.ToolCallID, toolResp.Name)
+				}
+				continue
+			}
+			genaiParts = append(genaiParts, genaiPart)
+			continue
+		}
+
+		// Fallback: Try JSON marshal/unmarshal for type conversion
+		// This handles cases where types don't match due to package differences
+		partTypeStr := fmt.Sprintf("%T", part)
+		if strings.Contains(partTypeStr, "ToolCall") && !strings.Contains(partTypeStr, "Response") {
+			// Try to convert via JSON
+			jsonData, err := json.Marshal(part)
+			if err == nil {
+				var toolCall llmtypes.ToolCall
+				if err := json.Unmarshal(jsonData, &toolCall); err == nil && toolCall.ID != "" && toolCall.FunctionCall != nil {
+					if g.logger != nil {
+						g.logger.Infof("🔍 [GEMINI] Converted ToolCall via JSON fallback, ID=%s, Name=%s", toolCall.ID, toolCall.FunctionCall.Name)
+					}
+					argsMap := parseJSONObject(toolCall.FunctionCall.Arguments)
+					genaiPart := genai.NewPartFromFunctionCall(toolCall.FunctionCall.Name, argsMap)
+					if genaiPart != nil {
+						genaiParts = append(genaiParts, genaiPart)
+						continue
+					}
+				}
+			}
+		}
+
+		if strings.Contains(partTypeStr, "ToolCallResponse") {
+			// Try to convert via JSON
+			jsonData, err := json.Marshal(part)
+			if err == nil {
+				var toolResp llmtypes.ToolCallResponse
+				if err := json.Unmarshal(jsonData, &toolResp); err == nil && toolResp.ToolCallID != "" {
+					if g.logger != nil {
+						g.logger.Infof("🔍 [GEMINI] Converted ToolCallResponse via JSON fallback, ToolCallID=%s, Name=%s", toolResp.ToolCallID, toolResp.Name)
+					}
+					responseMap := map[string]interface{}{
+						"result": toolResp.Content,
+					}
+					genaiPart := genai.NewPartFromFunctionResponse(toolResp.ToolCallID, responseMap)
+					if genaiPart != nil {
+						genaiParts = append(genaiParts, genaiPart)
+						continue
+					}
+				}
+			}
+		}
+
+		// Switch statement for other types (TextContent, ImageContent, etc.)
 		switch p := part.(type) {
 		case llmtypes.TextContent:
 			genaiParts = append(genaiParts, genai.NewPartFromText(p.Text))
@@ -1306,82 +1713,10 @@ func (g *GoogleGenAIAdapter) convertMessageParts(parts []llmtypes.ContentPart) [
 					g.logger.Debugf("Failed to create image part from ImageContent")
 				}
 			}
-		case llmtypes.ToolCallResponse:
-			// Convert tool response to function response format
-			// Send the raw string content directly to Gemini - no JSON parsing needed
-			// Gemini can handle the string content itself
-			responseMap := map[string]interface{}{
-				"result": p.Content,
-			}
-			genaiParts = append(genaiParts, genai.NewPartFromFunctionResponse(p.ToolCallID, responseMap))
-		case llmtypes.ToolCall:
-			// Convert ToolCall parts to genai.Part with FunctionCall
-			if p.FunctionCall != nil {
-				// Parse JSON arguments string to map
-				argsMap := parseJSONObject(p.FunctionCall.Arguments)
-				// Create genai.Part with FunctionCall
-				genaiPart := genai.NewPartFromFunctionCall(p.FunctionCall.Name, argsMap)
-
-				// Include thought signature if present AND this is the first function call in the message
-				// For parallel function calls, only the first one needs the thought signature
-				// For sequential calls (different turns), each first call needs it
-				isFirstFunctionCall := (i == firstFunctionCallIndex)
-				if p.ThoughtSignature != "" && isFirstFunctionCall {
-					// Set thoughtSignature directly as top-level field (genai SDK exposes it this way)
-					// We need to use JSON manipulation since genai SDK doesn't expose a direct setter
-					genaiPartJSON, err := json.Marshal(genaiPart)
-					if err == nil {
-						var partMap map[string]interface{}
-						if err := json.Unmarshal(genaiPartJSON, &partMap); err == nil {
-							// Set thoughtSignature as top-level field (matches how genai SDK exposes it)
-							partMap["thoughtSignature"] = p.ThoughtSignature
-
-							// Also set in extra_content.google.thought_signature for API compatibility
-							if partMap["extra_content"] == nil {
-								partMap["extra_content"] = make(map[string]interface{})
-							}
-							extraContent := partMap["extra_content"].(map[string]interface{})
-							if extraContent["google"] == nil {
-								extraContent["google"] = make(map[string]interface{})
-							}
-							google := extraContent["google"].(map[string]interface{})
-							google["thought_signature"] = p.ThoughtSignature
-
-							// Unmarshal back to genai.Part
-							updatedJSON, err := json.Marshal(partMap)
-							if err == nil {
-								var updatedPart genai.Part
-								if err := json.Unmarshal(updatedJSON, &updatedPart); err == nil {
-									genaiPart = &updatedPart
-									if g.logger != nil {
-										g.logger.Infof("✅ [VERTEX] Added thought signature to FIRST ToolCall: %s (length: %d, index: %d)", p.FunctionCall.Name, len(p.ThoughtSignature), i)
-									}
-								} else if g.logger != nil {
-									g.logger.Warnf("⚠️ [VERTEX] Failed to unmarshal updated part with thought signature: %v", err)
-								}
-							} else if g.logger != nil {
-								g.logger.Warnf("⚠️ [VERTEX] Failed to marshal updated part: %v", err)
-							}
-						} else if g.logger != nil {
-							g.logger.Warnf("⚠️ [VERTEX] Failed to unmarshal genaiPart JSON: %v", err)
-						}
-					} else if g.logger != nil {
-						g.logger.Warnf("⚠️ [VERTEX] Failed to marshal genaiPart: %v", err)
-					}
-				} else if p.ThoughtSignature != "" && !isFirstFunctionCall {
-					// This is not the first function call but has a thought signature
-					// This shouldn't happen for parallel calls, but if it does, we skip it
-					if g.logger != nil {
-						g.logger.Debugf("🔍 [VERTEX] Skipping thought signature for non-first ToolCall: %s (index: %d, first: %d)", p.FunctionCall.Name, i, firstFunctionCallIndex)
-					}
-				} else if p.ThoughtSignature == "" && isFirstFunctionCall {
-					// First function call but missing thought signature - this is a problem for Gemini 3 Pro
-					if g.logger != nil {
-						g.logger.Warnf("⚠️ [VERTEX] First ToolCall missing thought signature: %s (index: %d) - This may cause API errors with Gemini 3 Pro", p.FunctionCall.Name, i)
-					}
-				}
-
-				genaiParts = append(genaiParts, genaiPart)
+		default:
+			// Unknown part type - log it for debugging
+			if g.logger != nil {
+				g.logger.Errorf("❌ [GEMINI] convertMessageParts: Unknown part type at index %d: %T (value: %+v)", i, part, part)
 			}
 		}
 	}
@@ -1805,7 +2140,7 @@ func (g *GoogleGenAIAdapter) fetchImageFromURL(ctx context.Context, url string) 
 
 // extractThoughtSignature extracts thought signature from genai.Part's ExtraContent
 // Thought signatures are in extra_content.google.thought_signature according to Gemini API docs
-func extractThoughtSignature(part *genai.Part, logger utils.ExtendedLogger) string {
+func extractThoughtSignature(part *genai.Part, logger interfaces.Logger) string {
 	if part == nil {
 		return ""
 	}

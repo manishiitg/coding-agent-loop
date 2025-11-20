@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.4
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.24.3
 	github.com/openai/openai-go/v3 v3.7.0
-	google.golang.org/genai v1.33.0
+	google.golang.org/genai v1.36.0
 )
 
 require (

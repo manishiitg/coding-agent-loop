@@ -88,6 +88,7 @@ type AgentConfigs struct {
 
 // PlanStep represents a step in the planning output
 type PlanStep struct {
+	ID                       string                `json:"id"` // Stable step ID (generated from title) - required
 	Title                    string                `json:"title"`
 	Description              string                `json:"description"`
 	SuccessCriteria          string                `json:"success_criteria"`
@@ -99,24 +100,31 @@ type PlanStep struct {
 	LoopCondition            string                `json:"loop_condition"`                        // condition description (same as success criteria) - REQUIRED when has_loop=true
 	MaxIterations            int                   `json:"max_iterations,omitempty"`              // max iterations (default: 10)
 	LoopDescription          string                `json:"loop_description,omitempty"`            // human-readable explanation
+	// Conditional branching fields
+	HasCondition      bool       `json:"has_condition"`                // true if step has conditional branches
+	ConditionQuestion string     `json:"condition_question,omitempty"` // question to ask ConditionalLLM
+	ConditionContext  string     `json:"condition_context,omitempty"`  // context to provide to ConditionalLLM
+	IfTrueSteps       []PlanStep `json:"if_true_steps,omitempty"`      // nested steps for true branch
+	IfFalseSteps      []PlanStep `json:"if_false_steps,omitempty"`     // nested steps for false branch
+	ConditionResult   *bool      `json:"condition_result,omitempty"`   // runtime: stores decision result
+	ConditionReason   string     `json:"condition_reason,omitempty"`   // runtime: stores LLM reasoning
 	// AgentConfigs removed - now stored separately in step_config.json
 }
 
 // AddPlanStep represents a step to be added with insertion position
 type AddPlanStep struct {
 	PlanStep
-	InsertAfterStepTitle string `json:"insert_after_step_title"` // REQUIRED: Title of step to insert after (use empty string "" to insert at beginning)
+	InsertAfterStepID string `json:"insert_after_step_id"` // REQUIRED: ID of step to insert after (use empty string "" to insert at beginning)
 }
 
 // PlanningResponse represents the structured response from planning
 type PlanningResponse struct {
-	Steps   []PlanStep `json:"steps"`
-	RunMode string     `json:"run_mode,omitempty"` // "use_same_run", "create_new_runs_always", "create_new_run_once_daily"
+	Steps []PlanStep `json:"steps"`
 }
 
 // PartialPlanStep represents a partial update to a plan step (used only in tool schemas)
 type PartialPlanStep struct {
-	ExistingStepTitle   string                `json:"existing_step_title"`            // Required: Title of existing step to update
+	ExistingStepID      string                `json:"existing_step_id"`               // Required: ID of existing step to update
 	Title               string                `json:"title,omitempty"`                // Optional: New title (if renaming)
 	Description         string                `json:"description,omitempty"`          // Optional: Updated description
 	SuccessCriteria     string                `json:"success_criteria,omitempty"`     // Optional: Updated success criteria
@@ -141,9 +149,9 @@ func getUpdatePlanStepsSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
-						"existing_step_title": {
+						"existing_step_id": {
 							"type": "string",
-							"description": "REQUIRED: The exact title of the step in the existing plan that you want to update. Must match exactly (case-sensitive, preserve whitespace)."
+							"description": "REQUIRED: The ID of the step in the existing plan that you want to update. Use the step's id field from the plan."
 						},
 						"title": {
 							"type": "string",
@@ -183,9 +191,9 @@ func getUpdatePlanStepsSchema() string {
 							"description": "OPTIONAL: Updated loop description. Only include if you want to change it. If omitted, the existing loop description is preserved."
 						}
 					},
-					"required": ["existing_step_title"]
+					"required": ["existing_step_id"]
 				},
-				"description": "Steps to update. For each step, provide existing_step_title (required) to identify which step to update, and only include the fields you want to change."
+				"description": "Steps to update. For each step, provide existing_step_id (required) to identify which step to update, and only include the fields you want to change."
 			}
 		},
 		"required": ["updated_steps"]
@@ -197,13 +205,13 @@ func getDeletePlanStepsSchema() string {
 	return `{
 		"type": "object",
 		"properties": {
-			"deleted_step_titles": {
+			"deleted_step_ids": {
 				"type": "array",
 				"items": { "type": "string" },
-				"description": "Titles of steps to delete from the plan. Must match existing plan titles exactly (case-sensitive, preserve whitespace)."
+				"description": "IDs of steps to delete from the plan. Use the step's id field from the plan."
 			}
 		},
-		"required": ["deleted_step_titles"]
+		"required": ["deleted_step_ids"]
 	}`
 }
 
@@ -217,6 +225,10 @@ func getAddPlanStepsSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this new step. Generate a unique, URL-friendly ID based on the step title (e.g., 'deploy-application' from 'Deploy Application')."
+						},
 						"title": {
 							"type": "string",
 							"description": "Short, clear title for the new step"
@@ -254,17 +266,247 @@ func getAddPlanStepsSchema() string {
 							"type": "string",
 							"description": "Describe what happens in EACH ITERATION of the loop. Only include when has_loop is true."
 						},
-						"insert_after_step_title": {
+						"insert_after_step_id": {
 							"type": "string",
-							"description": "REQUIRED: The exact title of the step to insert after. Must match exactly (case-sensitive, preserve whitespace). Use empty string \"\" to insert at the beginning of the plan (before the first step)."
+							"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
 						}
 					},
-					"required": ["title", "description", "success_criteria", "has_loop", "insert_after_step_title"]
+					"required": ["id", "title", "description", "success_criteria", "has_loop", "insert_after_step_id"]
 				},
-				"description": "New steps to add to the plan. Provide complete step definitions with all required fields. Each step must specify insert_after_step_title to indicate where to insert it in the plan."
+				"description": "New steps to add to the plan. Provide complete step definitions with all required fields. Each step must specify insert_after_step_id to indicate where to insert it in the plan."
 			}
 		},
 		"required": ["new_steps"]
+	}`
+}
+
+// getConvertStepToConditionalSchema returns the JSON schema for convert_step_to_conditional tool
+func getConvertStepToConditionalSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the step to convert to conditional. Use the step's id field from the plan."
+			},
+			"condition_question": {
+				"type": "string",
+				"description": "REQUIRED: Question to ask the ConditionalLLM for decision making (e.g., 'Is the deployment healthy?')"
+			},
+			"condition_context": {
+				"type": "string",
+				"description": "OPTIONAL: Context to provide to ConditionalLLM (e.g., context files, status information). Can be empty string if not needed."
+			},
+			"if_true_steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'verify-deployment-health' from 'Verify Deployment Health')."
+						},
+						"title": {"type": "string"},
+						"description": {"type": "string"},
+						"success_criteria": {"type": "string"},
+						"context_dependencies": {"type": "array", "items": {"type": "string"}},
+						"context_output": {"type": "string"},
+						"has_loop": {"type": "boolean"},
+						"loop_condition": {"type": "string"},
+						"max_iterations": {"type": "integer"},
+						"loop_description": {"type": "string"},
+						"has_condition": {"type": "boolean"},
+						"condition_question": {"type": "string"},
+						"condition_context": {"type": "string"},
+						"if_true_steps": {"type": "array", "items": {"type": "object"}},
+						"if_false_steps": {"type": "array", "items": {"type": "object"}}
+					},
+					"required": ["id", "title", "description", "success_criteria", "has_loop"]
+				},
+				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] if no true branch steps. Each step MUST include an 'id' field."
+			},
+			"if_false_steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'rollback-deployment' from 'Rollback Deployment')."
+						},
+						"title": {"type": "string"},
+						"description": {"type": "string"},
+						"success_criteria": {"type": "string"},
+						"context_dependencies": {"type": "array", "items": {"type": "string"}},
+						"context_output": {"type": "string"},
+						"has_loop": {"type": "boolean"},
+						"loop_condition": {"type": "string"},
+						"max_iterations": {"type": "integer"},
+						"loop_description": {"type": "string"},
+						"has_condition": {"type": "boolean"},
+						"condition_question": {"type": "string"},
+						"condition_context": {"type": "string"},
+						"if_true_steps": {"type": "array", "items": {"type": "object"}},
+						"if_false_steps": {"type": "array", "items": {"type": "object"}}
+					},
+					"required": ["id", "title", "description", "success_criteria", "has_loop"]
+				},
+				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] if no false branch steps. Each step MUST include an 'id' field."
+			}
+		},
+		"required": ["step_id", "condition_question", "if_true_steps", "if_false_steps"]
+	}`
+}
+
+// getAddBranchStepsSchema returns the JSON schema for add_branch_steps tool
+func getAddBranchStepsSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"parent_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the conditional step (parent step). Use the step's id field from the plan."
+			},
+			"branch_type": {
+				"type": "string",
+				"enum": ["if_true", "if_false"],
+				"description": "REQUIRED: Which branch to add steps to - 'if_true' or 'if_false'"
+			},
+			"new_steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'verify-deployment-health' from 'Verify Deployment Health')."
+						},
+						"title": {"type": "string"},
+						"description": {"type": "string"},
+						"success_criteria": {"type": "string"},
+						"context_dependencies": {"type": "array", "items": {"type": "string"}},
+						"context_output": {"type": "string"},
+						"has_loop": {"type": "boolean"},
+						"loop_condition": {"type": "string"},
+						"max_iterations": {"type": "integer"},
+						"loop_description": {"type": "string"},
+						"has_condition": {"type": "boolean"},
+						"condition_question": {"type": "string"},
+						"condition_context": {"type": "string"},
+						"if_true_steps": {"type": "array", "items": {"type": "object"}},
+						"if_false_steps": {"type": "array", "items": {"type": "object"}}
+					},
+					"required": ["id", "title", "description", "success_criteria", "has_loop"]
+				},
+				"description": "REQUIRED: New steps to add to the specified branch. Provide complete step definitions with IDs."
+			}
+		},
+		"required": ["parent_step_id", "branch_type", "new_steps"]
+	}`
+}
+
+// getUpdateBranchStepsSchema returns the JSON schema for update_branch_steps tool
+func getUpdateBranchStepsSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"parent_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the conditional step (parent step). Use the step's id field from the plan."
+			},
+			"branch_type": {
+				"type": "string",
+				"enum": ["if_true", "if_false"],
+				"description": "REQUIRED: Which branch to update - 'if_true' or 'if_false'"
+			},
+			"updated_steps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"existing_step_id": {
+							"type": "string",
+							"description": "REQUIRED: The ID of the step within the branch to update. Use the step's id field from the plan."
+						},
+						"title": {"type": "string"},
+						"description": {"type": "string"},
+						"success_criteria": {"type": "string"},
+						"context_dependencies": {"type": "array", "items": {"type": "string"}},
+						"context_output": {"type": "string"},
+						"has_loop": {"type": "boolean"},
+						"loop_condition": {"type": "string"},
+						"max_iterations": {"type": "integer"},
+						"loop_description": {"type": "string"},
+						"has_condition": {"type": "boolean"},
+						"condition_question": {"type": "string"},
+						"condition_context": {"type": "string"}
+					},
+					"required": ["existing_step_id"]
+				},
+				"description": "REQUIRED: Steps to update within the branch. For each step, provide existing_step_id (required) and only include fields you want to change."
+			}
+		},
+		"required": ["parent_step_id", "branch_type", "updated_steps"]
+	}`
+}
+
+// getDeleteBranchStepsSchema returns the JSON schema for delete_branch_steps tool
+func getDeleteBranchStepsSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"parent_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the conditional step (parent step). Use the step's id field from the plan."
+			},
+			"branch_type": {
+				"type": "string",
+				"enum": ["if_true", "if_false"],
+				"description": "REQUIRED: Which branch to delete steps from - 'if_true' or 'if_false'"
+			},
+			"deleted_step_ids": {
+				"type": "array",
+				"items": {"type": "string"},
+				"description": "REQUIRED: IDs of steps to delete from the branch. Use the step's id field from the plan."
+			}
+		},
+		"required": ["parent_step_id", "branch_type", "deleted_step_ids"]
+	}`
+}
+
+// getUpdateConditionalStepSchema returns the JSON schema for update_conditional_step tool
+func getUpdateConditionalStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the conditional step to update. Use the step's id field from the plan."
+			},
+			"condition_question": {
+				"type": "string",
+				"description": "OPTIONAL: Updated condition question. Only include if you want to change it. If omitted, the existing question is preserved."
+			},
+			"condition_context": {
+				"type": "string",
+				"description": "OPTIONAL: Updated condition context. Only include if you want to change it. If omitted, the existing context is preserved."
+			}
+		},
+		"required": ["step_id"]
+	}`
+}
+
+// getConvertConditionalToRegularSchema returns the JSON schema for convert_conditional_to_regular tool
+func getConvertConditionalToRegularSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the conditional step to convert back to regular. Use the step's id field from the plan. This will remove all conditional properties and branch steps."
+			}
+		},
+		"required": ["step_id"]
 	}`
 }
 
@@ -289,11 +531,17 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 }
 
 // writePlanToFile writes PlanningResponse to plan.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
+// Validates that all steps have IDs before saving (planning agent should always generate them)
 func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
 	planPath := filepath.Join(workspacePath, "planning", "plan.json")
 
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
+
+	// Validate that all steps have IDs (planning agent should always generate them)
+	if err := validatePlanStepIDs(plan.Steps); err != nil {
+		return fmt.Errorf("plan validation failed: %w", err)
+	}
 
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
@@ -302,6 +550,35 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 
 	if err := writeFile(ctx, planPath, string(data)); err != nil {
 		return fmt.Errorf("failed to write plan.json: %w", err)
+	}
+
+	return nil
+}
+
+// validateNestingDepth checks if the maximum nesting depth (2 levels) is exceeded
+// Returns error if depth > 2, nil otherwise
+func validateNestingDepth(step PlanStep, currentDepth int) error {
+	const maxDepth = 2
+	if currentDepth > maxDepth {
+		return fmt.Errorf("nesting depth exceeds maximum allowed depth of %d (current: %d)", maxDepth, currentDepth)
+	}
+
+	// Check nested steps in branches
+	if step.HasCondition {
+		for _, branchStep := range step.IfTrueSteps {
+			if branchStep.HasCondition {
+				if err := validateNestingDepth(branchStep, currentDepth+1); err != nil {
+					return err
+				}
+			}
+		}
+		for _, branchStep := range step.IfFalseSteps {
+			if branchStep.HasCondition {
+				if err := validateNestingDepth(branchStep, currentDepth+1); err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	return nil
@@ -416,11 +693,6 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 					},
 					"required": ["title", "description", "success_criteria", "has_loop"]
 				}
-			},
-			"run_mode": {
-				"type": "string",
-				"enum": ["use_same_run", "create_new_runs_always", "create_new_run_once_daily"],
-				"description": "Run mode for execution: 'use_same_run' (reuse latest run folder), 'create_new_runs_always' (always create new), 'create_new_run_once_daily' (one per day). Default: 'use_same_run'"
 			}
 		},
 		"required": ["steps"]
@@ -484,22 +756,22 @@ func createUpdatePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Create map of existing steps by title
+		// Create map of existing steps by ID
 		existingStepsMap := make(map[string]*PlanStep)
 		for i := range plan.Steps {
-			existingStepsMap[plan.Steps[i].Title] = &plan.Steps[i]
+			existingStepsMap[plan.Steps[i].ID] = &plan.Steps[i]
 		}
 
 		// Apply updates
 		for _, partialUpdate := range partialUpdates {
-			existingStep, exists := existingStepsMap[partialUpdate.ExistingStepTitle]
+			existingStep, exists := existingStepsMap[partialUpdate.ExistingStepID]
 			if !exists {
-				// Build list of available step titles for better error message
-				availableTitles := make([]string, 0, len(plan.Steps))
+				// Build list of available step IDs for better error message
+				availableIDs := make([]string, 0, len(plan.Steps))
 				for _, step := range plan.Steps {
-					availableTitles = append(availableTitles, step.Title)
+					availableIDs = append(availableIDs, step.ID)
 				}
-				return "", fmt.Errorf("step title '%s' not found in existing plan. Available step titles: %v", partialUpdate.ExistingStepTitle, availableTitles)
+				return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
 			}
 
 			// Merge partial update
@@ -519,19 +791,19 @@ func createUpdatePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 // createDeletePlanStepsExecutor creates an executor function for delete_plan_steps tool
 func createDeletePlanStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Extract deleted_step_titles from args
-		deletedTitlesRaw, ok := args["deleted_step_titles"].([]interface{})
+		// Extract deleted_step_ids from args
+		deletedIDsRaw, ok := args["deleted_step_ids"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid deleted_step_titles argument")
+			return "", fmt.Errorf("invalid deleted_step_ids argument")
 		}
 
 		// Convert to string array
-		deletedTitles := make([]string, 0, len(deletedTitlesRaw))
-		for _, title := range deletedTitlesRaw {
-			if titleStr, ok := title.(string); ok {
-				deletedTitles = append(deletedTitles, titleStr)
+		deletedIDs := make([]string, 0, len(deletedIDsRaw))
+		for _, id := range deletedIDsRaw {
+			if idStr, ok := id.(string); ok {
+				deletedIDs = append(deletedIDs, idStr)
 			} else {
-				return "", fmt.Errorf("invalid step title in deleted_step_titles: %v", title)
+				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
 			}
 		}
 
@@ -541,32 +813,32 @@ func createDeletePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Create set of deleted step titles
+		// Create set of deleted step IDs
 		deletedSet := make(map[string]bool)
-		for _, title := range deletedTitles {
-			deletedSet[title] = true
+		for _, id := range deletedIDs {
+			deletedSet[id] = true
 		}
 
 		// Validate that all deleted steps exist
 		existingStepsMap := make(map[string]bool)
 		for _, step := range plan.Steps {
-			existingStepsMap[step.Title] = true
+			existingStepsMap[step.ID] = true
 		}
-		for _, title := range deletedTitles {
-			if !existingStepsMap[title] {
-				// Build list of available step titles for better error message
-				availableTitles := make([]string, 0, len(plan.Steps))
+		for _, id := range deletedIDs {
+			if !existingStepsMap[id] {
+				// Build list of available step IDs for better error message
+				availableIDs := make([]string, 0, len(plan.Steps))
 				for _, step := range plan.Steps {
-					availableTitles = append(availableTitles, step.Title)
+					availableIDs = append(availableIDs, step.ID)
 				}
-				return "", fmt.Errorf("step title '%s' not found in existing plan (cannot delete). Available step titles: %v", title, availableTitles)
+				return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot delete). Available step IDs: %v", id, availableIDs)
 			}
 		}
 
 		// Filter out deleted steps
 		filteredSteps := make([]PlanStep, 0, len(plan.Steps))
 		for _, step := range plan.Steps {
-			if !deletedSet[step.Title] {
+			if !deletedSet[step.ID] {
 				filteredSteps = append(filteredSteps, step)
 			}
 		}
@@ -578,8 +850,8 @@ func createDeletePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
-		logger.Infof("✅ Deleted %d steps from plan", len(deletedTitles))
-		return fmt.Sprintf("Successfully deleted %d step(s) from the plan", len(deletedTitles)), nil
+		logger.Infof("✅ Deleted %d steps from plan", len(deletedIDs))
+		return fmt.Sprintf("Successfully deleted %d step(s) from the plan", len(deletedIDs)), nil
 	}
 }
 
@@ -609,33 +881,38 @@ func createAddPlanStepsExecutor(workspacePath string, logger utils.ExtendedLogge
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Create map of step titles to indices for quick lookup
-		titleToIndex := make(map[string]int)
+		// Create map of step IDs to indices for quick lookup
+		idToIndex := make(map[string]int)
 		for i, step := range plan.Steps {
-			titleToIndex[step.Title] = i
+			idToIndex[step.ID] = i
 		}
 
 		// Track which positions we need to insert at (grouped by insertion point)
 		insertionPoints := make(map[int][]PlanStep) // original index -> steps to insert after this index
 
-		for _, addStep := range addSteps {
+		for i, addStep := range addSteps {
+			// Validate that step has ID (LLM should always provide it)
+			if addStep.PlanStep.ID == "" {
+				return "", fmt.Errorf("step at index %d in new_steps is missing required ID field. Step title: %q", i, addStep.PlanStep.Title)
+			}
+
 			var afterIndex int
 			var found bool
 
-			if addStep.InsertAfterStepTitle == "" {
+			if addStep.InsertAfterStepID == "" {
 				// Insert at beginning (before index 0, so afterIndex = -1)
 				afterIndex = -1
 				found = true
 			} else {
 				// Find the step to insert after
-				afterIndex, found = titleToIndex[addStep.InsertAfterStepTitle]
+				afterIndex, found = idToIndex[addStep.InsertAfterStepID]
 				if !found {
-					// Build list of available step titles for better error message
-					availableTitles := make([]string, 0, len(plan.Steps))
+					// Build list of available step IDs for better error message
+					availableIDs := make([]string, 0, len(plan.Steps))
 					for _, step := range plan.Steps {
-						availableTitles = append(availableTitles, step.Title)
+						availableIDs = append(availableIDs, step.ID)
 					}
-					return "", fmt.Errorf("step title '%s' not found in existing plan (cannot insert after it). Available step titles: %v", addStep.InsertAfterStepTitle, availableTitles)
+					return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot insert after it). Available step IDs: %v", addStep.InsertAfterStepID, availableIDs)
 				}
 			}
 
@@ -755,7 +1032,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 
 	mcpAgent.RegisterCustomTool(
 		"update_plan_steps",
-		"Update existing steps in the plan. Provide existing_step_title (required) to identify which step to update, and only include the fields you want to change. The plan.json file is updated immediately when this tool is called.",
+		"Update existing steps in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change. The plan.json file is updated immediately when this tool is called.",
 		updateParams,
 		createUpdatePlanStepsExecutor(workspacePath, logger, readFile, writeFile),
 	)
@@ -767,7 +1044,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	}
 	mcpAgent.RegisterCustomTool(
 		"delete_plan_steps",
-		"Delete steps from the plan by providing their exact titles. The plan.json file is updated immediately when this tool is called.",
+		"Delete steps from the plan by providing their IDs. Use the step's id field from the plan. The plan.json file is updated immediately when this tool is called.",
 		deleteParams,
 		createDeletePlanStepsExecutor(workspacePath, logger, readFile, writeFile),
 	)
@@ -779,9 +1056,82 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	}
 	mcpAgent.RegisterCustomTool(
 		"add_plan_steps",
-		"Add new steps to the plan. Provide complete step definitions with all required fields (title, description, success_criteria, has_loop, insert_after_step_title). CRITICAL: Each step MUST specify insert_after_step_title (REQUIRED) to indicate where to insert it. Use the exact title of the step to insert after, or empty string \"\" to insert at the beginning. The plan.json file is updated immediately when this tool is called.",
+		"Add new steps to the plan. Provide complete step definitions with all required fields (title, description, success_criteria, has_loop, insert_after_step_id). CRITICAL: Each step MUST specify insert_after_step_id (REQUIRED) to indicate where to insert it. Use the step's id field from the plan, or empty string \"\" to insert at the beginning. The plan.json file is updated immediately when this tool is called.",
 		addParams,
 		createAddPlanStepsExecutor(workspacePath, logger, readFile, writeFile),
+	)
+
+	// Register conditional step tools
+	convertToConditionalSchema := getConvertStepToConditionalSchema()
+	convertToConditionalParams, err := parseSchemaForToolParameters(convertToConditionalSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse convert_step_to_conditional schema: %w", err)
+	}
+	mcpAgent.RegisterCustomTool(
+		"convert_step_to_conditional",
+		"Convert a regular step to a conditional step with if/else branches. Provide step_id, condition_question, condition_context (optional), if_true_steps, and if_false_steps. The step will become a conditional decision point that executes one branch based on the condition evaluation.",
+		convertToConditionalParams,
+		createConvertStepToConditionalExecutor(workspacePath, logger, readFile, writeFile),
+	)
+
+	addBranchStepsSchema := getAddBranchStepsSchema()
+	addBranchStepsParams, err := parseSchemaForToolParameters(addBranchStepsSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse add_branch_steps schema: %w", err)
+	}
+	mcpAgent.RegisterCustomTool(
+		"add_branch_steps",
+		"Add new steps to a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type ('if_true' or 'if_false'), and new_steps array. The steps will be appended to the specified branch.",
+		addBranchStepsParams,
+		createAddBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
+	)
+
+	updateBranchStepsSchema := getUpdateBranchStepsSchema()
+	updateBranchStepsParams, err := parseSchemaForToolParameters(updateBranchStepsSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse update_branch_steps schema: %w", err)
+	}
+	mcpAgent.RegisterCustomTool(
+		"update_branch_steps",
+		"Update existing steps within a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type, and updated_steps array. For each step, provide existing_step_id (required) and only include fields you want to change.",
+		updateBranchStepsParams,
+		createUpdateBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
+	)
+
+	deleteBranchStepsSchema := getDeleteBranchStepsSchema()
+	deleteBranchStepsParams, err := parseSchemaForToolParameters(deleteBranchStepsSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse delete_branch_steps schema: %w", err)
+	}
+	mcpAgent.RegisterCustomTool(
+		"delete_branch_steps",
+		"Delete steps from a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type, and deleted_step_ids array. Use the step's id field from the plan.",
+		deleteBranchStepsParams,
+		createDeleteBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
+	)
+
+	updateConditionalStepSchema := getUpdateConditionalStepSchema()
+	updateConditionalStepParams, err := parseSchemaForToolParameters(updateConditionalStepSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse update_conditional_step schema: %w", err)
+	}
+	mcpAgent.RegisterCustomTool(
+		"update_conditional_step",
+		"Update the condition question or context of a conditional step without modifying its branches. Provide step_id and optionally condition_question and/or condition_context. Only provided fields will be updated.",
+		updateConditionalStepParams,
+		createUpdateConditionalStepExecutor(workspacePath, logger, readFile, writeFile),
+	)
+
+	convertToRegularSchema := getConvertConditionalToRegularSchema()
+	convertToRegularParams, err := parseSchemaForToolParameters(convertToRegularSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse convert_conditional_to_regular schema: %w", err)
+	}
+	mcpAgent.RegisterCustomTool(
+		"convert_conditional_to_regular",
+		"Convert a conditional step back to a regular step. This removes all conditional properties and branch steps. Provide step_id of the conditional step to convert.",
+		convertToRegularParams,
+		createConvertConditionalToRegularExecutor(workspacePath, logger, readFile, writeFile),
 	)
 
 	// Generate system prompt for update mode
@@ -797,7 +1147,9 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	toolCalls := extractToolCallsFromMessages(updatedHistory)
 	planUpdateToolCalled := false
 	for _, toolName := range toolCalls {
-		if toolName == "update_plan_steps" || toolName == "delete_plan_steps" || toolName == "add_plan_steps" {
+		if toolName == "update_plan_steps" || toolName == "delete_plan_steps" || toolName == "add_plan_steps" ||
+			toolName == "convert_step_to_conditional" || toolName == "add_branch_steps" || toolName == "update_branch_steps" ||
+			toolName == "delete_branch_steps" || toolName == "update_conditional_step" || toolName == "convert_conditional_to_regular" {
 			planUpdateToolCalled = true
 		}
 	}
@@ -820,6 +1172,495 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	// Tools were called - plan.json was updated
 	logger.Infof("✅ Plan updated via tools (%d steps)", len(currentPlan.Steps))
 	return currentPlan, updatedHistory, nil
+}
+
+// createConvertStepToConditionalExecutor creates an executor function for convert_step_to_conditional tool
+func createConvertStepToConditionalExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		stepID, ok := args["step_id"].(string)
+		if !ok || stepID == "" {
+			return "", fmt.Errorf("invalid or missing step_id")
+		}
+
+		conditionQuestion, ok := args["condition_question"].(string)
+		if !ok || conditionQuestion == "" {
+			return "", fmt.Errorf("invalid or missing condition_question")
+		}
+
+		conditionContext, _ := args["condition_context"].(string) // Optional
+
+		// Extract if_true_steps and if_false_steps
+		ifTrueStepsRaw, ok := args["if_true_steps"].([]interface{})
+		if !ok {
+			return "", fmt.Errorf("invalid if_true_steps argument")
+		}
+		ifFalseStepsRaw, ok := args["if_false_steps"].([]interface{})
+		if !ok {
+			return "", fmt.Errorf("invalid if_false_steps argument")
+		}
+
+		// Convert to JSON and unmarshal to PlanStep arrays
+		ifTrueStepsJSON, err := json.Marshal(ifTrueStepsRaw)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal if_true_steps: %w", err)
+		}
+		var ifTrueSteps []PlanStep
+		if err := json.Unmarshal(ifTrueStepsJSON, &ifTrueSteps); err != nil {
+			return "", fmt.Errorf("failed to parse if_true_steps: %w", err)
+		}
+
+		ifFalseStepsJSON, err := json.Marshal(ifFalseStepsRaw)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal if_false_steps: %w", err)
+		}
+		var ifFalseSteps []PlanStep
+		if err := json.Unmarshal(ifFalseStepsJSON, &ifFalseSteps); err != nil {
+			return "", fmt.Errorf("failed to parse if_false_steps: %w", err)
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the step to convert by ID
+		var stepToConvert *PlanStep
+		for i := range plan.Steps {
+			if plan.Steps[i].ID == stepID {
+				stepToConvert = &plan.Steps[i]
+				break
+			}
+		}
+		if stepToConvert == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.ID)
+			}
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
+		}
+
+		// Validate nesting depth for branch steps (starting from depth 1 since this step becomes conditional)
+		for _, branchStep := range ifTrueSteps {
+			if err := validateNestingDepth(branchStep, 1); err != nil {
+				return "", fmt.Errorf("if_true_steps validation failed: %w", err)
+			}
+		}
+		for _, branchStep := range ifFalseSteps {
+			if err := validateNestingDepth(branchStep, 1); err != nil {
+				return "", fmt.Errorf("if_false_steps validation failed: %w", err)
+			}
+		}
+
+		// Convert step to conditional
+		stepToConvert.HasCondition = true
+		stepToConvert.ConditionQuestion = conditionQuestion
+		stepToConvert.ConditionContext = conditionContext
+		stepToConvert.IfTrueSteps = ifTrueSteps
+		stepToConvert.IfFalseSteps = ifFalseSteps
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Infof("✅ Converted step '%s' to conditional with %d true branch steps and %d false branch steps", stepToConvert.Title, len(ifTrueSteps), len(ifFalseSteps))
+		return fmt.Sprintf("Successfully converted step '%s' to conditional", stepToConvert.Title), nil
+	}
+}
+
+// createAddBranchStepsExecutor creates an executor function for add_branch_steps tool
+func createAddBranchStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			return "", fmt.Errorf("invalid or missing parent_step_id")
+		}
+
+		branchType, ok := args["branch_type"].(string)
+		if !ok || (branchType != "if_true" && branchType != "if_false") {
+			return "", fmt.Errorf("invalid branch_type: must be 'if_true' or 'if_false'")
+		}
+
+		newStepsRaw, ok := args["new_steps"].([]interface{})
+		if !ok {
+			return "", fmt.Errorf("invalid new_steps argument")
+		}
+
+		// Convert to JSON and unmarshal to PlanStep array
+		newStepsJSON, err := json.Marshal(newStepsRaw)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal new_steps: %w", err)
+		}
+		var newSteps []PlanStep
+		if err := json.Unmarshal(newStepsJSON, &newSteps); err != nil {
+			return "", fmt.Errorf("failed to parse new_steps: %w", err)
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the parent conditional step by ID
+		var parentStep *PlanStep
+		for i := range plan.Steps {
+			if plan.Steps[i].ID == parentStepID {
+				parentStep = &plan.Steps[i]
+				break
+			}
+		}
+		if parentStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.ID)
+			}
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+		}
+
+		if !parentStep.HasCondition {
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
+		}
+
+		// Validate that all new branch steps have IDs (required for config matching)
+		for i, newStep := range newSteps {
+			if newStep.ID == "" {
+				return "", fmt.Errorf("branch step at index %d is missing required ID field. Step title: %q", i, newStep.Title)
+			}
+		}
+
+		// Validate nesting depth for new steps (starting from depth 1 since they're being added to a conditional)
+		for _, newStep := range newSteps {
+			if err := validateNestingDepth(newStep, 1); err != nil {
+				return "", fmt.Errorf("new_steps validation failed: %w", err)
+			}
+		}
+
+		// Add steps to the appropriate branch
+		if branchType == "if_true" {
+			parentStep.IfTrueSteps = append(parentStep.IfTrueSteps, newSteps...)
+		} else {
+			parentStep.IfFalseSteps = append(parentStep.IfFalseSteps, newSteps...)
+		}
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Infof("✅ Added %d steps to %s branch of conditional step '%s'", len(newSteps), branchType, parentStep.Title)
+		return fmt.Sprintf("Successfully added %d step(s) to %s branch of conditional step '%s'", len(newSteps), branchType, parentStep.Title), nil
+	}
+}
+
+// createUpdateBranchStepsExecutor creates an executor function for update_branch_steps tool
+func createUpdateBranchStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			return "", fmt.Errorf("invalid or missing parent_step_id")
+		}
+
+		branchType, ok := args["branch_type"].(string)
+		if !ok || (branchType != "if_true" && branchType != "if_false") {
+			return "", fmt.Errorf("invalid branch_type: must be 'if_true' or 'if_false'")
+		}
+
+		updatedStepsRaw, ok := args["updated_steps"].([]interface{})
+		if !ok {
+			return "", fmt.Errorf("invalid updated_steps argument")
+		}
+
+		// Convert to JSON and unmarshal to PartialPlanStep array
+		updatedStepsJSON, err := json.Marshal(updatedStepsRaw)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal updated_steps: %w", err)
+		}
+		var partialUpdates []PartialPlanStep
+		if err := json.Unmarshal(updatedStepsJSON, &partialUpdates); err != nil {
+			return "", fmt.Errorf("failed to parse updated_steps: %w", err)
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the parent conditional step by ID
+		var parentStep *PlanStep
+		for i := range plan.Steps {
+			if plan.Steps[i].ID == parentStepID {
+				parentStep = &plan.Steps[i]
+				break
+			}
+		}
+		if parentStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.ID)
+			}
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+		}
+
+		if !parentStep.HasCondition {
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
+		}
+
+		// Get the appropriate branch
+		var branchSteps *[]PlanStep
+		if branchType == "if_true" {
+			branchSteps = &parentStep.IfTrueSteps
+		} else {
+			branchSteps = &parentStep.IfFalseSteps
+		}
+
+		// Create map of existing branch steps by ID
+		existingStepsMap := make(map[string]*PlanStep)
+		for i := range *branchSteps {
+			existingStepsMap[(*branchSteps)[i].ID] = &(*branchSteps)[i]
+		}
+
+		// Apply updates
+		for _, partialUpdate := range partialUpdates {
+			existingStep, exists := existingStepsMap[partialUpdate.ExistingStepID]
+			if !exists {
+				availableIDs := make([]string, 0, len(*branchSteps))
+				for _, step := range *branchSteps {
+					availableIDs = append(availableIDs, step.ID)
+				}
+				return "", fmt.Errorf("step ID '%s' not found in %s branch. Available step IDs: %v", partialUpdate.ExistingStepID, branchType, availableIDs)
+			}
+
+			// Merge partial update
+			*existingStep = mergePartialStepUpdate(*existingStep, partialUpdate)
+
+			// Validate nesting depth after update
+			if err := validateNestingDepth(*existingStep, 1); err != nil {
+				return "", fmt.Errorf("updated step validation failed: %w", err)
+			}
+		}
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Infof("✅ Updated %d steps in %s branch of conditional step '%s'", len(partialUpdates), branchType, parentStep.Title)
+		return fmt.Sprintf("Successfully updated %d step(s) in %s branch of conditional step '%s'", len(partialUpdates), branchType, parentStep.Title), nil
+	}
+}
+
+// createDeleteBranchStepsExecutor creates an executor function for delete_branch_steps tool
+func createDeleteBranchStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			return "", fmt.Errorf("invalid or missing parent_step_id")
+		}
+
+		branchType, ok := args["branch_type"].(string)
+		if !ok || (branchType != "if_true" && branchType != "if_false") {
+			return "", fmt.Errorf("invalid branch_type: must be 'if_true' or 'if_false'")
+		}
+
+		deletedIDsRaw, ok := args["deleted_step_ids"].([]interface{})
+		if !ok {
+			return "", fmt.Errorf("invalid deleted_step_ids argument")
+		}
+
+		// Convert to string array
+		deletedIDs := make([]string, 0, len(deletedIDsRaw))
+		for _, id := range deletedIDsRaw {
+			if idStr, ok := id.(string); ok {
+				deletedIDs = append(deletedIDs, idStr)
+			} else {
+				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
+			}
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the parent conditional step by ID
+		var parentStep *PlanStep
+		for i := range plan.Steps {
+			if plan.Steps[i].ID == parentStepID {
+				parentStep = &plan.Steps[i]
+				break
+			}
+		}
+		if parentStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.ID)
+			}
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+		}
+
+		if !parentStep.HasCondition {
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
+		}
+
+		// Get the appropriate branch
+		var branchSteps *[]PlanStep
+		if branchType == "if_true" {
+			branchSteps = &parentStep.IfTrueSteps
+		} else {
+			branchSteps = &parentStep.IfFalseSteps
+		}
+
+		// Create set of deleted step IDs
+		deletedSet := make(map[string]bool)
+		for _, id := range deletedIDs {
+			deletedSet[id] = true
+		}
+
+		// Validate that all deleted steps exist
+		existingStepsMap := make(map[string]bool)
+		for _, step := range *branchSteps {
+			existingStepsMap[step.ID] = true
+		}
+		for _, id := range deletedIDs {
+			if !existingStepsMap[id] {
+				availableIDs := make([]string, 0, len(*branchSteps))
+				for _, step := range *branchSteps {
+					availableIDs = append(availableIDs, step.ID)
+				}
+				return "", fmt.Errorf("step ID '%s' not found in %s branch (cannot delete). Available step IDs: %v", id, branchType, availableIDs)
+			}
+		}
+
+		// Filter out deleted steps
+		filteredSteps := make([]PlanStep, 0, len(*branchSteps))
+		for _, step := range *branchSteps {
+			if !deletedSet[step.ID] {
+				filteredSteps = append(filteredSteps, step)
+			}
+		}
+
+		*branchSteps = filteredSteps
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Infof("✅ Deleted %d steps from %s branch of conditional step '%s'", len(deletedIDs), branchType, parentStep.Title)
+		return fmt.Sprintf("Successfully deleted %d step(s) from %s branch of conditional step '%s'", len(deletedIDs), branchType, parentStep.Title), nil
+	}
+}
+
+// createUpdateConditionalStepExecutor creates an executor function for update_conditional_step tool
+func createUpdateConditionalStepExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		stepID, ok := args["step_id"].(string)
+		if !ok || stepID == "" {
+			return "", fmt.Errorf("invalid or missing step_id")
+		}
+
+		conditionQuestion, _ := args["condition_question"].(string) // Optional
+		conditionContext, _ := args["condition_context"].(string)   // Optional
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the conditional step by ID
+		var conditionalStep *PlanStep
+		for i := range plan.Steps {
+			if plan.Steps[i].ID == stepID {
+				conditionalStep = &plan.Steps[i]
+				break
+			}
+		}
+		if conditionalStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.ID)
+			}
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
+		}
+
+		if !conditionalStep.HasCondition {
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", stepID)
+		}
+
+		// Update conditional properties (only if provided)
+		if conditionQuestion != "" {
+			conditionalStep.ConditionQuestion = conditionQuestion
+		}
+		if conditionContext != "" {
+			conditionalStep.ConditionContext = conditionContext
+		}
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Infof("✅ Updated conditional step '%s'", conditionalStep.Title)
+		return fmt.Sprintf("Successfully updated conditional step '%s'", conditionalStep.Title), nil
+	}
+}
+
+// createConvertConditionalToRegularExecutor creates an executor function for convert_conditional_to_regular tool
+func createConvertConditionalToRegularExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		stepID, ok := args["step_id"].(string)
+		if !ok || stepID == "" {
+			return "", fmt.Errorf("invalid or missing step_id")
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the conditional step by ID
+		var conditionalStep *PlanStep
+		for i := range plan.Steps {
+			if plan.Steps[i].ID == stepID {
+				conditionalStep = &plan.Steps[i]
+				break
+			}
+		}
+		if conditionalStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.ID)
+			}
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
+		}
+
+		if !conditionalStep.HasCondition {
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", stepID)
+		}
+
+		// Convert back to regular step (remove conditional properties and branches)
+		conditionalStep.HasCondition = false
+		conditionalStep.ConditionQuestion = ""
+		conditionalStep.ConditionContext = ""
+		conditionalStep.IfTrueSteps = nil
+		conditionalStep.IfFalseSteps = nil
+		conditionalStep.ConditionResult = nil
+		conditionalStep.ConditionReason = ""
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Infof("✅ Converted conditional step '%s' back to regular step", conditionalStep.Title)
+		return fmt.Sprintf("Successfully converted conditional step '%s' back to regular step", conditionalStep.Title), nil
+	}
 }
 
 // parseSchemaForToolParameters parses a JSON schema string and extracts properties for tool parameters
@@ -940,6 +1781,7 @@ Available variables:
 - **Logical Order**: Steps should follow logical sequence
 - **Focus on Strategy**: Plan what needs to be done, not how to do it (execution details will be handled by execution agents)
 - **Loop Support**: Set has_loop to true when step requires polling, retrying, or waiting for external systems. When has_loop is true, provide loop_condition (same as success_criteria) and max_iterations (default: 10, use 20-50 for long-running operations, use 3-5 for quick status checks). Each iteration should save progress to context_output file (append/update, don't overwrite).
+- **Conditional Branching**: Use conditional steps (has_condition=true) when you need if/else logic. Set condition_question (question for ConditionalLLM to evaluate), condition_context (context to provide), if_true_steps (steps if condition is true), and if_false_steps (steps if condition is false). Maximum nesting depth is 2 levels (conditional step can contain conditional steps in branches, but no deeper).
 
 ## 🤖 MULTI-AGENT COORDINATION
 - **Each step executed by different agent**: Steps share context via files
@@ -1032,9 +1874,17 @@ Update this plan based on human feedback. Use judgment to determine what changes
 
 **Available Tools**:
 - **human_feedback**: **REQUIRED BEFORE MAKING ANY PLAN CHANGES**. Use this tool to ask the user for confirmation before modifying the plan. Provide a clear message describing the proposed changes (what steps will be updated/deleted/added and why). Wait for user approval before proceeding with plan modification tools. Generate a unique UUID for the unique_id parameter.
-- **update_plan_steps**: Update existing steps. Provide existing_step_title (REQUIRED) to identify which step to update, and only include the fields you want to change. Other fields preserve existing values. To rename, include both existing_step_title and new title. The plan.json file is updated immediately when this tool is called.
-- **delete_plan_steps**: Delete steps from the plan by providing their exact titles. Must match existing titles exactly (case-sensitive, preserve whitespace). The plan.json file is updated immediately when this tool is called.
-- **add_plan_steps**: Add new steps to the plan. Provide complete step definitions with all required fields (title, description, success_criteria, has_loop, insert_after_step_title). **CRITICAL**: Each new step MUST specify insert_after_step_title (REQUIRED) to indicate where to insert it. Use the exact title of the step to insert after (case-sensitive, preserve whitespace). Use empty string "" to insert at the beginning of the plan. Multiple steps with the same insert_after_step_title will be inserted in the order they appear in the array. The plan.json file is updated immediately when this tool is called.
+- **update_plan_steps**: Update existing steps. Provide existing_step_id (REQUIRED) to identify which step to update, and only include the fields you want to change. Other fields preserve existing values. To rename, include both existing_step_id and new title. The plan.json file is updated immediately when this tool is called.
+- **delete_plan_steps**: Delete steps from the plan by providing their IDs. Use the step's id field from the plan. The plan.json file is updated immediately when this tool is called.
+- **add_plan_steps**: Add new steps to the plan. Provide complete step definitions with all required fields (title, description, success_criteria, has_loop, insert_after_step_id). **CRITICAL**: Each new step MUST specify insert_after_step_id (REQUIRED) to indicate where to insert it. Use the step's id field from the plan, or empty string "" to insert at the beginning of the plan. Multiple steps with the same insert_after_step_id will be inserted in the order they appear in the array. The plan.json file is updated immediately when this tool is called.
+
+**Conditional Branching Tools** (for if/else logic):
+- **convert_step_to_conditional**: Convert a regular step to a conditional step with if/else branches. Provide step_id, condition_question (question to ask ConditionalLLM), condition_context (optional), if_true_steps (steps to execute if condition is true), and if_false_steps (steps to execute if condition is false). Maximum nesting depth is 2 levels.
+- **add_branch_steps**: Add new steps to a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type ('if_true' or 'if_false'), and new_steps array.
+- **update_branch_steps**: Update existing steps within a specific branch of a conditional step. Provide parent_step_id, branch_type, and updated_steps array with existing_step_id (required) for each step to update.
+- **delete_branch_steps**: Delete steps from a specific branch of a conditional step. Provide parent_step_id, branch_type, and deleted_step_ids array.
+- **update_conditional_step**: Update the condition question or context of a conditional step without modifying its branches. Provide step_id and optionally condition_question and/or condition_context.
+- **convert_conditional_to_regular**: Convert a conditional step back to a regular step. This removes all conditional properties and branch steps. Provide step_id of the conditional step.
 
 **CRITICAL WORKFLOW - HUMAN CONFIRMATION REQUIRED**:
 1. **ALWAYS use human_feedback tool FIRST** before making any plan changes (update/delete/add steps)

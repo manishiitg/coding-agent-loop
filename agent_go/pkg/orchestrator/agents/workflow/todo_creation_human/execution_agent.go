@@ -25,7 +25,6 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	LearningsPath           string // Learnings folder path for reading learning files and Python scripts
 	ValidationFeedback      string
 	PreviousIterationOutput string // Previous loop iteration execution output (for loop steps)
-	LearningAgentOutput     string // Combined success/failure patterns and learning insights
 	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
 	HasLoop                 string // "true" or "false" as string
@@ -152,7 +151,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
      6. **Dynamic discovery**: If you encounter problems during execution, list and read additional learning files/scripts that might be relevant based on the problem context
    - **PURPOSE**: These files contain patterns from previous executions - use them as GUIDANCE, not strict rules
    - **Discovery strategy**: Use name-based matching (keywords, partial matches) rather than exact matches - be flexible in finding relevant files
-   - **Optional - Learning Agent Output**: If Learning Agent Output section contains "Source: learnings/{filename} - " patterns, prioritize reading those specific files first, then continue with auto-discovery
 
 3. **Read Context**: Check context dependencies for files from previous steps (read from {{.WorkspacePath}} folder)
 
@@ -224,7 +222,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 		LearningsPath:           templateVars["LearningsPath"],
 		ValidationFeedback:      templateVars["ValidationFeedback"],
 		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
-		LearningAgentOutput:     templateVars["LearningAgentOutput"],
 		VariableNames:           templateVars["VariableNames"],
 		VariableValues:          templateVars["VariableValues"],
 		HasLoop:                 templateVars["HasLoop"],
@@ -283,14 +280,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 - The loop condition ({{.LoopCondition}}) is the same as the success criteria
 - Once the loop condition is met, the step will exit the loop and be marked as completed
 - Continue executing until the condition is satisfied
-{{end}}
-
-{{if .LearningAgentOutput}}
-## 🧠 LEARNING AGENT OUTPUT
-
-**Learning Agent Analysis**: {{.LearningAgentOutput}}
-
-**Note**: This section contains learning insights from previous executions. Use this as additional context, but you should still auto-discover and read learning files directly from the learnings/ folder as described in the execution guidelines.
 {{end}}
 
 {{if .PreviousIterationOutput}}

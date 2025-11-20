@@ -480,6 +480,31 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 
 	// Convert response from genai format to llmtypes format
 	convertedResp := convertResponse(result, g.logger, hadMixedMessages)
+
+	// Log full raw response if we detect problematic finish reasons (even if no error)
+	// This helps debug issues like UNEXPECTED_TOOL_CALL, MALFORMED_FUNCTION_CALL, etc.
+	if result != nil && len(result.Candidates) > 0 {
+		firstCandidate := result.Candidates[0]
+		finishReason := string(firstCandidate.FinishReason)
+		// Log raw response for problematic finish reasons that might indicate API issues
+		if finishReason == "UNEXPECTED_TOOL_CALL" || finishReason == "MALFORMED_FUNCTION_CALL" {
+			if g.logger != nil {
+				g.logger.Warnf("⚠️ [REQUEST_ID: %s] Detected problematic FinishReason: %q - Logging full raw API response", requestID, finishReason)
+			}
+			g.logRawResponse(requestID, modelID, result, nil)
+		}
+		// Also log if content is empty (which might indicate other issues)
+		if convertedResp != nil && len(convertedResp.Choices) > 0 {
+			firstChoice := convertedResp.Choices[0]
+			if firstChoice.Content == "" && finishReason != "" && finishReason != "STOP" {
+				if g.logger != nil {
+					g.logger.Warnf("⚠️ [REQUEST_ID: %s] Empty content with FinishReason: %q - Logging full raw API response", requestID, finishReason)
+				}
+				g.logRawResponse(requestID, modelID, result, nil)
+			}
+		}
+	}
+
 	return convertedResp, nil
 }
 
@@ -899,6 +924,9 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 					if logger != nil {
 						logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Found FunctionCall - Name: %s", i, j, part.FunctionCall.Name)
 					}
+					// Extract thought signature from ExtraContent for Gemini 3 Pro
+					thoughtSignature := extractThoughtSignature(part, logger)
+
 					// 🔧 FIX: Generate ToolCallID for FunctionCall
 					// Gemini's FunctionCall doesn't include an ID field, so we generate one.
 					// This ID is used later when creating ToolCallResponse to match
@@ -906,8 +934,9 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 					// to FunctionCalls primarily by sequence/position, but the ID is still
 					// used in NewPartFromFunctionResponse for proper association.
 					toolCall := llmtypes.ToolCall{
-						ID:   generateToolCallID(),
-						Type: "function",
+						ID:               generateToolCallID(),
+						Type:             "function",
+						ThoughtSignature: thoughtSignature,
 						FunctionCall: &llmtypes.FunctionCall{
 							Name:      part.FunctionCall.Name,
 							Arguments: convertArgumentsToString(part.FunctionCall.Args),
@@ -915,10 +944,23 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 					}
 					toolCalls = append(toolCalls, toolCall)
 					if logger != nil {
-						logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s", i, j, toolCall.ID, toolCall.FunctionCall.Name)
+						if thoughtSignature != "" {
+							logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s, ThoughtSignature: present", i, j, toolCall.ID, toolCall.FunctionCall.Name)
+						} else {
+							logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Created ToolCall - ID: %s, Name: %s", i, j, toolCall.ID, toolCall.FunctionCall.Name)
+						}
 					}
-				} else if logger != nil {
-					logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: No FunctionCall (Text: %q, Text length: %d)", i, j, part.Text, len(part.Text))
+				} else {
+					// Check for thought signature in text parts (for responses without function calls)
+					// Gemini 3 Pro may return thought signature in the last part when there are no function calls
+					if part.Text == "" {
+						thoughtSignature := extractThoughtSignature(part, logger)
+						if thoughtSignature != "" && logger != nil {
+							logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: Found thought signature in empty text part", i, j)
+						}
+					} else if logger != nil {
+						logger.Debugf("🔍 [VERTEX] Candidate %d, Part %d: No FunctionCall (Text: %q, Text length: %d)", i, j, part.Text, len(part.Text))
+					}
 				}
 			}
 		} else if logger != nil {
@@ -980,6 +1022,12 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 				logger.Errorf("      - Invalid schema structure")
 				logger.Errorf("      - Invalid function names or descriptions")
 				logger.Errorf("      - Check tool conversion logs above for validation errors")
+			} else if finishReason == "UNEXPECTED_TOOL_CALL" {
+				logger.Errorf("   ❌ FinishReason is UNEXPECTED_TOOL_CALL - This indicates a problem with tool call format:")
+				logger.Errorf("      - Invalid thought signature format (most likely for Gemini 3 Pro)")
+				logger.Errorf("      - Tool call structure doesn't match expected format")
+				logger.Errorf("      - Thought signature may be incorrectly formatted or missing required fields")
+				logger.Errorf("      - Check thought signature extraction and inclusion logs above")
 			}
 			// Note: SAFETY blocks typically return API errors, not empty content, so we don't check for SAFETY here
 			logger.Errorf("   result.Text() fallback: %q (length: %d)", result.Text(), len(result.Text()))
@@ -1221,7 +1269,19 @@ func convertArgumentsToString(args map[string]interface{}) string {
 // convertMessageParts is a helper to convert llmtypes parts to genai parts
 func (g *GoogleGenAIAdapter) convertMessageParts(parts []llmtypes.ContentPart) []*genai.Part {
 	genaiParts := make([]*genai.Part, 0)
-	for _, part := range parts {
+
+	// Track the first function call in this message (for parallel calls, only first needs thought signature)
+	firstFunctionCallIndex := -1
+	for i, part := range parts {
+		if _, ok := part.(llmtypes.ToolCall); ok {
+			if firstFunctionCallIndex == -1 {
+				firstFunctionCallIndex = i
+			}
+			break
+		}
+	}
+
+	for i, part := range parts {
 		switch p := part.(type) {
 		case llmtypes.TextContent:
 			genaiParts = append(genaiParts, genai.NewPartFromText(p.Text))
@@ -1260,7 +1320,68 @@ func (g *GoogleGenAIAdapter) convertMessageParts(parts []llmtypes.ContentPart) [
 				// Parse JSON arguments string to map
 				argsMap := parseJSONObject(p.FunctionCall.Arguments)
 				// Create genai.Part with FunctionCall
-				genaiParts = append(genaiParts, genai.NewPartFromFunctionCall(p.FunctionCall.Name, argsMap))
+				genaiPart := genai.NewPartFromFunctionCall(p.FunctionCall.Name, argsMap)
+
+				// Include thought signature if present AND this is the first function call in the message
+				// For parallel function calls, only the first one needs the thought signature
+				// For sequential calls (different turns), each first call needs it
+				isFirstFunctionCall := (i == firstFunctionCallIndex)
+				if p.ThoughtSignature != "" && isFirstFunctionCall {
+					// Set thoughtSignature directly as top-level field (genai SDK exposes it this way)
+					// We need to use JSON manipulation since genai SDK doesn't expose a direct setter
+					genaiPartJSON, err := json.Marshal(genaiPart)
+					if err == nil {
+						var partMap map[string]interface{}
+						if err := json.Unmarshal(genaiPartJSON, &partMap); err == nil {
+							// Set thoughtSignature as top-level field (matches how genai SDK exposes it)
+							partMap["thoughtSignature"] = p.ThoughtSignature
+
+							// Also set in extra_content.google.thought_signature for API compatibility
+							if partMap["extra_content"] == nil {
+								partMap["extra_content"] = make(map[string]interface{})
+							}
+							extraContent := partMap["extra_content"].(map[string]interface{})
+							if extraContent["google"] == nil {
+								extraContent["google"] = make(map[string]interface{})
+							}
+							google := extraContent["google"].(map[string]interface{})
+							google["thought_signature"] = p.ThoughtSignature
+
+							// Unmarshal back to genai.Part
+							updatedJSON, err := json.Marshal(partMap)
+							if err == nil {
+								var updatedPart genai.Part
+								if err := json.Unmarshal(updatedJSON, &updatedPart); err == nil {
+									genaiPart = &updatedPart
+									if g.logger != nil {
+										g.logger.Infof("✅ [VERTEX] Added thought signature to FIRST ToolCall: %s (length: %d, index: %d)", p.FunctionCall.Name, len(p.ThoughtSignature), i)
+									}
+								} else if g.logger != nil {
+									g.logger.Warnf("⚠️ [VERTEX] Failed to unmarshal updated part with thought signature: %v", err)
+								}
+							} else if g.logger != nil {
+								g.logger.Warnf("⚠️ [VERTEX] Failed to marshal updated part: %v", err)
+							}
+						} else if g.logger != nil {
+							g.logger.Warnf("⚠️ [VERTEX] Failed to unmarshal genaiPart JSON: %v", err)
+						}
+					} else if g.logger != nil {
+						g.logger.Warnf("⚠️ [VERTEX] Failed to marshal genaiPart: %v", err)
+					}
+				} else if p.ThoughtSignature != "" && !isFirstFunctionCall {
+					// This is not the first function call but has a thought signature
+					// This shouldn't happen for parallel calls, but if it does, we skip it
+					if g.logger != nil {
+						g.logger.Debugf("🔍 [VERTEX] Skipping thought signature for non-first ToolCall: %s (index: %d, first: %d)", p.FunctionCall.Name, i, firstFunctionCallIndex)
+					}
+				} else if p.ThoughtSignature == "" && isFirstFunctionCall {
+					// First function call but missing thought signature - this is a problem for Gemini 3 Pro
+					if g.logger != nil {
+						g.logger.Warnf("⚠️ [VERTEX] First ToolCall missing thought signature: %s (index: %d) - This may cause API errors with Gemini 3 Pro", p.FunctionCall.Name, i)
+					}
+				}
+
+				genaiParts = append(genaiParts, genaiPart)
 			}
 		}
 	}
@@ -1547,6 +1668,20 @@ func (g *GoogleGenAIAdapter) logRawResponse(requestID, modelID string, result *g
 	} else {
 		g.logger.Debugf("⚠️ [REQUEST_ID: %s] Failed to serialize response summary to JSON: %v", requestID, err)
 	}
+
+	// Try to log the complete raw response as JSON for maximum debugging
+	// This captures everything including PromptFeedback, SafetyRatings, and any error details
+	if resultJSON, err := json.MarshalIndent(result, "   ", "  "); err == nil {
+		jsonStr := string(resultJSON)
+		// For very large responses, truncate but keep important parts
+		if len(jsonStr) > 10000 {
+			// Keep first 5000 chars and last 5000 chars
+			jsonStr = jsonStr[:5000] + "\n   ... (truncated, total length: " + fmt.Sprintf("%d", len(jsonStr)) + " bytes) ...\n   " + jsonStr[len(jsonStr)-5000:]
+		}
+		g.logger.Infof("🔍 [REQUEST_ID: %s] COMPLETE RAW VERTEX API RESPONSE (FULL JSON):\n   %s", requestID, jsonStr)
+	} else {
+		g.logger.Debugf("🔍 [REQUEST_ID: %s] Could not serialize complete response to JSON (may have unexported fields): %v", requestID, err)
+	}
 }
 
 // WithResponseSchema returns a context with the ResponseSchema set
@@ -1666,6 +1801,83 @@ func (g *GoogleGenAIAdapter) fetchImageFromURL(ctx context.Context, url string) 
 	}
 
 	return imageBytes, strings.TrimSpace(mimeType), nil
+}
+
+// extractThoughtSignature extracts thought signature from genai.Part's ExtraContent
+// Thought signatures are in extra_content.google.thought_signature according to Gemini API docs
+func extractThoughtSignature(part *genai.Part, logger utils.ExtendedLogger) string {
+	if part == nil {
+		return ""
+	}
+
+	// Marshal the part to JSON to access ExtraContent fields
+	partJSON, err := json.Marshal(part)
+	if err != nil {
+		if logger != nil {
+			logger.Debugf("🔍 [VERTEX] Failed to marshal part for thought signature extraction: %v", err)
+		}
+		return ""
+	}
+
+	// Unmarshal into a map to access nested fields
+	var partMap map[string]interface{}
+	if err := json.Unmarshal(partJSON, &partMap); err != nil {
+		if logger != nil {
+			logger.Debugf("🔍 [VERTEX] Failed to unmarshal part JSON: %v", err)
+		}
+		return ""
+	}
+
+	// Check for thoughtSignature directly (genai SDK exposes it as a top-level field)
+	if thoughtSig, ok := partMap["thoughtSignature"].(string); ok && thoughtSig != "" {
+		if logger != nil {
+			logger.Infof("✅ [VERTEX] Extracted thought signature directly (length: %d)", len(thoughtSig))
+		}
+		return thoughtSig
+	}
+
+	// Debug: Log the part structure to see what fields are available
+	if logger != nil {
+		// Check if extra_content exists
+		if extraContent, exists := partMap["extra_content"]; exists {
+			logger.Debugf("🔍 [VERTEX] Found extra_content: %+v", extraContent)
+		} else {
+			logger.Debugf("🔍 [VERTEX] No extra_content field found in part. Available fields: %v", getMapKeysForDebug(partMap))
+		}
+	}
+
+	// Navigate to extra_content.google.thought_signature (fallback for API response format)
+	if extraContent, ok := partMap["extra_content"].(map[string]interface{}); ok {
+		if logger != nil {
+			logger.Debugf("🔍 [VERTEX] extra_content keys: %v", getMapKeysForDebug(extraContent))
+		}
+		if google, ok := extraContent["google"].(map[string]interface{}); ok {
+			if logger != nil {
+				logger.Debugf("🔍 [VERTEX] google keys: %v", getMapKeysForDebug(google))
+			}
+			if thoughtSig, ok := google["thought_signature"].(string); ok && thoughtSig != "" {
+				if logger != nil {
+					logger.Infof("✅ [VERTEX] Extracted thought signature from extra_content.google (length: %d)", len(thoughtSig))
+				}
+				return thoughtSig
+			} else if logger != nil {
+				logger.Debugf("🔍 [VERTEX] thought_signature not found in google map")
+			}
+		} else if logger != nil {
+			logger.Debugf("🔍 [VERTEX] google not found in extra_content")
+		}
+	}
+
+	return ""
+}
+
+// getMapKeysForDebug returns the keys of a map as a slice of strings (for debugging)
+func getMapKeysForDebug(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // generateToolCallID generates a unique ID for tool calls

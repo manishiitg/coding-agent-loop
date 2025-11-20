@@ -402,12 +402,24 @@ func runVertex(cmd *cobra.Command, args []string) {
 
 	// Check for tool calls
 	if len(choice.ToolCalls) > 0 {
+		fmt.Printf("\n✅ Success! Detected %d tool call(s)\n", len(choice.ToolCalls))
 		logger.Info(fmt.Sprintf("✅ Success! Detected %d tool call(s)", len(choice.ToolCalls)))
 		for i, toolCall := range choice.ToolCalls {
-			logger.Info(fmt.Sprintf("🔧 Tool #%d", i+1), map[string]interface{}{
+			toolInfo := map[string]interface{}{
 				"name":      toolCall.FunctionCall.Name,
 				"arguments": toolCall.FunctionCall.Arguments,
-			})
+			}
+			// Check for thought signature (Gemini 3 Pro)
+			if toolCall.ThoughtSignature != "" {
+				toolInfo["thought_signature"] = fmt.Sprintf("present (length: %d)", len(toolCall.ThoughtSignature))
+				fmt.Printf("🔧 Tool #%d: %s (with thought signature, length: %d)\n", i+1, toolCall.FunctionCall.Name, len(toolCall.ThoughtSignature))
+				fmt.Printf("   Arguments: %s\n", toolCall.FunctionCall.Arguments)
+				logger.Info(fmt.Sprintf("🔧 Tool #%d (with thought signature)", i+1), toolInfo)
+			} else {
+				fmt.Printf("🔧 Tool #%d: %s (no thought signature)\n", i+1, toolCall.FunctionCall.Name)
+				fmt.Printf("   Arguments: %s\n", toolCall.FunctionCall.Arguments)
+				logger.Info(fmt.Sprintf("🔧 Tool #%d (no thought signature)", i+1), toolInfo)
+			}
 		}
 	} else if len(choice.Content) > 0 {
 		if vertexFlags.structured {

@@ -532,6 +532,9 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 	q.Add("max_depth", fmt.Sprintf("%d", maxDepth))
 	req.URL.RawQuery = q.Encode()
 
+	// Debug logging
+	fmt.Printf("[DEBUG list_workspace_files] Requesting folder: %s, max_depth: %d, URL: %s\n", folder, maxDepth, req.URL.String())
+
 	// Set timeout
 	client := &http.Client{
 		Timeout: 30 * time.Second,

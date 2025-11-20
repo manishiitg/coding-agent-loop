@@ -11,7 +11,6 @@ import (
 	"text/template"
 	"time"
 
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
@@ -569,33 +568,8 @@ func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context,
 	// Get logger from MCP agent (it has a Logger field)
 	logger := mcpAgent.Logger
 
-	// Register human_feedback tool first (required before making variable changes)
-	humanTools := virtualtools.CreateHumanTools()
-	humanToolExecutors := virtualtools.CreateHumanToolExecutors()
-	if len(humanTools) > 0 && len(humanToolExecutors) > 0 {
-		humanTool := humanTools[0] // Get the first (and only) human tool
-		if humanTool.Function != nil {
-			// Convert Parameters to map[string]interface{}
-			var params map[string]interface{}
-			if humanTool.Function.Parameters != nil {
-				paramsBytes, err := json.Marshal(humanTool.Function.Parameters)
-				if err == nil {
-					json.Unmarshal(paramsBytes, &params)
-				}
-			}
-			if params != nil {
-				if executor, exists := humanToolExecutors[humanTool.Function.Name]; exists {
-					mcpAgent.RegisterCustomTool(
-						humanTool.Function.Name,
-						humanTool.Function.Description,
-						params,
-						executor,
-					)
-					logger.Infof("✅ Registered human_feedback tool for variable extraction agent")
-				}
-			}
-		}
-	}
+	// Note: human_feedback tool is already registered via WorkspaceTools (which includes human tools)
+	// No need to register it manually here
 
 	mcpAgent.RegisterCustomTool(
 		"update_variable",

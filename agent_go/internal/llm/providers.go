@@ -38,6 +38,22 @@ type Config struct {
 	Logger utils.ExtendedLogger
 	// Context for LLM initialization (optional, uses background with timeout if not provided)
 	Context context.Context
+	// API keys for providers (optional, falls back to environment variables if not provided)
+	APIKeys *ProviderAPIKeys
+}
+
+// ProviderAPIKeys holds API keys for different providers
+type ProviderAPIKeys struct {
+	OpenRouter *string
+	OpenAI     *string
+	Anthropic  *string
+	Vertex     *string
+	Bedrock    *BedrockConfig
+}
+
+// BedrockConfig holds Bedrock-specific configuration
+type BedrockConfig struct {
+	Region string
 }
 
 // LoggerAdapter adapts utils.ExtendedLogger to interfaces.Logger

@@ -1,6 +1,9 @@
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 interface MarkdownRendererProps {
   content: string
@@ -59,16 +62,69 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           ul: ({ children }) => <ul className="list-disc mb-2 space-y-1 ml-4 pl-2 min-w-0">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal mb-2 space-y-1 ml-4 pl-2 min-w-0">{children}</ol>,
           li: ({ children }) => <li className="text-sm break-words overflow-wrap-anywhere leading-relaxed mb-1 last:mb-0">{children}</li>,
-          code: ({ children }) => (
-            <code className="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs font-mono break-all overflow-wrap-anywhere">
-              {children}
-            </code>
-          ),
-          pre: ({ children }) => (
-            <pre className="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs font-mono overflow-x-auto break-all min-w-0">
-              {children}
-            </pre>
-          ),
+          code: ({ className, children, inline, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) => {
+            const match = /language-(\w+)/.exec(className || '')
+            const isInline = typeof inline === 'boolean' ? inline : false
+            
+            // For inline code, use simple styling
+            if (isInline || !match) {
+              return (
+                <code className="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs font-mono break-all overflow-wrap-anywhere" {...props}>
+                  {children}
+                </code>
+              )
+            }
+            
+            // For code blocks, use SyntaxHighlighter
+            const language = match[1]
+            const codeString = String(children).replace(/\n$/, '')
+            
+            // Detect dark mode
+            const isDark = document.documentElement.classList.contains('dark') || 
+                          document.documentElement.classList.contains('dark-plus')
+            
+            return (
+              <div className="my-2 min-w-0 max-w-full overflow-x-auto">
+                <SyntaxHighlighter
+                  // @ts-expect-error: theme type mismatch is safe for SyntaxHighlighter
+                  style={isDark ? (oneDark as { [key: string]: React.CSSProperties }) : (prism as { [key: string]: React.CSSProperties })}
+                  language={language}
+                  PreTag="div"
+                  className="!m-0 !p-0"
+                  customStyle={{
+                    margin: 0,
+                    padding: '0.75rem',
+                    borderRadius: '0.375rem',
+                    fontSize: '0.75rem',
+                    lineHeight: '1.5',
+                    overflowX: 'auto',
+                    maxWidth: '100%',
+                    width: '100%',
+                    boxSizing: 'border-box',
+                  }}
+                  codeTagProps={{
+                    style: {
+                      display: 'block',
+                      overflowX: 'auto',
+                      maxWidth: '100%',
+                    }
+                  }}
+                  {...props}
+                >
+                  {codeString}
+                </SyntaxHighlighter>
+              </div>
+            )
+          },
+          pre: ({ children }) => {
+            // Pre tag is handled by the code component above
+            // This is a fallback for any pre tags that don't contain code
+            return (
+              <pre className="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs font-mono overflow-x-auto break-all min-w-0">
+                {children}
+              </pre>
+            )
+          },
           blockquote: ({ children }) => (
             <blockquote className="border-l-4 border-gray-300 pl-3 italic text-sm break-words overflow-wrap-anywhere">
               {children}
@@ -90,7 +146,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           ),
           tbody: ({ children }) => (
             <tbody className="bg-white dark:bg-gray-800">
-              {children}
+              {children}  
             </tbody>
           ),
           tr: ({ children }) => (

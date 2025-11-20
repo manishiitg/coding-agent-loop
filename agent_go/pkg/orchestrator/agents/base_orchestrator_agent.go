@@ -517,6 +517,22 @@ func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llmtypes.Model
 		// Added default cross-provider fallback models
 	}
 
+	// Convert API keys from agent config to LLM config format
+	var llmAPIKeys *llm.ProviderAPIKeys
+	if boa.config.APIKeys != nil {
+		llmAPIKeys = &llm.ProviderAPIKeys{
+			OpenRouter: boa.config.APIKeys.OpenRouter,
+			OpenAI:     boa.config.APIKeys.OpenAI,
+			Anthropic:  boa.config.APIKeys.Anthropic,
+			Vertex:     boa.config.APIKeys.Vertex,
+		}
+		if boa.config.APIKeys.Bedrock != nil {
+			llmAPIKeys.Bedrock = &llm.BedrockConfig{
+				Region: boa.config.APIKeys.Bedrock.Region,
+			}
+		}
+	}
+
 	// Create LLM configuration
 	config := llm.Config{
 		Provider:       llm.Provider(boa.config.Provider),
@@ -527,6 +543,7 @@ func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llmtypes.Model
 		FallbackModels: fallbackModels,
 		MaxRetries:     boa.config.MaxRetries,
 		Logger:         boa.logger,
+		APIKeys:        llmAPIKeys,
 	}
 
 	// Initialize LLM using the existing factory

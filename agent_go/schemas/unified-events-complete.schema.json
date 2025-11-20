@@ -1435,6 +1435,9 @@
         "result": {
           "type": "string"
         },
+        "structured_response": {
+          "type": "object"
+        },
         "success": {
           "type": "boolean"
         },
@@ -2383,9 +2386,6 @@
         },
         "server_name": {
           "type": "string"
-        },
-        "auto_expand": {
-          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -2493,9 +2493,6 @@
         },
         "server_name": {
           "type": "string"
-        },
-        "auto_expand": {
-          "type": "boolean"
         }
       },
       "additionalProperties": false,

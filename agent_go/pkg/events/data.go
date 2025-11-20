@@ -267,7 +267,6 @@ type ToolCallStartEvent struct {
 	ToolName   string     `json:"tool_name"`
 	ToolParams ToolParams `json:"tool_params"`
 	ServerName string     `json:"server_name"`
-	AutoExpand bool       `json:"auto_expand"` // If true, frontend should expand content by default
 }
 
 func (e *ToolCallStartEvent) GetEventType() EventType {
@@ -287,7 +286,6 @@ type ToolCallEndEvent struct {
 	Result     string        `json:"result"`
 	Duration   time.Duration `json:"duration"`
 	ServerName string        `json:"server_name"`
-	AutoExpand bool          `json:"auto_expand"` // If true, frontend should expand content by default
 }
 
 func (e *ToolCallEndEvent) GetEventType() EventType {
@@ -1743,6 +1741,7 @@ func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {
 
 // TodoStep represents a todo step in the execution
 type TodoStep struct {
+	ID                  string   `json:"id,omitempty"` // Stable step ID (from PlanStep) - required for frontend matching
 	Title               string   `json:"title"`
 	Description         string   `json:"description"`
 	SuccessCriteria     string   `json:"success_criteria"`

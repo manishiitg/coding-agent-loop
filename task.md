@@ -32,7 +32,8 @@ new tasks
 f) add hallunication check as extra agent
 g) add references as extra agent 
 h) should we conditional llm, manually to change flow? like during scrapping. if here is a logout or wrong password there is a critical error.
-
+i) learning agent for overall run as new mode
 
 
 the prompts we have, have variable issue which we get to know later when we run. 
+

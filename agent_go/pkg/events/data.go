@@ -8,7 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/utils"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // AgentEventType represents the type of event in the agent flow
@@ -258,6 +258,8 @@ type UsageMetrics struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	CacheTokens      int `json:"cache_tokens,omitempty"`     // Cache tokens (CachedContentTokens, CacheReadInputTokens, etc.)
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"` // Reasoning tokens (for models like o3)
 }
 
 // ToolCallStartEvent represents the start of a tool call

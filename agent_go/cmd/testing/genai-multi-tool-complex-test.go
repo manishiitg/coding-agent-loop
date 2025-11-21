@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 var genaiMultiToolComplexTestCmd = &cobra.Command{

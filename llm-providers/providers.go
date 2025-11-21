@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1853,24 +1852,28 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 	fmt.Printf("[API KEY VALIDATION] Validating %s API key\n", req.Provider)
 	switch req.Provider {
 	case "openrouter":
-		isValid, message, err = validateOpenRouterAPIKey(req.APIKey)
+		isValid, message, err = validateOpenRouterAPIKey(req.APIKey, req.ModelID)
 	case "openai":
-		isValid, message, err = validateOpenAIAPIKey(req.APIKey)
+		isValid, message, err = validateOpenAIAPIKey(req.APIKey, req.ModelID)
 	case "bedrock":
 		// Bedrock uses AWS credentials, test them instead of API key
 		fmt.Printf("[API KEY VALIDATION] Testing AWS Bedrock credentials\n")
 		isValid, message, err = validateBedrockCredentials(req.ModelID)
 	case "vertex":
-		// Vertex uses Google API key, optionally test with model ID
-		fmt.Printf("[API KEY VALIDATION] Testing Vertex AI API key\n")
-		isValid, message, err = validateVertexAPIKey(req.APIKey, req.ModelID)
-	case "anthropic":
-		// Anthropic validation can be added here if needed
-		fmt.Printf("[API KEY VALIDATION WARN] Anthropic validation not yet implemented\n")
-		return APIKeyValidationResponse{
-			Valid: false,
-			Error: "Anthropic API key validation not yet implemented",
+		// Vertex supports both API key and OAuth authentication
+		if req.APIKey == "" {
+			// Test OAuth authentication (gcloud/service account/ADC)
+			fmt.Printf("[API KEY VALIDATION] Testing Vertex AI OAuth credentials\n")
+			isValid, message, err = validateVertexCredentials(req.ModelID)
+		} else {
+			// Test API key authentication
+			fmt.Printf("[API KEY VALIDATION] Testing Vertex AI API key\n")
+			isValid, message, err = validateVertexAPIKey(req.APIKey, req.ModelID)
 		}
+	case "anthropic":
+		// Anthropic validation with real GenerateContent call
+		fmt.Printf("[API KEY VALIDATION] Testing Anthropic API key\n")
+		isValid, message, err = validateAnthropicAPIKey(req.APIKey, req.ModelID)
 	default:
 		fmt.Printf("[API KEY VALIDATION WARN] Unsupported provider: %s\n", req.Provider)
 		return APIKeyValidationResponse{
@@ -1901,8 +1904,8 @@ func ValidateAPIKey(req APIKeyValidationRequest) APIKeyValidationResponse {
 	}
 }
 
-// validateOpenRouterAPIKey validates an OpenRouter API key
-func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
+// validateOpenRouterAPIKey validates an OpenRouter API key by making a real GenerateContent call
+func validateOpenRouterAPIKey(apiKey string, modelID string) (bool, string, error) {
 	fmt.Printf("[OPENROUTER VALIDATION] Starting API key validation\n")
 
 	// Basic format validation
@@ -1911,47 +1914,75 @@ func validateOpenRouterAPIKey(apiKey string) (bool, string, error) {
 		return false, "Invalid OpenRouter API key format", nil
 	}
 	fmt.Printf("[OPENROUTER VALIDATION] Format validation passed\n")
-	// Test the API key by making a request to OpenRouter
-	fmt.Printf("[OPENROUTER VALIDATION] Making request to OpenRouter API\n")
-	client := &http.Client{Timeout: 10 * time.Second}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+	// Use a default model if none provided
+	if modelID == "" {
+		modelID = "moonshotai/kimi-k2"
+		fmt.Printf("[OPENROUTER VALIDATION] Using default model: %s\n", modelID)
+	}
+
+	// Set API key in environment temporarily for initialization
+	originalKey := os.Getenv("OPEN_ROUTER_API_KEY")
+	os.Setenv("OPEN_ROUTER_API_KEY", apiKey)
+	defer func() {
+		if originalKey != "" {
+			os.Setenv("OPEN_ROUTER_API_KEY", originalKey)
+		} else {
+			os.Unsetenv("OPEN_ROUTER_API_KEY")
+		}
+	}()
+
+	// Create a no-op logger for validation
+	noopLog := &noopLoggerImpl{}
+
+	// Create OpenRouter LLM instance
+	fmt.Printf("[OPENROUTER VALIDATION] Creating OpenRouter LLM instance\n")
+	config := Config{
+		Provider:    ProviderOpenRouter,
+		ModelID:     modelID,
+		Temperature: 0.7,
+		Logger:      noopLog,
+		Context:     context.Background(),
+	}
+
+	llm, err := initializeOpenRouter(config)
+	if err != nil {
+		fmt.Printf("[OPENROUTER VALIDATION ERROR] Failed to create LLM instance: %v\n", err)
+		return false, fmt.Sprintf("Failed to create OpenRouter LLM instance: %v", err), nil
+	}
+
+	// Test the LLM with a simple generation call
+	fmt.Printf("[OPENROUTER VALIDATION] Making test generation call to OpenRouter\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://openrouter.ai/api/v1/models", nil)
+
+	_, err = llm.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Hi"}},
+		},
+	})
 	if err != nil {
-		fmt.Printf("[OPENROUTER VALIDATION ERROR] Failed to create request: %w\n", err)
-		return false, "", fmt.Errorf("failed to create request: %w", err)
+		fmt.Printf("[OPENROUTER VALIDATION ERROR] OpenRouter test generation failed: %v\n", err)
+		// Check for specific error types
+		if strings.Contains(err.Error(), "unauthorized") || strings.Contains(err.Error(), "401") {
+			return false, "Invalid OpenRouter API key", nil
+		}
+		if strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "429") {
+			return false, "OpenRouter API rate limit exceeded", nil
+		}
+		if strings.Contains(err.Error(), "timeout") {
+			return false, "OpenRouter service timeout - check network connectivity", nil
+		}
+		return false, fmt.Sprintf("OpenRouter test generation failed: %v", err), nil
 	}
 
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	fmt.Printf("[OPENROUTER VALIDATION] Sending request to OpenRouter API\n")
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("[OPENROUTER VALIDATION ERROR] Request failed: %w\n", err)
-		return false, "", fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	fmt.Printf("[OPENROUTER VALIDATION] Response status: %d\n", resp.StatusCode)
-	switch resp.StatusCode {
-	case 200:
-		fmt.Printf("[OPENROUTER VALIDATION SUCCESS] API key is valid\n")
-		return true, "OpenRouter API key is valid", nil
-	case 401:
-		fmt.Printf("[OPENROUTER VALIDATION FAILED] Unauthorized - invalid API key\n")
-		return false, "Invalid OpenRouter API key", nil
-	case 429:
-		fmt.Printf("[OPENROUTER VALIDATION FAILED] Rate limit exceeded\n")
-		return false, "OpenRouter API rate limit exceeded", nil
-	default:
-		fmt.Printf("[OPENROUTER VALIDATION FAILED] Unexpected status: %d\n", resp.StatusCode)
-		return false, fmt.Sprintf("OpenRouter API returned status %d", resp.StatusCode), nil
-	}
+	fmt.Printf("[OPENROUTER VALIDATION SUCCESS] OpenRouter API key is valid\n")
+	return true, fmt.Sprintf("OpenRouter API key is valid for model %s", modelID), nil
 }
 
-// validateOpenAIAPIKey validates an OpenAI API key
-func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
+// validateOpenAIAPIKey validates an OpenAI API key by making a real GenerateContent call
+func validateOpenAIAPIKey(apiKey string, modelID string) (bool, string, error) {
 	fmt.Printf("[OPENAI VALIDATION] Starting API key validation\n")
 	// Basic format validation
 	if !strings.HasPrefix(apiKey, "sk-") {
@@ -1959,47 +1990,275 @@ func validateOpenAIAPIKey(apiKey string) (bool, string, error) {
 		return false, "Invalid OpenAI API key format", nil
 	}
 	fmt.Printf("[OPENAI VALIDATION] Format validation passed\n")
-	// Test the API key by making a request to OpenAI
-	fmt.Printf("[OPENAI VALIDATION] Making request to OpenAI API\n")
-	client := &http.Client{Timeout: 10 * time.Second}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+	// Use a default model if none provided
+	if modelID == "" {
+		modelID = "gpt-4o-mini"
+		fmt.Printf("[OPENAI VALIDATION] Using default model: %s\n", modelID)
+	}
+
+	// Set API key in environment temporarily for initialization
+	originalKey := os.Getenv("OPENAI_API_KEY")
+	os.Setenv("OPENAI_API_KEY", apiKey)
+	defer func() {
+		if originalKey != "" {
+			os.Setenv("OPENAI_API_KEY", originalKey)
+		} else {
+			os.Unsetenv("OPENAI_API_KEY")
+		}
+	}()
+
+	// Create a no-op logger for validation
+	noopLog := &noopLoggerImpl{}
+
+	// Create OpenAI LLM instance
+	fmt.Printf("[OPENAI VALIDATION] Creating OpenAI LLM instance\n")
+	config := Config{
+		Provider:    ProviderOpenAI,
+		ModelID:     modelID,
+		Temperature: 0.7,
+		Logger:      noopLog,
+		Context:     context.Background(),
+	}
+
+	llm, err := initializeOpenAI(config)
+	if err != nil {
+		fmt.Printf("[OPENAI VALIDATION ERROR] Failed to create LLM instance: %v\n", err)
+		return false, fmt.Sprintf("Failed to create OpenAI LLM instance: %v", err), nil
+	}
+
+	// Test the LLM with a simple generation call
+	fmt.Printf("[OPENAI VALIDATION] Making test generation call to OpenAI\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.openai.com/v1/models", nil)
+
+	_, err = llm.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Hi"}},
+		},
+	})
 	if err != nil {
-		fmt.Printf("[OPENAI VALIDATION ERROR] Failed to create request: %w\n", err)
-		return false, "", fmt.Errorf("failed to create request: %w", err)
+		fmt.Printf("[OPENAI VALIDATION ERROR] OpenAI test generation failed: %v\n", err)
+		// Check for specific error types
+		if strings.Contains(err.Error(), "unauthorized") || strings.Contains(err.Error(), "401") {
+			return false, "Invalid OpenAI API key", nil
+		}
+		if strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "429") {
+			return false, "OpenAI API rate limit exceeded", nil
+		}
+		if strings.Contains(err.Error(), "timeout") {
+			return false, "OpenAI service timeout - check network connectivity", nil
+		}
+		return false, fmt.Sprintf("OpenAI test generation failed: %v", err), nil
 	}
 
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	fmt.Printf("[OPENAI VALIDATION] Sending request to OpenAI API\n")
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("[OPENAI VALIDATION ERROR] Request failed: %w\n", err)
-		return false, "", fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	fmt.Printf("[OPENAI VALIDATION] Response status: %d", resp.StatusCode)
-
-	switch resp.StatusCode {
-	case 200:
-		fmt.Printf("[OPENAI VALIDATION SUCCESS] API key is valid\n")
-		return true, "OpenAI API key is valid", nil
-	case 401:
-		fmt.Printf("[OPENAI VALIDATION FAILED] Unauthorized - invalid API key\n")
-		return false, "Invalid OpenAI API key", nil
-	case 429:
-		fmt.Printf("[OPENAI VALIDATION FAILED] Rate limit exceeded\n")
-		return false, "OpenAI API rate limit exceeded", nil
-	default:
-		fmt.Printf("[OPENAI VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
-		return false, fmt.Sprintf("OpenAI API returned status %d", resp.StatusCode), nil
-	}
+	fmt.Printf("[OPENAI VALIDATION SUCCESS] OpenAI API key is valid\n")
+	return true, fmt.Sprintf("OpenAI API key is valid for model %s", modelID), nil
 }
 
-// validateVertexAPIKey validates a Vertex AI (Google Gemini) API key
+// validateAnthropicAPIKey validates an Anthropic API key by making a real GenerateContent call
+func validateAnthropicAPIKey(apiKey string, modelID string) (bool, string, error) {
+	fmt.Printf("[ANTHROPIC VALIDATION] Starting API key validation\n")
+
+	// Basic format validation - Anthropic API keys start with "sk-ant-"
+	if !strings.HasPrefix(apiKey, "sk-ant-") {
+		fmt.Printf("[ANTHROPIC VALIDATION WARN] Format validation failed - missing sk-ant- prefix\n")
+		return false, "Invalid Anthropic API key format", nil
+	}
+	fmt.Printf("[ANTHROPIC VALIDATION] Format validation passed\n")
+
+	// Use a default model if none provided
+	if modelID == "" {
+		modelID = "claude-3-5-sonnet-20241022"
+		fmt.Printf("[ANTHROPIC VALIDATION] Using default model: %s\n", modelID)
+	}
+
+	// Set API key in environment temporarily for initialization
+	originalKey := os.Getenv("ANTHROPIC_API_KEY")
+	os.Setenv("ANTHROPIC_API_KEY", apiKey)
+	defer func() {
+		if originalKey != "" {
+			os.Setenv("ANTHROPIC_API_KEY", originalKey)
+		} else {
+			os.Unsetenv("ANTHROPIC_API_KEY")
+		}
+	}()
+
+	// Create a no-op logger for validation
+	noopLog := &noopLoggerImpl{}
+
+	// Create Anthropic LLM instance
+	fmt.Printf("[ANTHROPIC VALIDATION] Creating Anthropic LLM instance\n")
+	config := Config{
+		Provider:    ProviderAnthropic,
+		ModelID:     modelID,
+		Temperature: 0.7,
+		Logger:      noopLog,
+		Context:     context.Background(),
+	}
+
+	llm, err := initializeAnthropic(config)
+	if err != nil {
+		fmt.Printf("[ANTHROPIC VALIDATION ERROR] Failed to create LLM instance: %v\n", err)
+		return false, fmt.Sprintf("Failed to create Anthropic LLM instance: %v", err), nil
+	}
+
+	// Test the LLM with a simple generation call
+	fmt.Printf("[ANTHROPIC VALIDATION] Making test generation call to Anthropic\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = llm.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Hi"}},
+		},
+	})
+	if err != nil {
+		fmt.Printf("[ANTHROPIC VALIDATION ERROR] Anthropic test generation failed: %v\n", err)
+		// Check for specific error types
+		if strings.Contains(err.Error(), "unauthorized") || strings.Contains(err.Error(), "401") {
+			return false, "Invalid Anthropic API key", nil
+		}
+		if strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "429") {
+			return false, "Anthropic API rate limit exceeded", nil
+		}
+		if strings.Contains(err.Error(), "timeout") {
+			return false, "Anthropic service timeout - check network connectivity", nil
+		}
+		return false, fmt.Sprintf("Anthropic test generation failed: %v", err), nil
+	}
+
+	fmt.Printf("[ANTHROPIC VALIDATION SUCCESS] Anthropic API key is valid\n")
+	return true, fmt.Sprintf("Anthropic API key is valid for model %s", modelID), nil
+}
+
+// validateVertexCredentials validates Vertex AI OAuth credentials (gcloud/service account/ADC)
+func validateVertexCredentials(modelID string) (bool, string, error) {
+	fmt.Printf("[VERTEX VALIDATION] Starting OAuth credentials validation\n")
+
+	// Check for required environment variables
+	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if projectID == "" {
+		projectID = os.Getenv("VERTEX_PROJECT_ID")
+	}
+	if projectID == "" {
+		fmt.Printf("[VERTEX VALIDATION WARN] GOOGLE_CLOUD_PROJECT or VERTEX_PROJECT_ID not set\n")
+		return false, "GOOGLE_CLOUD_PROJECT or VERTEX_PROJECT_ID environment variable is required for OAuth authentication", nil
+	}
+
+	location := os.Getenv("GOOGLE_CLOUD_LOCATION")
+	if location == "" {
+		location = os.Getenv("VERTEX_LOCATION_ID")
+	}
+	if location == "" {
+		location = "us-central1"
+		fmt.Printf("[VERTEX VALIDATION] Using default location: %s\n", location)
+	}
+	// Vertex AI doesn't support "global" location
+	if location == "global" {
+		location = "us-central1"
+		fmt.Printf("[VERTEX VALIDATION] Location 'global' is not valid for Vertex AI, using: %s\n", location)
+	}
+
+	fmt.Printf("[VERTEX VALIDATION] Testing OAuth with project: %s, location: %s\n", projectID, location)
+
+	// Use a default model if none provided
+	if modelID == "" {
+		modelID = "gemini-2.5-flash"
+		fmt.Printf("[VERTEX VALIDATION] Using default model: %s\n", modelID)
+	}
+
+	// Test OAuth by creating an LLM instance and making a real API call
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create a no-op logger for validation
+	noopLog := &noopLoggerImpl{}
+
+	// Detect if this is an Anthropic model (starts with "claude-")
+	isAnthropicModel := strings.HasPrefix(modelID, "claude-")
+
+	var llm llmtypes.Model
+	var err error
+
+	if isAnthropicModel {
+		// Create Vertex Anthropic adapter for OAuth
+		fmt.Printf("[VERTEX VALIDATION] Creating Vertex Anthropic adapter for model: %s\n", modelID)
+		llm = vertexadapter.NewVertexAnthropicAdapter(projectID, location, modelID, noopLog)
+	} else {
+		// For Gemini models with OAuth, use Vertex AI backend (not Gemini Developer API)
+		fmt.Printf("[VERTEX VALIDATION] Creating Vertex AI Gemini adapter for model: %s with OAuth\n", modelID)
+
+		// Set environment variables for Vertex AI OAuth (genai library reads these)
+		originalProject := os.Getenv("GOOGLE_CLOUD_PROJECT")
+		originalLocation := os.Getenv("GOOGLE_CLOUD_LOCATION")
+		originalUseVertex := os.Getenv("GOOGLE_GENAI_USE_VERTEXAI")
+
+		os.Setenv("GOOGLE_CLOUD_PROJECT", projectID)
+		os.Setenv("GOOGLE_CLOUD_LOCATION", location)
+		os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+
+		defer func() {
+			if originalProject != "" {
+				os.Setenv("GOOGLE_CLOUD_PROJECT", originalProject)
+			} else {
+				os.Unsetenv("GOOGLE_CLOUD_PROJECT")
+			}
+			if originalLocation != "" {
+				os.Setenv("GOOGLE_CLOUD_LOCATION", originalLocation)
+			} else {
+				os.Unsetenv("GOOGLE_CLOUD_LOCATION")
+			}
+			if originalUseVertex != "" {
+				os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", originalUseVertex)
+			} else {
+				os.Unsetenv("GOOGLE_GENAI_USE_VERTEXAI")
+			}
+		}()
+
+		// Create Google GenAI client with OAuth (no API key, uses BackendVertexAI via env vars)
+		client, err := genai.NewClient(ctx, &genai.ClientConfig{
+			Backend: genai.BackendVertexAI,
+		})
+		if err != nil {
+			fmt.Printf("[VERTEX VALIDATION ERROR] Failed to create Vertex AI client: %v\n", err)
+			return false, fmt.Sprintf("Failed to create Vertex AI client for Gemini model '%s': %v", modelID, err), nil
+		}
+
+		// Create Gemini adapter with Vertex AI backend
+		llm = vertexadapter.NewGoogleGenAIAdapter(client, modelID, noopLog)
+	}
+
+	// Test the LLM with a simple generation call
+	fmt.Printf("[VERTEX VALIDATION] Making test generation call to Vertex AI\n")
+	_, err = llm.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Hi"}},
+		},
+	})
+	if err != nil {
+		fmt.Printf("[VERTEX VALIDATION ERROR] Vertex AI test generation failed: %v\n", err)
+		// Check for specific error types
+		if strings.Contains(err.Error(), "authentication") || strings.Contains(err.Error(), "unauthorized") {
+			return false, "OAuth authentication failed. Make sure you have run 'gcloud auth application-default login' or set up service account credentials.", nil
+		}
+		if strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "forbidden") {
+			return false, "OAuth credentials do not have permission to access Vertex AI", nil
+		}
+		if strings.Contains(err.Error(), "timeout") {
+			return false, "Vertex AI service timeout - check network connectivity", nil
+		}
+		return false, fmt.Sprintf("Vertex AI test generation failed: %v", err), nil
+	}
+
+	fmt.Printf("[VERTEX VALIDATION SUCCESS] Vertex AI OAuth credentials are valid\n")
+	return true, fmt.Sprintf("Vertex AI OAuth authentication successful (project: %s, location: %s)", projectID, location), nil
+}
+
+// validateVertexAPIKey validates a Vertex AI (Google Gemini) API key by making a real GenerateContent call
 func validateVertexAPIKey(apiKey string, modelID string) (bool, string, error) {
 	fmt.Printf("[VERTEX VALIDATION] Starting API key validation\n")
 	// Basic validation - Google API keys don't have a specific prefix
@@ -2008,72 +2267,84 @@ func validateVertexAPIKey(apiKey string, modelID string) (bool, string, error) {
 		return false, "API key is empty", nil
 	}
 	fmt.Printf("[VERTEX VALIDATION] API key format check passed\n")
-	// If model ID is provided, test with that specific model
-	// Otherwise, test by listing available models
-	var testURL string
-	if modelID != "" {
-		// Test with specific model
-		testURL = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s?key=%s", modelID, apiKey)
-		fmt.Printf("[VERTEX VALIDATION] Testing with model: %s", modelID)
-	} else {
-		// Test by listing models
-		testURL = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", apiKey)
-		fmt.Printf("[VERTEX VALIDATION] Testing by listing available models\n")
+
+	// Use a default model if none provided
+	if modelID == "" {
+		modelID = "gemini-2.5-flash"
+		fmt.Printf("[VERTEX VALIDATION] Using default model: %s\n", modelID)
 	}
 
-	// Test the API key by making a request to Gemini API
-	fmt.Printf("[VERTEX VALIDATION] Making request to Gemini API\n")
-	client := &http.Client{Timeout: 10 * time.Second}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
-	if err != nil {
-		fmt.Printf("[VERTEX VALIDATION ERROR] Failed to create request: %w\n", err)
-		return false, "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	fmt.Printf("[VERTEX VALIDATION] Sending request to Gemini API\n")
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("[VERTEX VALIDATION ERROR] Request failed: %w\n", err)
-		return false, "", fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	fmt.Printf("[VERTEX VALIDATION] Response status: %d", resp.StatusCode)
-
-	switch resp.StatusCode {
-	case 200:
-		fmt.Printf("[VERTEX VALIDATION SUCCESS] API key is valid\n")
-		if modelID != "" {
-			return true, fmt.Sprintf("Vertex AI API key is valid for model %s", modelID), nil
+	// Set API key in environment temporarily for initialization
+	originalKey := os.Getenv("VERTEX_API_KEY")
+	originalGoogleKey := os.Getenv("GOOGLE_API_KEY")
+	os.Setenv("VERTEX_API_KEY", apiKey)
+	defer func() {
+		if originalKey != "" {
+			os.Setenv("VERTEX_API_KEY", originalKey)
+		} else {
+			os.Unsetenv("VERTEX_API_KEY")
 		}
-		return true, "Vertex AI API key is valid", nil
-	case 400:
-		fmt.Printf("[VERTEX VALIDATION FAILED] Bad request - invalid API key or model\n")
-		return false, "Invalid API key or model ID", nil
-	case 401:
-		fmt.Printf("[VERTEX VALIDATION FAILED] Unauthorized - invalid API key\n")
-		return false, "Invalid Vertex AI API key", nil
-	case 403:
-		fmt.Printf("[VERTEX VALIDATION FAILED] Forbidden - API key lacks required permissions\n")
-		return false, "API key lacks required permissions", nil
-	case 404:
-		if modelID != "" {
-			fmt.Printf("[VERTEX VALIDATION FAILED] Model not found: %s", modelID)
+		if originalGoogleKey != "" {
+			os.Setenv("GOOGLE_API_KEY", originalGoogleKey)
+		}
+	}()
+
+	// Create a no-op logger for validation
+	noopLog := &noopLoggerImpl{}
+
+	// Create Vertex LLM instance (for Gemini models with API key)
+	fmt.Printf("[VERTEX VALIDATION] Creating Vertex Gemini LLM instance\n")
+	config := Config{
+		Provider:    ProviderVertex,
+		ModelID:     modelID,
+		Temperature: 0.7,
+		Logger:      noopLog,
+		Context:     context.Background(),
+		APIKeys: &ProviderAPIKeys{
+			Vertex: &apiKey,
+		},
+	}
+
+	llm, err := initializeVertexGemini(config, modelID, noopLog)
+	if err != nil {
+		fmt.Printf("[VERTEX VALIDATION ERROR] Failed to create LLM instance: %v\n", err)
+		return false, fmt.Sprintf("Failed to create Vertex LLM instance: %v", err), nil
+	}
+
+	// Test the LLM with a simple generation call
+	fmt.Printf("[VERTEX VALIDATION] Making test generation call to Vertex AI\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = llm.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role:  llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Hi"}},
+		},
+	})
+	if err != nil {
+		fmt.Printf("[VERTEX VALIDATION ERROR] Vertex AI test generation failed: %v\n", err)
+		// Check for specific error types
+		if strings.Contains(err.Error(), "unauthorized") || strings.Contains(err.Error(), "401") {
+			return false, "Invalid Vertex AI API key", nil
+		}
+		if strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "forbidden") || strings.Contains(err.Error(), "403") {
+			return false, "API key lacks required permissions", nil
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
 			return false, fmt.Sprintf("Model %s not found", modelID), nil
 		}
-		fmt.Printf("[VERTEX VALIDATION FAILED] Resource not found\n")
-		return false, "Resource not found", nil
-	case 429:
-		fmt.Printf("[VERTEX VALIDATION FAILED] Rate limit exceeded\n")
-		return false, "Vertex AI API rate limit exceeded", nil
-	default:
-		fmt.Printf("[VERTEX VALIDATION FAILED] Unexpected status: %d", resp.StatusCode)
-		return false, fmt.Sprintf("Vertex AI API returned status %d", resp.StatusCode), nil
+		if strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "429") {
+			return false, "Vertex AI API rate limit exceeded", nil
+		}
+		if strings.Contains(err.Error(), "timeout") {
+			return false, "Vertex AI service timeout - check network connectivity", nil
+		}
+		return false, fmt.Sprintf("Vertex AI test generation failed: %v", err), nil
 	}
+
+	fmt.Printf("[VERTEX VALIDATION SUCCESS] Vertex AI API key is valid\n")
+	return true, fmt.Sprintf("Vertex AI API key is valid for model %s", modelID), nil
 }
 
 // noopLoggerImpl is a no-op logger implementation for validation functions

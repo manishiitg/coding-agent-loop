@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // SummarizeTools returns a human-readable summary string of the available tools.

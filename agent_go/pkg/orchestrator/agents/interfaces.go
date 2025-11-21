@@ -3,7 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"os"
 	"strconv"
 	"strings"

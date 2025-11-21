@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/viper"
 
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 )
 

@@ -37,3 +37,4 @@ i) learning agent for overall run as new mode
 
 the prompts we have, have variable issue which we get to know later when we run. 
 
+in the agent end we should all tokens it took in total

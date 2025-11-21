@@ -56,14 +56,16 @@ const (
 	StreamingConnectionLost EventType = "streaming_connection_lost"
 
 	// Debug events
-	Debug       EventType = "debug"
-	Performance EventType = "performance"
-	TokenUsage  EventType = "token_usage"
-	ErrorDetail EventType = "error_detail"
+	Debug         EventType = "debug"
+	Performance   EventType = "performance"
+	TokenUsage    EventType = "token_usage"
+	LLMTokenUsage EventType = "llm_token_usage" // Per-call token usage (advanced mode only)
+	ErrorDetail   EventType = "error_detail"
 
 	// Event type aliases for backward compatibility
-	TokenUsageEventType  EventType = "token_usage"
-	ErrorDetailEventType EventType = "error_detail"
+	TokenUsageEventType    EventType = "token_usage"
+	LLMTokenUsageEventType EventType = "llm_token_usage"
+	ErrorDetailEventType   EventType = "error_detail"
 
 	// Large output events
 	LargeToolOutputDetected    EventType = "large_tool_output_detected"

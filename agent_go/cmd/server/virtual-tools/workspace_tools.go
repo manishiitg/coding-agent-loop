@@ -10,7 +10,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"net/http"
 	"net/url"
 	"os"

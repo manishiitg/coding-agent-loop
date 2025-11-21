@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // validateFilePath ensures the file path is within the allowed directory and doesn't contain path traversal

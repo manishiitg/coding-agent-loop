@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // CreateHumanTools creates human interaction tools

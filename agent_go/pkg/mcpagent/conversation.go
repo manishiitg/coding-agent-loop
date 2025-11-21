@@ -28,7 +28,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)
@@ -449,11 +449,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
+			var generationInfo *llmtypes.GenerationInfo
+			if resp.Choices[0].GenerationInfo != nil {
+				generationInfo = resp.Choices[0].GenerationInfo
+			}
 			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
 				PromptTokens:     usage.InputTokens,
 				CompletionTokens: usage.OutputTokens,
 				TotalTokens:      usage.TotalTokens,
-			})
+			}, generationInfo)
 		}
 
 		// Check for context cancellation after LLM generation
@@ -1181,7 +1185,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
-			a.EndAgentSession(ctx)
+			a.EndAgentSession(ctx, time.Since(conversationStartTime))
 
 			return choice.Content, messages, nil
 		}
@@ -1230,9 +1234,71 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, err, _ = GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns, func(msg string) {
+	finalResp, err, finalUsage := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns, func(msg string) {
 		// Optional: stream the final response
 	})
+
+	// Log finalUsage for debugging
+	logger.Infof("🔍 [FINAL LLM CALL DEBUG] finalUsage from GenerateContentWithRetry:")
+	logger.Infof("   InputTokens: %d, OutputTokens: %d, TotalTokens: %d, Unit: %s",
+		finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.TotalTokens, finalUsage.Unit)
+	if finalResp != nil && len(finalResp.Choices) > 0 {
+		if finalResp.Choices[0].GenerationInfo != nil {
+			genInfo := finalResp.Choices[0].GenerationInfo
+			logger.Infof("   GenerationInfo available:")
+			if genInfo.InputTokens != nil {
+				logger.Infof("      InputTokens: %d", *genInfo.InputTokens)
+			}
+			if genInfo.OutputTokens != nil {
+				logger.Infof("      OutputTokens: %d", *genInfo.OutputTokens)
+			}
+			if genInfo.TotalTokens != nil {
+				logger.Infof("      TotalTokens: %d", *genInfo.TotalTokens)
+			}
+			if genInfo.CachedContentTokens != nil {
+				logger.Infof("      CachedContentTokens: %d", *genInfo.CachedContentTokens)
+			}
+			if genInfo.ReasoningTokens != nil {
+				logger.Infof("      ReasoningTokens: %d", *genInfo.ReasoningTokens)
+			}
+			if genInfo.CacheDiscount != nil {
+				logger.Infof("      CacheDiscount: %.2f%%", *genInfo.CacheDiscount*100)
+			}
+			if genInfo.Additional != nil && len(genInfo.Additional) > 0 {
+				logger.Infof("      Additional fields:")
+				for key, value := range genInfo.Additional {
+					if strings.Contains(strings.ToLower(key), "cache") || strings.Contains(strings.ToLower(key), "token") {
+						logger.Infof("         %s: %v", key, value)
+					}
+				}
+			}
+		} else {
+			logger.Infof("   GenerationInfo is nil")
+		}
+	} else {
+		logger.Infof("   finalResp is nil or has no choices")
+	}
+
+	// Accumulate token usage from final LLM call
+	if finalResp != nil && len(finalResp.Choices) > 0 && finalUsage.TotalTokens > 0 {
+		var generationInfo *llmtypes.GenerationInfo
+		if finalResp.Choices[0].GenerationInfo != nil {
+			generationInfo = finalResp.Choices[0].GenerationInfo
+		}
+		a.accumulateTokenUsage(ctx, events.UsageMetrics{
+			PromptTokens:     finalUsage.InputTokens,
+			CompletionTokens: finalUsage.OutputTokens,
+			TotalTokens:      finalUsage.TotalTokens,
+		}, generationInfo, a.MaxTurns+1)
+	} else {
+		logger.Warnf("⚠️  [FINAL LLM CALL DEBUG] Skipping token accumulation - finalResp: %v, choices: %d, finalUsage.TotalTokens: %d",
+			finalResp != nil, func() int {
+				if finalResp != nil {
+					return len(finalResp.Choices)
+				}
+				return 0
+			}(), finalUsage.TotalTokens)
+	}
 
 	if err != nil {
 		// If the final call also fails, emit error event
@@ -1267,7 +1333,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
-			a.EndAgentSession(ctx)
+			a.EndAgentSession(ctx, time.Since(conversationStartTime))
 
 			// Append the final response to messages array for consistency
 			if lastResponse != "" {
@@ -1322,7 +1388,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 	// NEW: End agent session for hierarchy tracking
-	a.EndAgentSession(ctx)
+	a.EndAgentSession(ctx, time.Since(conversationStartTime))
 
 	// Append the final response to messages array for consistency
 	if finalChoice.Content != "" {

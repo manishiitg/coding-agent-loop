@@ -1585,8 +1585,8 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                 className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey, config.model_id)}
-                disabled={!config.model_id || apiKeyStatus === 'testing'}
+                onClick={() => onTestAPIKey(apiKey || '', config.model_id)}
+                disabled={apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"
               >
@@ -1601,15 +1601,9 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                 )}
               </Button>
             </div>
-            {!config.model_id && (
-              <div className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                <AlertCircle className="w-4 h-4" />
-                Please select a model from the dropdown below to test authentication
-              </div>
-            )}
-            {!apiKey && config.model_id && (
+            {!apiKey && (
               <div className="text-xs text-muted-foreground">
-                No API key provided - will test using OAuth authentication (gcloud/service account/ADC)
+                No API key provided - will test using OAuth authentication (gcloud/service account/ADC). Make sure GOOGLE_CLOUD_PROJECT or VERTEX_PROJECT_ID is set.
               </div>
             )}
             {apiKey && (

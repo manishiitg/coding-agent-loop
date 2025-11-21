@@ -51,8 +51,15 @@ func (v *VertexAnthropicAdapter) GenerateContent(ctx context.Context, messages [
 		return nil, fmt.Errorf("failed to get access token: %w", err)
 	}
 
+	// Handle JSON mode by adding instructions to messages (similar to direct Anthropic adapter)
+	// This ensures structured output works correctly with Vertex Anthropic
+	messagesToConvert := messages
+	if opts.JSONMode {
+		messagesToConvert = v.addJSONModeInstructions(messages)
+	}
+
 	// Convert messages to Anthropic format
-	anthropicMessages, err := v.convertMessagesToAnthropic(messages)
+	anthropicMessages, err := v.convertMessagesToAnthropic(messagesToConvert)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert messages: %w", err)
 	}
@@ -1013,6 +1020,44 @@ func (v *VertexAnthropicAdapter) getTemperature(opts *llmtypes.CallOptions) floa
 		return opts.Temperature
 	}
 	return 1.0 // Default
+}
+
+// addJSONModeInstructions adds JSON mode instructions to messages (similar to direct Anthropic adapter)
+// This ensures structured output works correctly with Vertex Anthropic models
+func (v *VertexAnthropicAdapter) addJSONModeInstructions(messages []llmtypes.MessageContent) []llmtypes.MessageContent {
+	jsonInstruction := "You must respond with valid JSON only, no other text. Return a JSON object."
+
+	// Create a copy of messages to avoid modifying the original
+	result := make([]llmtypes.MessageContent, len(messages))
+	copy(result, messages)
+
+	// Find system message and append JSON instruction
+	for i := range result {
+		if result[i].Role == llmtypes.ChatMessageTypeSystem {
+			// Append JSON instruction to system message
+			if len(result[i].Parts) > 0 {
+				if textPart, ok := result[i].Parts[0].(llmtypes.TextContent); ok {
+					result[i].Parts[0] = llmtypes.TextContent{
+						Text: textPart.Text + "\n\n" + jsonInstruction,
+					}
+					return result
+				}
+			}
+		}
+	}
+
+	// If no system message, prepend JSON instruction to first user message
+	if len(result) > 0 && result[0].Role == llmtypes.ChatMessageTypeHuman {
+		if len(result[0].Parts) > 0 {
+			if textPart, ok := result[0].Parts[0].(llmtypes.TextContent); ok {
+				result[0].Parts[0] = llmtypes.TextContent{
+					Text: jsonInstruction + "\n\n" + textPart.Text,
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // Call implements a convenience method for simple text generation

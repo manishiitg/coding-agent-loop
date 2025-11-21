@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	llmproviders "llm-providers"
 	"llm-providers/interfaces"

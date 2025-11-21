@@ -3,13 +3,12 @@ package llm
 import (
 	"context"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 
 	llmproviders "llm-providers"
 	"llm-providers/interfaces"
-	llmprovidertypes "llm-providers/llmtypes"
 )
 
 // Re-export Provider type and constants from llm-providers
@@ -138,309 +137,21 @@ func InitializeLLM(config Config) (llmtypes.Model, error) {
 	// Convert agent_go Config to llm-providers Config
 	externalConfig := convertConfig(config)
 
-	// Call llm-providers InitializeLLM
+	// Call llm-providers InitializeLLM (already returns llmtypes.Model)
 	llm, err := llmproviders.InitializeLLM(externalConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	// Wrap the returned LLM to maintain backward compatibility
-	// The llm-providers version already returns ProviderAwareLLM, but we need to
-	// wrap it to maintain the same interface that agent_go expects
+	// Wrap the returned LLM to maintain backward compatibility with agent_go-specific fields
 	return wrapProviderAwareLLM(llm, config.Provider, config.ModelID, config.Tracers, config.TraceID, config.Logger), nil
 }
 
-// modelAdapter adapts llm-providers Model to agent_go llmtypes.Model
-type modelAdapter struct {
-	model llmprovidertypes.Model
-}
-
-// GenerateContent converts types and calls the underlying model
-func (m *modelAdapter) GenerateContent(ctx context.Context, messages []llmtypes.MessageContent, options ...llmtypes.CallOption) (*llmtypes.ContentResponse, error) {
-	// Convert messages from agent_go types to llm-providers types
-	providerMessages := make([]llmprovidertypes.MessageContent, len(messages))
-	for i, msg := range messages {
-		providerMessages[i] = convertMessageContent(msg)
-	}
-
-	// Convert options from agent_go types to llm-providers types
-	providerOptions := make([]llmprovidertypes.CallOption, len(options))
-	for i, opt := range options {
-		providerOptions[i] = convertCallOption(opt)
-	}
-
-	// Call the underlying model
-	resp, err := m.model.GenerateContent(ctx, providerMessages, providerOptions...)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert response from llm-providers types to agent_go types
-	return convertContentResponse(resp), nil
-}
-
-// convertMessageContent converts agent_go MessageContent to llm-providers MessageContent
-func convertMessageContent(msg llmtypes.MessageContent) llmprovidertypes.MessageContent {
-	parts := make([]llmprovidertypes.ContentPart, len(msg.Parts))
-	for i, part := range msg.Parts {
-		parts[i] = convertContentPart(part)
-	}
-	return llmprovidertypes.MessageContent{
-		Role:  llmprovidertypes.ChatMessageType(msg.Role),
-		Parts: parts,
-	}
-}
-
-// convertContentPart converts agent_go ContentPart to llm-providers ContentPart
-func convertContentPart(part llmtypes.ContentPart) llmprovidertypes.ContentPart {
-	switch p := part.(type) {
-	case llmtypes.TextContent:
-		return llmprovidertypes.TextContent{Text: p.Text}
-	case llmtypes.ImageContent:
-		return llmprovidertypes.ImageContent{
-			SourceType: p.SourceType,
-			MediaType:  p.MediaType,
-			Data:       p.Data,
-		}
-	case llmtypes.ToolCall:
-		result := llmprovidertypes.ToolCall{
-			ID:   p.ID,
-			Type: p.Type,
-		}
-		if p.FunctionCall != nil {
-			result.FunctionCall = &llmprovidertypes.FunctionCall{
-				Name:      p.FunctionCall.Name,
-				Arguments: p.FunctionCall.Arguments,
-			}
-		}
-		result.ThoughtSignature = p.ThoughtSignature
-		return result
-	case llmtypes.ToolCallResponse:
-		return llmprovidertypes.ToolCallResponse{
-			ToolCallID: p.ToolCallID,
-			Name:       p.Name,
-			Content:    p.Content,
-		}
-	default:
-		return part
-	}
-}
-
-// convertCallOption converts agent_go CallOption to llm-providers CallOption
-func convertCallOption(opt llmtypes.CallOption) llmprovidertypes.CallOption {
-	return func(opts *llmprovidertypes.CallOptions) {
-		// Create a temporary agent_go CallOptions to apply the option
-		agentOpts := &llmtypes.CallOptions{}
-		opt(agentOpts)
-
-		// Copy the values to llm-providers CallOptions
-		if agentOpts.Model != "" {
-			opts.Model = agentOpts.Model
-		}
-		if agentOpts.Temperature != 0 {
-			opts.Temperature = agentOpts.Temperature
-		}
-		if agentOpts.MaxTokens != 0 {
-			opts.MaxTokens = agentOpts.MaxTokens
-		}
-		if agentOpts.JSONMode {
-			opts.JSONMode = agentOpts.JSONMode
-		}
-		if agentOpts.Tools != nil {
-			// Convert tools
-			tools := make([]llmprovidertypes.Tool, len(agentOpts.Tools))
-			for i, tool := range agentOpts.Tools {
-				tools[i] = convertTool(tool)
-			}
-			opts.Tools = tools
-		}
-		if agentOpts.ToolChoice != nil {
-			opts.ToolChoice = convertToolChoice(agentOpts.ToolChoice)
-		}
-		if agentOpts.StreamingFunc != nil {
-			// Convert StreamingFunc to StreamChan
-			ch := make(chan llmprovidertypes.StreamChunk, 100)
-			opts.StreamChan = ch
-			go func() {
-				for chunk := range ch {
-					// Convert StreamChunk to string for agent_go's StreamingFunc
-					if chunk.Content != "" {
-						agentOpts.StreamingFunc(chunk.Content)
-					}
-				}
-			}()
-		}
-		if agentOpts.Metadata != nil {
-			opts.Metadata = convertMetadata(agentOpts.Metadata)
-		}
-	}
-}
-
-// convertTool converts agent_go Tool to llm-providers Tool
-func convertTool(tool llmtypes.Tool) llmprovidertypes.Tool {
-	return llmprovidertypes.Tool{
-		Type:     tool.Type,
-		Function: convertFunctionDefinition(tool.Function),
-	}
-}
-
-// convertFunctionDefinition converts agent_go FunctionDefinition to llm-providers FunctionDefinition
-func convertFunctionDefinition(fn *llmtypes.FunctionDefinition) *llmprovidertypes.FunctionDefinition {
-	if fn == nil {
-		return nil
-	}
-	// Convert Parameters struct
-	var params *llmprovidertypes.Parameters
-	if fn.Parameters != nil {
-		params = &llmprovidertypes.Parameters{
-			Type:                 fn.Parameters.Type,
-			Properties:           fn.Parameters.Properties,
-			Required:             fn.Parameters.Required,
-			AdditionalProperties: fn.Parameters.AdditionalProperties,
-			PatternProperties:    fn.Parameters.PatternProperties,
-			MinProperties:        fn.Parameters.MinProperties,
-			MaxProperties:        fn.Parameters.MaxProperties,
-			Additional:           fn.Parameters.Additional,
-		}
-	}
-	return &llmprovidertypes.FunctionDefinition{
-		Name:        fn.Name,
-		Description: fn.Description,
-		Parameters:  params,
-	}
-}
-
-// convertToolChoice converts agent_go ToolChoice to llm-providers ToolChoice
-func convertToolChoice(tc *llmtypes.ToolChoice) *llmprovidertypes.ToolChoice {
-	if tc == nil {
-		return nil
-	}
-	var function *llmprovidertypes.FunctionName
-	if tc.Function != nil {
-		function = &llmprovidertypes.FunctionName{
-			Name: tc.Function.Name,
-		}
-	}
-	return &llmprovidertypes.ToolChoice{
-		Type:     tc.Type,
-		Function: function,
-		Any:      tc.Any,
-		None:     tc.None,
-	}
-}
-
-// convertMetadata converts agent_go Metadata to llm-providers Metadata
-func convertMetadata(md *llmtypes.Metadata) *llmprovidertypes.Metadata {
-	if md == nil {
-		return nil
-	}
-	result := &llmprovidertypes.Metadata{}
-	if md.Usage != nil {
-		result.Usage = &llmprovidertypes.UsageMetadata{
-			Include: md.Usage.Include,
-		}
-	}
-	return result
-}
-
-// convertContentResponse converts llm-providers ContentResponse to agent_go ContentResponse
-func convertContentResponse(resp *llmprovidertypes.ContentResponse) *llmtypes.ContentResponse {
-	if resp == nil {
-		return nil
-	}
-	choices := make([]*llmtypes.ContentChoice, len(resp.Choices))
-	for i, choice := range resp.Choices {
-		if choice != nil {
-			choices[i] = convertContentChoice(choice)
-		}
-	}
-	return &llmtypes.ContentResponse{
-		Choices: choices,
-	}
-}
-
-// convertContentChoice converts llm-providers ContentChoice to agent_go ContentChoice
-func convertContentChoice(choice *llmprovidertypes.ContentChoice) *llmtypes.ContentChoice {
-	result := &llmtypes.ContentChoice{
-		Content:    choice.Content,
-		StopReason: choice.StopReason,
-	}
-	if choice.ToolCalls != nil {
-		result.ToolCalls = make([]llmtypes.ToolCall, len(choice.ToolCalls))
-		for i, tc := range choice.ToolCalls {
-			result.ToolCalls[i] = convertToolCall(tc)
-		}
-	}
-	if choice.FuncCall != nil {
-		result.FuncCall = convertFunctionCall(choice.FuncCall)
-	}
-	if choice.GenerationInfo != nil {
-		result.GenerationInfo = convertGenerationInfo(choice.GenerationInfo)
-	}
-	return result
-}
-
-// convertToolCall converts llm-providers ToolCall to agent_go ToolCall
-func convertToolCall(tc llmprovidertypes.ToolCall) llmtypes.ToolCall {
-	result := llmtypes.ToolCall{
-		ID:               tc.ID,
-		Type:             tc.Type,
-		ThoughtSignature: tc.ThoughtSignature, // CRITICAL: Preserve thought signature for Gemini 3 Pro
-	}
-	if tc.FunctionCall != nil {
-		result.FunctionCall = convertFunctionCall(tc.FunctionCall)
-	}
-	return result
-}
-
-// convertFunctionCall converts llm-providers FunctionCall to agent_go FunctionCall
-func convertFunctionCall(fc *llmprovidertypes.FunctionCall) *llmtypes.FunctionCall {
-	if fc == nil {
-		return nil
-	}
-	return &llmtypes.FunctionCall{
-		Name:      fc.Name,
-		Arguments: fc.Arguments,
-	}
-}
-
-// convertGenerationInfo converts llm-providers GenerationInfo to agent_go GenerationInfo
-func convertGenerationInfo(gi *llmprovidertypes.GenerationInfo) *llmtypes.GenerationInfo {
-	if gi == nil {
-		return nil
-	}
-	result := &llmtypes.GenerationInfo{}
-	if gi.InputTokens != nil {
-		result.InputTokens = gi.InputTokens
-	}
-	if gi.OutputTokens != nil {
-		result.OutputTokens = gi.OutputTokens
-	}
-	if gi.TotalTokens != nil {
-		result.TotalTokens = gi.TotalTokens
-	}
-	if gi.CacheDiscount != nil {
-		result.CacheDiscount = gi.CacheDiscount
-	}
-	if gi.CachedContentTokens != nil {
-		result.CachedContentTokens = gi.CachedContentTokens
-	}
-	if gi.ReasoningTokens != nil {
-		result.ReasoningTokens = gi.ReasoningTokens
-	}
-	if gi.Additional != nil {
-		result.Additional = make(map[string]interface{})
-		for k, v := range gi.Additional {
-			result.Additional[k] = v
-		}
-	}
-	return result
-}
-
 // wrapProviderAwareLLM wraps the llm-providers Model to maintain backward compatibility
-func wrapProviderAwareLLM(llm llmprovidertypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger) *ProviderAwareLLM {
+// Since both packages now use the same llmtypes, no conversion is needed
+func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
-		Model:    &modelAdapter{model: llm},
+		Model:    llm,
 		provider: provider,
 		modelID:  modelID,
 		tracers:  tracers,

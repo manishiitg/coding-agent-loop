@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"

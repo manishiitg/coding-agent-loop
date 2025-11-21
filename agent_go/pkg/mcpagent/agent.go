@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -289,6 +289,17 @@ type Agent struct {
 
 	// Cross-provider fallback configuration
 	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration from frontend
+
+	// Cumulative token tracking for entire conversation
+	cumulativePromptTokens     int          // Cumulative prompt/input tokens
+	cumulativeCompletionTokens int          // Cumulative completion/output tokens
+	cumulativeTotalTokens      int          // Cumulative total tokens
+	cumulativeCacheTokens      int          // Cumulative cache tokens (sum of all cache-related tokens)
+	cumulativeReasoningTokens  int          // Cumulative reasoning tokens (for models like o3)
+	cumulativeCacheDiscount    float64      // Sum of cache discounts (for averaging)
+	llmCallCount               int          // Number of LLM calls made
+	cacheEnabledCallCount      int          // Number of calls with cache tokens > 0
+	tokenTrackingMutex         sync.RWMutex // Mutex for thread-safe token accumulation
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -739,9 +750,154 @@ func (a *Agent) StartLLMGeneration(ctx context.Context) {
 	a.EmitTypedEvent(ctx, llmStartEvent)
 }
 
+// extractCacheTokens extracts all cache-related tokens from GenerationInfo
+// Supports multiple providers: OpenAI (CachedContentTokens), Anthropic (CacheReadInputTokens, CacheCreationInputTokens)
+func extractCacheTokens(generationInfo *llmtypes.GenerationInfo) int {
+	if generationInfo == nil {
+		return 0
+	}
+
+	totalCacheTokens := 0
+
+	// Check CachedContentTokens (OpenAI, Gemini)
+	if generationInfo.CachedContentTokens != nil {
+		totalCacheTokens += *generationInfo.CachedContentTokens
+	}
+
+	// Check Additional map for Anthropic cache tokens
+	if generationInfo.Additional != nil {
+		// CacheReadInputTokens (tokens read from cache)
+		if cacheRead, ok := generationInfo.Additional["CacheReadInputTokens"]; ok {
+			if cacheReadInt, ok := cacheRead.(int); ok {
+				totalCacheTokens += cacheReadInt
+			} else if cacheReadFloat, ok := cacheRead.(float64); ok {
+				totalCacheTokens += int(cacheReadFloat)
+			}
+		}
+		// Also check lowercase variant
+		if cacheRead, ok := generationInfo.Additional["cache_read_input_tokens"]; ok {
+			if cacheReadInt, ok := cacheRead.(int); ok {
+				totalCacheTokens += cacheReadInt
+			} else if cacheReadFloat, ok := cacheRead.(float64); ok {
+				totalCacheTokens += int(cacheReadFloat)
+			}
+		}
+
+		// CacheCreationInputTokens (tokens used to create cache)
+		if cacheCreate, ok := generationInfo.Additional["CacheCreationInputTokens"]; ok {
+			if cacheCreateInt, ok := cacheCreate.(int); ok {
+				totalCacheTokens += cacheCreateInt
+			} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
+				totalCacheTokens += int(cacheCreateFloat)
+			}
+		}
+		// Also check lowercase variant
+		if cacheCreate, ok := generationInfo.Additional["cache_creation_input_tokens"]; ok {
+			if cacheCreateInt, ok := cacheCreate.(int); ok {
+				totalCacheTokens += cacheCreateInt
+			} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
+				totalCacheTokens += int(cacheCreateFloat)
+			}
+		}
+	}
+
+	return totalCacheTokens
+}
+
+// accumulateTokenUsage accumulates token usage from an LLM call
+func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.UsageMetrics, generationInfo *llmtypes.GenerationInfo, turn int) {
+	a.tokenTrackingMutex.Lock()
+	defer a.tokenTrackingMutex.Unlock()
+
+	// Extract cache tokens
+	cacheTokens := extractCacheTokens(generationInfo)
+
+	// Extract reasoning tokens
+	reasoningTokens := 0
+	if generationInfo != nil && generationInfo.ReasoningTokens != nil {
+		reasoningTokens = *generationInfo.ReasoningTokens
+	}
+
+	// Extract cache discount
+	cacheDiscount := 0.0
+	if generationInfo != nil && generationInfo.CacheDiscount != nil {
+		cacheDiscount = *generationInfo.CacheDiscount
+	}
+
+	// Accumulate tokens
+	a.cumulativePromptTokens += usageMetrics.PromptTokens
+	a.cumulativeCompletionTokens += usageMetrics.CompletionTokens
+	a.cumulativeTotalTokens += usageMetrics.TotalTokens
+	a.cumulativeCacheTokens += cacheTokens
+	a.cumulativeReasoningTokens += reasoningTokens
+	a.cumulativeCacheDiscount += cacheDiscount
+	a.llmCallCount++
+
+	if cacheTokens > 0 {
+		a.cacheEnabledCallCount++
+	}
+
+	// Detailed logging of tokens received from LLM provider
+	logger := getLogger(a)
+	logger.Infof("📊 [TOKEN TRACKING] Turn %d - Tokens from LLM Provider:", turn)
+	logger.Infof("   Prompt/Input: %d, Completion/Output: %d, Total: %d",
+		usageMetrics.PromptTokens, usageMetrics.CompletionTokens, usageMetrics.TotalTokens)
+
+	if cacheTokens > 0 {
+		logger.Infof("   Cache Tokens: %d", cacheTokens)
+		// Log breakdown of cache tokens
+		if generationInfo != nil {
+			if generationInfo.CachedContentTokens != nil {
+				logger.Infof("      - CachedContentTokens: %d", *generationInfo.CachedContentTokens)
+			}
+			if generationInfo.Additional != nil {
+				if cacheRead, ok := generationInfo.Additional["CacheReadInputTokens"]; ok {
+					logger.Infof("      - CacheReadInputTokens: %v", cacheRead)
+				}
+				if cacheCreate, ok := generationInfo.Additional["CacheCreationInputTokens"]; ok {
+					logger.Infof("      - CacheCreationInputTokens: %v", cacheCreate)
+				}
+			}
+		}
+	}
+
+	if reasoningTokens > 0 {
+		logger.Infof("   Reasoning Tokens: %d", reasoningTokens)
+	}
+
+	if cacheDiscount > 0 {
+		logger.Infof("   Cache Discount: %.2f%%", cacheDiscount*100)
+	}
+
+	// Log cumulative totals
+	logger.Infof("📊 [TOKEN TRACKING] Cumulative Totals (after turn %d):", turn)
+	logger.Infof("   Prompt: %d, Completion: %d, Total: %d",
+		a.cumulativePromptTokens, a.cumulativeCompletionTokens, a.cumulativeTotalTokens)
+	logger.Infof("   Cache: %d, Reasoning: %d, LLM Calls: %d, Cache-Enabled Calls: %d",
+		a.cumulativeCacheTokens, a.cumulativeReasoningTokens, a.llmCallCount, a.cacheEnabledCallCount)
+	if a.cacheEnabledCallCount > 0 {
+		avgCacheDiscount := a.cumulativeCacheDiscount / float64(a.cacheEnabledCallCount)
+		logger.Infof("   Average Cache Discount: %.2f%%", avgCacheDiscount*100)
+	}
+}
+
 // EndLLMGeneration ends the current LLM generation
-func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, toolCalls int, duration time.Duration, usageMetrics events.UsageMetrics) {
-	// Emit LLM generation end event to close hierarchy
+func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, toolCalls int, duration time.Duration, usageMetrics events.UsageMetrics, generationInfo *llmtypes.GenerationInfo) {
+	// Accumulate token usage (including cache tokens)
+	a.accumulateTokenUsage(ctx, usageMetrics, generationInfo, turn)
+
+	// Extract cache and reasoning tokens to include in UsageMetrics
+	cacheTokens := extractCacheTokens(generationInfo)
+	reasoningTokens := 0
+	if generationInfo != nil && generationInfo.ReasoningTokens != nil {
+		reasoningTokens = *generationInfo.ReasoningTokens
+	}
+
+	// Add cache and reasoning tokens to usage metrics
+	usageMetrics.CacheTokens = cacheTokens
+	usageMetrics.ReasoningTokens = reasoningTokens
+
+	// Emit LLM generation end event with complete token information
 	llmEndEvent := events.NewLLMGenerationEndEvent(turn, result, toolCalls, duration, usageMetrics)
 	a.EmitTypedEvent(ctx, llmEndEvent)
 }
@@ -751,8 +907,70 @@ func (a *Agent) EndTurn(ctx context.Context) {
 	// This method is no longer needed as hierarchy is removed
 }
 
+// emitTotalTokenUsageEvent emits a total token usage event with all cumulative metrics
+func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDuration time.Duration) {
+	a.tokenTrackingMutex.RLock()
+	defer a.tokenTrackingMutex.RUnlock()
+
+	// Calculate average cache discount if applicable
+	avgCacheDiscount := 0.0
+	if a.cacheEnabledCallCount > 0 {
+		avgCacheDiscount = a.cumulativeCacheDiscount / float64(a.cacheEnabledCallCount)
+	}
+
+	// Create generation info map with cumulative cache information
+	generationInfo := make(map[string]interface{})
+	generationInfo["cumulative_prompt_tokens"] = a.cumulativePromptTokens
+	generationInfo["cumulative_completion_tokens"] = a.cumulativeCompletionTokens
+	generationInfo["cumulative_total_tokens"] = a.cumulativeTotalTokens
+	generationInfo["cumulative_cache_tokens"] = a.cumulativeCacheTokens
+	generationInfo["cumulative_reasoning_tokens"] = a.cumulativeReasoningTokens
+	generationInfo["llm_call_count"] = a.llmCallCount
+	generationInfo["cache_enabled_call_count"] = a.cacheEnabledCallCount
+	if avgCacheDiscount > 0 {
+		generationInfo["average_cache_discount"] = avgCacheDiscount
+	}
+
+	// Emit total token usage event
+	totalTokenEvent := events.NewTokenUsageEventWithCache(
+		0, // turn (this is a summary event, not tied to a specific turn)
+		"conversation_total",
+		a.ModelID,
+		string(a.provider),
+		a.cumulativePromptTokens,
+		a.cumulativeCompletionTokens,
+		a.cumulativeTotalTokens,
+		conversationDuration,
+		"conversation_total",
+		avgCacheDiscount,
+		a.cumulativeReasoningTokens,
+		generationInfo,
+	)
+
+	a.EmitTypedEvent(ctx, totalTokenEvent)
+
+	// Log total token usage summary
+	logger := getLogger(a)
+	logger.Infof("📊 [TOKEN TRACKING] ===== CONVERSATION TOTAL TOKEN USAGE =====")
+	logger.Infof("   Prompt/Input Tokens: %d", a.cumulativePromptTokens)
+	logger.Infof("   Completion/Output Tokens: %d", a.cumulativeCompletionTokens)
+	logger.Infof("   Total Tokens: %d", a.cumulativeTotalTokens)
+	logger.Infof("   Cache Tokens: %d", a.cumulativeCacheTokens)
+	logger.Infof("   Reasoning Tokens: %d", a.cumulativeReasoningTokens)
+	logger.Infof("   LLM Calls: %d", a.llmCallCount)
+	logger.Infof("   Cache-Enabled Calls: %d", a.cacheEnabledCallCount)
+	if avgCacheDiscount > 0 {
+		logger.Infof("   Average Cache Discount: %.2f%%", avgCacheDiscount*100)
+	}
+	logger.Infof("   Conversation Duration: %v", conversationDuration)
+	logger.Infof("============================================================")
+}
+
 // EndAgentSession ends the current agent session
-func (a *Agent) EndAgentSession(ctx context.Context) {
+func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.Duration) {
+	// Emit total token usage event before agent end event
+	a.emitTotalTokenUsageEvent(ctx, conversationDuration)
+
 	// Emit agent end event to close hierarchy
 	agentEndEvent := events.NewAgentEndEvent(string(a.AgentMode), true, "")
 	a.EmitTypedEvent(ctx, agentEndEvent)

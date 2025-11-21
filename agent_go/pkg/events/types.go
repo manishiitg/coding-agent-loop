@@ -167,6 +167,9 @@ const (
 	HumanVerificationResponse EventType = "human_verification_response"
 	RequestHumanFeedback      EventType = "request_human_feedback"
 	BlockingHumanFeedback     EventType = "blocking_human_feedback"
+
+	// Step token usage event
+	StepTokenUsage EventType = "step_token_usage"
 )
 
 // Unified Event structure with hierarchy support
@@ -228,7 +231,8 @@ func GetComponentFromEventType(eventType EventType) string {
 		eventType == OrchestratorAgentStart || eventType == OrchestratorAgentEnd || eventType == OrchestratorAgentError ||
 		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
 		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
-		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted || eventType == VariablesExtracted:
+		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted || eventType == VariablesExtracted ||
+		eventType == StepTokenUsage:
 		return "orchestrator"
 	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
 		return "agent"

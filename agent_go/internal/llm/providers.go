@@ -67,16 +67,25 @@ func NewLoggerAdapter(logger utils.ExtendedLogger) *LoggerAdapter {
 
 // Infof implements interfaces.Logger
 func (l *LoggerAdapter) Infof(format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Infof(format, v...)
 }
 
 // Errorf implements interfaces.Logger
 func (l *LoggerAdapter) Errorf(format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Errorf(format, v...)
 }
 
 // Debugf implements interfaces.Logger
 func (l *LoggerAdapter) Debugf(format string, args ...interface{}) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Debugf(format, args...)
 }
 
@@ -97,7 +106,7 @@ func convertConfig(config Config) llmproviders.Config {
 		logger = NewLoggerAdapter(config.Logger)
 	} else {
 		// Create a no-op logger if none provided
-		logger = &LoggerAdapter{logger: nil}
+		logger = NewLoggerAdapter(nil)
 	}
 
 	// Convert API keys if provided

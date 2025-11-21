@@ -1,17 +1,13 @@
 import React from 'react';
 import type { OrchestratorAgentEndEvent } from '../../../generated/events';
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
+import { formatDuration } from '../../../utils/duration';
 
 interface OrchestratorAgentEndEventDisplayProps {
   event: OrchestratorAgentEndEvent;
 }
 
 export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEventDisplayProps> = ({ event }) => {
-  const formatDuration = (duration?: number) => {
-    if (!duration) return '0ms';
-    if (duration < 1000) return `${duration}ms`;
-    return `${(duration / 1000).toFixed(1)}s`;
-  };
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';
@@ -114,9 +110,41 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Completed: {event.agent_name}{' '}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  | Duration: {formatDuration(event.duration)}
+                  | Duration: {formatDuration(event.duration || 0)}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                   {event.iteration !== undefined && ` | Iteration: ${event.iteration}`}
+                  {/* Token usage summary - check if token fields exist */}
+                  {(() => {
+                    const eventWithTokens = event as OrchestratorAgentEndEvent & {
+                      total_tokens?: number
+                      prompt_tokens?: number
+                      completion_tokens?: number
+                      cache_tokens?: number
+                      reasoning_tokens?: number
+                    }
+                    if (eventWithTokens.total_tokens !== undefined && eventWithTokens.total_tokens > 0) {
+                      return (
+                        <>
+                          {' • Tokens: '}
+                          {eventWithTokens.prompt_tokens !== undefined && <>Input: {eventWithTokens.prompt_tokens.toLocaleString()}</>}
+                          {eventWithTokens.completion_tokens !== undefined && <> • Output: {eventWithTokens.completion_tokens.toLocaleString()}</>}
+                          {' • Total: '}
+                          <span className="font-semibold">{eventWithTokens.total_tokens.toLocaleString()}</span>
+                          {eventWithTokens.cache_tokens !== undefined && eventWithTokens.cache_tokens > 0 && (
+                            <span className="text-cyan-600 dark:text-cyan-400">
+                              {' • Cache: '}{eventWithTokens.cache_tokens.toLocaleString()}
+                            </span>
+                          )}
+                          {eventWithTokens.reasoning_tokens !== undefined && eventWithTokens.reasoning_tokens > 0 && (
+                            <span className="text-purple-600 dark:text-purple-400">
+                              {' • Reasoning: '}{eventWithTokens.reasoning_tokens.toLocaleString()}
+                            </span>
+                          )}
+                        </>
+                      )
+                    }
+                    return null
+                  })()}
                 </span>
               </div>
             </div>

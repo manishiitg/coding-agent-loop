@@ -173,11 +173,28 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	}
 
 	// Create ConditionalLLM for conditional step evaluation
+	// Get LLM config from orchestrator to preserve API keys from frontend
+	orchestratorLLMConfig := baseOrchestrator.GetLLMConfig()
 	conditionalLLMConfig := &agents.OrchestratorAgentConfig{
 		Provider:    provider,
 		Model:       model,
 		Temperature: temperature,
 		MaxRetries:  3,
+	}
+	// Preserve API keys from orchestrator LLM config (sent from frontend)
+	if orchestratorLLMConfig != nil && orchestratorLLMConfig.APIKeys != nil {
+		conditionalLLMConfig.APIKeys = &agents.AgentAPIKeys{
+			OpenRouter: orchestratorLLMConfig.APIKeys.OpenRouter,
+			OpenAI:     orchestratorLLMConfig.APIKeys.OpenAI,
+			Anthropic:  orchestratorLLMConfig.APIKeys.Anthropic,
+			Vertex:     orchestratorLLMConfig.APIKeys.Vertex,
+		}
+		if orchestratorLLMConfig.APIKeys.Bedrock != nil {
+			conditionalLLMConfig.APIKeys.Bedrock = &agents.BedrockAgentConfig{
+				Region: orchestratorLLMConfig.APIKeys.Bedrock.Region,
+			}
+		}
+		logger.Infof("🔑 Preserved API keys for conditional LLM from orchestrator config")
 	}
 	conditionalLLM, err := orchestratorllm.CreateConditionalLLMWithEventBridge(
 		conditionalLLMConfig,
@@ -2196,6 +2213,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					}
 					hcpo.GetLogger().Infof("✅ Step %d/%d marked as completed and saved (%s) - Total completed: %d/%d", stepIndex+1, totalSteps, modeStr, len(progress.CompletedStepIndices), progress.TotalSteps)
 				}
+
+				// Emit step token usage summary
+				stepTitle := step.Title
+				if stepTitle == "" {
+					stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
+				}
+				hcpo.EmitStepTokenUsage(ctx, "execution", stepIndex, stepTitle, false) // Don't clear - keep for potential future queries
 			} else {
 				hcpo.GetLogger().Infof("✅ Branch step %d completed (not updating main progress)", stepIndex+1)
 			}

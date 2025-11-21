@@ -91,12 +91,24 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := pim.GetLLMConfig()
 	if pim.presetPlanImprovementLLM != nil && pim.presetPlanImprovementLLM.Provider != "" && pim.presetPlanImprovementLLM.ModelID != "" {
+		// Initialize fallback/cpf/apiKeys with safe defaults
+		var fallbackModels []string
+		var crossProviderFallback *agents.CrossProviderFallback
+		var apiKeys *orchestrator.APIKeys
+
+		// Only copy from orchestratorLLMConfig if it's not nil
+		if orchestratorLLMConfig != nil {
+			fallbackModels = orchestratorLLMConfig.FallbackModels
+			crossProviderFallback = orchestratorLLMConfig.CrossProviderFallback
+			apiKeys = orchestratorLLMConfig.APIKeys
+		}
+
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Provider:              pim.presetPlanImprovementLLM.Provider,
 			ModelID:               pim.presetPlanImprovementLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
-			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
+			FallbackModels:        fallbackModels,        // Preserve fallback models from orchestrator (or nil if orchestrator config is nil)
+			CrossProviderFallback: crossProviderFallback, // Preserve cross-provider fallback (or nil if orchestrator config is nil)
+			APIKeys:               apiKeys,               // Preserve API keys from orchestrator (or nil if orchestrator config is nil)
 		}
 		pim.GetLogger().Infof("🔧 Using preset default plan improvement LLM: %s/%s", pim.presetPlanImprovementLLM.Provider, pim.presetPlanImprovementLLM.ModelID)
 	} else {

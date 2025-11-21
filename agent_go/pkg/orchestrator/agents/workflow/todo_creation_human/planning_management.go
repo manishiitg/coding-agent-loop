@@ -240,18 +240,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 			return nil, nil, fmt.Errorf("plan validation failed: %w", err)
 		}
 
-		// Save JSON plan to file manually
+		// Save JSON plan to file using shared helper (ensures mutex protection)
 		planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
-
-		planJSON, err := json.MarshalIndent(planResponse, "", "  ")
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to marshal plan to JSON: %w", err)
-		}
-
-		if err := hcpo.WriteWorkspaceFile(ctx, planPath, string(planJSON)); err != nil {
+		if err := writePlanToFile(ctx, hcpo.GetWorkspacePath(), planResponse, nil, hcpo.WriteWorkspaceFile, hcpo.GetLogger()); err != nil {
 			return nil, nil, fmt.Errorf("failed to save plan.json: %w", err)
 		}
-		// Note: IDs are added above before marshaling, so they're included in the saved file
 
 		// Note: Learning integration cache removal no longer needed - execution agent auto-discovers files
 
@@ -733,11 +726,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	var approvedPlan *PlanningResponse
 	var initialPlanningFeedback string
 	var existingPlanForFirstUpdate *PlanningResponse
+	var eventEmitted bool = false
+	var planSource string = ""
 
 	// If plan exists, emit event immediately so UI can display it while user decides what to do
 	if planExists {
 		breakdownSteps := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
 		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
+		eventEmitted = true
+		planSource = "existing_plan"
 		hcpo.GetLogger().Infof("📋 Emitted plan event for UI display (%d steps)", len(breakdownSteps))
 	}
 
@@ -841,6 +838,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			approvedPlan, planningConversationHistory, err = hcpo.runPlanningPhase(ctx, revisionAttempt, humanFeedback, planningConversationHistory, existingPlanForUpdate)
 			if err != nil {
 				errMsg := err.Error()
+
+				// Check for conversational approval sentinel (UPDATE mode - no plan update needed)
+				if strings.HasPrefix(errMsg, "PLANNING_CONVERSATIONAL_APPROVED:") {
+					hcpo.GetLogger().Infof("✅ User approved conversational response - no plan update needed. Using existing plan.")
+					// Use existing plan since no update is needed
+					if existingPlanForUpdate != nil {
+						approvedPlan = existingPlanForUpdate
+						// planningConversationHistory already updated from runPlanningPhase
+						break
+					} else {
+						// This shouldn't happen in UPDATE mode, but handle gracefully
+						hcpo.GetLogger().Warnf("⚠️ Conversational approval received but no existing plan available")
+						return "", fmt.Errorf("conversational approval received but no existing plan to use")
+					}
+				}
+
 				feedbackPrefix := "PLANNING_TEXT_RESPONSE_FEEDBACK:"
 				if strings.Contains(errMsg, feedbackPrefix) {
 					parts := strings.Split(errMsg, feedbackPrefix)
@@ -866,6 +879,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 
 			// Emit todo steps extracted event
 			hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "new_plan")
+			eventEmitted = true
+			planSource = "new_plan"
 
 			// Request human approval for JSON plan
 			approvedInternal, feedbackInternal, err := hcpo.requestPlanApproval(ctx, revisionAttempt)
@@ -891,11 +906,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 
 	// Ensure event is emitted at the end if we have an approved plan
 	// This ensures the UI always sees the plan, even if event was emitted earlier
-	if approvedPlan != nil {
+	if approvedPlan != nil && !eventEmitted {
 		breakdownSteps := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
-		// Only emit if we haven't already emitted (to avoid duplicates)
-		// We emit here to ensure the UI always gets the event
-		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
+		// Determine correct source if not already set
+		if planSource == "" {
+			// If we haven't emitted yet, determine source based on context
+			// If we're using the existing plan (from option0), it's "existing_plan"
+			// Otherwise, it's a "new_plan"
+			if existingPlan != nil && approvedPlan == existingPlan {
+				planSource = "existing_plan"
+			} else {
+				planSource = "new_plan"
+			}
+		}
+		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, planSource)
 	}
 
 	// Build result summary

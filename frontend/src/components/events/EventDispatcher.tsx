@@ -132,6 +132,7 @@ import {
   IndependentStepsSelectedEventDisplay,
   TodoStepsExtractedEventDisplay
 } from './orchestrator'
+import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
 
 import {
@@ -392,6 +393,23 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
     // Variables Events
     case 'variables_extracted':
       return <VariablesExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+
+    // Step Token Usage Events
+    case 'step_token_usage':
+      return <StepTokenUsageEventDisplay event={extractEventData<{
+        timestamp?: string
+        phase: string
+        step: number
+        step_title?: string
+        prompt_tokens: number
+        completion_tokens: number
+        total_tokens: number
+        cache_tokens: number
+        reasoning_tokens: number
+        llm_call_count: number
+        cache_enabled_call_count: number
+        average_cache_discount: number
+      }>(event.data)} />
 
     // Default case for unknown event types
     default:

@@ -26,6 +26,26 @@ export function AgentEndEventComponent({ event }: AgentEndEventProps) {
               {isSuccess ? '✅' : '❌'} Agent {isSuccess ? 'Completed' : 'Failed'}{' '}
               <span className={`text-xs font-normal ${isSuccess ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                 | Type: {event.agent_type || 'Unknown'} | Status: {isSuccess ? 'Success' : 'Failed'}
+                {/* Token usage summary */}
+                {(event.total_tokens !== undefined && event.total_tokens > 0) && (
+                  <>
+                    {' • Tokens: '}
+                    {event.prompt_tokens !== undefined && <>Input: {event.prompt_tokens.toLocaleString()}</>}
+                    {event.completion_tokens !== undefined && <> • Output: {event.completion_tokens.toLocaleString()}</>}
+                    {' • Total: '}
+                    <span className="font-semibold">{event.total_tokens.toLocaleString()}</span>
+                    {event.cache_tokens !== undefined && event.cache_tokens > 0 && (
+                      <span className="text-cyan-600 dark:text-cyan-400">
+                        {' • Cache: '}{event.cache_tokens.toLocaleString()}
+                      </span>
+                    )}
+                    {event.reasoning_tokens !== undefined && event.reasoning_tokens > 0 && (
+                      <span className="text-purple-600 dark:text-purple-400">
+                        {' • Reasoning: '}{event.reasoning_tokens.toLocaleString()}
+                      </span>
+                    )}
+                  </>
+                )}
               </span>
             </div>
           </div>
@@ -73,6 +93,47 @@ export function AgentEndEventComponent({ event }: AgentEndEventProps) {
                 )}
                 {event.parent_id && (
                   <div>Parent ID: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">{event.parent_id}</code></div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Token Usage Details */}
+          {(event.total_tokens !== undefined && event.total_tokens > 0) && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-2">
+              <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">Token Usage:</div>
+              <div className="text-xs text-blue-600 dark:text-blue-400 space-y-1">
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {event.prompt_tokens !== undefined && (
+                    <span>Input: <span className="font-semibold">{event.prompt_tokens.toLocaleString()}</span></span>
+                  )}
+                  {event.completion_tokens !== undefined && (
+                    <span>Output: <span className="font-semibold">{event.completion_tokens.toLocaleString()}</span></span>
+                  )}
+                  <span>Total: <span className="font-semibold">{event.total_tokens.toLocaleString()}</span></span>
+                  {event.cache_tokens !== undefined && event.cache_tokens > 0 && (
+                    <span className="text-cyan-600 dark:text-cyan-400">
+                      Cache: {event.cache_tokens.toLocaleString()}
+                    </span>
+                  )}
+                  {event.reasoning_tokens !== undefined && event.reasoning_tokens > 0 && (
+                    <span className="text-purple-600 dark:text-purple-400">
+                      Reasoning: {event.reasoning_tokens.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                {(event.llm_call_count !== undefined && event.llm_call_count > 0) && (
+                  <div className="mt-1 pt-1 border-t border-blue-200 dark:border-blue-700">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      <span>LLM Calls: <span className="font-semibold">{event.llm_call_count}</span></span>
+                      {event.cache_enabled_call_count !== undefined && event.cache_enabled_call_count > 0 && (
+                        <span>Cache-Enabled: <span className="font-semibold">{event.cache_enabled_call_count}</span></span>
+                      )}
+                      {event.average_cache_discount !== undefined && event.average_cache_discount > 0 && (
+                        <span>Avg Cache Discount: <span className="font-semibold">{(event.average_cache_discount * 100).toFixed(1)}%</span></span>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

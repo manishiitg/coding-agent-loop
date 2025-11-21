@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"reflect"
 	"time"
 
 	"llm-providers/llmtypes"
@@ -165,7 +164,7 @@ func RunTypeConversionTest(llm llmtypes.Model, modelID string) {
 	// Test that adapters can actually process these types
 	// We'll do a simple test with a tool call message
 	log.Printf("\n🔍 Step 2: Testing adapter can process ToolCall types")
-	
+
 	// Create a simple tool for testing
 	testTool := llmtypes.Tool{
 		Type: "function",
@@ -220,7 +219,7 @@ func RunTypeConversionTest(llm llmtypes.Model, modelID string) {
 
 		// Step 3: Test that we can send tool calls back with responses
 		log.Printf("\n🔍 Step 3: Testing ToolCall and ToolCallResponse in conversation history")
-		
+
 		toolCall := resp.Choices[0].ToolCalls[0]
 		conversationWithResponse := []llmtypes.MessageContent{
 			{
@@ -329,4 +328,3 @@ func validateTypeAssertions(parts []llmtypes.ContentPart) error {
 	}
 	return nil
 }
-

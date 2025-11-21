@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
 	"llm-providers/llmtypes"
+	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -451,6 +451,12 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 		boa.logger.Infof("🔍 [DEBUG] StructuredResponse keys: %v", getMapKeys(structuredResponse))
 	}
 
+	// Get token usage from agent if available
+	var promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int
+	if boa.baseAgent != nil && boa.baseAgent.Agent() != nil {
+		promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount = boa.baseAgent.Agent().GetTokenUsage()
+	}
+
 	eventData := &events.OrchestratorAgentEndEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp:     time.Now(),
@@ -468,11 +474,18 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 			}
 			return ""
 		}(),
-		Duration:     duration,
-		ModelID:      boa.config.Model,
-		Provider:     boa.config.Provider,
-		ServersCount: len(boa.config.ServerNames),
-		MaxTurns:     boa.config.MaxTurns,
+		Duration:              duration,
+		ModelID:               boa.config.Model,
+		Provider:              boa.config.Provider,
+		ServersCount:          len(boa.config.ServerNames),
+		MaxTurns:              boa.config.MaxTurns,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		TotalTokens:           totalTokens,
+		CacheTokens:           cacheTokens,
+		ReasoningTokens:       reasoningTokens,
+		LLMCallCount:          llmCallCount,
+		CacheEnabledCallCount: cacheEnabledCallCount,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentEnd, eventData)

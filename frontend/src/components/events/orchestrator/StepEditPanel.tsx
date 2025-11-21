@@ -273,10 +273,14 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
+    // Empty array means all tools enabled by default
+    if (enabledTools.length === 0) return true;
     return enabledTools.includes(formatToolEntry(category, '*'));
   };
 
   const isToolEnabled = (category: string, toolName: string, enabledTools: string[]): boolean => {
+    // Empty array means all tools enabled by default
+    if (enabledTools.length === 0) return true;
     // Check if category is enabled (all tools)
     if (isCategoryEnabled(category, enabledTools)) return true;
     // Check if specific tool is enabled
@@ -293,6 +297,17 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   const disableCategory = (category: string, enabledTools: string[]): string[] => {
+    // If array is empty (default = all enabled), explicitly enable all other categories
+    if (enabledTools.length === 0) {
+      const allCategories = ['workspace_tools', 'human_tools'];
+      const otherCategories = allCategories.filter(c => c !== category);
+      const result: string[] = [];
+      for (const otherCategory of otherCategories) {
+        const otherCategoryTools = getToolsByCategory(otherCategory);
+        result.push(...otherCategoryTools.map(t => formatToolEntry(otherCategory, t)));
+      }
+      return result;
+    }
     // Remove category:* and all specific tools from this category
     return enabledTools.filter(entry => {
       const parsed = parseToolEntry(entry);
@@ -1077,7 +1092,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         const categoryEnabled = isCategoryEnabled('workspace_tools', enabledCustomTools);
                         
                         if (categoryEnabled) return true;
-                        if (enabledCustomTools.length === 0) return true; // Default: all enabled
                         
                         // Check if all workspace tools are enabled individually
                         const workspaceSpecificTools = enabledCustomTools
@@ -1085,10 +1099,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                           .filter(parsed => parsed && parsed.category === 'workspace_tools' && parsed.tool !== '*')
                           .map(parsed => parsed!.tool);
                         
-                        if (workspaceSpecificTools.length === allWorkspaceTools.length) return true;
-                        if (workspaceSpecificTools.length > 0) return true; // At least one enabled
-                        
-                        return false;
+                        // Checked if all tools are enabled (either via category:* or all individual tools)
+                        return workspaceSpecificTools.length === allWorkspaceTools.length;
                       })()}
                       onChange={(e) => {
                         if (e.target.checked) {
@@ -1370,7 +1382,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         const categoryEnabled = isCategoryEnabled('human_tools', enabledCustomTools);
                         
                         if (categoryEnabled) return true;
-                        if (enabledCustomTools.length === 0) return true; // Default: all enabled
                         
                         // Check if all human tools are enabled individually
                         const humanSpecificTools = enabledCustomTools
@@ -1378,10 +1389,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                           .filter(parsed => parsed && parsed.category === 'human_tools' && parsed.tool !== '*')
                           .map(parsed => parsed!.tool);
                         
-                        if (humanSpecificTools.length === allHumanTools.length) return true;
-                        if (humanSpecificTools.length > 0) return true; // At least one enabled
-                        
-                        return false;
+                        // Checked if all tools are enabled (either via category:* or all individual tools)
+                        return humanSpecificTools.length === allHumanTools.length;
                       })()}
                       onChange={(e) => {
                         if (e.target.checked) {

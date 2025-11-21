@@ -12,8 +12,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	"mcp-agent/agent_go/internal/llm"
 	"llm-providers/llmtypes"
+	"mcp-agent/agent_go/internal/llm"
 )
 
 var genaiMultiToolComplexTestCmd = &cobra.Command{
@@ -75,7 +75,7 @@ func runGenAIMultiToolComplexTest(cmd *cobra.Command, args []string) {
 		Logger:      logger,
 	})
 	if err != nil {
-		log.Printf("❌ Failed to create Google GenAI LLM: %w", err)
+		log.Printf("❌ Failed to create Google GenAI LLM: %v", err)
 		return
 	}
 
@@ -280,11 +280,20 @@ func runGenAIMultiToolComplexTest(cmd *cobra.Command, args []string) {
 			log.Printf("\n✅ Turn %d: Final Response (no more tool calls)", turn+1)
 			log.Printf("📝 Assistant: %s", choice.Content)
 			duration := time.Since(startTime)
+
+			// Calculate coverage safely, avoiding division by zero
+			var coverage float64
+			if toolCallCount > 0 {
+				coverage = float64(thoughtSignatureCount) / float64(toolCallCount) * 100
+			} else {
+				coverage = 0.0
+			}
+
 			log.Printf("\n📊 Test Summary:")
 			log.Printf("   Total Turns: %d", turn+1)
 			log.Printf("   Total Tool Calls: %d", toolCallCount)
 			log.Printf("   Tool Calls with Thought Signatures: %d", thoughtSignatureCount)
-			log.Printf("   Thought Signature Coverage: %.1f%%", float64(thoughtSignatureCount)/float64(toolCallCount)*100)
+			log.Printf("   Thought Signature Coverage: %.1f%%", coverage)
 			log.Printf("   Duration: %v", duration)
 			log.Printf("   Total Tokens: %d", totalTokens)
 			if thoughtSignatureCount == toolCallCount && toolCallCount > 0 {

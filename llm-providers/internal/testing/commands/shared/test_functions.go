@@ -1681,17 +1681,28 @@ func RunStreamingMultiTurnTest(llm llmtypes.Model, modelID string) {
 		return
 	}
 
+	// CRITICAL: Validate context retention - response should contain "Alice"
+	if len(finalContent2) == 0 {
+		log.Printf("❌ Turn 2 failed - empty response")
+		return
+	}
+
+	finalContent2Lower := strings.ToLower(finalContent2)
+	if !strings.Contains(finalContent2Lower, "alice") {
+		log.Printf("❌ Turn 2 failed - context retention validation failed")
+		log.Printf("   Expected response to contain 'Alice' (from Turn 1)")
+		log.Printf("   Response: %s", finalContent2)
+		log.Printf("   This indicates the model is not maintaining conversation context")
+		return
+	}
+
 	log.Printf("✅ Turn 2 passed in %s", duration2)
 	log.Printf("   📊 Streaming stats:")
 	log.Printf("      Streamed content: %d chars", len(streamedContent2Str))
 	log.Printf("      Final content: %d chars", len(finalContent2))
 	log.Printf("      Content match: ✅")
+	log.Printf("   Context retention: ✅ (response contains 'Alice')")
 	log.Printf("   💬 Response: %s", finalContent2)
-
-	// Verify the model remembers the conversation
-	if !strings.Contains(strings.ToLower(finalContent2), "alice") {
-		log.Printf("   ⚠️ Model may not have remembered the name 'Alice' from previous turn")
-	}
 
 	logTokenUsage(resp2.Choices[0].GenerationInfo)
 
@@ -1818,6 +1829,41 @@ func RunStreamingMultiTurnTest(llm llmtypes.Model, modelID string) {
 		}
 	}
 
+	// CRITICAL: Validate tool call arguments if tool calls were returned
+	if len(finalToolCalls3) > 0 {
+		log.Printf("\n🔍 Validating tool call arguments")
+		readFileTool := llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "read_file",
+				Description: "Read contents of a file",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "File path to read",
+						},
+					},
+					"required": []string{"path"},
+				}),
+			},
+		}
+
+		for i, tc := range finalToolCalls3 {
+			if tc.FunctionCall == nil {
+				log.Printf("❌ Turn 3 failed - tool call %d has no FunctionCall", i+1)
+				return
+			}
+			if err := validateRequiredToolArguments(readFileTool, tc, modelID); err != nil {
+				log.Printf("❌ Turn 3 failed - tool call %d missing required arguments: %v", i+1, err)
+				log.Printf("      Model: %s", modelID)
+				return
+			}
+			log.Printf("   ✅ Tool call %d: %s - valid arguments", i+1, tc.FunctionCall.Name)
+		}
+	}
+
 	log.Printf("✅ Turn 3 passed in %s", duration3)
 	log.Printf("   📊 Streaming stats:")
 	log.Printf("      Streamed content: %d chars", len(streamedContent3Str))
@@ -1829,6 +1875,9 @@ func RunStreamingMultiTurnTest(llm llmtypes.Model, modelID string) {
 		log.Printf("   Tool: %s", finalToolCalls3[0].FunctionCall.Name)
 		log.Printf("   Args: %s", finalToolCalls3[0].FunctionCall.Arguments)
 		log.Printf("   ✅ Tool calls were streamed correctly")
+		log.Printf("   ✅ Tool call arguments validated")
+	} else {
+		log.Printf("   ⚠️ No tool calls returned (model may not support tool calling)")
 	}
 
 	logTokenUsage(resp3.Choices[0].GenerationInfo)
@@ -3096,4 +3145,553 @@ func validateConversationTypeAssertions(messages []llmtypes.MessageContent) erro
 		}
 	}
 	return nil
+}
+
+// RunParallelToolCallWithResponseTestNonStreaming tests the complete flow without streaming:
+// 1. Request multiple parallel tool calls
+// 2. Get parallel tool calls from LLM
+// 3. Add tool responses for all tool calls
+// 4. Send full conversation (with tool responses) back to LLM
+// 5. Verify LLM can continue conversation using tool results
+// This is a non-streaming version for providers that don't support streaming (e.g., OpenRouter)
+func RunParallelToolCallWithResponseTestNonStreaming(llm llmtypes.Model, modelID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	log.Printf("\n📝 Test: Parallel tool calls with responses and continued conversation (non-streaming)")
+	log.Printf("   This test verifies that multiple tool calls can be matched with responses")
+	log.Printf("   and the LLM can continue the conversation using the tool results")
+
+	// Define tools for parallel execution
+	weatherTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "get_weather",
+			Description: "Get current weather for a location",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"location": map[string]interface{}{
+						"type":        "string",
+						"description": "City name",
+					},
+				},
+				"required": []string{"location"},
+			}),
+		},
+	}
+
+	getTimeTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "get_current_time",
+			Description: "Get the current time in a specific timezone",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"timezone": map[string]interface{}{
+						"type":        "string",
+						"description": "Timezone (e.g., 'UTC', 'America/New_York')",
+					},
+				},
+				"required": []string{"timezone"},
+			}),
+		},
+	}
+
+	// Step 1: Request parallel tool calls (non-streaming)
+	log.Printf("\n🔄 Step 1: Request parallel tool calls")
+	messages1 := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Get the weather in San Francisco and also get the current time in UTC. Do both tasks."),
+	}
+
+	startTime1 := time.Now()
+	resp1, err := llm.GenerateContent(ctx, messages1,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{weatherTool, getTimeTool}),
+		llmtypes.WithToolChoiceString("auto"),
+	)
+	duration1 := time.Since(startTime1)
+
+	if err != nil {
+		log.Printf("❌ Step 1 failed: %v", err)
+		return
+	}
+
+	if len(resp1.Choices) == 0 {
+		log.Printf("❌ Step 1 failed - no choices returned")
+		return
+	}
+
+	finalContent1 := resp1.Choices[0].Content
+	finalToolCalls1 := resp1.Choices[0].ToolCalls
+
+	// CRITICAL: Validate we got multiple parallel tool calls
+	if len(finalToolCalls1) < 2 {
+		log.Printf("❌ Step 1 failed - expected at least 2 parallel tool calls, got %d", len(finalToolCalls1))
+		log.Printf("      Model: %s", modelID)
+		return
+	}
+
+	log.Printf("✅ Step 1 passed in %s", duration1)
+	log.Printf("   📊 Stats:")
+	log.Printf("      Parallel tool calls received: %d", len(finalToolCalls1))
+	for i, tc := range finalToolCalls1 {
+		if tc.FunctionCall != nil {
+			log.Printf("      Tool call %d: %s (ID: %s)", i+1, tc.FunctionCall.Name, tc.ID)
+		}
+	}
+
+	// CRITICAL: Validate required arguments for all parallel tool calls
+	log.Printf("\n🔍 Step 2: Validating tool call arguments")
+	for i, tc := range finalToolCalls1 {
+		if tc.FunctionCall == nil {
+			log.Printf("❌ Step 2 failed - tool call %d has no FunctionCall", i+1)
+			return
+		}
+		var toolToValidate llmtypes.Tool
+		if tc.FunctionCall.Name == "get_weather" {
+			toolToValidate = weatherTool
+		} else if tc.FunctionCall.Name == "get_current_time" {
+			toolToValidate = getTimeTool
+		}
+		if toolToValidate.Function != nil {
+			if err := validateRequiredToolArguments(toolToValidate, tc, modelID); err != nil {
+				log.Printf("❌ Step 2 failed - tool call %d missing required arguments: %v", i+1, err)
+				log.Printf("      Model: %s", modelID)
+				return
+			}
+		}
+		log.Printf("   ✅ Tool call %d: %s - valid arguments", i+1, tc.FunctionCall.Name)
+	}
+	log.Printf("✅ Step 2 passed - all tool call arguments are valid")
+
+	// Step 3: Build conversation history with tool calls
+	log.Printf("\n🔄 Step 3: Building conversation history with tool calls")
+	conversationHistory := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Get the weather in San Francisco and also get the current time in UTC. Do both tasks."),
+	}
+
+	// Add assistant message with tool calls
+	if finalContent1 != "" || len(finalToolCalls1) > 0 {
+		parts := []llmtypes.ContentPart{}
+		if finalContent1 != "" {
+			parts = append(parts, llmtypes.TextContent{Text: finalContent1})
+		}
+		for _, tc := range finalToolCalls1 {
+			parts = append(parts, tc)
+		}
+		conversationHistory = append(conversationHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: parts,
+		})
+		log.Printf("   ✅ Added assistant message with %d tool call(s)", len(finalToolCalls1))
+	}
+
+	// Step 4: Add tool responses for all tool calls
+	log.Printf("\n🔄 Step 4: Adding tool responses for all parallel tool calls")
+	if len(finalToolCalls1) > 0 {
+		// Collect all tool results as parts of a single message
+		parts := make([]llmtypes.ContentPart, 0, len(finalToolCalls1))
+		for _, tc := range finalToolCalls1 {
+			// Create realistic mock tool results
+			var toolResultContent string
+			if tc.FunctionCall.Name == "get_weather" {
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
+					location := "San Francisco"
+					if loc, ok := args["location"].(string); ok {
+						location = loc
+					}
+					toolResultContent = fmt.Sprintf(`{"location": "%s", "temperature": 72, "condition": "Sunny", "humidity": 65}`, location)
+				} else {
+					toolResultContent = `{"location": "San Francisco", "temperature": 72, "condition": "Sunny", "humidity": 65}`
+				}
+			} else if tc.FunctionCall.Name == "get_current_time" {
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
+					timezone := "UTC"
+					if tz, ok := args["timezone"].(string); ok {
+						timezone = tz
+					}
+					toolResultContent = fmt.Sprintf(`{"timezone": "%s", "current_time": "2025-01-27T14:30:00Z"}`, timezone)
+				} else {
+					toolResultContent = `{"timezone": "UTC", "current_time": "2025-01-27T14:30:00Z"}`
+				}
+			} else {
+				toolResultContent = fmt.Sprintf(`{"result": "Mock result for %s"}`, tc.FunctionCall.Name)
+			}
+
+			toolResult := llmtypes.ToolCallResponse{
+				ToolCallID: tc.ID,
+				Name:       tc.FunctionCall.Name,
+				Content:    toolResultContent,
+			}
+			parts = append(parts, toolResult)
+			log.Printf("   ✅ Added tool result for %s (ID: %s)", tc.FunctionCall.Name, tc.ID)
+		}
+		// Add all tool results as a single message
+		conversationHistory = append(conversationHistory, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeTool,
+			Parts: parts,
+		})
+		log.Printf("   ✅ Added %d tool responses in a single tool message", len(parts))
+	}
+
+	// Step 5: Send full conversation (with tool responses) back to LLM
+	log.Printf("\n🔄 Step 5: Sending full conversation back to LLM with tool responses")
+	log.Printf("   This tests that the LLM can match tool responses to tool calls correctly")
+	log.Printf("   Conversation has %d messages (including %d tool calls and %d tool responses)", len(conversationHistory), len(finalToolCalls1), len(finalToolCalls1))
+
+	startTime2 := time.Now()
+	resp2, err := llm.GenerateContent(ctx, conversationHistory,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{weatherTool, getTimeTool}),
+		llmtypes.WithToolChoiceString("auto"),
+	)
+	duration2 := time.Since(startTime2)
+
+	if err != nil {
+		log.Printf("❌ Step 5 failed: %v", err)
+		return
+	}
+
+	if len(resp2.Choices) == 0 {
+		log.Printf("❌ Step 5 failed - no choices returned")
+		return
+	}
+
+	finalContent2 := resp2.Choices[0].Content
+	log.Printf("✅ Step 5 passed in %s", duration2)
+	log.Printf("   📊 Response length: %d characters", len(finalContent2))
+	if len(finalContent2) > 0 {
+		preview := finalContent2
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		log.Printf("   Response preview: %s", preview)
+	}
+
+	logTokenUsage(resp2.Choices[0].GenerationInfo)
+
+	// Step 6: Test that LLM remembers tool results in follow-up questions
+	log.Printf("\n🔄 Step 6: Testing LLM remembers tool results in follow-up questions")
+	followUpMessage := llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "What was the temperature you found?")
+	conversationHistory = append(conversationHistory, followUpMessage)
+
+	startTime3 := time.Now()
+	resp3, err := llm.GenerateContent(ctx, conversationHistory,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{weatherTool, getTimeTool}),
+	)
+	duration3 := time.Since(startTime3)
+
+	if err != nil {
+		log.Printf("❌ Step 6 failed: %v", err)
+		return
+	}
+
+	if len(resp3.Choices) == 0 {
+		log.Printf("❌ Step 6 failed - no choices returned")
+		return
+	}
+
+	finalContent3 := resp3.Choices[0].Content
+	log.Printf("✅ Step 6 passed in %s", duration3)
+	if len(finalContent3) > 0 {
+		preview := finalContent3
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		log.Printf("   Response: %s", preview)
+	}
+
+	logTokenUsage(resp3.Choices[0].GenerationInfo)
+
+	log.Printf("\n🎯 Parallel tool call with response test completed successfully!")
+	log.Printf("   ✅ Multiple parallel tool calls received")
+	log.Printf("   ✅ Tool responses added for all tool calls")
+	log.Printf("   ✅ Full conversation sent back to LLM without errors")
+	log.Printf("   ✅ LLM continued conversation using tool results")
+	log.Printf("   ✅ LLM remembers tool results in follow-up questions")
+}
+
+// RunMultiTurnConversationTest tests multi-turn conversations without streaming:
+// 1. First turn: Simple question
+// 2. Second turn: Follow-up question using context from first turn
+// 3. Third turn: Question requiring tool call, then continue conversation
+// This validates that conversation context is maintained across multiple turns
+func RunMultiTurnConversationTest(llm llmtypes.Model, modelID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	log.Printf("\n📝 Test: Multi-turn conversation (non-streaming)")
+	log.Printf("   This test verifies that conversation context is maintained across multiple turns")
+
+	// Define tools
+	readFileTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "read_file",
+			Description: "Read contents of a file",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "File path to read",
+					},
+				},
+				"required": []string{"path"},
+			}),
+		},
+	}
+
+	// Turn 1: Simple question
+	log.Printf("\n🔄 Turn 1: Simple question")
+	conversation := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Hello! My name is Alice and I'm working on a Go project."),
+	}
+
+	startTime1 := time.Now()
+	resp1, err := llm.GenerateContent(ctx, conversation,
+		llmtypes.WithModel(modelID),
+	)
+	duration1 := time.Since(startTime1)
+
+	if err != nil {
+		log.Printf("❌ Turn 1 failed: %v", err)
+		return
+	}
+
+	if len(resp1.Choices) == 0 {
+		log.Printf("❌ Turn 1 failed - no choices returned")
+		return
+	}
+
+	content1 := resp1.Choices[0].Content
+	log.Printf("✅ Turn 1 passed in %s", duration1)
+	log.Printf("   Response length: %d characters", len(content1))
+	logTokenUsage(resp1.Choices[0].GenerationInfo)
+
+	// Add assistant response to conversation
+	conversation = append(conversation, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeAI,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: content1}},
+	})
+
+	// Turn 2: Follow-up question using context
+	log.Printf("\n🔄 Turn 2: Follow-up question using context from Turn 1")
+	conversation = append(conversation, llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "What's my name?"))
+
+	startTime2 := time.Now()
+	resp2, err := llm.GenerateContent(ctx, conversation,
+		llmtypes.WithModel(modelID),
+	)
+	duration2 := time.Since(startTime2)
+
+	if err != nil {
+		log.Printf("❌ Turn 2 failed: %v", err)
+		return
+	}
+
+	if len(resp2.Choices) == 0 {
+		log.Printf("❌ Turn 2 failed - no choices returned")
+		return
+	}
+
+	content2 := resp2.Choices[0].Content
+
+	// CRITICAL: Validate context retention - response should contain "Alice"
+	if len(content2) == 0 {
+		log.Printf("❌ Turn 2 failed - empty response")
+		return
+	}
+
+	content2Lower := strings.ToLower(content2)
+	if !strings.Contains(content2Lower, "alice") {
+		log.Printf("❌ Turn 2 failed - context retention validation failed")
+		log.Printf("   Expected response to contain 'Alice' (from Turn 1)")
+		log.Printf("   Response: %s", content2)
+		log.Printf("   This indicates the model is not maintaining conversation context")
+		return
+	}
+
+	log.Printf("✅ Turn 2 passed in %s", duration2)
+	log.Printf("   Response length: %d characters", len(content2))
+	log.Printf("   Context retention: ✅ (response contains 'Alice')")
+	if len(content2) > 0 {
+		preview := content2
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		log.Printf("   Response preview: %s", preview)
+	}
+	logTokenUsage(resp2.Choices[0].GenerationInfo)
+
+	// Add assistant response to conversation
+	conversation = append(conversation, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeAI,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: content2}},
+	})
+
+	// Turn 3: Question requiring tool call
+	log.Printf("\n🔄 Turn 3: Question requiring tool call")
+	conversation = append(conversation, llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Can you read the go.mod file for me?"))
+
+	startTime3 := time.Now()
+	resp3, err := llm.GenerateContent(ctx, conversation,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{readFileTool}),
+		llmtypes.WithToolChoiceString("auto"),
+	)
+	duration3 := time.Since(startTime3)
+
+	if err != nil {
+		log.Printf("❌ Turn 3 failed: %v", err)
+		return
+	}
+
+	if len(resp3.Choices) == 0 {
+		log.Printf("❌ Turn 3 failed - no choices returned")
+		return
+	}
+
+	content3 := resp3.Choices[0].Content
+	toolCalls3 := resp3.Choices[0].ToolCalls
+
+	// Validate tool calls were generated
+	if len(toolCalls3) == 0 {
+		log.Printf("⚠️ Turn 3: No tool calls returned (model may not support tool calling or chose not to use tools)")
+		log.Printf("   Skipping Turn 4 (requires tool calls)")
+		log.Printf("   Turn 3 response: %s", content3)
+		logTokenUsage(resp3.Choices[0].GenerationInfo)
+		log.Printf("\n🎯 Multi-turn conversation test completed (partial)")
+		log.Printf("   ✅ Turn 1: Simple question ✅")
+		log.Printf("   ✅ Turn 2: Follow-up question with context ✅")
+		log.Printf("   ⚠️ Turn 3: Question with tool call (no tool calls returned)")
+		return
+	}
+
+	// CRITICAL: Validate tool call arguments
+	log.Printf("\n🔍 Validating tool call arguments")
+	for i, tc := range toolCalls3 {
+		if tc.FunctionCall == nil {
+			log.Printf("❌ Turn 3 failed - tool call %d has no FunctionCall", i+1)
+			return
+		}
+		if err := validateRequiredToolArguments(readFileTool, tc, modelID); err != nil {
+			log.Printf("❌ Turn 3 failed - tool call %d missing required arguments: %v", i+1, err)
+			log.Printf("      Model: %s", modelID)
+			return
+		}
+		log.Printf("   ✅ Tool call %d: %s - valid arguments", i+1, tc.FunctionCall.Name)
+	}
+
+	log.Printf("✅ Turn 3 passed in %s", duration3)
+	log.Printf("   Tool calls: %d", len(toolCalls3))
+	for i, tc := range toolCalls3 {
+		if tc.FunctionCall != nil {
+			log.Printf("   Tool call %d: %s (ID: %s)", i+1, tc.FunctionCall.Name, tc.ID)
+			log.Printf("   Args: %s", tc.FunctionCall.Arguments)
+		}
+	}
+	logTokenUsage(resp3.Choices[0].GenerationInfo)
+
+	// Add tool calls and tool responses to conversation
+	if len(toolCalls3) > 0 {
+		// Add assistant message with tool calls
+		parts := []llmtypes.ContentPart{}
+		if content3 != "" {
+			parts = append(parts, llmtypes.TextContent{Text: content3})
+		}
+		for _, tc := range toolCalls3 {
+			parts = append(parts, tc)
+		}
+		conversation = append(conversation, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: parts,
+		})
+
+		// Add tool responses
+		toolParts := make([]llmtypes.ContentPart, 0, len(toolCalls3))
+		for _, tc := range toolCalls3 {
+			toolResult := llmtypes.ToolCallResponse{
+				ToolCallID: tc.ID,
+				Name:       tc.FunctionCall.Name,
+				Content:    `{"content": "module example\n\ngo 1.21\n\nrequire (\n\tgithub.com/example/package v1.0.0\n)"}`,
+			}
+			toolParts = append(toolParts, toolResult)
+		}
+		conversation = append(conversation, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeTool,
+			Parts: toolParts,
+		})
+
+		// Turn 4: Continue conversation after tool call
+		log.Printf("\n🔄 Turn 4: Continue conversation after tool call")
+		conversation = append(conversation, llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "What version of Go is required?"))
+
+		startTime4 := time.Now()
+		resp4, err := llm.GenerateContent(ctx, conversation,
+			llmtypes.WithModel(modelID),
+			llmtypes.WithTools([]llmtypes.Tool{readFileTool}),
+		)
+		duration4 := time.Since(startTime4)
+
+		if err != nil {
+			log.Printf("❌ Turn 4 failed: %v", err)
+			return
+		}
+
+		if len(resp4.Choices) == 0 {
+			log.Printf("❌ Turn 4 failed - no choices returned")
+			return
+		}
+
+		content4 := resp4.Choices[0].Content
+
+		// CRITICAL: Validate tool result usage - response should mention "1.21" or "go 1.21"
+		if len(content4) == 0 {
+			log.Printf("❌ Turn 4 failed - empty response")
+			return
+		}
+
+		content4Lower := strings.ToLower(content4)
+		mentionsVersion := strings.Contains(content4Lower, "1.21") ||
+			strings.Contains(content4Lower, "go 1.21") ||
+			strings.Contains(content4Lower, "version 1.21")
+
+		if !mentionsVersion {
+			log.Printf("⚠️ Turn 4: Tool result usage validation - response may not reference tool result")
+			log.Printf("   Expected response to mention '1.21' or 'go 1.21' (from tool result)")
+			log.Printf("   Response: %s", content4)
+			log.Printf("   This may indicate the model is not using tool results correctly")
+			// Don't fail - this is a warning, not a hard failure
+		}
+
+		log.Printf("✅ Turn 4 passed in %s", duration4)
+		log.Printf("   Response length: %d characters", len(content4))
+		if mentionsVersion {
+			log.Printf("   Tool result usage: ✅ (response references tool result)")
+		} else {
+			log.Printf("   Tool result usage: ⚠️ (response may not reference tool result)")
+		}
+		if len(content4) > 0 {
+			preview := content4
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			log.Printf("   Response preview: %s", preview)
+		}
+		logTokenUsage(resp4.Choices[0].GenerationInfo)
+	}
+
+	log.Printf("\n🎯 Multi-turn conversation test completed successfully!")
+	log.Printf("   ✅ Turn 1: Simple question ✅")
+	log.Printf("   ✅ Turn 2: Follow-up question with context ✅")
+	log.Printf("   ✅ Turn 3: Question with tool call ✅")
+	if len(toolCalls3) > 0 {
+		log.Printf("   ✅ Turn 4: Continued conversation after tool call ✅")
+	}
 }

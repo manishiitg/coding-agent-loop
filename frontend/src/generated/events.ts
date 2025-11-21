@@ -30,7 +30,6 @@ export interface UnifiedEventsCompleteSchema {
   throttling_detected?: ThrottlingDetectedEvent;
   token_limit_exceeded?: TokenLimitExceededEvent;
   token_usage?: TokenUsageEvent;
-  llm_token_usage?: TokenUsageEvent; // Per-call token usage (advanced mode only)
   max_turns_reached?: MaxTurnsReachedEvent;
   context_cancelled?: ContextCancelledEvent;
   tool_output?: ToolOutputEvent;
@@ -157,8 +156,6 @@ export interface UsageMetrics {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
-  cache_tokens?: number;
-  reasoning_tokens?: number;
 }
 export interface AgentStartEvent {
   timestamp?: string;

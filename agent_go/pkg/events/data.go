@@ -82,9 +82,16 @@ func (e *AgentStartEvent) GetEventType() EventType {
 // AgentEndEvent represents the end of an agent session
 type AgentEndEvent struct {
 	BaseEventData
-	AgentType string `json:"agent_type"`
-	Success   bool   `json:"success"`
-	Error     string `json:"error,omitempty"`
+	AgentType             string `json:"agent_type"`
+	Success               bool   `json:"success"`
+	Error                 string `json:"error,omitempty"`
+	PromptTokens          int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens      int    `json:"completion_tokens,omitempty"`
+	TotalTokens           int    `json:"total_tokens,omitempty"`
+	CacheTokens           int    `json:"cache_tokens,omitempty"`
+	ReasoningTokens       int    `json:"reasoning_tokens,omitempty"`
+	LLMCallCount          int    `json:"llm_call_count,omitempty"`
+	CacheEnabledCallCount int    `json:"cache_enabled_call_count,omitempty"`
 }
 
 func (e *AgentEndEvent) GetEventType() EventType {
@@ -588,6 +595,25 @@ func NewAgentEndEventWithHierarchy(agentType string, success bool, error, parent
 		AgentType: agentType,
 		Success:   success,
 		Error:     error,
+	}
+}
+
+// NewAgentEndEventWithTokens creates a new AgentEndEvent with token usage information
+func NewAgentEndEventWithTokens(agentType string, success bool, error string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) *AgentEndEvent {
+	return &AgentEndEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		AgentType:             agentType,
+		Success:               success,
+		Error:                 error,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		TotalTokens:           totalTokens,
+		CacheTokens:           cacheTokens,
+		ReasoningTokens:       reasoningTokens,
+		LLMCallCount:          llmCallCount,
+		CacheEnabledCallCount: cacheEnabledCallCount,
 	}
 }
 
@@ -1663,6 +1689,14 @@ type OrchestratorAgentEndEvent struct {
 	PlanID             string                 `json:"plan_id,omitempty"`             // associated plan ID
 	StepIndex          int                    `json:"step_index,omitempty"`          // which step in the plan
 	Iteration          int                    `json:"iteration,omitempty"`           // which iteration of the loop
+	// Token usage fields
+	PromptTokens          int `json:"prompt_tokens,omitempty"`
+	CompletionTokens      int `json:"completion_tokens,omitempty"`
+	TotalTokens           int `json:"total_tokens,omitempty"`
+	CacheTokens           int `json:"cache_tokens,omitempty"`
+	ReasoningTokens       int `json:"reasoning_tokens,omitempty"`
+	LLMCallCount          int `json:"llm_call_count,omitempty"`
+	CacheEnabledCallCount int `json:"cache_enabled_call_count,omitempty"`
 }
 
 func (e *OrchestratorAgentEndEvent) GetEventType() EventType {
@@ -1687,6 +1721,44 @@ type OrchestratorAgentErrorEvent struct {
 
 func (e *OrchestratorAgentErrorEvent) GetEventType() EventType {
 	return OrchestratorAgentError
+}
+
+// StepTokenUsageEvent represents token usage summary for a workflow step
+type StepTokenUsageEvent struct {
+	BaseEventData
+	Phase                 string `json:"phase"`                // e.g., "execution"
+	Step                  int    `json:"step"`                 // step index (0-based)
+	StepTitle             string `json:"step_title,omitempty"` // optional step title for display
+	PromptTokens          int    `json:"prompt_tokens"`
+	CompletionTokens      int    `json:"completion_tokens"`
+	TotalTokens           int    `json:"total_tokens"`
+	CacheTokens           int    `json:"cache_tokens"`
+	ReasoningTokens       int    `json:"reasoning_tokens"`
+	LLMCallCount          int    `json:"llm_call_count"`
+	CacheEnabledCallCount int    `json:"cache_enabled_call_count"`
+}
+
+func (e *StepTokenUsageEvent) GetEventType() EventType {
+	return StepTokenUsage
+}
+
+// NewStepTokenUsageEvent creates a new StepTokenUsageEvent
+func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) *StepTokenUsageEvent {
+	return &StepTokenUsageEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Phase:                 phase,
+		Step:                  step,
+		StepTitle:             stepTitle,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		TotalTokens:           totalTokens,
+		CacheTokens:           cacheTokens,
+		ReasoningTokens:       reasoningTokens,
+		LLMCallCount:          llmCallCount,
+		CacheEnabledCallCount: cacheEnabledCallCount,
+	}
 }
 
 // Human Verification Events

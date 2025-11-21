@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
@@ -59,6 +60,18 @@ const (
 	OrchestratorTypeWorkflow OrchestratorType = "workflow"
 )
 
+// StepTokenUsage represents accumulated token usage for a workflow step
+type StepTokenUsage struct {
+	PromptTokens          int
+	CompletionTokens      int
+	TotalTokens           int
+	CacheTokens           int
+	ReasoningTokens       int
+	LLMCallCount          int
+	CacheEnabledCallCount int
+	CacheDiscountSum      float64 // Sum of cache discounts for averaging
+}
+
 // BaseOrchestrator provides unified base functionality for all orchestrators
 type BaseOrchestrator struct {
 	// Context-aware event bridge for orchestrator-level events
@@ -93,6 +106,10 @@ type BaseOrchestrator struct {
 	// Folder guard paths for fine-grained access control
 	folderGuardReadPaths  []string
 	folderGuardWritePaths []string
+
+	// Step token tracking
+	stepTokenAccumulator map[string]*StepTokenUsage // key format: "phase:step"
+	stepTokenMutex       sync.RWMutex
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -116,7 +133,8 @@ func NewBaseOrchestrator(
 	// Create context-aware event bridge that wraps the main event bridge
 	contextAwareBridge := NewContextAwareEventBridge(eventBridge, logger)
 
-	return &BaseOrchestrator{
+	// Create orchestrator instance
+	orchestrator := &BaseOrchestrator{
 		contextAwareBridge:     contextAwareBridge,
 		logger:                 logger,
 		WorkspaceTools:         customTools,
@@ -133,7 +151,14 @@ func NewBaseOrchestrator(
 		selectedTools:   selectedTools, // NEW field
 		llmConfig:       llmConfig,
 		maxTurns:        maxTurns,
-	}, nil
+		// Initialize step token tracking
+		stepTokenAccumulator: make(map[string]*StepTokenUsage),
+	}
+
+	// Set token accumulator on bridge for step token tracking
+	contextAwareBridge.SetTokenAccumulator(orchestrator)
+
+	return orchestrator, nil
 }
 
 // GetLogger returns the orchestrator's logger
@@ -969,6 +994,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	customToolExecutors map[string]interface{},
 	overwriteSystemPrompt bool,
 ) (agents.OrchestratorAgent, error) {
+	// Apply overwriteSystemPrompt parameter to config so callers can override default system prompt behavior
+	config.OverwriteSystemPrompt = &overwriteSystemPrompt
+
 	// Create agent using provided factory function with pre-created config
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
@@ -1956,4 +1984,89 @@ func FilterCustomToolsByCategory(
 	}
 
 	return filteredTools, filteredExecutors
+}
+
+// AccumulateStepTokens accumulates token usage for a specific step
+func (bo *BaseOrchestrator) AccumulateStepTokens(phase string, step int, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int, llmCallCount int, cacheDiscount float64) {
+	bo.stepTokenMutex.Lock()
+	defer bo.stepTokenMutex.Unlock()
+
+	key := fmt.Sprintf("%s:%d", phase, step)
+	usage, exists := bo.stepTokenAccumulator[key]
+	if !exists {
+		usage = &StepTokenUsage{}
+		bo.stepTokenAccumulator[key] = usage
+	}
+
+	usage.PromptTokens += promptTokens
+	usage.CompletionTokens += completionTokens
+	usage.TotalTokens += totalTokens
+	usage.CacheTokens += cacheTokens
+	usage.ReasoningTokens += reasoningTokens
+	usage.LLMCallCount += llmCallCount
+	if cacheTokens > 0 {
+		usage.CacheEnabledCallCount++
+	}
+	usage.CacheDiscountSum += cacheDiscount
+}
+
+// GetStepTokenUsage retrieves accumulated token usage for a specific step
+func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int) *StepTokenUsage {
+	bo.stepTokenMutex.RLock()
+	defer bo.stepTokenMutex.RUnlock()
+
+	key := fmt.Sprintf("%s:%d", phase, step)
+	usage, exists := bo.stepTokenAccumulator[key]
+	if !exists {
+		return &StepTokenUsage{} // Return zero values if step not found
+	}
+
+	// Return a copy to avoid race conditions
+	return &StepTokenUsage{
+		PromptTokens:          usage.PromptTokens,
+		CompletionTokens:      usage.CompletionTokens,
+		TotalTokens:           usage.TotalTokens,
+		CacheTokens:           usage.CacheTokens,
+		ReasoningTokens:       usage.ReasoningTokens,
+		LLMCallCount:          usage.LLMCallCount,
+		CacheEnabledCallCount: usage.CacheEnabledCallCount,
+		CacheDiscountSum:      usage.CacheDiscountSum,
+	}
+}
+
+// EmitStepTokenUsage emits a step token usage summary event and optionally clears the accumulated data
+func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string, step int, stepTitle string, clearAfterEmit bool) {
+	bo.stepTokenMutex.Lock()
+	defer bo.stepTokenMutex.Unlock()
+
+	key := fmt.Sprintf("%s:%d", phase, step)
+	usage, exists := bo.stepTokenAccumulator[key]
+	if !exists {
+		bo.GetLogger().Warnf("⚠️ No token usage data found for step %s:%d", phase, step)
+		return
+	}
+
+	// Create and emit step token usage event
+	stepTokenEvent := events.NewStepTokenUsageEvent(
+		phase,
+		step,
+		stepTitle,
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		usage.TotalTokens,
+		usage.CacheTokens,
+		usage.ReasoningTokens,
+		usage.LLMCallCount,
+		usage.CacheEnabledCallCount,
+	)
+
+	bo.emitEvent(ctx, events.StepTokenUsage, stepTokenEvent)
+
+	bo.GetLogger().Infof("📊 Emitted step token usage for %s:%d - Total: %d tokens (Prompt: %d, Completion: %d, Cache: %d, Reasoning: %d, Calls: %d)",
+		phase, step, usage.TotalTokens, usage.PromptTokens, usage.CompletionTokens, usage.CacheTokens, usage.ReasoningTokens, usage.LLMCallCount)
+
+	// Clear accumulated data if requested
+	if clearAfterEmit {
+		delete(bo.stepTokenAccumulator, key)
+	}
 }

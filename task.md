@@ -27,14 +27,9 @@ also fails in writing python code due to indentation
 
 new tasks
 
-1. we need add a UI to edit the plan json manually
-
 f) add hallunication check as extra agent
 g) add references as extra agent 
-h) should we conditional llm, manually to change flow? like during scrapping. if here is a logout or wrong password there is a critical error.
-i) learning agent for overall run as new mode
 
+h) should we conditional llm, manually to change flow? like during scrapping. if here is a logout or wrong password there is a critical error.
 
 the prompts we have, have variable issue which we get to know later when we run. 
-
-in the agent end we should all tokens it took in total

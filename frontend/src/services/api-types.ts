@@ -19,6 +19,7 @@ export interface LLMConfiguration {
       // AWS credentials handled via IAM roles
     }
     anthropic?: string
+    vertex?: string
   }
 }
 

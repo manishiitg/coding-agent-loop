@@ -1212,7 +1212,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	messages = append(messages, finalUserMessage)
 
 	// Emit user message event for the final request
-	finalUserMessageEvent := events.NewUserMessageEvent(a.MaxTurns, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
+	finalUserMessageEvent := events.NewUserMessageEvent(a.MaxTurns+1, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
 	a.EmitTypedEvent(ctx, finalUserMessageEvent)
 
 	// Make one final LLM call to get the final answer
@@ -1234,7 +1234,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, err, finalUsage := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns, func(msg string) {
+	finalResp, err, finalUsage := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
 		// Optional: stream the final response
 	})
 
@@ -1308,7 +1308,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			},
 			Question: lastUserMessage,
 			Error:    "max turns reached and final attempt failed",
-			Turn:     a.MaxTurns,
+			Turn:     a.MaxTurns + 1,
 			Context:  "conversation",
 			Duration: time.Since(conversationStartTime),
 		}
@@ -1328,7 +1328,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				lastResponse,                      // finalResult
 				"completed",                       // status
 				time.Since(conversationStartTime), // duration
-				a.MaxTurns,                        // turns
+				a.MaxTurns+1,                      // turns (+1 for the final turn)
 			)
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
@@ -1349,7 +1349,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		logger.Infof("[AGENT TRACE] AskWithHistory: exiting with no final answer after %d turns.", a.MaxTurns)
 
 		// 🎯 FIX: End the trace for max turns error - replaced with event emission
-		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.MaxTurns), a.MaxTurns, "max_turns_exceeded", time.Since(conversationStartTime))
+		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.MaxTurns), a.MaxTurns+1, "max_turns_exceeded", time.Since(conversationStartTime))
 		a.EmitTypedEvent(ctx, maxTurnsErrorEvent)
 
 		return "", messages, fmt.Errorf("max turns (%d) reached without final answer", a.MaxTurns)
@@ -1359,7 +1359,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		logger.Infof("[AGENT TRACE] AskWithHistory: final call returned no response choices")
 
 		// 🎯 FIX: End the trace for final call error - replaced with event emission
-		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.MaxTurns, "no_final_choices", time.Since(conversationStartTime))
+		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.MaxTurns+1, "no_final_choices", time.Since(conversationStartTime))
 		a.EmitTypedEvent(ctx, finalCallErrorEvent)
 
 		return "", messages, fmt.Errorf("final call returned no response choices")

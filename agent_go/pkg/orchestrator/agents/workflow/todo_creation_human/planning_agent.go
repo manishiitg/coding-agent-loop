@@ -11,8 +11,8 @@ import (
 	"text/template"
 	"time"
 
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"llm-providers/llmtypes"
+	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -532,7 +532,7 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 
 // writePlanToFile writes PlanningResponse to plan.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
 // Validates that all steps have IDs before saving (planning agent should always generate them)
-func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
+func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, _ func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
 	planPath := filepath.Join(workspacePath, "planning", "plan.json")
 
 	planFileMutex.Lock()

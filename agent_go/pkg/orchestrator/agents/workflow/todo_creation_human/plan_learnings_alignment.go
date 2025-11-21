@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -184,15 +185,20 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 }
 
 // checkExistingPlan checks if a plan.json file already exists in the workspace and returns the parsed plan if found
-// Uses the generic ReadWorkspaceFile function from base orchestrator
+// Uses the shared readPlanFromFile helper which ensures thread-safe access via planFileMutex
 func (plam *PlanLearningsAlignmentManager) checkExistingPlan(ctx context.Context, planPath string) (bool, *PlanningResponse, error) {
 	plam.GetLogger().Infof("🔍 Checking for existing plan at %s", planPath)
 
-	// Use the generic ReadWorkspaceFile function from base orchestrator
-	planContent, err := plam.ReadWorkspaceFile(ctx, planPath)
+	// Extract workspace path from planPath (planPath is workspacePath/planning/plan.json)
+	// readPlanFromFile expects workspacePath and constructs the path internally
+	workspacePath := filepath.Dir(filepath.Dir(planPath))
+
+	// Use the shared readPlanFromFile helper which acquires planFileMutex for thread-safe access
+	plan, err := readPlanFromFile(ctx, workspacePath, plam.ReadWorkspaceFile)
 	if err != nil {
 		// Check if it's a "file not found" error vs other errors
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
 			plam.GetLogger().Infof("📋 No existing plan found: %v", err)
 			return false, nil, nil
 		}
@@ -200,15 +206,8 @@ func (plam *PlanLearningsAlignmentManager) checkExistingPlan(ctx context.Context
 		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
 	}
 
-	// Parse JSON content to PlanningResponse
-	var planResponse PlanningResponse
-	if err := json.Unmarshal([]byte(planContent), &planResponse); err != nil {
-		plam.GetLogger().Warnf("⚠️ Failed to parse existing plan.json: %v", err)
-		return false, nil, fmt.Errorf("failed to parse plan.json: %w", err)
-	}
-
-	plam.GetLogger().Infof("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps))
-	return true, &planResponse, nil
+	plam.GetLogger().Infof("✅ Found existing plan at %s with %d steps", planPath, len(plan.Steps))
+	return true, plan, nil
 }
 
 // Execute implements the OrchestratorAgent interface
@@ -242,7 +241,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	userMessage := agent.alignmentUserMessageProcessor(alignmentTemplateVars)
 
 	// Get logger from base agent's MCP agent
-	baseAgent := agent.BaseOrchestratorAgent.BaseAgent()
+	baseAgent := agent.GetBaseAgent()
 	var logger utils.ExtendedLogger
 	if baseAgent != nil {
 		mcpAgent := baseAgent.Agent()

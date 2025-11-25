@@ -544,6 +544,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/tools/edit", api.handleEditServer).Methods("POST")
 	apiRouter.HandleFunc("/tools/remove", api.handleRemoveServer).Methods("POST")
 
+	// MCP execution API (from tools.go)
+	apiRouter.HandleFunc("/mcp/execute", api.handleMCPExecute).Methods("POST", "OPTIONS")
+
 	// MCP Registry API routes (from mcp_registry_routes.go)
 	apiRouter.HandleFunc("/mcp-registry/servers", api.handleGetMCPRegistryServers).Methods("GET")
 	apiRouter.HandleFunc("/mcp-registry/servers/{id}", api.handleGetMCPRegistryServerDetails).Methods("GET")

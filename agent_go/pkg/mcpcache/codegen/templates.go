@@ -10,8 +10,12 @@ func GeneratePackageHeader(packageName string) string {
 	return fmt.Sprintf(`package %s
 
 import (
+	"bytes"
 	"context"
-	"mcp-agent/agent_go/pkg/mcpagent/codeexec"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
 )
 `, packageName)
 }
@@ -65,8 +69,8 @@ func GenerateFunction(toolName string, structName string, actualToolName string)
 	return code
 }
 
-// GenerateFunctionWithParams generates a Go function that accepts map[string]interface{} directly
-// This is simpler and works natively with yaegi interpreter
+// GenerateFunctionWithParams generates a Go function that accepts map[string]interface{} and calls MCP API via HTTP
+// Now updated to call HTTP API instead of using yaegi interpreter and codeexec registry
 func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolName string, toolDescription string) string {
 	funcName := sanitizeFunctionName(toolName)
 
@@ -74,7 +78,6 @@ func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolN
 
 	// Add function comment with tool description (Go doc comment format)
 	if toolDescription != "" {
-		// Format description as Go doc comment (handle multi-line)
 		lines := strings.Split(toolDescription, "\n")
 		for _, line := range lines {
 			builder.WriteString("// ")
@@ -83,9 +86,42 @@ func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolN
 		}
 	}
 
-	// Use map[string]interface{} directly - no struct conversion needed
-	builder.WriteString(fmt.Sprintf("func %s(ctx context.Context, params map[string]interface{}) (string, error) {\n", funcName))
-	builder.WriteString(fmt.Sprintf("\treturn codeexec.CallMCPTool(ctx, \"%s\", params)\n", actualToolName))
+	// Function signature - simple parameters map
+	builder.WriteString(fmt.Sprintf("func %s(params map[string]interface{}) (string, error) {\n", funcName))
+
+	// Get API URL from environment or use default
+	builder.WriteString("\tapiURL := os.Getenv(\"MCP_API_URL\")\n")
+	builder.WriteString("\tif apiURL == \"\" {\n")
+	builder.WriteString("\t\tapiURL = \"http://localhost:8000\"\n")
+	builder.WriteString("\t}\n\n")
+
+	// Build request payload
+	builder.WriteString("\treqBody, _ := json.Marshal(map[string]interface{}{\n")
+	builder.WriteString("\t\t\"server\": os.Getenv(\"MCP_SERVER_NAME\"),\n")
+	builder.WriteString(fmt.Sprintf("\t\t\"tool\":   \"%s\",\n", actualToolName))
+	builder.WriteString("\t\t\"args\":   params,\n")
+	builder.WriteString("\t})\n\n")
+
+	// Make HTTP request
+	builder.WriteString("\tresp, err := http.Post(apiURL+\"/api/mcp/execute\", \"application/json\", bytes.NewBuffer(reqBody))\n")
+	builder.WriteString("\tif err != nil {\n")
+	builder.WriteString("\t\treturn \"\", err\n")
+	builder.WriteString("\t}\n")
+	builder.WriteString("\tdefer resp.Body.Close()\n\n")
+
+	// Parse response
+	builder.WriteString("\tvar result struct {\n")
+	builder.WriteString("\t\tSuccess bool   `json:\"success\"`\n")
+	builder.WriteString("\t\tResult  string `json:\"result\"`\n")
+	builder.WriteString("\t\tError   string `json:\"error\"`\n")
+	builder.WriteString("\t}\n")
+	builder.WriteString("\tjson.NewDecoder(resp.Body).Decode(&result)\n\n")
+
+	// Handle response
+	builder.WriteString("\tif !result.Success {\n")
+	builder.WriteString("\t\treturn \"\", fmt.Errorf(result.Error)\n")
+	builder.WriteString("\t}\n")
+	builder.WriteString("\treturn result.Result, nil\n")
 	builder.WriteString("}\n\n")
 
 	return builder.String()

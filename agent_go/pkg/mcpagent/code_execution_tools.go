@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -571,16 +572,39 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	return output, nil
 }
 
-// executeGoCode executes Go code in-process using yaegi interpreter
-// Yaegi supports full Go code execution (loops, conditionals, functions, etc.) without compilation
-// No fallback needed - yaegi works on all platforms and supports full Go language
+// executeGoCode executes Go code using `go run` command
+// This runs the code as a separate process with full Go language support
+// Code can make HTTP calls to MCP API for tool execution
 func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string) (string, error) {
-	result, err := a.executeGoCodeViaYaegi(ctx, code)
-	if err != nil {
-		// Return a helpful error message
-		return "", fmt.Errorf("yaegi execution failed: %w\n\n💡 Tip: Ensure your code has an execute() function that returns string, or wrap your code in execute()", err)
+	if a.Logger != nil {
+		a.Logger.Infof("🔧 Executing Go code using 'go run' command: %s", filePath)
 	}
-	return result, nil
+
+	// Create command to run the Go code
+	cmd := exec.CommandContext(ctx, "go", "run", filePath)
+	cmd.Dir = workspaceDir
+
+	// Set environment variables for code to use
+	cmd.Env = append(os.Environ(),
+		"MCP_API_URL=http://localhost:8000",
+		// Note: MCP_SERVER_NAME should be set by the generated code based on package
+	)
+
+	// Capture combined output (stdout + stderr)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		if a.Logger != nil {
+			a.Logger.Errorf("❌ go run failed: %v\nOutput: %s", err, string(output))
+		}
+		return "", fmt.Errorf("go run failed: %w\nOutput:\n%s", err, string(output))
+	}
+
+	if a.Logger != nil {
+		a.Logger.Infof("✅ Code executed successfully, output length: %d bytes", len(output))
+	}
+
+	return string(output), nil
 }
 
 // executeGoCodeViaYaegi executes Go code using yaegi interpreter

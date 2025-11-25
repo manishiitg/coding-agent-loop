@@ -80,21 +80,42 @@ When answering questions:
 **📋 Workflow:**
 1. **Review** available code packages in the structure above
 2. **Discover code FIRST**: Use discover_code_files to get exact function signatures before writing any code
-3. **Write** Go code using write_code that imports and calls the discovered functions
+3. **Write** Go code using write_code that calls the generated tool functions
 4. **Execute** and get results
 
 **⚠️ CRITICAL - Code Requirements:**
-- ✅ **MUST return a string** (use fmt.Sprintf() or strings.Builder)
-- ❌ **DO NOT use fmt.Println()** - output will NOT be captured
-- ❌ **DO NOT write to os.Stdout** - return a string instead
+- ✅ **MUST have package main declaration**
+- ✅ **Code runs as separate process via 'go run'**
+- ✅ **Generated tool functions make HTTP calls to MCP API**
+- ✅ **Use fmt.Println() to output results**
+- ❌ **DO NOT try to import mcp-agent internal packages** - not accessible
 
-**🔧 Type Flexibility Guidelines:**
-- ✅ **Prefer interface{} over strict types** when possible for better flexibility
-- ✅ Use interface{} for function parameters when exact type isn't critical
-- ✅ Use interface{} for variables handling dynamic or unknown data structures
-- ✅ Only use strict types when type safety is explicitly required
-- 💡 **Example**: var data interface{} instead of var data map[string]string when structure may vary
-- 💡 **Example**: func process(data interface{}) instead of func process(data map[string]string) for flexibility
+**🌐 MCP API Architecture:**
+Your code runs independently and calls MCP tools via HTTP API:
+- API Endpoint: http://localhost:8000/api/mcp/execute
+- Generated functions automatically make POST requests
+- Environment variables: MCP_API_URL, MCP_SERVER_NAME
+
+**Generated Function Pattern:**
+Each MCP tool is generated as a Go function that makes HTTP calls:
+
+  // Generated function example (in aws_tools package)
+  func GetDocument(params map[string]interface{}) (string, error) {
+      apiURL := os.Getenv("MCP_API_URL")
+      if apiURL == "" {
+          apiURL = "http://localhost:8000"
+      }
+
+      reqBody, _ := json.Marshal(map[string]interface{}{
+          "server": os.Getenv("MCP_SERVER_NAME"),
+          "tool":   "get_document",
+          "args":   params,
+      })
+
+      resp, err := http.Post(apiURL+"/api/mcp/execute", "application/json", bytes.NewBuffer(reqBody))
+      // ... parse response ...
+      return result.Result, nil
+  }
 
 **💡 You Can Write Logic:**
 - Use **if/else** to make decisions based on results
@@ -103,56 +124,95 @@ When answering questions:
 - Use **loops** to process data
 
 **Basic Example:**
-  func execute() string {
-      ctx := context.Background()
-      // Use codeexec.CallCustomTool() directly - no package imports needed
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      // Set environment for generated functions
+      os.Setenv("MCP_SERVER_NAME", "aws")
+
+      // Call generated function
       params := map[string]interface{}{
           "document_id": "doc123",
       }
-      output, err := codeexec.CallCustomTool(ctx, "get_document", params)
+      output, err := GetDocument(params)
       if err != nil {
-          return fmt.Sprintf("Error: %%v", err)
+          fmt.Printf("Error: %%v\n", err)
+          return
       }
-      return fmt.Sprintf("Result: %%s", output)
+      fmt.Printf("Result: %%s\n", output)
   }
 
-**Example with Multiple Functions:**
-  func execute() string {
-      ctx := context.Background()
-      var result strings.Builder
-      
-      // Call first function using codeexec
-      params1 := map[string]interface{}{}
-      data, err := codeexec.CallCustomTool(ctx, "get_costs", params1)
+**Example with Multiple Servers:**
+  package main
+
+  import (
+      "fmt"
+      "os"
+      "strings"
+  )
+
+  func main() {
+      // Call AWS tool
+      os.Setenv("MCP_SERVER_NAME", "aws")
+      data, err := GetCosts(map[string]interface{}{})
       if err != nil {
-          return fmt.Sprintf("Error: %%v", err)
+          fmt.Printf("Error: %%v\n", err)
+          return
       }
-      result.WriteString(fmt.Sprintf("Costs: %%s\n", data))
-      
-      // Call second function based on result
+      fmt.Printf("Costs: %%s\n", data)
+
+      // Call Slack tool if costs are high
       if strings.Contains(data, "high") {
-          params2 := map[string]interface{}{
+          os.Setenv("MCP_SERVER_NAME", "slack")
+          params := map[string]interface{}{
               "channel": "alerts",
               "text": "High costs detected",
           }
-          alert, _ := codeexec.CallCustomTool(ctx, "send_message", params2)
-          result.WriteString(fmt.Sprintf("Alert: %%s\n", alert))
+          alert, _ := SendMessage(params)
+          fmt.Printf("Alert: %%s\n", alert)
       }
-      
-      return result.String()
   }
 
-**Tool Call Pattern:**
-  // Use codeexec.CallCustomTool() for custom tools
-  codeexec.CallCustomTool(ctx, "tool_name", map[string]interface{}{"param": "value"})
-  
-  // Use codeexec.CallMCPTool() for MCP server tools
-  codeexec.CallMCPTool(ctx, "tool_name", map[string]interface{}{"param": "value"})
-  
-  // Use codeexec.CallVirtualTool() for virtual tools (workspace, human, etc.)
-  codeexec.CallVirtualTool(ctx, "tool_name", map[string]interface{}{"param": "value"})
-  
-  // The system will automatically route to the correct registry
+**HTTP API Direct Usage (if needed):**
+You can also make direct HTTP calls to the MCP API:
+
+  import (
+      "bytes"
+      "encoding/json"
+      "net/http"
+  )
+
+  func callMCPTool(server, tool string, args map[string]interface{}) (string, error) {
+      reqBody, _ := json.Marshal(map[string]interface{}{
+          "server": server,
+          "tool":   tool,
+          "args":   args,
+      })
+
+      resp, err := http.Post("http://localhost:8000/api/mcp/execute",
+          "application/json", bytes.NewBuffer(reqBody))
+      if err != nil {
+          return "", err
+      }
+      defer resp.Body.Close()
+
+      var result struct {
+          Success bool
+          Result  string
+          Error   string
+      }
+      json.NewDecoder(resp.Body).Decode(&result)
+
+      if !result.Success {
+          return "", fmt.Errorf(result.Error)
+      }
+      return result.Result, nil
+  }
 
 **🔧 Error Recovery:**
 Build errors? Fix and retry with write_code - check imports, types, syntax

@@ -974,34 +974,16 @@ func extractToolCallsFromMessages(messages []llmtypes.MessageContent) []string {
 	return result
 }
 
-// ExecuteStructuredUpdate executes the planning agent in UPDATE mode using 3 custom tools that directly update plan.json
-// readFile and writeFile are BaseOrchestrator's ReadWorkspaceFile and WriteWorkspaceFile methods
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) (*PlanningResponse, []llmtypes.MessageContent, error) {
-	// Get workspace path from template vars
-	workspacePath := templateVars["WorkspacePath"]
-	if workspacePath == "" {
-		return nil, nil, fmt.Errorf("WorkspacePath not found in template vars")
-	}
-
-	// Get the underlying MCP agent
-	baseAgent := hctppa.BaseOrchestratorAgent.BaseAgent()
-	if baseAgent == nil {
-		return nil, nil, fmt.Errorf("base agent is not initialized")
-	}
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, nil, fmt.Errorf("MCP agent is not initialized")
-	}
-
-	// Parse schemas and register the 3 custom tools
-	updateSchema := getUpdatePlanStepsSchema()
-	updateParams, err := parseSchemaForToolParameters(updateSchema)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse update schema: %w", err)
-	}
-	// Get logger from MCP agent (it has a Logger field)
-	logger := mcpAgent.Logger
-
+// registerPlanModificationTools registers all plan modification tools (human_feedback and plan update tools)
+// This shared function is used by both planning agent and plan improvement agent
+func registerPlanModificationTools(
+	mcpAgent *mcpagent.Agent,
+	workspacePath string,
+	logger utils.ExtendedLogger,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
+	agentName string, // e.g., "planning agent" or "plan improvement agent"
+) error {
 	// Register human_feedback tool first (required before making plan changes)
 	humanTools := virtualtools.CreateHumanTools()
 	humanToolExecutors := virtualtools.CreateHumanToolExecutors()
@@ -1024,12 +1006,20 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 						params,
 						executor,
 					)
-					logger.Infof("✅ Registered human_feedback tool for planning agent")
+					if logger != nil {
+						logger.Infof("✅ Registered human_feedback tool for %s", agentName)
+					}
 				}
 			}
 		}
 	}
 
+	// Register basic plan modification tools
+	updateSchema := getUpdatePlanStepsSchema()
+	updateParams, err := parseSchemaForToolParameters(updateSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse update schema: %w", err)
+	}
 	mcpAgent.RegisterCustomTool(
 		"update_plan_steps",
 		"Update existing steps in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change. The plan.json file is updated immediately when this tool is called.",
@@ -1040,7 +1030,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	deleteSchema := getDeletePlanStepsSchema()
 	deleteParams, err := parseSchemaForToolParameters(deleteSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse delete schema: %w", err)
+		return fmt.Errorf("failed to parse delete schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"delete_plan_steps",
@@ -1052,7 +1042,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	addSchema := getAddPlanStepsSchema()
 	addParams, err := parseSchemaForToolParameters(addSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse add schema: %w", err)
+		return fmt.Errorf("failed to parse add schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"add_plan_steps",
@@ -1065,7 +1055,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	convertToConditionalSchema := getConvertStepToConditionalSchema()
 	convertToConditionalParams, err := parseSchemaForToolParameters(convertToConditionalSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse convert_step_to_conditional schema: %w", err)
+		return fmt.Errorf("failed to parse convert_step_to_conditional schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"convert_step_to_conditional",
@@ -1077,7 +1067,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	addBranchStepsSchema := getAddBranchStepsSchema()
 	addBranchStepsParams, err := parseSchemaForToolParameters(addBranchStepsSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse add_branch_steps schema: %w", err)
+		return fmt.Errorf("failed to parse add_branch_steps schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"add_branch_steps",
@@ -1089,7 +1079,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	updateBranchStepsSchema := getUpdateBranchStepsSchema()
 	updateBranchStepsParams, err := parseSchemaForToolParameters(updateBranchStepsSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse update_branch_steps schema: %w", err)
+		return fmt.Errorf("failed to parse update_branch_steps schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"update_branch_steps",
@@ -1101,7 +1091,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	deleteBranchStepsSchema := getDeleteBranchStepsSchema()
 	deleteBranchStepsParams, err := parseSchemaForToolParameters(deleteBranchStepsSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse delete_branch_steps schema: %w", err)
+		return fmt.Errorf("failed to parse delete_branch_steps schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"delete_branch_steps",
@@ -1113,7 +1103,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	updateConditionalStepSchema := getUpdateConditionalStepSchema()
 	updateConditionalStepParams, err := parseSchemaForToolParameters(updateConditionalStepSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse update_conditional_step schema: %w", err)
+		return fmt.Errorf("failed to parse update_conditional_step schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"update_conditional_step",
@@ -1125,7 +1115,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	convertToRegularSchema := getConvertConditionalToRegularSchema()
 	convertToRegularParams, err := parseSchemaForToolParameters(convertToRegularSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse convert_conditional_to_regular schema: %w", err)
+		return fmt.Errorf("failed to parse convert_conditional_to_regular schema: %w", err)
 	}
 	mcpAgent.RegisterCustomTool(
 		"convert_conditional_to_regular",
@@ -1133,6 +1123,40 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 		convertToRegularParams,
 		createConvertConditionalToRegularExecutor(workspacePath, logger, readFile, writeFile),
 	)
+
+	if logger != nil {
+		logger.Infof("✅ Registered all plan modification tools for %s", agentName)
+	}
+
+	return nil
+}
+
+// ExecuteStructuredUpdate executes the planning agent in UPDATE mode using 3 custom tools that directly update plan.json
+// readFile and writeFile are BaseOrchestrator's ReadWorkspaceFile and WriteWorkspaceFile methods
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) (*PlanningResponse, []llmtypes.MessageContent, error) {
+	// Get workspace path from template vars
+	workspacePath := templateVars["WorkspacePath"]
+	if workspacePath == "" {
+		return nil, nil, fmt.Errorf("WorkspacePath not found in template vars")
+	}
+
+	// Get the underlying MCP agent
+	baseAgent := hctppa.BaseOrchestratorAgent.BaseAgent()
+	if baseAgent == nil {
+		return nil, nil, fmt.Errorf("base agent is not initialized")
+	}
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, nil, fmt.Errorf("MCP agent is not initialized")
+	}
+
+	// Get logger from MCP agent (it has a Logger field)
+	logger := mcpAgent.Logger
+
+	// Register all plan modification tools using shared function
+	if err := registerPlanModificationTools(mcpAgent, workspacePath, logger, readFile, writeFile, "planning agent"); err != nil {
+		return nil, nil, err
+	}
 
 	// Generate system prompt for update mode
 	systemPrompt := planningSystemPromptProcessorForUpdate(templateVars)

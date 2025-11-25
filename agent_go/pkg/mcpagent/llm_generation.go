@@ -1877,6 +1877,25 @@ func (a *Agent) createFallbackLLM(modelID string) (llmtypes.Model, error) {
 		temperature = 0.7
 	}
 
+	// Convert Agent API keys to llm ProviderAPIKeys format
+	var llmAPIKeys *llm.ProviderAPIKeys
+	if a.APIKeys != nil {
+		llmAPIKeys = &llm.ProviderAPIKeys{
+			OpenRouter: a.APIKeys.OpenRouter,
+			OpenAI:     a.APIKeys.OpenAI,
+			Anthropic:  a.APIKeys.Anthropic,
+			Vertex:     a.APIKeys.Vertex,
+		}
+		if a.APIKeys.Bedrock != nil {
+			llmAPIKeys.Bedrock = &llm.BedrockConfig{
+				Region: a.APIKeys.Bedrock.Region,
+			}
+		}
+		logger.Infof("🔑 Using API keys from agent config for fallback LLM")
+	} else {
+		logger.Infof("⚠️ No API keys in agent config, fallback LLM will use environment variables")
+	}
+
 	llmConfig := llm.Config{
 		Provider:    provider,
 		ModelID:     modelID,
@@ -1885,6 +1904,7 @@ func (a *Agent) createFallbackLLM(modelID string) (llmtypes.Model, error) {
 		TraceID:     a.TraceID,
 		Logger:      logger,
 		Context:     context.Background(),
+		APIKeys:     llmAPIKeys,
 	}
 
 	llmModel, err := llm.InitializeLLM(llmConfig)

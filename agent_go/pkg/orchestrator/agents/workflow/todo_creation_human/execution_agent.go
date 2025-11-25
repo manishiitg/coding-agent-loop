@@ -160,19 +160,37 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
      - Adapt success patterns from learnings to match current step description
      - Avoid failure patterns mentioned in learnings (still relevant)
      - **Modify tool calls and arguments** from learnings to match current step requirements (don't use exact copies if step description differs)
-     - Adapt Python scripts from learnings to match current step needs (modify as needed)
+     - **Adapt Python scripts from learnings** to match current step needs:
+       - **Preserve parameter structure**: If scripts use argparse or environment variables, keep that structure
+       - **Pass actual variable values**: Use variable values from step context when executing scripts
+       - **Modify script logic as needed**: Adapt the script's functionality to match current step, but don't hardcode values that should be parameters
    - **If step description is similar to learnings**: You can follow learnings more closely
    - **If step description differs significantly**: Prioritize step description, use learnings only as general guidance
 
 5. **Use MCP Tools**: Select appropriate tools to accomplish the CURRENT step objective (as described in step description), using learnings as guidance
 
-6. **Adapt Discovered Scripts**: Adapt Python scripts from {{.LearningsPath}}/scripts/ to match current step requirements - modify them as needed rather than using exact copies
+6. **Execute Python Scripts with Parameters**: When using Python scripts from {{.LearningsPath}}/scripts/:
+   - **Check script structure**: Read the script to understand how it accepts variables:
+     - **If script uses argparse**: Script accepts command-line arguments (e.g., --account-id, --region)
+     - **If script uses os.getenv()**: Script reads from environment variables
+     - **If script has hardcoded values**: Adapt the script to use parameters (preferred) or modify values as needed
+   - **Pass variables as parameters**:
+     - **For argparse scripts**: Execute with command-line arguments using actual variable values
+       - Example: python script.py --account-id "123456789012" --region "us-east-1"
+       - Use the variable values provided in the step context (from VariableValues)
+     - **For environment variable scripts**: Set environment variables before execution
+       - Example: AWS_ACCOUNT_ID="123456789012" AWS_REGION="us-east-1" python script.py
+       - Export or set environment variables with actual values from VariableValues
+   - **Adapt scripts as needed**: Modify scripts to match current step requirements, but preserve parameter structure
+   - **DO NOT hardcode values**: Always use parameters/arguments when scripts support them - never modify scripts to hardcode values that should be parameters
 
-7. **Verify Completion**: Check if success criteria (from CURRENT step description) is met
+7. **Adapt Discovered Scripts**: Adapt Python scripts from {{.LearningsPath}}/scripts/ to match current step requirements - modify them as needed rather than using exact copies, but preserve parameter-based variable passing
 
-8. **Create Output**: Generate context output file for next steps (if specified)
+8. **Verify Completion**: Check if success criteria (from CURRENT step description) is met
 
-9. **Document Results**: Provide clear summary of what was accomplished
+9. **Create Output**: Generate context output file for next steps (if specified)
+
+10. **Document Results**: Provide clear summary of what was accomplished
 {{if .HasLoop}}
 7. **Save Progress After Each Iteration**: Update or append to the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) after each iteration to preserve progress
 {{end}}
@@ -252,6 +270,13 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 {{end}}
 
 **Important**: Variables have been resolved in step descriptions above. Use these variable names/values as reference when executing the step.
+
+**CRITICAL - Python Script Execution with Variables**:
+- **When executing Python scripts**: Scripts may use variables as parameters (argparse) or environment variables
+- **For argparse scripts**: Pass variable values as command-line arguments (e.g., --account-id "123456789012" --region "us-east-1")
+- **For environment variable scripts**: Set environment variables before execution (e.g., AWS_ACCOUNT_ID="123456789012" python script.py)
+- **Use actual variable values**: Use the values from VariableValues above when executing scripts
+- **DO NOT hardcode values**: Always use parameters/arguments when scripts support them
 {{end}}
 
 {{if eq .HasLoop "true"}}
@@ -325,6 +350,10 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
    - **PRIORITY**: Follow the CURRENT step description above
    - **GUIDANCE**: Use learnings to inform your approach, but adapt them to match current step requirements
    - **IF STEP DESCRIPTION DIFFERS FROM LEARNINGS**: Follow the step description, adapt learnings as needed
+   - **Python Script Execution**: When executing Python scripts:
+     - Check if scripts use argparse (command-line arguments) or environment variables
+     - Pass variable values as parameters/arguments using actual values from VariableValues above
+     - DO NOT hardcode values in scripts - always use parameters when scripts support them
    - Use the complete step information above, including success criteria, context dependencies, and context output requirements.`
 
 	// Parse and execute the template

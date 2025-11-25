@@ -54,6 +54,9 @@ type PlanLearningsAlignmentManager struct {
 	// Session and workflow IDs for human feedback
 	sessionID  string
 	workflowID string
+
+	// Preset LLM config for plan learnings alignment agent
+	presetPlanLearningsAlignmentLLM *AgentLLMConfig
 }
 
 // NewPlanLearningsAlignmentManager creates a new PlanLearningsAlignmentManager
@@ -61,11 +64,13 @@ func NewPlanLearningsAlignmentManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
+	presetPlanLearningsAlignmentLLM *AgentLLMConfig,
 ) *PlanLearningsAlignmentManager {
 	return &PlanLearningsAlignmentManager{
-		BaseOrchestrator: baseOrchestrator,
-		sessionID:        sessionID,
-		workflowID:       workflowID,
+		BaseOrchestrator:                baseOrchestrator,
+		sessionID:                       sessionID,
+		workflowID:                      workflowID,
+		presetPlanLearningsAlignmentLLM: presetPlanLearningsAlignmentLLM,
 	}
 }
 
@@ -82,9 +87,24 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	plam.GetLogger().Infof("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/ and learnings/ folders)", readPaths, writePaths)
 
-	// Use orchestrator default LLM config
-	llmConfigToUse := plam.GetLLMConfig()
-	plam.GetLogger().Infof("🔧 Using orchestrator default alignment LLM: %s/%s", plam.GetProvider(), plam.GetModel())
+	// Use preset LLM config if available, otherwise fall back to orchestrator default
+	orchestratorLLMConfig := plam.GetLLMConfig()
+	var llmConfigToUse *orchestrator.LLMConfig
+	if plam.presetPlanLearningsAlignmentLLM != nil && plam.presetPlanLearningsAlignmentLLM.Provider != "" && plam.presetPlanLearningsAlignmentLLM.ModelID != "" {
+		// Use preset LLM config
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:              plam.presetPlanLearningsAlignmentLLM.Provider,
+			ModelID:               plam.presetPlanLearningsAlignmentLLM.ModelID,
+			FallbackModels:        orchestratorLLMConfig.FallbackModels,
+			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
+			APIKeys:               orchestratorLLMConfig.APIKeys,
+		}
+		plam.GetLogger().Infof("🔧 Using preset plan learnings alignment LLM: %s/%s", plam.presetPlanLearningsAlignmentLLM.Provider, plam.presetPlanLearningsAlignmentLLM.ModelID)
+	} else {
+		// Fall back to orchestrator default
+		llmConfigToUse = orchestratorLLMConfig
+		plam.GetLogger().Infof("🔧 Using orchestrator default alignment LLM: %s/%s", plam.GetProvider(), plam.GetModel())
+	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
 	// No need to add human tools separately as they're already combined in WorkspaceTools

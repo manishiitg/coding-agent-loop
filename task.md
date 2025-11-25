@@ -33,3 +33,10 @@ g) add references as extra agent
 h) should we conditional llm, manually to change flow? like during scrapping. if here is a logout or wrong password there is a critical error.
 
 the prompts we have, have variable issue which we get to know later when we run. 
+
+
+1. the mcp code execution
+2. variable looping agent or variable injection agent
+3. step deciding agent
+4. chain builder?
+6. have a different knowledge tools and a different directly fully for knowledge/ which will index data

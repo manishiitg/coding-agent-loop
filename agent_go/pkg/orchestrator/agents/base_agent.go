@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	internalLLM "mcp-agent/agent_go/internal/llm"
 	"llm-providers/llmtypes"
+	internalLLM "mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -51,17 +51,18 @@ const (
 	TodoOptimizationAgentType  AgentType = "todo_optimization"   // Orchestrates optimization processes (refinement, critique, reports)
 
 	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
-	VariableExtractionAgentType         AgentType = "variable_extraction"           // Extracts variables from objective
-	TodoPlannerAnonymizationAgentType   AgentType = "todo_planner_anonymization"    // Anonymizes learnings by replacing values with variables
-	TodoPlannerPlanImprovementAgentType AgentType = "todo_planner_plan_improvement" // Analyzes execution and provides plan improvement feedback
-	TodoPlannerPlanningAgentType        AgentType = "todo_planner_planning"         // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType       AgentType = "todo_planner_execution"        // Executes first step of plan
-	TodoPlannerValidationAgentType      AgentType = "todo_planner_validation"       // Validates execution results
-	TodoPlannerWriterAgentType          AgentType = "todo_planner_writer"           // Creates optimal todo list
-	TodoPlannerCleanupAgentType         AgentType = "todo_planner_cleanup"          // Manages workspace cleanup
-	TodoPlannerCritiqueAgentType        AgentType = "todo_planner_critique"         // Critiques execution/validation data for planning
-	TodoPlannerSuccessLearningAgentType AgentType = "todo_planner_success_learning" // Analyzes successful executions to capture best practices
-	ConditionalLLMAgentType             AgentType = "conditional_llm"               // Makes conditional decisions
+	VariableExtractionAgentType              AgentType = "variable_extraction"                 // Extracts variables from objective
+	TodoPlannerAnonymizationAgentType        AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
+	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
+	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
+	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results
+	TodoPlannerWriterAgentType               AgentType = "todo_planner_writer"                 // Creates optimal todo list
+	TodoPlannerCleanupAgentType              AgentType = "todo_planner_cleanup"                // Manages workspace cleanup
+	TodoPlannerCritiqueAgentType             AgentType = "todo_planner_critique"               // Critiques execution/validation data for planning
+	TodoPlannerSuccessLearningAgentType      AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
+	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
+	ConditionalLLMAgentType                  AgentType = "conditional_llm"                     // Makes conditional decisions
 )
 
 // BaseAgentInterface defines the interface for base agent operations

@@ -976,12 +976,25 @@ func handleRegexSearchWorkspaceFiles(ctx context.Context, args map[string]interf
 	// Parse JSON response
 	var apiResp WorkspaceAPIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return "", fmt.Errorf("failed to parse API response: %w", err)
+		return "", fmt.Errorf("failed to parse API response: %w (body: %s)", err, string(body))
 	}
 
 	// Check API response success
 	if !apiResp.Success {
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Debug: Log the actual data structure for troubleshooting
+	if apiResp.Data != nil {
+		if dataBytes, err := json.Marshal(apiResp.Data); err == nil {
+			// Only log first 500 chars to avoid huge logs
+			debugInfo := string(dataBytes)
+			if len(debugInfo) > 500 {
+				debugInfo = debugInfo[:500] + "..."
+			}
+			// Note: Using fmt.Printf for debugging - can be removed in production
+			fmt.Printf("[DEBUG] regex_search API response data: %s\n", debugInfo)
+		}
 	}
 
 	// Format the search results for the LLM
@@ -1380,18 +1393,54 @@ func formatWorkspaceSearchResults(data interface{}, query string) (string, error
 	// Convert data to map for processing
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
+		// Debug: Log the actual type for troubleshooting
+		if dataBytes, err := json.Marshal(data); err == nil {
+			debugInfo := string(dataBytes)
+			if len(debugInfo) > 500 {
+				debugInfo = debugInfo[:500] + "..."
+			}
+			fmt.Printf("[DEBUG] formatWorkspaceSearchResults: data is not a map, type=%T, value=%s\n", data, debugInfo)
+		}
 		return "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", data)
 	}
 
 	// Extract search results
 	results, exists := dataMap["results"]
 	if !exists {
-		return "", fmt.Errorf("no results found in search response")
+		// Debug: Log available keys
+		keys := make([]string, 0, len(dataMap))
+		for k := range dataMap {
+			keys = append(keys, k)
+		}
+		return "", fmt.Errorf("no results found in search response (available keys: %v)", keys)
 	}
 
-	resultsArray, ok := results.([]interface{})
-	if !ok {
-		return "", fmt.Errorf("results is not an array")
+	// Handle nil results
+	if results == nil {
+		return formatEmptySearchResults(query, getStringValue(dataMap, "method")), nil
+	}
+
+	// Try to convert results to array
+	var resultsArray []interface{}
+	switch v := results.(type) {
+	case []interface{}:
+		resultsArray = v
+	case []map[string]interface{}:
+		// Convert []map[string]interface{} to []interface{}
+		resultsArray = make([]interface{}, len(v))
+		for i, item := range v {
+			resultsArray[i] = item
+		}
+	default:
+		// Debug: Log the actual type for troubleshooting
+		if resultsBytes, err := json.Marshal(results); err == nil {
+			debugInfo := string(resultsBytes)
+			if len(debugInfo) > 500 {
+				debugInfo = debugInfo[:500] + "..."
+			}
+			fmt.Printf("[DEBUG] formatWorkspaceSearchResults: results is not an array, type=%T, value=%s\n", results, debugInfo)
+		}
+		return "", fmt.Errorf("results is not an array (type: %T, value: %v)", results, results)
 	}
 
 	total := getIntValue(dataMap, "total")
@@ -1467,6 +1516,19 @@ func formatWorkspaceSearchResults(data interface{}, query string) (string, error
 	result.WriteString("💡 **Tip**: Use `read_workspace_file` to read the full content of any file.")
 
 	return result.String(), nil
+}
+
+// formatEmptySearchResults formats an empty search result response
+func formatEmptySearchResults(query, method string) string {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("🔍 **Search Results for: `%s`**\n", query))
+	if method != "" {
+		result.WriteString(fmt.Sprintf("**Method**: %s | **Total**: 0 results\n\n", method))
+	} else {
+		result.WriteString("**Total**: 0 results\n\n")
+	}
+	result.WriteString("No files found matching your search query.\n")
+	return result.String()
 }
 
 // handleSyncWorkspaceToGitHub handles the sync_workspace_to_github tool execution

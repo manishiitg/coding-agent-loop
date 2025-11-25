@@ -11,9 +11,22 @@ interface ConversationTurnEventProps {
 export const ConversationTurnEventDisplay: React.FC<ConversationTurnEventProps> = ({ event, compact = false }) => {
   const [isExpanded, setIsExpanded] = useState(false)
   const [isToolsExpanded, setIsToolsExpanded] = useState(false)
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set())
 
   const hasExpandableContent = event.messages && event.messages.length > 0
   const hasTools = event.tools && event.tools.length > 0
+
+  const toggleDescription = (toolKey: string) => {
+    setExpandedDescriptions(prev => {
+      const next = new Set(prev)
+      if (next.has(toolKey)) {
+        next.delete(toolKey)
+      } else {
+        next.add(toolKey)
+      }
+      return next
+    })
+  }
 
   if (compact) {
     return (
@@ -101,20 +114,38 @@ export const ConversationTurnEventDisplay: React.FC<ConversationTurnEventProps> 
                             </span>
                           </div>
                           <div className="space-y-1 ml-4">
-                            {tools?.map((tool, index) => (
-                              <div key={index} className="text-xs">
-                                <div className="flex items-start gap-2">
-                                  <span className="font-medium text-blue-700 dark:text-blue-300 min-w-0 flex-1">
-                                    {tool.name}
-                                  </span>
-                                </div>
-                                {tool.description && (
-                                  <div className="text-gray-600 dark:text-gray-400 mt-1 text-xs">
-                                    {tool.description.length > 80 ? `${tool.description.substring(0, 80)}...` : tool.description}
+                            {tools?.map((tool, index) => {
+                              const toolKey = `${serverName}:${tool.name}`
+                              const isDescriptionExpanded = expandedDescriptions.has(toolKey)
+                              const description = tool.description || ''
+                              const shouldTruncate = description.length > 80
+                              const displayDescription = shouldTruncate && !isDescriptionExpanded
+                                ? `${description.substring(0, 80)}...`
+                                : description
+
+                              return (
+                                <div key={index} className="text-xs">
+                                  <div className="flex items-start gap-2">
+                                    <span className="font-medium text-blue-700 dark:text-blue-300 min-w-0 flex-1">
+                                      {tool.name}
+                                    </span>
                                   </div>
-                                )}
-                              </div>
-                            ))}
+                                  {description && (
+                                    <div className="text-gray-600 dark:text-gray-400 mt-1 text-xs">
+                                      {displayDescription}
+                                      {shouldTruncate && (
+                                        <button
+                                          onClick={() => toggleDescription(toolKey)}
+                                          className="ml-1 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 underline cursor-pointer"
+                                        >
+                                          {isDescriptionExpanded ? 'Read less' : 'Read more'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
                           </div>
                         </div>
                       ))}
@@ -332,20 +363,38 @@ export const ConversationTurnEventDisplay: React.FC<ConversationTurnEventProps> 
                             </span>
                           </div>
                           <div className="space-y-1 ml-4">
-                            {tools?.map((tool, index) => (
-                              <div key={index} className="text-xs">
-                                <div className="flex items-start gap-2">
-                                  <span className="font-medium text-blue-700 dark:text-blue-300 min-w-0 flex-1">
-                                    {tool.name}
-                                  </span>
-                                </div>
-                                {tool.description && (
-                                  <div className="text-gray-600 dark:text-gray-400 mt-1 text-xs">
-                                    {tool.description.length > 100 ? `${tool.description.substring(0, 100)}...` : tool.description}
+                            {tools?.map((tool, index) => {
+                              const toolKey = `${serverName}:${tool.name}`
+                              const isDescriptionExpanded = expandedDescriptions.has(toolKey)
+                              const description = tool.description || ''
+                              const shouldTruncate = description.length > 100
+                              const displayDescription = shouldTruncate && !isDescriptionExpanded
+                                ? `${description.substring(0, 100)}...`
+                                : description
+
+                              return (
+                                <div key={index} className="text-xs">
+                                  <div className="flex items-start gap-2">
+                                    <span className="font-medium text-blue-700 dark:text-blue-300 min-w-0 flex-1">
+                                      {tool.name}
+                                    </span>
                                   </div>
-                                )}
-                              </div>
-                            ))}
+                                  {description && (
+                                    <div className="text-gray-600 dark:text-gray-400 mt-1 text-xs">
+                                      {displayDescription}
+                                      {shouldTruncate && (
+                                        <button
+                                          onClick={() => toggleDescription(toolKey)}
+                                          className="ml-1 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 underline cursor-pointer"
+                                        >
+                                          {isDescriptionExpanded ? 'Read less' : 'Read more'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
                           </div>
                         </div>
                       ))}

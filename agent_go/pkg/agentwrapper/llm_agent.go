@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
 	"llm-providers/llmtypes"
+	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -279,6 +279,24 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 
 	// Set the agent's provider field
 	agent.SetProvider(config.Provider)
+
+	// Set the agent's API keys for fallback LLM creation
+	if config.APIKeys != nil {
+		// Convert from wrapper API keys to agent API keys
+		agentAPIKeys := &mcpagent.AgentAPIKeys{
+			OpenRouter: config.APIKeys.OpenRouter,
+			OpenAI:     config.APIKeys.OpenAI,
+			Anthropic:  config.APIKeys.Anthropic,
+			Vertex:     config.APIKeys.Vertex,
+		}
+		if config.APIKeys.Bedrock != nil {
+			agentAPIKeys.Bedrock = &mcpagent.AgentBedrockConfig{
+				Region: config.APIKeys.Bedrock.Region,
+			}
+		}
+		agent.APIKeys = agentAPIKeys
+		logger.Infof("🔑 API keys configured for agent fallback LLM creation")
+	}
 
 	// Note: Event bridge integration will be added later to avoid import cycles
 	// For now, the agent will use its own event system which is compatible with Langfuse

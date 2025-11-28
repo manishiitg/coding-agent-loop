@@ -28,7 +28,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)
@@ -39,8 +39,12 @@ func getLogger(a *Agent) utils.ExtendedLogger {
 
 // isVirtualTool checks if a tool name is a virtual tool
 func isVirtualTool(toolName string) bool {
-	// Check hardcoded virtual tools
-	virtualTools := []string{"get_prompt", "get_resource", "read_large_output", "search_large_output", "query_large_output"}
+	// Check hardcoded virtual tools (includes all possible virtual tools)
+	virtualTools := []string{
+		"get_prompt", "get_resource",
+		"read_large_output", "search_large_output", "query_large_output",
+		"discover_code_files", "write_code", // Code execution mode tools (discover_code_structure removed)
+	}
 	for _, vt := range virtualTools {
 		if vt == toolName {
 			return true
@@ -263,13 +267,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	a.filteredTools = a.Tools // Start with all tools, then filter based on conversation context
 
 	// Only run smart routing if it was enabled during initialization
-	// In cache-only mode, use cached servers count; otherwise use active clients count
-	var serverCount int
-	if a.CacheOnly {
-		serverCount = len(a.servers) // Use cached servers count
-	} else {
-		serverCount = len(a.Clients) // Use active clients count
-	}
+	// Use active clients count
+	serverCount := len(a.Clients)
 
 	if a.EnableSmartRouting && len(a.Tools) > a.SmartRoutingThreshold.MaxTools && serverCount > a.SmartRoutingThreshold.MaxServers {
 		logger := getLogger(a)
@@ -449,11 +448,15 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
+			var generationInfo *llmtypes.GenerationInfo
+			if resp.Choices[0].GenerationInfo != nil {
+				generationInfo = resp.Choices[0].GenerationInfo
+			}
 			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
 				PromptTokens:     usage.InputTokens,
 				CompletionTokens: usage.OutputTokens,
 				TotalTokens:      usage.TotalTokens,
-			})
+			}, generationInfo)
 		}
 
 		// Check for context cancellation after LLM generation
@@ -844,7 +847,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 				// Only check for client errors for non-custom tools and non-virtual tools
 				if !isCustomTool && !isVirtualTool(tc.FunctionCall.Name) && client == nil {
-					// Check if we're in cache-only mode with no active connections
+					// Check if we have no active connections
 					if len(a.Clients) == 0 {
 
 						// Create connection on-demand for the specific server
@@ -944,6 +947,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
 						}
 					} else {
+						// Ensure resultText is never empty for virtual tools
+						// This prevents empty content from being sent to LLM
+						if resultText == "" {
+							logger.Warnf("⚠️ Virtual tool '%s' returned empty result - using default message", tc.FunctionCall.Name)
+							resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
+						}
 						result = &mcp.CallToolResult{
 							IsError: false,
 							Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
@@ -1037,6 +1046,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Get the tool result as string (without prefix)
 					resultText = mcpclient.ToolResultAsString(result, getLogger(a))
+
+					// Ensure resultText is never empty when sending to LLM
+					// This is a safety check for all tool types (virtual, custom, MCP)
+					if resultText == "" && !result.IsError {
+						logger.Warnf("⚠️ Tool '%s' returned empty result - using default message", tc.FunctionCall.Name)
+						resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
+					}
 
 					// 🔧 BROKEN PIPE DETECTION IN SUCCESSFUL RESULT PATH
 					if result.IsError && (strings.Contains(resultText, "Broken pipe") || strings.Contains(resultText, "[Errno 32]")) {
@@ -1181,7 +1197,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
-			a.EndAgentSession(ctx)
+			a.EndAgentSession(ctx, time.Since(conversationStartTime))
 
 			return choice.Content, messages, nil
 		}
@@ -1208,7 +1224,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	messages = append(messages, finalUserMessage)
 
 	// Emit user message event for the final request
-	finalUserMessageEvent := events.NewUserMessageEvent(a.MaxTurns, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
+	finalUserMessageEvent := events.NewUserMessageEvent(a.MaxTurns+1, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
 	a.EmitTypedEvent(ctx, finalUserMessageEvent)
 
 	// Make one final LLM call to get the final answer
@@ -1230,9 +1246,71 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, err, _ = GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns, func(msg string) {
+	finalResp, err, finalUsage := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
 		// Optional: stream the final response
 	})
+
+	// Log finalUsage for debugging
+	logger.Infof("🔍 [FINAL LLM CALL DEBUG] finalUsage from GenerateContentWithRetry:")
+	logger.Infof("   InputTokens: %d, OutputTokens: %d, TotalTokens: %d, Unit: %s",
+		finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.TotalTokens, finalUsage.Unit)
+	if finalResp != nil && len(finalResp.Choices) > 0 {
+		if finalResp.Choices[0].GenerationInfo != nil {
+			genInfo := finalResp.Choices[0].GenerationInfo
+			logger.Infof("   GenerationInfo available:")
+			if genInfo.InputTokens != nil {
+				logger.Infof("      InputTokens: %d", *genInfo.InputTokens)
+			}
+			if genInfo.OutputTokens != nil {
+				logger.Infof("      OutputTokens: %d", *genInfo.OutputTokens)
+			}
+			if genInfo.TotalTokens != nil {
+				logger.Infof("      TotalTokens: %d", *genInfo.TotalTokens)
+			}
+			if genInfo.CachedContentTokens != nil {
+				logger.Infof("      CachedContentTokens: %d", *genInfo.CachedContentTokens)
+			}
+			if genInfo.ReasoningTokens != nil {
+				logger.Infof("      ReasoningTokens: %d", *genInfo.ReasoningTokens)
+			}
+			if genInfo.CacheDiscount != nil {
+				logger.Infof("      CacheDiscount: %.2f%%", *genInfo.CacheDiscount*100)
+			}
+			if genInfo.Additional != nil && len(genInfo.Additional) > 0 {
+				logger.Infof("      Additional fields:")
+				for key, value := range genInfo.Additional {
+					if strings.Contains(strings.ToLower(key), "cache") || strings.Contains(strings.ToLower(key), "token") {
+						logger.Infof("         %s: %v", key, value)
+					}
+				}
+			}
+		} else {
+			logger.Infof("   GenerationInfo is nil")
+		}
+	} else {
+		logger.Infof("   finalResp is nil or has no choices")
+	}
+
+	// Accumulate token usage from final LLM call
+	if finalResp != nil && len(finalResp.Choices) > 0 && finalUsage.TotalTokens > 0 {
+		var generationInfo *llmtypes.GenerationInfo
+		if finalResp.Choices[0].GenerationInfo != nil {
+			generationInfo = finalResp.Choices[0].GenerationInfo
+		}
+		a.accumulateTokenUsage(ctx, events.UsageMetrics{
+			PromptTokens:     finalUsage.InputTokens,
+			CompletionTokens: finalUsage.OutputTokens,
+			TotalTokens:      finalUsage.TotalTokens,
+		}, generationInfo, a.MaxTurns+1)
+	} else {
+		logger.Warnf("⚠️  [FINAL LLM CALL DEBUG] Skipping token accumulation - finalResp: %v, choices: %d, finalUsage.TotalTokens: %d",
+			finalResp != nil, func() int {
+				if finalResp != nil {
+					return len(finalResp.Choices)
+				}
+				return 0
+			}(), finalUsage.TotalTokens)
+	}
 
 	if err != nil {
 		// If the final call also fails, emit error event
@@ -1242,7 +1320,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			},
 			Question: lastUserMessage,
 			Error:    "max turns reached and final attempt failed",
-			Turn:     a.MaxTurns,
+			Turn:     a.MaxTurns + 1,
 			Context:  "conversation",
 			Duration: time.Since(conversationStartTime),
 		}
@@ -1262,12 +1340,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				lastResponse,                      // finalResult
 				"completed",                       // status
 				time.Since(conversationStartTime), // duration
-				a.MaxTurns,                        // turns
+				a.MaxTurns+1,                      // turns (+1 for the final turn)
 			)
 			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 			// NEW: End agent session for hierarchy tracking
-			a.EndAgentSession(ctx)
+			a.EndAgentSession(ctx, time.Since(conversationStartTime))
 
 			// Append the final response to messages array for consistency
 			if lastResponse != "" {
@@ -1283,7 +1361,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		logger.Infof("[AGENT TRACE] AskWithHistory: exiting with no final answer after %d turns.", a.MaxTurns)
 
 		// 🎯 FIX: End the trace for max turns error - replaced with event emission
-		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.MaxTurns), a.MaxTurns, "max_turns_exceeded", time.Since(conversationStartTime))
+		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.MaxTurns), a.MaxTurns+1, "max_turns_exceeded", time.Since(conversationStartTime))
 		a.EmitTypedEvent(ctx, maxTurnsErrorEvent)
 
 		return "", messages, fmt.Errorf("max turns (%d) reached without final answer", a.MaxTurns)
@@ -1293,7 +1371,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		logger.Infof("[AGENT TRACE] AskWithHistory: final call returned no response choices")
 
 		// 🎯 FIX: End the trace for final call error - replaced with event emission
-		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.MaxTurns, "no_final_choices", time.Since(conversationStartTime))
+		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.MaxTurns+1, "no_final_choices", time.Since(conversationStartTime))
 		a.EmitTypedEvent(ctx, finalCallErrorEvent)
 
 		return "", messages, fmt.Errorf("final call returned no response choices")
@@ -1322,7 +1400,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	a.EmitTypedEvent(ctx, unifiedCompletionEvent)
 
 	// NEW: End agent session for hierarchy tracking
-	a.EndAgentSession(ctx)
+	a.EndAgentSession(ctx, time.Since(conversationStartTime))
 
 	// Append the final response to messages array for consistency
 	if finalChoice.Content != "" {

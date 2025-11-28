@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"llm-providers/llmtypes"
 	internalLLM "mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -52,6 +52,8 @@ const (
 
 	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
 	VariableExtractionAgentType         AgentType = "variable_extraction"           // Extracts variables from objective
+	TodoPlannerAnonymizationAgentType   AgentType = "todo_planner_anonymization"    // Anonymizes learnings by replacing values with variables
+	TodoPlannerPlanImprovementAgentType AgentType = "todo_planner_plan_improvement" // Analyzes execution and provides plan improvement feedback
 	TodoPlannerPlanningAgentType        AgentType = "todo_planner_planning"         // Creates step-wise plan from objective
 	TodoPlannerExecutionAgentType       AgentType = "todo_planner_execution"        // Executes first step of plan
 	TodoPlannerValidationAgentType      AgentType = "todo_planner_validation"       // Validates execution results
@@ -131,6 +133,7 @@ func NewBaseAgent(
 	instructions string,
 	serverNames []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	mode AgentMode,
 	tracer observability.Tracer,
 	traceID observability.TraceID,
@@ -158,7 +161,6 @@ func NewBaseAgent(
 		mcpagent.WithToolChoice(toolChoice),
 		mcpagent.WithMaxTurns(maxTurns),
 		mcpagent.WithProvider(internalLLM.Provider(provider)),
-		mcpagent.WithCacheOnly(cacheOnly),
 	}
 
 	// Add selected servers for "all tools" mode determination
@@ -169,6 +171,12 @@ func NewBaseAgent(
 	// Add selected tools if provided
 	if len(selectedTools) > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(selectedTools))
+	}
+
+	// Add code execution mode if enabled
+	if useCodeExecutionMode {
+		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
+		logger.Infof("🔧 Code execution mode enabled for %s agent - MCP tools will be accessed via generated Go code", agentType)
 	}
 
 	// Enable smart routing for all agents

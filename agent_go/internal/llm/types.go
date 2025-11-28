@@ -2,7 +2,7 @@ package llm
 
 import (
 	"context"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // LLMCallFunc is a type-safe function signature for LLM calls.

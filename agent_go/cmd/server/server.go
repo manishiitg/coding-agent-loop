@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/events"
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
@@ -60,8 +60,15 @@ func extractWorkspacePathFromObjective(objective string) string {
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
-func createCustomTools() ([]llmtypes.Tool, map[string]interface{}) {
+// Returns: tools, executors, and a map of tool names to their categories
+// All tools from CreateWorkspaceTools() get category "workspace"
+// All tools from CreateHumanTools() get category "human"
+func createCustomTools() ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
 	// Create workspace and human tools for orchestrator/workflow agents
+	// Get category names dynamically using GetToolCategory functions
+	workspaceCategory := virtualtools.GetWorkspaceToolCategory()
+	humanCategory := virtualtools.GetHumanToolCategory()
+
 	workspaceTools := virtualtools.CreateWorkspaceTools()
 	workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
 	humanTools := virtualtools.CreateHumanTools()
@@ -77,7 +84,26 @@ func createCustomTools() ([]llmtypes.Tool, map[string]interface{}) {
 		allExecutors[name] = executor
 	}
 
-	return allTools, allExecutors
+	// Build category map based on source function:
+	// All tools from CreateWorkspaceTools() -> "workspace"
+	// All tools from CreateHumanTools() -> "human"
+	toolCategories := make(map[string]string)
+
+	// Assign category to all tools from CreateWorkspaceTools()
+	for _, tool := range workspaceTools {
+		if tool.Function != nil {
+			toolCategories[tool.Function.Name] = workspaceCategory
+		}
+	}
+
+	// Assign category to all tools from CreateHumanTools()
+	for _, tool := range humanTools {
+		if tool.Function != nil {
+			toolCategories[tool.Function.Name] = humanCategory
+		}
+	}
+
+	return allTools, allExecutors, toolCategories
 }
 
 // ServerCmd represents the server command
@@ -208,6 +234,9 @@ type QueryRequest struct {
 	LLMConfig      *orchestrator.LLMConfig `json:"llm_config,omitempty"`
 	PresetQueryID  string                  `json:"preset_query_id,omitempty"`
 	LLMGuidance    string                  `json:"llm_guidance,omitempty"` // LLM guidance message
+	// Code execution mode: When enabled, only virtual tools are added to LLM
+	// MCP tools are accessed via generated Go code using discover_code_files and write_code
+	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -500,6 +529,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/tools/add", api.handleAddServer).Methods("POST")
 	apiRouter.HandleFunc("/tools/edit", api.handleEditServer).Methods("POST")
 	apiRouter.HandleFunc("/tools/remove", api.handleRemoveServer).Methods("POST")
+
+	// MCP execution API (from tools.go)
+	apiRouter.HandleFunc("/mcp/execute", api.handleMCPExecute).Methods("POST", "OPTIONS")
+
+	// Custom tool execution API (from tools.go)
+	apiRouter.HandleFunc("/custom/execute", api.handleCustomExecute).Methods("POST", "OPTIONS")
+
+	// Virtual tool execution API (from tools.go)
+	apiRouter.HandleFunc("/virtual/execute", api.handleVirtualExecute).Methods("POST", "OPTIONS")
 
 	// MCP Registry API routes (from mcp_registry_routes.go)
 	apiRouter.HandleFunc("/mcp-registry/servers", api.handleGetMCPRegistryServers).Methods("GET")
@@ -951,22 +989,40 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// TODO: Memory tools removed from workflow - only needed for individual React agents
 		// memoryTools := virtualtools.CreateMemoryTools()
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-		allTools, allExecutors := createCustomTools()
+		allTools, allExecutors, toolCategories := createCustomTools()
 
-		// Load selected tools from preset if available (for workflow agents)
+		// Load selected tools, code execution mode, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
+		var useCodeExecutionMode bool
+		var presetLLMConfig *database.PresetLLMConfig
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
 			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-			if err == nil && preset.SelectedTools != "" {
-				if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-					log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
-				} else {
-					if len(selectedTools) > 0 {
-						log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+			if err == nil {
+				// Load selected tools
+				if preset.SelectedTools != "" {
+					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
 					} else {
-						log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						if len(selectedTools) > 0 {
+							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+						} else {
+							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						}
 					}
+				}
+				// Load preset LLM config for agent defaults
+				if len(preset.LLMConfig) > 0 {
+					if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
+						log.Printf("[PRESET LLM] Failed to parse preset LLM config: %w", err)
+					} else {
+						log.Printf("[PRESET LLM] Loaded preset LLM config with agent defaults")
+					}
+				}
+				// Load code execution mode from preset
+				useCodeExecutionMode = preset.UseCodeExecutionMode
+				if useCodeExecutionMode {
+					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
 				}
 			}
 		}
@@ -983,22 +1039,31 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
+		// Use code execution mode from request if preset didn't provide any
+		if !useCodeExecutionMode && req.UseCodeExecutionMode {
+			useCodeExecutionMode = req.UseCodeExecutionMode
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
+		}
+
 		// Create workflow orchestrator for this request
 		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
-			req.Provider,        // provider
-			req.ModelID,         // model
-			api.mcpConfigPath,   // mcpConfigPath
-			api.temperature,     // temperature
-			"workflow",          // agentMode
-			api.logger,          // logger
-			workflowEventBridge, // eventBridge
-			tracer,              // tracer
-			selectedServers,     // selectedServers
-			selectedTools,       // NEW: selectedTools
-			allTools,            // customTools
-			allExecutors,        // customToolExecutors
-			req.LLMConfig,       // llmConfig
-			req.MaxTurns,        // maxTurns
+			req.Provider,         // provider
+			req.ModelID,          // model
+			api.mcpConfigPath,    // mcpConfigPath
+			api.temperature,      // temperature
+			"workflow",           // agentMode
+			api.logger,           // logger
+			workflowEventBridge,  // eventBridge
+			tracer,               // tracer
+			selectedServers,      // selectedServers
+			selectedTools,        // NEW: selectedTools
+			useCodeExecutionMode, // NEW: code execution mode
+			allTools,             // customTools
+			allExecutors,         // customToolExecutors
+			req.LLMConfig,        // llmConfig
+			req.MaxTurns,         // maxTurns
+			toolCategories,       // NEW: toolCategories
+			presetLLMConfig,      // preset LLM config for agent defaults
 		)
 		if err != nil {
 			log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %w", err)
@@ -1225,20 +1290,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		streamCtx, cancel := context.WithTimeout(context.Background(), 60*3*time.Minute)
 		defer cancel()
 
-		// Load selected tools from preset if available (for simple/ReAct agents)
+		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
 		var selectedTools []string
+		var useCodeExecutionMode bool
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
 			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-			if err == nil && preset.SelectedTools != "" {
-				if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-					log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
-				} else {
-					if len(selectedTools) > 0 {
-						log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+			if err == nil {
+				if preset.SelectedTools != "" {
+					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
 					} else {
-						log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						if len(selectedTools) > 0 {
+							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+						} else {
+							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						}
 					}
+				}
+				// Load code execution mode from preset
+				useCodeExecutionMode = preset.UseCodeExecutionMode
+				if useCodeExecutionMode {
+					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
 				}
 			}
 		}
@@ -1255,6 +1328,54 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
+		// Use code execution mode from request if preset didn't provide any
+		if !useCodeExecutionMode && req.UseCodeExecutionMode {
+			useCodeExecutionMode = req.UseCodeExecutionMode
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
+		}
+
+		// Create LLM agent wrapper with trace using streamCtx
+		if req.PresetQueryID != "" {
+			ctx := context.Background()
+			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
+			if err == nil {
+				if preset.SelectedTools != "" {
+					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
+					} else {
+						if len(selectedTools) > 0 {
+							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+						} else {
+							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						}
+					}
+				}
+				// Load code execution mode from preset
+				useCodeExecutionMode = preset.UseCodeExecutionMode
+				if useCodeExecutionMode {
+					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
+				}
+			}
+		}
+
+		// Use selected tools from request if preset didn't provide any
+		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
+			selectedTools = req.SelectedTools
+			if len(selectedTools) > 0 {
+				log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
+			} else {
+				log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
+			}
+		} else if len(selectedTools) == 0 {
+			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
+		}
+
+		// Use code execution mode from request if preset didn't provide any
+		if !useCodeExecutionMode && req.UseCodeExecutionMode {
+			useCodeExecutionMode = req.UseCodeExecutionMode
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
+		}
+
 		// Create new agent with streamCtx instead of r.Context()
 		agentConfig := agent.LLMAgentConfig{
 			Name:               sessionID,
@@ -1267,7 +1388,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
 			Timeout:            2 * time.Minute,
-			CacheOnly:          false,         // Allow fresh connections when cache is not available
 			SelectedTools:      selectedTools, // NEW: Pass selected tools
 
 			// Enable smart routing by default for both React and Simple agents
@@ -1278,6 +1398,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Detailed LLM configuration from frontend
 			FallbackModels:        fallbackModels,
 			CrossProviderFallback: crossProviderFallback,
+			// Code execution mode: When enabled, only virtual tools are added to LLM
+			// MCP tools are accessed via generated Go code using discover_code_files and write_code
+			UseCodeExecutionMode: useCodeExecutionMode,
+			// Convert API keys from request to LLM format
+			APIKeys: func() *llm.ProviderAPIKeys {
+				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
+					llmKeys := &llm.ProviderAPIKeys{
+						OpenRouter: req.LLMConfig.APIKeys.OpenRouter,
+						OpenAI:     req.LLMConfig.APIKeys.OpenAI,
+						Anthropic:  req.LLMConfig.APIKeys.Anthropic,
+						Vertex:     req.LLMConfig.APIKeys.Vertex,
+					}
+					if req.LLMConfig.APIKeys.Bedrock != nil {
+						llmKeys.Bedrock = &llm.BedrockConfig{
+							Region: req.LLMConfig.APIKeys.Bedrock.Region,
+						}
+					}
+					return llmKeys
+				}
+				return nil
+			}(),
 		}
 
 		// Set agent mode based on request
@@ -1296,7 +1437,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
 		log.Printf("[SMART ROUTING DEBUG] Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
 			agentConfig.SmartRoutingMaxTools, agentConfig.SmartRoutingMaxServers)
-		log.Printf("[CACHE DEBUG] Cache-only mode: %v (disabled to allow fresh connections)", agentConfig.CacheOnly)
 		// Create LLM agent wrapper with trace using streamCtx
 		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, api.logger)
 		if err != nil {
@@ -1307,9 +1447,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Add workspace tools to simple agents (chat mode)
 		// This matches how workspace tools are registered in workflow/orchestrator agents
+		// This ensures custom tools are available and code generation is triggered
 		if req.AgentMode == "simple" && llmAgent.GetUnderlyingAgent() != nil {
 			workspaceTools := virtualtools.CreateWorkspaceTools()
 			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+			_, _, toolCategories := createCustomTools() // Get toolCategories map
 
 			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent", len(workspaceTools))
 
@@ -1331,15 +1473,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 
+					// Get tool category from the category map - REQUIRED
+					toolCategory := toolCategories[toolName]
+					if toolCategory == "" {
+						log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
+						sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
+						return
+					}
+
 					// Executor is already the correct type (func(ctx, args) (string, error))
 					// No type assertion needed unlike workflow where executors are map[string]interface{}
-					underlyingAgent.RegisterCustomTool(
+					if err := underlyingAgent.RegisterCustomTool(
 						toolName,
 						tool.Function.Description,
 						params,
 						executor,
-					)
-					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s", toolName)
+						toolCategory,
+					); err != nil {
+						log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+						sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
+						return
+					}
+					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 				}
 			}
 			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
@@ -1347,6 +1502,63 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			// Create custom tools for regular agents (same as orchestrator/workflow)
+			allTools, allExecutors, toolCategories := createCustomTools()
+
+			// Register each custom tool with the agent
+			// This will trigger code generation and update the registry
+			// Note: Workspace tools are already registered above, skip them in allTools
+			for _, tool := range allTools {
+				if tool.Function != nil {
+					toolName := tool.Function.Name
+
+					// Skip workspace tools - already registered above
+					if toolCategories[toolName] == virtualtools.GetWorkspaceToolCategory() {
+						continue
+					}
+
+					if executor, exists := allExecutors[toolName]; exists {
+						// Convert executor to the expected function signature
+						if execFunc, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+							// Convert Parameters to map[string]interface{} by marshaling/unmarshaling
+							var params map[string]interface{}
+							if tool.Function.Parameters != nil {
+								paramsBytes, err := json.Marshal(tool.Function.Parameters)
+								if err == nil {
+									json.Unmarshal(paramsBytes, &params)
+								}
+							}
+							if params == nil {
+								params = make(map[string]interface{})
+							}
+
+							// Get tool category from the category map - REQUIRED
+							toolCategory := toolCategories[toolName]
+							if toolCategory == "" {
+								log.Printf("[CUSTOM TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
+								// Continue to next tool instead of failing entire request
+								continue
+							}
+
+							// Register the tool - this triggers code generation
+							if err := underlyingAgent.RegisterCustomTool(
+								toolName,
+								tool.Function.Description,
+								params,
+								execFunc,
+								toolCategory,
+							); err != nil {
+								log.Printf("[CUSTOM TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+								// Continue to next tool instead of failing entire request
+								continue
+							}
+							log.Printf("[CUSTOM TOOLS] Registered custom tool: %s (category: %s)", toolName, toolCategory)
+						}
+					}
+				}
+			}
+			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", len(allTools))
+
 			// Add base instructions for all agents
 			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
 		}

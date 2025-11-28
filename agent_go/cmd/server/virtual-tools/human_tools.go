@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // CreateHumanTools creates human interaction tools
@@ -37,6 +37,11 @@ func CreateHumanTools() []llmtypes.Tool {
 	humanTools = append(humanTools, humanFeedbackTool)
 
 	return humanTools
+}
+
+// GetToolCategory returns the category name for human tools
+func GetHumanToolCategory() string {
+	return "human"
 }
 
 // CreateHumanToolExecutors creates the execution functions for human tools

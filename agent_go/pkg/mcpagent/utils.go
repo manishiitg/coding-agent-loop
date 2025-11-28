@@ -14,7 +14,7 @@ package mcpagent
 import (
 	"mcp-agent/agent_go/internal/observability"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // GetDefaultMaxTurns returns the default max turns for a given agent mode.

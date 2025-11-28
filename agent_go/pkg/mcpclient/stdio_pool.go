@@ -132,6 +132,33 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey string, command string, args []string, env []string) (*StdioConnection, error) {
 	startTime := time.Now()
 	p.logger.Infof("🔧 [STDIO POOL] Creating new stdio connection: %s %v", command, args)
+	
+	// Debug: Log environment variables (but mask sensitive values)
+	if p.logger != nil {
+		envCount := len(env)
+		envPreview := make([]string, 0)
+		for _, e := range env {
+			if idx := strings.IndexByte(e, '='); idx > 0 {
+				key := e[:idx]
+				// Always include SERVICE_ACCOUNT_PATH and DRIVE_FOLDER_ID if present
+				if strings.Contains(key, "SERVICE_ACCOUNT") || strings.Contains(key, "DRIVE_FOLDER") {
+					envPreview = append(envPreview, e)
+				}
+				// Only show first few env vars to avoid log spam
+				if len(envPreview) < 10 {
+					if strings.Contains(strings.ToLower(key), "secret") || strings.Contains(strings.ToLower(key), "password") || strings.Contains(strings.ToLower(key), "key") {
+						envPreview = append(envPreview, fmt.Sprintf("%s=***", key))
+					} else {
+						envPreview = append(envPreview, e)
+					}
+				}
+			}
+		}
+		if envCount > 5 {
+			envPreview = append(envPreview, fmt.Sprintf("... and %d more", envCount-5))
+		}
+		p.logger.Debugf("🔧 [STDIO POOL] Environment variables (%d total): %v", envCount, envPreview)
+	}
 
 	// Create the MCP client
 	p.logger.Infof("🔧 [STDIO POOL] Step 1/2: Creating stdio MCP client for: %s", serverKey)

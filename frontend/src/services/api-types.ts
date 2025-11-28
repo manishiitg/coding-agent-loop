@@ -19,6 +19,7 @@ export interface LLMConfiguration {
       // AWS credentials handled via IAM roles
     }
     anthropic?: string
+    vertex?: string
   }
 }
 
@@ -43,6 +44,9 @@ export interface AgentQueryRequest {
   agent_mode?: 'simple' | 'workflow'
   llm_config?: LLMConfiguration
   preset_query_id?: string
+  // Code execution mode: When enabled, only virtual tools are added to LLM
+  // MCP tools are accessed via generated Go code using discover_code_files and write_code
+  use_code_execution_mode?: boolean
 }
 
 export interface AgentQueryResponse {
@@ -232,6 +236,8 @@ export interface PlannerFile {
   children?: PlannerFile[];
   depth?: number;
   is_image?: boolean;
+  // Store original path when filepath is adjusted for display (e.g., in workflow mode)
+  originalFilepath?: string;
 }
 
 export interface PlannerFileContent {
@@ -446,9 +452,24 @@ export interface UpdateChatSessionRequest {
 }
 
 // Preset LLM Configuration types
-export interface PresetLLMConfig {
+export interface AgentLLMConfig {
   provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
   model_id: string
+}
+
+export interface PresetLLMConfig {
+  // Legacy: Single default model (for backward compatibility)
+  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  model_id?: string
+
+  // New: Agent-specific default models (takes priority over legacy fields)
+  execution_llm?: AgentLLMConfig        // Default for execution agents
+  validation_llm?: AgentLLMConfig       // Default for validation agents
+  learning_llm?: AgentLLMConfig         // Default for learning agents
+  planning_llm?: AgentLLMConfig         // Default for planning agent
+  variable_extraction_llm?: AgentLLMConfig // Default for variable extraction agent
+  anonymization_llm?: AgentLLMConfig    // Default for anonymization agent
+  plan_improvement_llm?: AgentLLMConfig // Default for plan improvement agent
 }
 
 // Preset Query API types
@@ -461,6 +482,7 @@ export interface PresetQuery {
   selected_folder?: string; // Single folder path (nullable)
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
+  use_code_execution_mode?: boolean;
   is_predefined: boolean;
   created_at: string;
   updated_at: string;
@@ -475,6 +497,7 @@ export interface CreatePresetQueryRequest {
   selected_folder?: string; // Single folder path
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
+  use_code_execution_mode?: boolean; // MCP code execution mode
   is_predefined?: boolean;
 }
 
@@ -486,6 +509,7 @@ export interface UpdatePresetQueryRequest {
   selected_folder?: string; // Single folder path
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
+  use_code_execution_mode?: boolean; // MCP code execution mode
 }
 
 export interface ListPresetQueriesResponse {

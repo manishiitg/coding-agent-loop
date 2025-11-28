@@ -37,8 +37,7 @@ interface PresetQueriesProps {
     predefinedServerSelections,
     loading,
     error,
-    addPreset,
-    updatePreset,
+    savePreset,
     deletePreset,
     updatePredefinedServerSelection,
     refreshPresets,
@@ -117,19 +116,37 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
-    if (editingPreset) {
-      await updatePreset(editingPreset.id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig);
-      // Call the callback to refresh workflow presets when a preset is updated
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => {
+    console.log('[code_execution] [PresetQueries] handleSavePreset called with:', {
+      label,
+      editingPreset: editingPreset?.id,
+      useCodeExecutionMode,
+      type: typeof useCodeExecutionMode
+    })
+    
+    try {
+      // Use consolidated savePreset function - pass id if editing, undefined if creating
+      await savePreset(
+        label,
+        query,
+        selectedServers,
+        selectedTools,
+        agentMode,
+        selectedFolder,
+        llmConfig,
+        useCodeExecutionMode,
+        editingPreset?.id // Pass id if editing, undefined if creating
+      );
+      
+      // Call the callback to refresh workflow presets when a preset is saved
       setTimeout(() => {
         onPresetAdded?.();
       }, 100);
-    } else {
-      await addPreset(label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig);
-      // Add a small delay to ensure the preset is fully processed
-      setTimeout(() => {
-        onPresetAdded?.();
-      }, 100);
+      
+      setIsModalOpen(false);
+      setEditingPreset(null);
+    } catch (error) {
+      console.error('[code_execution] [PresetQueries] Failed to save preset:', error);
     }
   };
 
@@ -221,7 +238,7 @@ interface PresetQueriesProps {
                   ? `Selected servers: ${selectedServers.join(', ')}` 
                   : 'Click to select servers'
                 }
-              >
+            >
                 {selectedServers.length > 0 ? '🔧' : '⚙️'}
               </button>
             </div>

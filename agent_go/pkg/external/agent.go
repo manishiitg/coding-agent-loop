@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -265,7 +265,8 @@ type AgentCapabilities interface {
 
 	// RegisterCustomTool registers a custom tool with both schema and execution function
 	// This maintains proper encapsulation while allowing custom tool registration
-	RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error))
+	// category is optional and can be "workspace", "human", "virtual", "custom", or empty (defaults to "custom")
+	RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category ...string)
 }
 
 // AgentEventListener defines the interface for event listeners that can receive agent events.
@@ -902,10 +903,11 @@ func (a *agentImpl) GetToolNames() []string {
 
 // RegisterCustomTool registers a custom tool with both schema and execution function
 // This maintains proper encapsulation while allowing custom tool registration
-func (a *agentImpl) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error)) {
+// category is optional and can be "workspace", "human", "virtual", "custom", or empty (defaults to "custom")
+func (a *agentImpl) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category ...string) {
 	// Delegate to the underlying MCP agent
 	if a.agent != nil {
-		a.agent.RegisterCustomTool(name, description, parameters, executionFunc)
+		a.agent.RegisterCustomTool(name, description, parameters, executionFunc, category...)
 	}
 }
 

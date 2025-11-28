@@ -10,7 +10,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // ConditionalResponse represents a true/false response with reasoning
@@ -51,6 +51,21 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 	startTime := time.Now()
 
 	cl.GetLogger().Infof("🤔 Making conditional decision: %s", question)
+
+	// Emit orchestrator agent start event
+	if cl.GetEventEmitter() != nil {
+		startEvent := &events.OrchestratorAgentStartEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			AgentType: "conditional",
+			AgentName: "conditional-llm",
+			Objective: fmt.Sprintf("Conditional decision: %s", question),
+			StepIndex: stepIndex,
+			Iteration: iteration,
+		}
+		cl.GetEventEmitter()(ctx, startEvent)
+	}
 
 	// Build prompt
 	prompt := GetPrompt(context, question)

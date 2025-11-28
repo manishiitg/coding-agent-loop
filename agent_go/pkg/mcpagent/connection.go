@@ -19,14 +19,15 @@ import (
 	"mcp-agent/agent_go/pkg/mcpcache"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // NewAgentConnection handles MCP config loading, server connection, tool discovery, and returns all connection artifacts for agent construction.
 // Now uses caching to avoid redundant connections and discoveries.
-func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger utils.ExtendedLogger, cacheOnly bool) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+// Always connects to servers even when using cached data.
+func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger utils.ExtendedLogger) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Start timing the entire connection process
 	connectionStartTime := time.Now()
@@ -58,8 +59,8 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 		"start_time":  connectionStartTime.Format(time.RFC3339),
 	})
 
-	// Try to get cached or fresh connection data
-	result, err := mcpcache.GetCachedOrFreshConnection(ctx, llm, serverName, configPath, tracers, logger, cacheOnly)
+	// Try to get cached or fresh connection data (always connects to servers)
+	result, err := mcpcache.GetCachedOrFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
 	if err != nil {
 		connectionDuration := time.Since(connectionStartTime)
 

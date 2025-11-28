@@ -21,6 +21,10 @@ interface EventNode {
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  // Track sessions that user has manually expanded - these should never be auto-collapsed
+  const [manuallyExpandedSessions, setManuallyExpandedSessions] = useState<Set<string>>(new Set());
+  // Track previously seen session keys to detect truly new sessions
+  const previousSessionKeysRef = React.useRef<Set<string>>(new Set());
   
   // Display all events in normal list
   const displayEvents = events;
@@ -191,32 +195,109 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return sessionEvents;
   }, [events, getAgentSessionKey]);
 
-  // Initialize collapsed sessions with all found session keys (all collapsed by default)
-  // This runs only when new sessions are found (not when collapsedSessions changes)
-  React.useEffect(() => {
-    if (findEventsBetweenStartEnd.size > 0) {
-      const allSessionKeys = Array.from(findEventsBetweenStartEnd.keys());
-      const newCollapsed = new Set(collapsedSessions);
-      let hasNewSessions = false;
-      
-      // Add any new session keys that aren't already in collapsedSessions
-      // This preserves user's manual expand/collapse choices
-      allSessionKeys.forEach(key => {
-        if (!newCollapsed.has(key)) {
-          newCollapsed.add(key);
-          hasNewSessions = true;
+  // Get ordered list of completed sessions by their end event index
+  const getOrderedCompletedSessions = React.useMemo(() => {
+    const sessionEndIndices = new Map<string, number>(); // sessionKey -> end event index
+    
+    // Find all orchestrator_agent_end events and their indices
+    events.forEach((event, index) => {
+      const sessionKey = getAgentSessionKey(event);
+      if (sessionKey && event.type === 'orchestrator_agent_end') {
+        // Only include sessions that have both start and end (completed sessions)
+        if (findEventsBetweenStartEnd.has(sessionKey)) {
+          sessionEndIndices.set(sessionKey, index);
         }
-      });
+      }
+    });
+    
+    // Sort sessions by end event index (completion time)
+    return Array.from(sessionEndIndices.entries())
+      .sort(([, indexA], [, indexB]) => indexA - indexB)
+      .map(([sessionKey]) => sessionKey);
+  }, [events, getAgentSessionKey, findEventsBetweenStartEnd]);
+
+  // Auto-collapse logic: Keep n-1 open, collapse n-2 and earlier
+  // This runs when new sessions complete or when session order changes
+  React.useEffect(() => {
+    if (getOrderedCompletedSessions.length === 0) {
+      return;
+    }
+
+    const allSessionKeys = Array.from(findEventsBetweenStartEnd.keys());
+    const currentSessionKeys = new Set(allSessionKeys);
+    const previousSessionKeys = previousSessionKeysRef.current;
+    
+    // Find truly new sessions (ones we haven't seen before)
+    const newSessionKeys = allSessionKeys.filter(key => !previousSessionKeys.has(key));
+    
+    // Update ref to track current session keys for next comparison
+    previousSessionKeysRef.current = currentSessionKeys;
+    
+    // Only process if there are new sessions or session order changed
+    const hasNewSessions = newSessionKeys.length > 0;
+    const orderedSessions = getOrderedCompletedSessions;
+    
+    if (hasNewSessions || orderedSessions.length > 0) {
+      const newCollapsed = new Set(collapsedSessions);
+      const newManuallyExpanded = new Set(manuallyExpandedSessions);
+      let hasChanges = false;
       
-      // Only update if there are new sessions to collapse
-      if (hasNewSessions) {
+      if (orderedSessions.length === 1) {
+        // Only one session: keep it expanded
+        const sessionKey = orderedSessions[0];
+        if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
+          newCollapsed.delete(sessionKey);
+          hasChanges = true;
+        }
+      } else if (orderedSessions.length >= 2) {
+        // Multiple sessions: keep n-1 open, collapse n (newest) and n-2 and earlier
+        const n = orderedSessions.length;
+        const newestSession = orderedSessions[n - 1]; // Current newest session (n)
+        const nMinus1 = orderedSessions[n - 2]; // Previous completed session (n-1)
+        const olderSessions = orderedSessions.slice(0, n - 2); // n-2, n-3, etc.
+        
+        // Keep n-1 expanded (unless manually collapsed by user)
+        if (nMinus1) {
+          // If n-1 is collapsed and not manually expanded, expand it
+          if (newCollapsed.has(nMinus1) && !manuallyExpandedSessions.has(nMinus1)) {
+            newCollapsed.delete(nMinus1);
+            hasChanges = true;
+          }
+        }
+        
+        // Collapse the newest session (n) unless manually expanded
+        if (newestSession) {
+          if (!manuallyExpandedSessions.has(newestSession)) {
+            if (!newCollapsed.has(newestSession)) {
+              newCollapsed.add(newestSession);
+              hasChanges = true;
+            }
+          }
+        }
+        
+        // Collapse all older sessions (n-2 and earlier) unless manually expanded
+        olderSessions.forEach(sessionKey => {
+          // Only auto-collapse if user hasn't manually expanded it
+          if (!manuallyExpandedSessions.has(sessionKey)) {
+            if (!newCollapsed.has(sessionKey)) {
+              newCollapsed.add(sessionKey);
+              hasChanges = true;
+            }
+          }
+        });
+      }
+      
+      // Only update if there are changes
+      if (hasChanges) {
         setCollapsedSessions(newCollapsed);
+        // Note: We don't update manuallyExpandedSessions here to preserve user choices
       }
     }
-    // Only depend on findEventsBetweenStartEnd, not collapsedSessions
-    // This prevents re-adding sessions that the user explicitly expanded
+    
+    // Depend on getOrderedCompletedSessions to react to session completion order
+    // Depend on manuallyExpandedSessions to respect user choices
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findEventsBetweenStartEnd]);
+  }, [getOrderedCompletedSessions, findEventsBetweenStartEnd, manuallyExpandedSessions]);
 
 
   const toggleNode = (eventId: string) => {
@@ -231,12 +312,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
 
   const toggleAgentSession = (sessionKey: string) => {
     const newCollapsed = new Set(collapsedSessions);
+    const newManuallyExpanded = new Set(manuallyExpandedSessions);
+    
     if (newCollapsed.has(sessionKey)) {
+      // User is expanding - mark as manually expanded
       newCollapsed.delete(sessionKey);
+      newManuallyExpanded.add(sessionKey);
     } else {
+      // User is collapsing - remove from manually expanded (user wants it collapsed)
       newCollapsed.add(sessionKey);
+      newManuallyExpanded.delete(sessionKey);
     }
+    
     setCollapsedSessions(newCollapsed);
+    setManuallyExpandedSessions(newManuallyExpanded);
   };
 
   const renderEventNode = (node: EventNode): React.ReactNode => {

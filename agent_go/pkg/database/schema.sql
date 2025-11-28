@@ -46,9 +46,11 @@ CREATE TABLE IF NOT EXISTS preset_queries (
     label TEXT NOT NULL, -- Display name for the preset
     query TEXT NOT NULL, -- The actual query text
     selected_servers TEXT, -- JSON array of server names (e.g., ["aws", "github"])
+    selected_tools TEXT DEFAULT '[]', -- JSON array of "server:tool" strings (e.g., ["aws:aws_cli_query", "github:create_issue"])
     selected_folder TEXT DEFAULT NULL, -- Single folder path for orchestrator/workflow modes
     agent_mode TEXT DEFAULT 'ReAct', -- Agent mode: simple, ReAct, orchestrator, workflow
     llm_config TEXT DEFAULT NULL, -- JSON configuration for LLM settings (provider, model, temperature, etc.)
+    use_code_execution_mode INTEGER DEFAULT 0, -- MCP code execution mode (0 = disabled, 1 = enabled)
     is_predefined BOOLEAN DEFAULT FALSE, -- Whether this is a built-in preset
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

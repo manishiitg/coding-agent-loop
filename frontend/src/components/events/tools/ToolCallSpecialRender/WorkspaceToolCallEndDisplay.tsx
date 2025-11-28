@@ -47,7 +47,8 @@ const formatDuration = (durationNs: number) => {
 }
 
 export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayProps> = ({ event }) => {
-  const [showContent, setShowContent] = useState(true) // Always show content by default
+  // Always expanded by default
+  const [showContent, setShowContent] = useState(true)
   
   if (!event.result) {
     return null

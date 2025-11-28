@@ -1,9 +1,10 @@
-import React, { useRef, useCallback, useMemo, useState } from 'react'
-import { Send, Loader2, Zap, Square, Plus } from 'lucide-react'
+import React, { useRef, useCallback, useMemo, useState, useImperativeHandle, forwardRef, useEffect } from 'react'
+import { Send, Loader2, Zap, Square, Plus, Code2, Sparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { Checkbox } from './ui/checkbox'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
@@ -21,12 +22,16 @@ interface ChatInputProps {
   onNewChat: () => void
 }
 
+export interface ChatInputRef {
+  getCodeExecutionMode: () => boolean
+}
+
 // Completely isolated input component that doesn't re-render when events change
-export const ChatInput = React.memo<ChatInputProps>(({
+const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   onSubmit,
   onStopStreaming,
   onNewChat
-}) => {
+}, ref) => {
   // Store subscriptions
   const {
     agentMode,
@@ -43,6 +48,14 @@ export const ChatInput = React.memo<ChatInputProps>(({
   
   // Local state for input to prevent global re-renders on every keystroke
   const [localQuery, setLocalQuery] = useState('')
+  
+  // Code execution mode state (only for chat mode) - enabled by default
+  const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(true)
+  
+  // Expose code execution mode via ref
+  useImperativeHandle(ref, () => ({
+    getCodeExecutionMode: () => useCodeExecutionMode
+  }), [useCodeExecutionMode])
   
   const { selectedModeCategory } = useModeStore()
   
@@ -85,6 +98,28 @@ export const ChatInput = React.memo<ChatInputProps>(({
   
   // Check if a preset is active for the current mode
   const chatActivePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+  
+  // Sync localQuery with preset query when preset is selected in chat mode
+  useEffect(() => {
+    // Only sync in chat mode
+    if (selectedModeCategory === 'chat') {
+      const activePresetId = activePresetIds['chat']
+      
+      if (activePresetId) {
+        // Find the preset
+        const preset = customPresets.find(p => p.id === activePresetId) || 
+                      predefinedPresets.find(p => p.id === activePresetId)
+        
+        if (preset && preset.query) {
+          // Sync localQuery with preset query
+          setLocalQuery(preset.query)
+        }
+      } else {
+        // No preset active, clear localQuery
+        setLocalQuery('')
+      }
+    }
+  }, [selectedModeCategory, activePresetIds, customPresets, predefinedPresets])
   
   const isRequiredFolderSelected = useMemo(() => {
     if (agentMode !== 'workflow') return true; // No validation needed for other modes
@@ -555,24 +590,6 @@ export const ChatInput = React.memo<ChatInputProps>(({
                         </TooltipContent>
                       </Tooltip>
                     )}
-                    
-                    {/* New Chat button - only show when not streaming */}
-                    {!isStreaming && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={onNewChat}
-                            className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-                          >
-                            New Chat
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Create a new chat session</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
                   </div>
                 </div>
               </div>
@@ -614,26 +631,71 @@ export const ChatInput = React.memo<ChatInputProps>(({
                 
                 {/* Agent Mode Selector - Only for Chat Mode */}
                 {selectedModeCategory === 'chat' && (
-                  <div className="flex items-center gap-1">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={() => setAgentMode('simple')}
-                          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                            agentMode === 'simple'
-                              ? 'agent-mode-selected'
-                              : 'agent-mode-unselected'
-                          }`}
-                        >
-                          <Zap className="w-3 h-3 inline mr-1" />
-                          Simple
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Simple mode - Ctrl+1</p>
-                      </TooltipContent>
-                    </Tooltip>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => setAgentMode('simple')}
+                            className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                              agentMode === 'simple'
+                                ? 'agent-mode-selected'
+                                : 'agent-mode-unselected'
+                            }`}
+                          >
+                            <Zap className="w-3 h-3 inline mr-1" />
+                            Simple
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Simple mode - Ctrl+1</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {/* Code Execution Mode Toggle */}
+                    <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => setUseCodeExecutionMode(false)}
+                            disabled={isStreaming}
+                            className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                              !useCodeExecutionMode
+                                ? 'agent-mode-selected rounded-l-md rounded-r-none'
+                                : 'agent-mode-unselected rounded-none'
+                            }`}
+                          >
+                            <Sparkles className="w-3 h-3 inline mr-1" />
+                            Simple
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Simple mode - Direct MCP tool access</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => setUseCodeExecutionMode(true)}
+                            disabled={isStreaming}
+                            className={`px-2 py-1 text-xs font-medium transition-colors ${
+                              useCodeExecutionMode
+                                ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                                : 'agent-mode-unselected rounded-none'
+                            }`}
+                          >
+                            <Code2 className="w-3 h-3 inline mr-1" />
+                            Code Exec
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                   </div>
                 )}
                 
@@ -754,4 +816,6 @@ export const ChatInput = React.memo<ChatInputProps>(({
   )
 })
 
-ChatInput.displayName = 'ChatInput'
+ChatInputComponent.displayName = 'ChatInput'
+
+export const ChatInput = React.memo(ChatInputComponent)

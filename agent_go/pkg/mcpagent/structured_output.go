@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 )
 

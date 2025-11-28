@@ -41,7 +41,30 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
                   {event.turn && `• Turn ${event.turn}`}
                   {event.duration && ` • ${formatDuration(event.duration)}`}
                   {event.tool_calls !== undefined && ` • ${event.tool_calls} tool calls`}
-                  {event.usage_metrics && ` • Tokens: ${event.usage_metrics.total_tokens || 'N/A'}`}
+                  {event.usage_metrics && (
+                    <>
+                      {' • Tokens: '}
+                      {event.usage_metrics.prompt_tokens && (
+                        <>Input: {event.usage_metrics.prompt_tokens.toLocaleString()}</>
+                      )}
+                      {event.usage_metrics.completion_tokens && (
+                        <> • Output: {event.usage_metrics.completion_tokens.toLocaleString()}</>
+                      )}
+                      {event.usage_metrics.total_tokens && (
+                        <> • Total: {event.usage_metrics.total_tokens.toLocaleString()}</>
+                      )}
+                      {event.usage_metrics.cache_tokens && event.usage_metrics.cache_tokens > 0 && (
+                        <span className="text-cyan-600 dark:text-cyan-400">
+                          {' • Cache: '}{event.usage_metrics.cache_tokens.toLocaleString()}
+                        </span>
+                      )}
+                      {event.usage_metrics.reasoning_tokens && event.usage_metrics.reasoning_tokens > 0 && (
+                        <span className="text-purple-600 dark:text-purple-400">
+                          {' • Reasoning: '}{event.usage_metrics.reasoning_tokens.toLocaleString()}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </span>
               </div>
             </div>

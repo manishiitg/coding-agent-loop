@@ -19,7 +19,7 @@ import (
 	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )

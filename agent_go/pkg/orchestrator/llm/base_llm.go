@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
@@ -103,6 +103,22 @@ func CreateLLMInstance(
 		logger.Infof("🔧 Added default cross-provider fallback models for %s LLM: %v", llmType, crossProviderFallbacks)
 	}
 
+	// Convert API keys from agent config to LLM config format
+	var llmAPIKeys *llm.ProviderAPIKeys
+	if config.APIKeys != nil {
+		llmAPIKeys = &llm.ProviderAPIKeys{
+			OpenRouter: config.APIKeys.OpenRouter,
+			OpenAI:     config.APIKeys.OpenAI,
+			Anthropic:  config.APIKeys.Anthropic,
+			Vertex:     config.APIKeys.Vertex,
+		}
+		if config.APIKeys.Bedrock != nil {
+			llmAPIKeys.Bedrock = &llm.BedrockConfig{
+				Region: config.APIKeys.Bedrock.Region,
+			}
+		}
+	}
+
 	// Create LLM configuration
 	llmConfig := llm.Config{
 		Provider:       llm.Provider(config.Provider),
@@ -113,6 +129,7 @@ func CreateLLMInstance(
 		FallbackModels: fallbackModels,
 		MaxRetries:     config.MaxRetries,
 		Logger:         logger,
+		APIKeys:        llmAPIKeys,
 	}
 
 	// Initialize LLM using the existing factory

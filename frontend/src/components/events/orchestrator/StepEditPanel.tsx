@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronUp, Settings } from 'lucide-react';
+import { ChevronDown, ChevronUp, Settings, Sparkles, Code2 } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import LLMSelectionDropdown from '../../LLMSelectionDropdown';
 import { ToolSelectionSection } from '../../ToolSelectionSection';
 import { usePresetApplication } from '../../../stores/useGlobalPresetStore';
-import type { TodoStep, AgentConfigs, AgentLLMConfig } from '../../../generated/events-bridge';
+import type { TodoStepWithConfigs, AgentConfigs, AgentLLMConfig } from '../../../utils/stepConfigMatching';
+import type { PresetLLMConfig } from '../../../services/api-types';
 import type { LLMOption } from '../../../types/llm';
 import { useLLMStore } from '../../../stores/useLLMStore';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../../ui/tooltip';
 import { 
   HUMAN_TOOLS, 
   getToolsByCategory,
@@ -14,12 +16,14 @@ import {
 } from '../../../utils/customToolNames';
 
 interface StepEditPanelProps {
-  step: TodoStep;
+  step: TodoStepWithConfigs;
   stepIndex: number;
-  onSave: (updatedStep: TodoStep) => Promise<void>;
+  onSave: (updatedStep: TodoStepWithConfigs) => Promise<void>;
   onCancel: () => void;
   isSaving?: boolean;
   presetServers?: string[]; // Preset's selected servers (subset to show in UI)
+  presetLLMConfig?: PresetLLMConfig | null; // Preset's LLM config with agent defaults
+  presetUseCodeExecutionMode?: boolean; // Preset's code execution mode (default value for step)
   isExpanded?: boolean; // Controlled expanded state from parent
   onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
 }
@@ -32,6 +36,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   onSave,
   isSaving = false,
   presetServers = [],
+  presetLLMConfig = null,
+  presetUseCodeExecutionMode = false,
   isExpanded: controlledIsExpanded,
   onToggleExpanded,
 }) => {
@@ -55,6 +61,14 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   // Ensure validation is enabled for loop steps (required to check loop conditions)
   const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>(() => {
     const configs = step.agent_configs || {};
+    console.log('[StepEditPanel] Initializing agentConfigs from step:', {
+      stepTitle: step.title,
+      stepId: step.id,
+      step_agent_configs: step.agent_configs,
+      disable_learning: configs.disable_learning,
+      disable_validation: configs.disable_validation,
+      configs,
+    });
     // Force enable validation for loop steps
     if (step.has_loop && configs.disable_validation) {
       return {
@@ -88,6 +102,56 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   const hasNoServers = selectedServers.includes("NO_SERVERS");
   const actualSelectedServers = selectedServers.filter(s => s !== "NO_SERVERS");
 
+  // Helper functions for format conversion (must be defined before useState that uses them)
+  const formatToolEntry = (category: string, tool: string): string => {
+    return `${category}:${tool}`;
+  };
+
+  // Convert old format (categories + tools) to new unified format
+  const convertOldFormatToNew = (categories?: string[], tools?: string[]): string[] => {
+    const result: string[] = [];
+    
+    // Convert categories to "category:*" format
+    if (categories && categories.length > 0) {
+      for (const category of categories) {
+        result.push(formatToolEntry(category, '*'));
+      }
+    }
+    
+    // Convert specific tools - determine category for each tool
+    if (tools && tools.length > 0) {
+      const allWorkspaceTools = getToolsByCategory('workspace_tools');
+      const allHumanTools = getToolsByCategory('human_tools');
+      
+      for (const toolName of tools) {
+        if (allWorkspaceTools.includes(toolName)) {
+          result.push(formatToolEntry('workspace_tools', toolName));
+        } else if (allHumanTools.includes(toolName)) {
+          result.push(formatToolEntry('human_tools', toolName));
+        }
+      }
+    }
+    
+    return result;
+  };
+
+  // State for enabled custom tools in unified format: "category:tool" or "category:*"
+  const [enabledCustomTools, setEnabledCustomTools] = useState<string[]>(() => {
+    const configs = step.agent_configs || {};
+    // Check if already in new format
+    if (configs.enabled_custom_tools && configs.enabled_custom_tools.length > 0) {
+      const firstEntry = configs.enabled_custom_tools[0];
+      if (firstEntry.includes(':')) {
+        return configs.enabled_custom_tools;
+      }
+    }
+    // Convert from old format (backward compatibility)
+    // @ts-expect-error - old format may still exist in database
+    const oldCategories = configs.enabled_custom_tool_categories;
+    const oldTools = configs.enabled_custom_tools;
+    return convertOldFormatToNew(oldCategories, oldTools);
+  });
+
   // State for expanded tool categories (to show individual tools)
   const [expandedToolCategories, setExpandedToolCategories] = useState<Set<string>>(new Set());
   // State for expanded workspace sub-categories (expanded by default to show tools)
@@ -95,19 +159,42 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     new Set(['basic_workspace', 'advanced_workspace', 'plus_tools'])
   );
 
-  // Track the step index to detect when step changes
-  const prevStepIndexRef = useRef<number>(stepIndex);
+  // Track the step to detect when step changes (using title + index as stable identifier)
+  // This ensures state resets properly when switching between different steps
+  const stepIdentifier = `${step.title || ''}-${stepIndex}`;
+  const prevStepIdentifierRef = useRef<string>(stepIdentifier);
+  const prevAgentConfigsRef = useRef<string>(''); // Track previous agent_configs as JSON string
 
-  // Sync state only when step index changes (different step)
-  // This prevents infinite loops by only syncing when we switch to a different step
+  // Sync state when step changes (different step identifier) OR when agent_configs changes (after save)
+  // This ensures state updates both when switching steps and when the same step's config is updated
   useEffect(() => {
-    const isDifferentStep = prevStepIndexRef.current !== stepIndex;
+    const isDifferentStep = prevStepIdentifierRef.current !== stepIdentifier;
+    const currentConfigs = step.agent_configs || {};
+    const currentConfigsJson = JSON.stringify(currentConfigs);
+    const configsChanged = prevAgentConfigsRef.current !== currentConfigsJson;
     
-    if (isDifferentStep) {
-      const currentConfigs = step.agent_configs;
+    // Sync if it's a different step OR if agent_configs has changed (e.g., after save)
+    // We need to sync when agent_configs changes to reflect saved changes
+    if (isDifferentStep || configsChanged) {
+      console.log('[StepEditPanel] Syncing state from step config:', {
+        isDifferentStep,
+        configsChanged,
+        stepTitle: step.title,
+        stepId: step.id,
+        currentConfigs,
+        disable_learning: currentConfigs.disable_learning,
+        disable_validation: currentConfigs.disable_validation,
+      });
+      
+      // Reset agentConfigs state from step's config
+      // Force enable validation for loop steps
+      const newAgentConfigs: AgentConfigs = step.has_loop && currentConfigs.disable_validation
+        ? { ...currentConfigs, disable_validation: false }
+        : currentConfigs;
+      setAgentConfigs(newAgentConfigs);
       
       // Update servers: use step config if available, otherwise preset defaults
-      if (currentConfigs?.selected_servers && currentConfigs.selected_servers.length > 0) {
+      if (currentConfigs.selected_servers && currentConfigs.selected_servers.length > 0) {
         // Check if NO_SERVERS is in the config
         setSelectedServers(currentConfigs.selected_servers);
       } else {
@@ -115,17 +202,40 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       }
 
       // Update tools: use step config if available, otherwise preset defaults
-      if (currentConfigs?.selected_tools && currentConfigs.selected_tools.length > 0) {
+      if (currentConfigs.selected_tools && currentConfigs.selected_tools.length > 0) {
         setSelectedTools(currentConfigs.selected_tools);
       } else {
         setSelectedTools(currentPresetTools || []);
       }
 
-      // Update ref for next comparison
-      prevStepIndexRef.current = stepIndex;
+      // Update enabled custom tools: convert from old format if needed
+      if (currentConfigs.enabled_custom_tools && currentConfigs.enabled_custom_tools.length > 0) {
+        const firstEntry = currentConfigs.enabled_custom_tools[0];
+        if (firstEntry.includes(':')) {
+          // Already in new format
+          setEnabledCustomTools(currentConfigs.enabled_custom_tools);
+        } else {
+          // Convert from old format
+          // @ts-expect-error - old format may still exist in database
+          const oldCategories = currentConfigs.enabled_custom_tool_categories;
+          const oldTools = currentConfigs.enabled_custom_tools;
+          setEnabledCustomTools(convertOldFormatToNew(oldCategories, oldTools));
+        }
+      } else {
+        // No tools specified - empty array (all tools enabled by default)
+        setEnabledCustomTools([]);
+      }
+
+      // Reset expanded categories when step changes
+      setExpandedToolCategories(new Set());
+      setExpandedWorkspaceSubCategories(new Set(['basic_workspace', 'advanced_workspace', 'plus_tools']));
+
+      // Update refs for next comparison
+      prevStepIdentifierRef.current = stepIdentifier;
+      prevAgentConfigsRef.current = currentConfigsJson;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepIndex]); // Only depend on stepIndex to prevent infinite loops
+  }, [stepIdentifier, step.agent_configs, presetServers, currentPresetTools]); // Include stepIdentifier and agent_configs to detect changes
 
   // Helper to convert AgentLLMConfig to LLMOption
   const llmConfigToOption = (config: AgentLLMConfig | undefined): LLMOption | null => {
@@ -138,6 +248,34 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     return llm || null;
   };
 
+  // Helper to get preset default LLM for an agent type
+  const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'learning'): LLMOption | null => {
+    if (!presetLLMConfig) {
+      return null;
+    }
+    let config: AgentLLMConfig | undefined;
+    if (agentType === 'execution') {
+      config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        provider: presetLLMConfig.provider,
+        model_id: presetLLMConfig.model_id
+      } : undefined);
+    } else if (agentType === 'validation') {
+      config = presetLLMConfig.validation_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        provider: presetLLMConfig.provider,
+        model_id: presetLLMConfig.model_id
+      } : undefined);
+    } else if (agentType === 'learning') {
+      config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        provider: presetLLMConfig.provider,
+        model_id: presetLLMConfig.model_id
+      } : undefined);
+    }
+    if (config) {
+      return llmConfigToOption(config);
+    }
+    return null;
+  };
+
   // Helper to convert LLMOption to AgentLLMConfig
   const optionToLLMConfig = (option: LLMOption | null): AgentLLMConfig | undefined => {
     if (!option) {
@@ -147,6 +285,148 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       provider: option.provider as 'openai' | 'bedrock' | 'openrouter' | 'vertex',
       model_id: option.model,
     };
+  };
+
+  // Helper functions for unified format: "category:tool" or "category:*"
+  const parseToolEntry = (entry: string): { category: string; tool: string } | null => {
+    // Split only on first colon to handle tool names that might contain colons
+    const colonIndex = entry.indexOf(':');
+    if (colonIndex === -1 || colonIndex === 0) return null;
+    return { 
+      category: entry.substring(0, colonIndex), 
+      tool: entry.substring(colonIndex + 1) 
+    };
+  };
+
+  const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
+    // Empty array means all tools enabled by default
+    if (enabledTools.length === 0) return true;
+    return enabledTools.includes(formatToolEntry(category, '*'));
+  };
+
+  const isToolEnabled = (category: string, toolName: string, enabledTools: string[]): boolean => {
+    // Empty array means all tools enabled by default
+    if (enabledTools.length === 0) return true;
+    // Check if category is enabled (all tools)
+    if (isCategoryEnabled(category, enabledTools)) return true;
+    // Check if specific tool is enabled
+    return enabledTools.includes(formatToolEntry(category, toolName));
+  };
+
+  const enableCategory = (category: string, enabledTools: string[]): string[] => {
+    // Remove any specific tools from this category, add category:*
+    const filtered = enabledTools.filter(entry => {
+      const parsed = parseToolEntry(entry);
+      return !parsed || parsed.category !== category;
+    });
+    return [...filtered, formatToolEntry(category, '*')];
+  };
+
+  const disableCategory = (category: string, enabledTools: string[]): string[] => {
+    // If array is empty (default = all enabled), explicitly enable all other categories
+    if (enabledTools.length === 0) {
+      const allCategories = ['workspace_tools', 'human_tools'];
+      const otherCategories = allCategories.filter(c => c !== category);
+      const result: string[] = [];
+      for (const otherCategory of otherCategories) {
+        const otherCategoryTools = getToolsByCategory(otherCategory);
+        result.push(...otherCategoryTools.map(t => formatToolEntry(otherCategory, t)));
+      }
+      return result;
+    }
+    // Remove category:* and all specific tools from this category
+    return enabledTools.filter(entry => {
+      const parsed = parseToolEntry(entry);
+      return !parsed || parsed.category !== category;
+    });
+  };
+
+  const enableTool = (category: string, toolName: string, enabledTools: string[]): string[] => {
+    // If category is enabled, disable it first (switch to specific tools)
+    let filtered = enabledTools;
+    if (isCategoryEnabled(category, enabledTools)) {
+      filtered = disableCategory(category, enabledTools);
+      // Add all other tools from this category
+      const allCategoryTools = getToolsByCategory(category);
+      filtered = [...filtered, ...allCategoryTools.map(t => formatToolEntry(category, t))];
+    }
+    // Add this specific tool if not already present
+    const toolEntry = formatToolEntry(category, toolName);
+    if (!filtered.includes(toolEntry)) {
+      filtered = [...filtered, toolEntry];
+    }
+    return filtered;
+  };
+
+  const disableTool = (category: string, toolName: string, enabledTools: string[]): string[] => {
+    // If category is enabled, disable it and enable all other tools
+    if (isCategoryEnabled(category, enabledTools)) {
+      const allCategoryTools = getToolsByCategory(category);
+      const otherTools = allCategoryTools.filter(t => t !== toolName);
+      const filtered = enabledTools.filter(entry => {
+        const parsed = parseToolEntry(entry);
+        return !parsed || parsed.category !== category;
+      });
+      return [...filtered, ...otherTools.map(t => formatToolEntry(category, t))];
+    }
+    // Just remove this specific tool
+    return enabledTools.filter(entry => entry !== formatToolEntry(category, toolName));
+  };
+
+  // Helper to check if a sub-category is enabled
+  const isSubCategoryEnabled = (category: string, subCategoryTools: string[], enabledTools: string[]): boolean => {
+    if (isCategoryEnabled(category, enabledTools)) return true;
+    if (enabledTools.length === 0) return true; // Default: all enabled
+    
+    const enabledInSubCategory = subCategoryTools.filter(toolName => 
+      isToolEnabled(category, toolName, enabledTools)
+    );
+    return enabledInSubCategory.length === subCategoryTools.length;
+  };
+
+  // Helper to enable/disable a sub-category
+  const toggleSubCategory = (category: string, subCategoryTools: string[], enabled: boolean, enabledTools: string[]): string[] => {
+    if (enabled) {
+      // Enable sub-category - add all tools from this sub-category
+      let result = enabledTools;
+      
+      // If category is enabled, disable it first
+      if (isCategoryEnabled(category, enabledTools)) {
+        result = disableCategory(category, enabledTools);
+        // Add all other tools from the category
+        const allCategoryTools = getToolsByCategory(category);
+        result = [...result, ...allCategoryTools.map(t => formatToolEntry(category, t))];
+      }
+      
+      // Add all tools from this sub-category
+      for (const toolName of subCategoryTools) {
+        const toolEntry = formatToolEntry(category, toolName);
+        if (!result.includes(toolEntry)) {
+          result = [...result, toolEntry];
+        }
+      }
+      
+      return result;
+    } else {
+      // Disable sub-category - remove all tools from this sub-category
+      if (isCategoryEnabled(category, enabledTools)) {
+        // Category is enabled - disable it and enable all other tools
+        const allCategoryTools = getToolsByCategory(category);
+        const otherTools = allCategoryTools.filter(t => !subCategoryTools.includes(t));
+        const filtered = enabledTools.filter(entry => {
+          const parsed = parseToolEntry(entry);
+          return !parsed || parsed.category !== category;
+        });
+        return [...filtered, ...otherTools.map(t => formatToolEntry(category, t))];
+      } else {
+        // Just remove tools from this sub-category
+        return enabledTools.filter(entry => {
+          const parsed = parseToolEntry(entry);
+          if (!parsed || parsed.category !== category) return true;
+          return !subCategoryTools.includes(parsed.tool);
+        });
+      }
+    }
   };
 
   // Update execution LLM
@@ -197,12 +477,15 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
   // Handle save
   const handleSave = async () => {
-    // Ensure validation is not disabled for loop steps
+    // Start with a clean config object - we'll explicitly set each field
     const finalConfigs: AgentConfigs = {
       ...agentConfigs,
-      // Force enable validation for loop steps (required to check loop conditions)
-      disable_validation: step.has_loop ? false : agentConfigs.disable_validation,
     };
+    
+    // Force enable validation for loop steps (required to check loop conditions)
+    if (step.has_loop) {
+      finalConfigs.disable_validation = false;
+    }
 
     // Handle server/tool selection:
     // - If NO_SERVERS is selected → save ["NO_SERVERS"] explicitly
@@ -231,19 +514,12 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       finalConfigs.selected_tools = undefined;
     }
 
-    // Handle custom tool categories and specific tools
-    // If both are empty/undefined, all tools are enabled (default behavior)
-    if (agentConfigs.enabled_custom_tool_categories && agentConfigs.enabled_custom_tool_categories.length === 0) {
-      finalConfigs.enabled_custom_tool_categories = undefined;
-    } else if (agentConfigs.enabled_custom_tool_categories && agentConfigs.enabled_custom_tool_categories.length > 0) {
-      finalConfigs.enabled_custom_tool_categories = agentConfigs.enabled_custom_tool_categories;
-    }
-
-    // Handle specific tools: if empty array, set to undefined (use categories or all tools)
-    if (agentConfigs.enabled_custom_tools && agentConfigs.enabled_custom_tools.length === 0) {
+    // Handle custom tools in unified format: "category:tool" or "category:*"
+    if (enabledCustomTools.length === 0) {
+      // Empty array means all tools enabled (default behavior)
       finalConfigs.enabled_custom_tools = undefined;
-    } else if (agentConfigs.enabled_custom_tools && agentConfigs.enabled_custom_tools.length > 0) {
-      finalConfigs.enabled_custom_tools = agentConfigs.enabled_custom_tools;
+    } else {
+      finalConfigs.enabled_custom_tools = enabledCustomTools;
     }
 
     // Handle large output virtual tools: only save if explicitly set to false
@@ -254,18 +530,62 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       finalConfigs.enable_large_output_virtual_tools = undefined;
     }
 
+    // Handle disable_learning: explicitly save false when enabled, true when disabled
+    // nil/undefined = not set (default enabled), false = explicitly enabled, true = disabled
+    if (agentConfigs.disable_learning === false) {
+      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      finalConfigs.disable_learning = false;
+    } else if (agentConfigs.disable_learning === true) {
+      // Explicitly disabled - save true
+      finalConfigs.disable_learning = true;
+    } else {
+      // Not set - keep undefined (default enabled)
+      finalConfigs.disable_learning = undefined;
+    }
+
+    // Handle disable_validation: explicitly save false when enabled, true when disabled
+    // Similar logic to disable_learning
+    if (agentConfigs.disable_validation === false) {
+      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      finalConfigs.disable_validation = false;
+    } else if (agentConfigs.disable_validation === true) {
+      // Explicitly disabled - save true
+      finalConfigs.disable_validation = true;
+    } else {
+      // Not set - keep undefined (default enabled)
+      finalConfigs.disable_validation = undefined;
+    }
+
+    // Handle use_code_execution_mode: save if explicitly set by user
+    // If undefined, step will use preset default (field will be omitted from JSON)
+    if (agentConfigs.use_code_execution_mode !== undefined) {
+      // User has explicitly set it - save the value
+      finalConfigs.use_code_execution_mode = agentConfigs.use_code_execution_mode;
+    } else {
+      // Not explicitly set - delete the field so it uses preset default
+      // JSON.stringify will omit undefined fields automatically
+      delete finalConfigs.use_code_execution_mode;
+    }
+
     // Debug logging to verify data being saved
     console.log('[StepEditPanel] Saving step config:', {
       stepTitle: step.title,
       selectedServers,
       selectedTools,
+      agentConfigs_disable_learning: agentConfigs.disable_learning,
+      agentConfigs_use_code_execution_mode: agentConfigs.use_code_execution_mode,
+      finalConfigs_disable_learning: finalConfigs.disable_learning,
+      finalConfigs_use_code_execution_mode: finalConfigs.use_code_execution_mode,
       finalConfigs: {
         selected_servers: finalConfigs.selected_servers,
         selected_tools: finalConfigs.selected_tools,
+        disable_learning: finalConfigs.disable_learning,
+        disable_validation: finalConfigs.disable_validation,
+        use_code_execution_mode: finalConfigs.use_code_execution_mode,
       },
     });
 
-    const updatedStep: TodoStep = {
+    const updatedStep: TodoStepWithConfigs = {
       ...step,
       agent_configs: finalConfigs,
     };
@@ -281,12 +601,21 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
   // Get current agent config summary (LLM settings only)
   const getAgentConfigSummary = () => {
-    const execLLM = llmConfigToOption(agentConfigs.execution_llm) || getCurrentLLMOption();
-    const valLLM = llmConfigToOption(agentConfigs.validation_llm) || getCurrentLLMOption();
-    const learnLLM = llmConfigToOption(agentConfigs.learning_llm) || getCurrentLLMOption();
+    // Priority: step config > preset default > global default
+    const execLLM = llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption();
+    const valLLM = llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption();
+    const learnLLM = llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption();
+    
+    // Get effective code execution mode (step config > preset default)
+    const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
+      ? agentConfigs.use_code_execution_mode 
+      : presetUseCodeExecutionMode;
     
     const parts = [];
-    if (execLLM) parts.push(`Exec: ${execLLM.label}`);
+    if (execLLM) {
+      const codeExecLabel = effectiveCodeExecMode ? 'Code Exec' : 'Simple';
+      parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
+    }
     if (valLLM && !agentConfigs.disable_validation) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
       const detailLevel = agentConfigs.learning_detail_level || 'general';
@@ -346,16 +675,13 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     return parts.join(' • ');
   };
 
-  // Get custom tools summary with detailed information
+  // Get custom tools summary with detailed information (using unified format)
   const getCustomToolsSummary = () => {
-    const categories = agentConfigs.enabled_custom_tool_categories || [];
-    const tools = agentConfigs.enabled_custom_tools || [];
     const allWorkspaceTools = getToolsByCategory('workspace_tools');
     const allHumanTools = getToolsByCategory('human_tools');
     
     // Check if no filtering (default: all enabled)
-    if (categories.length === 0 && tools.length === 0) {
-      // Show default status with human tools and large output
+    if (enabledCustomTools.length === 0) {
       const defaultParts = ['All custom tools enabled (default)'];
       if (agentConfigs.enable_large_output_virtual_tools === false) {
         defaultParts.push('Large output: disabled');
@@ -367,95 +693,71 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     
     const parts = [];
     
-    // Category details
-    if (categories.length > 0) {
-      if (categories.length === 1) {
-        const categoryName = categories[0] === 'workspace_tools' ? 'Workspace' : 'Human';
-        parts.push(`${categoryName} Tools`);
-      } else {
-        parts.push(`${categories.length} categories`);
-      }
-    }
+    // Parse enabled tools
+    const workspaceCategoryEnabled = isCategoryEnabled('workspace_tools', enabledCustomTools);
+    const humanCategoryEnabled = isCategoryEnabled('human_tools', enabledCustomTools);
     
-    // Individual tool details (only if not using categories)
-    if (tools.length > 0 && categories.length === 0) {
-      const workspaceToolsInList = tools.filter(t => allWorkspaceTools.includes(t));
-      const humanToolsInList = tools.filter(t => allHumanTools.includes(t));
+    // Get specific tools enabled
+    const workspaceSpecificTools: string[] = [];
+    const humanSpecificTools: string[] = [];
+    
+    for (const entry of enabledCustomTools) {
+      const parsed = parseToolEntry(entry);
+      if (!parsed) continue;
       
-      if (workspaceToolsInList.length > 0 && humanToolsInList.length > 0) {
-        // Mixed tools from both categories
-        parts.push(`${tools.length} tools (${workspaceToolsInList.length} workspace, ${humanToolsInList.length} human)`);
-      } else if (workspaceToolsInList.length > 0) {
-        // Only workspace tools - show sub-category breakdown
-        if (workspaceToolsInList.length === allWorkspaceTools.length) {
-          parts.push('All workspace tools');
-        } else {
-          // Show sub-category breakdown
-          const basicTools = getToolsByWorkspaceSubCategory('basic_workspace');
-          const advancedTools = getToolsByWorkspaceSubCategory('advanced_workspace');
-          const plusTools = getToolsByWorkspaceSubCategory('plus_tools');
-          
-          const basicEnabled = workspaceToolsInList.filter(t => basicTools.includes(t)).length;
-          const advancedEnabled = workspaceToolsInList.filter(t => advancedTools.includes(t)).length;
-          const plusEnabled = workspaceToolsInList.filter(t => plusTools.includes(t)).length;
-          
-          const subCategoryParts = [];
-          if (basicEnabled > 0) {
-            subCategoryParts.push(`${basicEnabled}/${basicTools.length} basic`);
-          }
-          if (advancedEnabled > 0) {
-            subCategoryParts.push(`${advancedEnabled}/${advancedTools.length} advanced`);
-          }
-          if (plusEnabled > 0) {
-            subCategoryParts.push(`${plusEnabled}/${plusTools.length} plus`);
-          }
-          
-          if (subCategoryParts.length > 0) {
-            parts.push(`${workspaceToolsInList.length}/${allWorkspaceTools.length} workspace (${subCategoryParts.join(', ')})`);
-          } else {
-            parts.push(`${workspaceToolsInList.length}/${allWorkspaceTools.length} workspace tools`);
-          }
-        }
-      } else if (humanToolsInList.length > 0) {
-        // Only human tools
-        if (humanToolsInList.length === allHumanTools.length) {
-          parts.push('All human tools');
-        } else {
-          parts.push(`${humanToolsInList.length}/${allHumanTools.length} human tools`);
-        }
-      }
-    } else if (tools.length > 0 && categories.length > 0) {
-      // Some categories + some individual tools (mixed mode)
-      const workspaceToolsInList = tools.filter(t => allWorkspaceTools.includes(t));
-      const humanToolsInList = tools.filter(t => allHumanTools.includes(t));
-      if (workspaceToolsInList.length > 0 || humanToolsInList.length > 0) {
-        parts.push(`+ ${tools.length} individual tools`);
+      if (parsed.category === 'workspace_tools' && parsed.tool !== '*') {
+        workspaceSpecificTools.push(parsed.tool);
+      } else if (parsed.category === 'human_tools' && parsed.tool !== '*') {
+        humanSpecificTools.push(parsed.tool);
       }
     }
     
-    // Show human tools status if not already included
-    if (categories.length > 0 && categories.includes('human_tools')) {
-      // Human tools category is enabled
-      if (!parts.some(p => p.includes('human'))) {
-        parts.push('All human tools');
-      }
-    } else if (tools.length > 0) {
-      const humanToolsInList = tools.filter(t => allHumanTools.includes(t));
-      if (humanToolsInList.length > 0 && !parts.some(p => p.includes('human'))) {
-        if (humanToolsInList.length === allHumanTools.length) {
-          parts.push('All human tools');
-        } else {
-          parts.push(`${humanToolsInList.length}/${allHumanTools.length} human tools`);
+    // Workspace tools summary
+    if (workspaceCategoryEnabled) {
+      parts.push('All workspace tools');
+    } else if (workspaceSpecificTools.length > 0) {
+      if (workspaceSpecificTools.length === allWorkspaceTools.length) {
+        parts.push('All workspace tools');
+      } else {
+        // Show sub-category breakdown
+        const basicTools = getToolsByWorkspaceSubCategory('basic_workspace');
+        const advancedTools = getToolsByWorkspaceSubCategory('advanced_workspace');
+        const plusTools = getToolsByWorkspaceSubCategory('plus_tools');
+        
+        const basicEnabled = workspaceSpecificTools.filter(t => basicTools.includes(t)).length;
+        const advancedEnabled = workspaceSpecificTools.filter(t => advancedTools.includes(t)).length;
+        const plusEnabled = workspaceSpecificTools.filter(t => plusTools.includes(t)).length;
+        
+        const subCategoryParts = [];
+        if (basicEnabled > 0) {
+          subCategoryParts.push(`${basicEnabled}/${basicTools.length} basic`);
         }
-      } else if (humanToolsInList.length === 0 && categories.length === 0 && tools.length > 0) {
-        // Workspace tools enabled but human tools disabled
-        parts.push('0/1 human tools');
+        if (advancedEnabled > 0) {
+          subCategoryParts.push(`${advancedEnabled}/${advancedTools.length} advanced`);
+        }
+        if (plusEnabled > 0) {
+          subCategoryParts.push(`${plusEnabled}/${plusTools.length} plus`);
+        }
+        
+        if (subCategoryParts.length > 0) {
+          parts.push(`${workspaceSpecificTools.length}/${allWorkspaceTools.length} workspace (${subCategoryParts.join(', ')})`);
+        } else {
+          parts.push(`${workspaceSpecificTools.length}/${allWorkspaceTools.length} workspace tools`);
+        }
       }
-    } else if (categories.length === 0 && tools.length === 0) {
-      // Default state - all enabled, so human tools are enabled
-      // Already handled at the top
-    } else if (categories.length > 0 && !categories.includes('human_tools')) {
-      // Categories enabled but human_tools not in the list
+    }
+    
+    // Human tools summary
+    if (humanCategoryEnabled) {
+      parts.push('All human tools');
+    } else if (humanSpecificTools.length > 0) {
+      if (humanSpecificTools.length === allHumanTools.length) {
+        parts.push('All human tools');
+      } else {
+        parts.push(`${humanSpecificTools.length}/${allHumanTools.length} human tools`);
+      }
+    } else if (!workspaceCategoryEnabled && workspaceSpecificTools.length > 0) {
+      // Workspace tools enabled but human tools disabled
       parts.push('0/1 human tools');
     }
     
@@ -463,10 +765,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     if (agentConfigs.enable_large_output_virtual_tools === false) {
       parts.push('Large output: disabled');
     } else {
-      // Only show if explicitly enabled (not default)
-      // Default is enabled, so we don't need to show it
-      // But we can show it if it's explicitly set to true for clarity
-      // Actually, let's always show it for clarity
       parts.push('Large output: enabled');
     }
     
@@ -525,14 +823,73 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
             {/* Execution Agent Configuration */}
             <div className="space-y-2">
-              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                Execution
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                  Execution
+                </div>
+                {/* Code Execution Mode Toggle */}
+                <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.log('[StepEditPanel] Setting use_code_execution_mode to false');
+                            setAgentConfigs((prev) => ({
+                              ...prev,
+                              use_code_execution_mode: false,
+                            }));
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                            agentConfigs.use_code_execution_mode === false || 
+                            (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode)
+                              ? 'agent-mode-selected rounded-l-md rounded-r-none'
+                              : 'agent-mode-unselected rounded-none'
+                          }`}
+                        >
+                          <Sparkles className="w-3 h-3 inline mr-1" />
+                          Simple
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Simple mode - Direct MCP tool access</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.log('[StepEditPanel] Setting use_code_execution_mode to true');
+                            setAgentConfigs((prev) => ({
+                              ...prev,
+                              use_code_execution_mode: true,
+                            }));
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors ${
+                            agentConfigs.use_code_execution_mode === true ||
+                            (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode)
+                              ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                              : 'agent-mode-unselected rounded-none'
+                          }`}
+                        >
+                          <Code2 className="w-3 h-3 inline mr-1" />
+                          Code Exec
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex-1 min-w-0">
                   <LLMSelectionDropdown
                     availableLLMs={availableLLMs}
-                    selectedLLM={llmConfigToOption(agentConfigs.execution_llm) || getCurrentLLMOption()}
+                    selectedLLM={llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption()}
                     onLLMSelect={handleExecutionLLMSelect}
                     inModal={false}
                     openDirection="down"
@@ -589,7 +946,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                   <div className="flex-1 min-w-0">
                     <LLMSelectionDropdown
                       availableLLMs={availableLLMs}
-                      selectedLLM={llmConfigToOption(agentConfigs.validation_llm) || getCurrentLLMOption()}
+                      selectedLLM={llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption()}
                       onLLMSelect={handleValidationLLMSelect}
                       inModal={false}
                       openDirection="down"
@@ -642,7 +999,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <div className="flex-1 min-w-0">
                       <LLMSelectionDropdown
                         availableLLMs={availableLLMs}
-                        selectedLLM={llmConfigToOption(agentConfigs.learning_llm) || getCurrentLLMOption()}
+                        selectedLLM={llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption()}
                         onLLMSelect={handleLearningLLMSelect}
                         inModal={false}
                         openDirection="down"
@@ -668,9 +1025,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <select
                       value={agentConfigs.learning_detail_level || 'general'}
                       onChange={(e) => {
-                        setAgentConfigs((prev) => ({
+                        const value = e.target.value as 'exact' | 'general' | 'none';
+                        setAgentConfigs((prev): AgentConfigs => ({
                           ...prev,
-                          learning_detail_level: e.target.value,
+                          learning_detail_level: value,
                         }));
                       }}
                       className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1"
@@ -686,6 +1044,88 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                   Learning disabled for this step
                 </div>
               )}
+            </div>
+
+            {/* Conditional Branching Configuration */}
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-2">
+                Conditional Branching
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`has-condition-${stepIndex}`}
+                    checked={step.has_condition || false}
+                    disabled={true}
+                    className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500 disabled:opacity-50"
+                  />
+                  <label
+                    htmlFor={`has-condition-${stepIndex}`}
+                    className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer flex-1"
+                  >
+                    Enable Conditional Branching
+                    <span className="text-gray-500 dark:text-gray-500 ml-1">
+                      (Use planning tools to convert step to conditional)
+                    </span>
+                  </label>
+                </div>
+                
+                {step.has_condition && (
+                  <div className="ml-6 space-y-2 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded">
+                    <div className="text-xs font-medium text-purple-700 dark:text-purple-400">
+                      Condition Question:
+                    </div>
+                    <div className="text-xs text-gray-700 dark:text-gray-300">
+                      {step.condition_question || '(Not set)'}
+                    </div>
+                    
+                    {step.condition_context && (
+                      <>
+                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mt-2">
+                          Condition Context:
+                        </div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">
+                          {step.condition_context}
+                        </div>
+                      </>
+                    )}
+                    
+                    {step.if_true_steps && step.if_true_steps.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs font-medium text-green-700 dark:text-green-400">
+                          ✅ If True Branch: {step.if_true_steps.length} step(s)
+                        </div>
+                      </div>
+                    )}
+                    
+                    {step.if_false_steps && step.if_false_steps.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs font-medium text-red-700 dark:text-red-400">
+                          ❌ If False Branch: {step.if_false_steps.length} step(s)
+                        </div>
+                      </div>
+                    )}
+                    
+                    {step.condition_result !== undefined && (
+                      <div className={`mt-2 p-1 rounded text-xs ${step.condition_result ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
+                        <div className="font-medium">
+                          {step.condition_result ? '✅ Decision: TRUE' : '❌ Decision: FALSE'}
+                        </div>
+                        {step.condition_reason && (
+                          <div className="text-gray-600 dark:text-gray-400 mt-1 italic text-xs">
+                            {step.condition_reason}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="text-xs text-gray-500 dark:text-gray-500 mt-2 italic">
+                      Note: Use planning agent tools (convert_step_to_conditional, add_branch_steps, etc.) to manage conditional steps and branches. All planning tools now use step IDs (from the step's id field) instead of titles for identification.
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Loop Configuration (only shown if has_loop is true) */}
@@ -788,99 +1228,44 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <input
                       type="checkbox"
                       checked={(() => {
-                        const categories = agentConfigs.enabled_custom_tool_categories || [];
-                        const tools = agentConfigs.enabled_custom_tools || [];
                         const allWorkspaceTools = getToolsByCategory('workspace_tools');
+                        const categoryEnabled = isCategoryEnabled('workspace_tools', enabledCustomTools);
                         
-                        // Category is checked if:
-                        // 1. Explicitly in categories list, OR
-                        // 2. All tools from this category are in enabled_custom_tools, OR
-                        // 3. No filtering at all (default: all enabled), OR
-                        // 4. At least one tool from this category is enabled
-                        let checked = false;
-                        if (categories.includes('workspace_tools')) {
-                          checked = true;
-                        } else if (tools.length > 0 && allWorkspaceTools.every(tool => tools.includes(tool))) {
-                          checked = true; // All tools enabled individually
-                        } else if (categories.length === 0 && tools.length === 0) {
-                          checked = true; // Default: all enabled
-                        } else if (tools.length > 0) {
-                          // Check if any tools from this category are enabled
-                          const enabledInCategory = tools.filter((t: string) => allWorkspaceTools.includes(t));
-                          if (enabledInCategory.length > 0) {
-                            checked = true; // At least one tool from this category is enabled
-                          }
-                        }
+                        if (categoryEnabled) return true;
                         
-                        return checked;
+                        // Check if all workspace tools are enabled individually
+                        const workspaceSpecificTools = enabledCustomTools
+                          .map(entry => parseToolEntry(entry))
+                          .filter(parsed => parsed && parsed.category === 'workspace_tools' && parsed.tool !== '*')
+                          .map(parsed => parsed!.tool);
+                        
+                        // Checked if all tools are enabled (either via category:* or all individual tools)
+                        return workspaceSpecificTools.length === allWorkspaceTools.length;
                       })()}
                       onChange={(e) => {
-                        console.log('[CHECKBOX_DEBUG] Workspace Tools category:', e.target.checked ? 'ENABLING' : 'DISABLING');
-                        
-                        setAgentConfigs((prev) => {
-                          const current = prev.enabled_custom_tool_categories || [];
-                          const currentTools = prev.enabled_custom_tools || [];
-                          const workspaceTools = getToolsByCategory('workspace_tools');
-                          
-                          if (e.target.checked) {
-                            // Enable category - add to categories, remove workspace tools from specific tools
-                            const newCategories = current.includes('workspace_tools') ? current : [...current, 'workspace_tools'];
-                            const newTools = currentTools.filter(t => !workspaceTools.includes(t));
-                            
-                            return {
-                              ...prev,
-                              enabled_custom_tool_categories: newCategories,
-                              enabled_custom_tools: newTools.length > 0 ? newTools : undefined,
-                            };
-                          } else {
-                            // Disable category
-                            const isDefaultState = current.length === 0 && currentTools.length === 0;
-                            
-                            if (isDefaultState) {
-                              // Coming from default state - explicitly disable workspace_tools by enabling only human_tools
-                              return {
-                                ...prev,
-                                enabled_custom_tool_categories: ['human_tools'],
-                                enabled_custom_tools: undefined,
-                              };
-                            } else {
-                              // Remove category from list
-                              const newCategories = current.filter(cat => cat !== 'workspace_tools');
-                              // Remove all workspace tools from enabled_custom_tools
-                              const newTools = currentTools.filter(t => !workspaceTools.includes(t));
-                              
-                              return {
-                                ...prev,
-                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                enabled_custom_tools: newTools.length > 0 ? newTools : undefined,
-                              };
-                            }
-                          }
-                        });
+                        if (e.target.checked) {
+                          setEnabledCustomTools(prev => enableCategory('workspace_tools', prev));
+                        } else {
+                          setEnabledCustomTools(prev => disableCategory('workspace_tools', prev));
+                        }
                       }}
                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                     />
                     <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Workspace Tools</span>
                     <span className="text-xs text-gray-500 dark:text-gray-500">
                       {(() => {
-                        const categories = agentConfigs.enabled_custom_tool_categories || [];
-                        const tools = agentConfigs.enabled_custom_tools || [];
                         const allWorkspaceTools = getToolsByCategory('workspace_tools');
+                        const categoryEnabled = isCategoryEnabled('workspace_tools', enabledCustomTools);
                         
-                        // Calculate enabled count
                         let enabledCount = 0;
-                        if (categories.includes('workspace_tools')) {
-                          // Category enabled = all tools enabled
+                        if (categoryEnabled || enabledCustomTools.length === 0) {
                           enabledCount = allWorkspaceTools.length;
-                        } else if (categories.length === 0 && tools.length === 0) {
-                          // Default state = all enabled
-                          enabledCount = allWorkspaceTools.length;
-                        } else if (tools.length > 0) {
-                          // Count how many workspace tools are in the enabled list
-                          enabledCount = tools.filter((t: string) => allWorkspaceTools.includes(t)).length;
                         } else {
-                          // No workspace tools enabled
-                          enabledCount = 0;
+                          const workspaceSpecificTools = enabledCustomTools
+                            .map(entry => parseToolEntry(entry))
+                            .filter(parsed => parsed && parsed.category === 'workspace_tools' && parsed.tool !== '*')
+                            .map(parsed => parsed!.tool);
+                          enabledCount = workspaceSpecificTools.length;
                         }
                         
                         return `(${enabledCount}/${allWorkspaceTools.length} tools)`;
@@ -911,14 +1296,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     {(() => {
                       const subCategoryName = 'basic_workspace';
                       const subCategoryTools = getToolsByWorkspaceSubCategory(subCategoryName);
-                      const categories = agentConfigs.enabled_custom_tool_categories || [];
-                      const tools = agentConfigs.enabled_custom_tools || [];
-                      const isCategoryEnabled = categories.includes('workspace_tools');
-                      const enabledInSubCategory = subCategoryTools.filter((t: string) => 
-                        isCategoryEnabled || (tools.length > 0 ? tools.includes(t) : categories.length === 0 && tools.length === 0)
+                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_tools', subCategoryTools, enabledCustomTools);
+                      const enabledInSubCategory = subCategoryTools.filter(toolName => 
+                        isToolEnabled('workspace_tools', toolName, enabledCustomTools)
                       );
-                      const isSubCategoryChecked = isCategoryEnabled || enabledInSubCategory.length === subCategoryTools.length || 
-                        (categories.length === 0 && tools.length === 0);
                       
                       return (
                         <div key={subCategoryName} className="space-y-1.5">
@@ -928,53 +1309,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                                 type="checkbox"
                                 checked={isSubCategoryChecked}
                                 onChange={(e) => {
-                                  const wantsEnabled = e.target.checked;
-                                  setAgentConfigs((prev: typeof agentConfigs) => {
-                                    const current = prev.enabled_custom_tools || [];
-                                    const currentCategories = prev.enabled_custom_tool_categories || [];
-                                    const allCategoryTools = getToolsByCategory('workspace_tools');
-                                    const categoryIsEnabled = currentCategories.includes('workspace_tools');
-                                    const isDefaultState = currentCategories.length === 0 && current.length === 0;
-                                    
-                                    if (wantsEnabled) {
-                                      if (categoryIsEnabled || isDefaultState) {
-                                        // Already enabled via category or default
-                                        return prev;
-                                      }
-                                      // Add all tools from this sub-category
-                                      const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                      const newTools = [...new Set([...subCategoryTools, ...current.filter((t: string) => !subCategoryTools.includes(t)), ...toolsFromOtherCategories])];
-                                      return {
-                                        ...prev,
-                                        enabled_custom_tools: newTools,
-                                      };
-                                    } else {
-                                      if (categoryIsEnabled) {
-                                        // Remove category, add all other workspace tools except this sub-category
-                                        const otherWorkspaceTools = allCategoryTools.filter((t: string) => !subCategoryTools.includes(t));
-                                        const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tool_categories: currentCategories.filter((cat: string) => cat !== 'workspace_tools'),
-                                          enabled_custom_tools: [...otherWorkspaceTools, ...toolsFromOtherCategories],
-                                        };
-                                      } else if (isDefaultState) {
-                                        // Enable all workspace tools except this sub-category
-                                        const otherWorkspaceTools = allCategoryTools.filter((t: string) => !subCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tools: otherWorkspaceTools,
-                                        };
-                                      } else {
-                                        // Remove all tools from this sub-category
-                                        const newTools = current.filter((t: string) => !subCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tools: newTools.length > 0 ? newTools : undefined,
-                                        };
-                                      }
-                                    }
-                                  });
+                                  setEnabledCustomTools(prev => 
+                                    toggleSubCategory('workspace_tools', subCategoryTools, e.target.checked, prev)
+                                  );
                                 }}
                                 className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                               />
@@ -1002,62 +1339,18 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                           {expandedWorkspaceSubCategories.has(subCategoryName) && (
                             <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
                               {subCategoryTools.map((toolName) => {
-                                const isToolEnabled = isCategoryEnabled || (tools.length > 0 ? tools.includes(toolName) : categories.length === 0 && tools.length === 0);
+                                const toolIsEnabled = isToolEnabled('workspace_tools', toolName, enabledCustomTools);
                                 return (
                                   <label key={toolName} className="flex items-center gap-2 cursor-pointer">
                                     <input
                                       type="checkbox"
-                                      checked={isToolEnabled}
+                                      checked={toolIsEnabled}
                                       onChange={(e) => {
-                                        const wantsEnabled = e.target.checked;
-                                        setAgentConfigs((prev: typeof agentConfigs) => {
-                                          const current = prev.enabled_custom_tools || [];
-                                          const currentCategories = prev.enabled_custom_tool_categories || [];
-                                          const allCategoryTools = getToolsByCategory('workspace_tools');
-                                          const categoryIsEnabled = currentCategories.includes('workspace_tools');
-                                          const isDefaultState = currentCategories.length === 0 && current.length === 0;
-                                          
-                                          if (wantsEnabled) {
-                                            if (categoryIsEnabled || isDefaultState) {
-                                              const newCategories = currentCategories.filter((cat: string) => cat !== 'workspace_tools');
-                                              const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                                enabled_custom_tools: [...allCategoryTools, ...toolsFromOtherCategories],
-                                              };
-                                            } else if (!current.includes(toolName)) {
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: [...current, toolName],
-                                              };
-                                            }
-                                          } else {
-                                            if (categoryIsEnabled) {
-                                              const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                              const newCategories = currentCategories.filter((cat: string) => cat !== 'workspace_tools');
-                                              const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                                enabled_custom_tools: [...otherCategoryTools, ...toolsFromOtherCategories],
-                                              };
-                                            } else if (isDefaultState) {
-                                              const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: otherCategoryTools,
-                                              };
-                                            } else {
-                                              const finalTools = current.filter((t: string) => t !== toolName);
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: finalTools.length > 0 ? finalTools : undefined,
-                                              };
-                                            }
-                                          }
-                                          return prev;
-                                        });
+                                        if (e.target.checked) {
+                                          setEnabledCustomTools(prev => enableTool('workspace_tools', toolName, prev));
+                                        } else {
+                                          setEnabledCustomTools(prev => disableTool('workspace_tools', toolName, prev));
+                                        }
                                       }}
                                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                                     />
@@ -1075,14 +1368,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     {(() => {
                       const subCategoryName = 'advanced_workspace';
                       const subCategoryTools = getToolsByWorkspaceSubCategory(subCategoryName);
-                      const categories = agentConfigs.enabled_custom_tool_categories || [];
-                      const tools = agentConfigs.enabled_custom_tools || [];
-                      const isCategoryEnabled = categories.includes('workspace_tools');
-                      const enabledInSubCategory = subCategoryTools.filter((t: string) => 
-                        isCategoryEnabled || (tools.length > 0 ? tools.includes(t) : categories.length === 0 && tools.length === 0)
+                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_tools', subCategoryTools, enabledCustomTools);
+                      const enabledInSubCategory = subCategoryTools.filter(toolName => 
+                        isToolEnabled('workspace_tools', toolName, enabledCustomTools)
                       );
-                      const isSubCategoryChecked = isCategoryEnabled || enabledInSubCategory.length === subCategoryTools.length || 
-                        (categories.length === 0 && tools.length === 0);
                       
                       return (
                         <div key={subCategoryName} className="space-y-1.5">
@@ -1092,48 +1381,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                                 type="checkbox"
                                 checked={isSubCategoryChecked}
                                 onChange={(e) => {
-                                  const wantsEnabled = e.target.checked;
-                                  setAgentConfigs((prev: typeof agentConfigs) => {
-                                    const current = prev.enabled_custom_tools || [];
-                                    const currentCategories = prev.enabled_custom_tool_categories || [];
-                                    const allCategoryTools = getToolsByCategory('workspace_tools');
-                                    const categoryIsEnabled = currentCategories.includes('workspace_tools');
-                                    const isDefaultState = currentCategories.length === 0 && current.length === 0;
-                                    
-                                    if (wantsEnabled) {
-                                      if (categoryIsEnabled || isDefaultState) {
-                                        return prev;
-                                      }
-                                      const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                      const newTools = [...new Set([...subCategoryTools, ...current.filter((t: string) => !subCategoryTools.includes(t)), ...toolsFromOtherCategories])];
-                                      return {
-                                        ...prev,
-                                        enabled_custom_tools: newTools,
-                                      };
-                                    } else {
-                                      if (categoryIsEnabled) {
-                                        const otherWorkspaceTools = allCategoryTools.filter((t: string) => !subCategoryTools.includes(t));
-                                        const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tool_categories: currentCategories.filter((cat: string) => cat !== 'workspace_tools'),
-                                          enabled_custom_tools: [...otherWorkspaceTools, ...toolsFromOtherCategories],
-                                        };
-                                      } else if (isDefaultState) {
-                                        const otherWorkspaceTools = allCategoryTools.filter((t: string) => !subCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tools: otherWorkspaceTools,
-                                        };
-                                      } else {
-                                        const newTools = current.filter((t: string) => !subCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tools: newTools.length > 0 ? newTools : undefined,
-                                        };
-                                      }
-                                    }
-                                  });
+                                  setEnabledCustomTools(prev => 
+                                    toggleSubCategory('workspace_tools', subCategoryTools, e.target.checked, prev)
+                                  );
                                 }}
                                 className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                               />
@@ -1161,62 +1411,18 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                           {expandedWorkspaceSubCategories.has(subCategoryName) && (
                             <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
                               {subCategoryTools.map((toolName) => {
-                                const isToolEnabled = isCategoryEnabled || (tools.length > 0 ? tools.includes(toolName) : categories.length === 0 && tools.length === 0);
+                                const toolIsEnabled = isToolEnabled('workspace_tools', toolName, enabledCustomTools);
                                 return (
                                   <label key={toolName} className="flex items-center gap-2 cursor-pointer">
                                     <input
                                       type="checkbox"
-                                      checked={isToolEnabled}
+                                      checked={toolIsEnabled}
                                       onChange={(e) => {
-                                        const wantsEnabled = e.target.checked;
-                                        setAgentConfigs((prev: typeof agentConfigs) => {
-                                          const current = prev.enabled_custom_tools || [];
-                                          const currentCategories = prev.enabled_custom_tool_categories || [];
-                                          const allCategoryTools = getToolsByCategory('workspace_tools');
-                                          const categoryIsEnabled = currentCategories.includes('workspace_tools');
-                                          const isDefaultState = currentCategories.length === 0 && current.length === 0;
-                                          
-                                          if (wantsEnabled) {
-                                            if (categoryIsEnabled || isDefaultState) {
-                                              const newCategories = currentCategories.filter((cat: string) => cat !== 'workspace_tools');
-                                              const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                                enabled_custom_tools: [...allCategoryTools, ...toolsFromOtherCategories],
-                                              };
-                                            } else if (!current.includes(toolName)) {
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: [...current, toolName],
-                                              };
-                                            }
-                                          } else {
-                                            if (categoryIsEnabled) {
-                                              const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                              const newCategories = currentCategories.filter((cat: string) => cat !== 'workspace_tools');
-                                              const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                                enabled_custom_tools: [...otherCategoryTools, ...toolsFromOtherCategories],
-                                              };
-                                            } else if (isDefaultState) {
-                                              const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: otherCategoryTools,
-                                              };
-                                            } else {
-                                              const finalTools = current.filter((t: string) => t !== toolName);
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: finalTools.length > 0 ? finalTools : undefined,
-                                              };
-                                            }
-                                          }
-                                          return prev;
-                                        });
+                                        if (e.target.checked) {
+                                          setEnabledCustomTools(prev => enableTool('workspace_tools', toolName, prev));
+                                        } else {
+                                          setEnabledCustomTools(prev => disableTool('workspace_tools', toolName, prev));
+                                        }
                                       }}
                                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                                     />
@@ -1234,14 +1440,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     {(() => {
                       const subCategoryName = 'plus_tools';
                       const subCategoryTools = getToolsByWorkspaceSubCategory(subCategoryName);
-                      const categories = agentConfigs.enabled_custom_tool_categories || [];
-                      const tools = agentConfigs.enabled_custom_tools || [];
-                      const isCategoryEnabled = categories.includes('workspace_tools');
-                      const enabledInSubCategory = subCategoryTools.filter((t: string) => 
-                        isCategoryEnabled || (tools.length > 0 ? tools.includes(t) : categories.length === 0 && tools.length === 0)
+                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_tools', subCategoryTools, enabledCustomTools);
+                      const enabledInSubCategory = subCategoryTools.filter(toolName => 
+                        isToolEnabled('workspace_tools', toolName, enabledCustomTools)
                       );
-                      const isSubCategoryChecked = isCategoryEnabled || enabledInSubCategory.length === subCategoryTools.length || 
-                        (categories.length === 0 && tools.length === 0);
                       
                       return (
                         <div key={subCategoryName} className="space-y-1.5">
@@ -1251,48 +1453,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                                 type="checkbox"
                                 checked={isSubCategoryChecked}
                                 onChange={(e) => {
-                                  const wantsEnabled = e.target.checked;
-                                  setAgentConfigs((prev: typeof agentConfigs) => {
-                                    const current = prev.enabled_custom_tools || [];
-                                    const currentCategories = prev.enabled_custom_tool_categories || [];
-                                    const allCategoryTools = getToolsByCategory('workspace_tools');
-                                    const categoryIsEnabled = currentCategories.includes('workspace_tools');
-                                    const isDefaultState = currentCategories.length === 0 && current.length === 0;
-                                    
-                                    if (wantsEnabled) {
-                                      if (categoryIsEnabled || isDefaultState) {
-                                        return prev;
-                                      }
-                                      const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                      const newTools = [...new Set([...subCategoryTools, ...current.filter((t: string) => !subCategoryTools.includes(t)), ...toolsFromOtherCategories])];
-                                      return {
-                                        ...prev,
-                                        enabled_custom_tools: newTools,
-                                      };
-                                    } else {
-                                      if (categoryIsEnabled) {
-                                        const otherWorkspaceTools = allCategoryTools.filter((t: string) => !subCategoryTools.includes(t));
-                                        const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tool_categories: currentCategories.filter((cat: string) => cat !== 'workspace_tools'),
-                                          enabled_custom_tools: [...otherWorkspaceTools, ...toolsFromOtherCategories],
-                                        };
-                                      } else if (isDefaultState) {
-                                        const otherWorkspaceTools = allCategoryTools.filter((t: string) => !subCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tools: otherWorkspaceTools,
-                                        };
-                                      } else {
-                                        const newTools = current.filter((t: string) => !subCategoryTools.includes(t));
-                                        return {
-                                          ...prev,
-                                          enabled_custom_tools: newTools.length > 0 ? newTools : undefined,
-                                        };
-                                      }
-                                    }
-                                  });
+                                  setEnabledCustomTools(prev => 
+                                    toggleSubCategory('workspace_tools', subCategoryTools, e.target.checked, prev)
+                                  );
                                 }}
                                 className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                               />
@@ -1320,62 +1483,18 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                           {expandedWorkspaceSubCategories.has(subCategoryName) && (
                             <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
                               {subCategoryTools.map((toolName) => {
-                                const isToolEnabled = isCategoryEnabled || (tools.length > 0 ? tools.includes(toolName) : categories.length === 0 && tools.length === 0);
+                                const toolIsEnabled = isToolEnabled('workspace_tools', toolName, enabledCustomTools);
                                 return (
                                   <label key={toolName} className="flex items-center gap-2 cursor-pointer">
                                     <input
                                       type="checkbox"
-                                      checked={isToolEnabled}
+                                      checked={toolIsEnabled}
                                       onChange={(e) => {
-                                        const wantsEnabled = e.target.checked;
-                                        setAgentConfigs((prev: typeof agentConfigs) => {
-                                          const current = prev.enabled_custom_tools || [];
-                                          const currentCategories = prev.enabled_custom_tool_categories || [];
-                                          const allCategoryTools = getToolsByCategory('workspace_tools');
-                                          const categoryIsEnabled = currentCategories.includes('workspace_tools');
-                                          const isDefaultState = currentCategories.length === 0 && current.length === 0;
-                                          
-                                          if (wantsEnabled) {
-                                            if (categoryIsEnabled || isDefaultState) {
-                                              const newCategories = currentCategories.filter((cat: string) => cat !== 'workspace_tools');
-                                              const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                                enabled_custom_tools: [...allCategoryTools, ...toolsFromOtherCategories],
-                                              };
-                                            } else if (!current.includes(toolName)) {
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: [...current, toolName],
-                                              };
-                                            }
-                                          } else {
-                                            if (categoryIsEnabled) {
-                                              const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                              const newCategories = currentCategories.filter((cat: string) => cat !== 'workspace_tools');
-                                              const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                                enabled_custom_tools: [...otherCategoryTools, ...toolsFromOtherCategories],
-                                              };
-                                            } else if (isDefaultState) {
-                                              const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: otherCategoryTools,
-                                              };
-                                            } else {
-                                              const finalTools = current.filter((t: string) => t !== toolName);
-                                              return {
-                                                ...prev,
-                                                enabled_custom_tools: finalTools.length > 0 ? finalTools : undefined,
-                                              };
-                                            }
-                                          }
-                                          return prev;
-                                        });
+                                        if (e.target.checked) {
+                                          setEnabledCustomTools(prev => enableTool('workspace_tools', toolName, prev));
+                                        } else {
+                                          setEnabledCustomTools(prev => disableTool('workspace_tools', toolName, prev));
+                                        }
                                       }}
                                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                                     />
@@ -1399,99 +1518,44 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <input
                       type="checkbox"
                       checked={(() => {
-                        const categories = agentConfigs.enabled_custom_tool_categories || [];
-                        const tools = agentConfigs.enabled_custom_tools || [];
                         const allHumanTools = getToolsByCategory('human_tools');
+                        const categoryEnabled = isCategoryEnabled('human_tools', enabledCustomTools);
                         
-                        // Category is checked if:
-                        // 1. Explicitly in categories list, OR
-                        // 2. All tools from this category are in enabled_custom_tools, OR
-                        // 3. No filtering at all (default: all enabled), OR
-                        // 4. At least one tool from this category is enabled
-                        let checked = false;
-                        if (categories.includes('human_tools')) {
-                          checked = true;
-                        } else if (tools.length > 0 && allHumanTools.every(tool => tools.includes(tool))) {
-                          checked = true; // All tools enabled individually
-                        } else if (categories.length === 0 && tools.length === 0) {
-                          checked = true; // Default: all enabled
-                        } else if (tools.length > 0) {
-                          // Check if any tools from this category are enabled
-                          const enabledInCategory = tools.filter((t: string) => allHumanTools.includes(t));
-                          if (enabledInCategory.length > 0) {
-                            checked = true; // At least one tool from this category is enabled
-                          }
-                        }
+                        if (categoryEnabled) return true;
                         
-                        return checked;
+                        // Check if all human tools are enabled individually
+                        const humanSpecificTools = enabledCustomTools
+                          .map(entry => parseToolEntry(entry))
+                          .filter(parsed => parsed && parsed.category === 'human_tools' && parsed.tool !== '*')
+                          .map(parsed => parsed!.tool);
+                        
+                        // Checked if all tools are enabled (either via category:* or all individual tools)
+                        return humanSpecificTools.length === allHumanTools.length;
                       })()}
                       onChange={(e) => {
-                        console.log('[CHECKBOX_DEBUG] Human Tools category:', e.target.checked ? 'ENABLING' : 'DISABLING');
-                        
-                        setAgentConfigs((prev) => {
-                          const current = prev.enabled_custom_tool_categories || [];
-                          const currentTools = prev.enabled_custom_tools || [];
-                          const humanTools = getToolsByCategory('human_tools');
-                          
-                          if (e.target.checked) {
-                            // Enable category - add to categories, remove human tools from specific tools
-                            const newCategories = current.includes('human_tools') ? current : [...current, 'human_tools'];
-                            const newTools = currentTools.filter(t => !humanTools.includes(t));
-                            
-                            return {
-                              ...prev,
-                              enabled_custom_tool_categories: newCategories,
-                              enabled_custom_tools: newTools.length > 0 ? newTools : undefined,
-                            };
-                          } else {
-                            // Disable category
-                            const isDefaultState = current.length === 0 && currentTools.length === 0;
-                            
-                            if (isDefaultState) {
-                              // Coming from default state - explicitly disable human_tools by enabling only workspace_tools
-                              return {
-                                ...prev,
-                                enabled_custom_tool_categories: ['workspace_tools'],
-                                enabled_custom_tools: undefined,
-                              };
-                            } else {
-                              // Remove category from list
-                              const newCategories = current.filter(cat => cat !== 'human_tools');
-                              // Remove all human tools from enabled_custom_tools
-                              const newTools = currentTools.filter(t => !humanTools.includes(t));
-                              
-                              return {
-                                ...prev,
-                                enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                enabled_custom_tools: newTools.length > 0 ? newTools : undefined,
-                              };
-                            }
-                          }
-                        });
+                        if (e.target.checked) {
+                          setEnabledCustomTools(prev => enableCategory('human_tools', prev));
+                        } else {
+                          setEnabledCustomTools(prev => disableCategory('human_tools', prev));
+                        }
                       }}
                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                     />
                     <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Human Tools</span>
                     <span className="text-xs text-gray-500 dark:text-gray-500">
                       {(() => {
-                        const categories = agentConfigs.enabled_custom_tool_categories || [];
-                        const tools = agentConfigs.enabled_custom_tools || [];
                         const allHumanTools = getToolsByCategory('human_tools');
+                        const categoryEnabled = isCategoryEnabled('human_tools', enabledCustomTools);
                         
-                        // Calculate enabled count
                         let enabledCount = 0;
-                        if (categories.includes('human_tools')) {
-                          // Category enabled = all tools enabled
+                        if (categoryEnabled || enabledCustomTools.length === 0) {
                           enabledCount = allHumanTools.length;
-                        } else if (categories.length === 0 && tools.length === 0) {
-                          // Default state = all enabled
-                          enabledCount = allHumanTools.length;
-                        } else if (tools.length > 0) {
-                          // Count how many human tools are in the enabled list
-                          enabledCount = tools.filter((t: string) => allHumanTools.includes(t)).length;
                         } else {
-                          // No human tools enabled
-                          enabledCount = 0;
+                          const humanSpecificTools = enabledCustomTools
+                            .map(entry => parseToolEntry(entry))
+                            .filter(parsed => parsed && parsed.category === 'human_tools' && parsed.tool !== '*')
+                            .map(parsed => parsed!.tool);
+                          enabledCount = humanSpecificTools.length;
                         }
                         
                         return `(${enabledCount}/${allHumanTools.length} tools)`;
@@ -1517,110 +1581,21 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 {expandedToolCategories.has('human_tools') && (
                   <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
                     {HUMAN_TOOLS.map((toolName) => {
-                      const categories = agentConfigs.enabled_custom_tool_categories || [];
-                      const tools = agentConfigs.enabled_custom_tools || [];
-                      const isCategoryEnabled = categories.includes('human_tools');
-                      const isToolEnabled = tools.includes(toolName);
-                      const hasAnyFiltering = categories.length > 0 || tools.length > 0;
-                      
-                      // Tool is enabled if:
-                      // 1. Category is enabled (all tools in category), OR
-                      // 2. Tool is specifically in enabled_custom_tools, OR
-                      // 3. No filtering at all (default: all enabled)
-                      // IMPORTANT: If tools array exists and has items, we're in explicit mode - only show checked if tool is in the list
-                      const isEnabled = isCategoryEnabled || (hasAnyFiltering ? isToolEnabled : true);
+                      const toolIsEnabled = isToolEnabled('human_tools', toolName, enabledCustomTools);
                       
                       return (
                         <label key={toolName} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={isEnabled}
+                            checked={toolIsEnabled}
                             onChange={(e) => {
-                              const wantsEnabled = e.target.checked;
-                              console.log('[CHECKBOX_DEBUG] Human tool:', toolName, wantsEnabled ? 'ENABLING' : 'DISABLING');
-                              
-                              setAgentConfigs((prev: typeof agentConfigs) => {
-                                const current = prev.enabled_custom_tools || [];
-                                const currentCategories = prev.enabled_custom_tool_categories || [];
-                                const allCategoryTools = getToolsByCategory('human_tools');
-                                const categoryIsEnabled = currentCategories.includes('human_tools');
-                                const isDefaultState = currentCategories.length === 0 && current.length === 0;
-                                
-                                if (wantsEnabled) {
-                                  // User wants to enable this tool
-                                  if (categoryIsEnabled) {
-                                    // Category is enabled - switch to individual tool mode with all tools enabled
-                                    // Remove category, add all tools from this category
-                                    const newCategories = currentCategories.filter((cat: string) => cat !== 'human_tools');
-                                    const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                    
-                                    return {
-                                      ...prev,
-                                      enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                      enabled_custom_tools: [...allCategoryTools, ...toolsFromOtherCategories],
-                                    };
-                                  } else if (isDefaultState) {
-                                    // Default state - checkbox was already checked, user clicked to "re-check" it
-                                    // This shouldn't normally happen, but if it does, just ensure it's explicitly enabled
-                                    return {
-                                      ...prev,
-                                      enabled_custom_tools: allCategoryTools,
-                                    };
-                                  } else {
-                                    // Category not enabled, not default - just add this tool
-                                    if (!current.includes(toolName)) {
-                                      return {
-                                        ...prev,
-                                        enabled_custom_tools: [...current, toolName],
-                                      };
-                                    }
-                                  }
-                                } else {
-                                  // User wants to disable this tool
-                                  if (categoryIsEnabled) {
-                                    // Category is enabled - switch to individual tool mode, exclude this tool
-                                    // Remove category, add all other tools from this category
-                                    const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                    const newCategories = currentCategories.filter((cat: string) => cat !== 'human_tools');
-                                    const toolsFromOtherCategories = current.filter((t: string) => !allCategoryTools.includes(t));
-                                    
-                                    return {
-                                      ...prev,
-                                      enabled_custom_tool_categories: newCategories.length > 0 ? newCategories : undefined,
-                                      enabled_custom_tools: [...otherCategoryTools, ...toolsFromOtherCategories],
-                                    };
-                                  } else if (isDefaultState) {
-                                    // Default state - user clicked to disable this tool
-                                    // Switch to explicit mode: enable all other tools from this category (exclude this one)
-                                    // This is correct - we're disabling the clicked tool and keeping all others enabled
-                                    const otherCategoryTools = allCategoryTools.filter((t: string) => t !== toolName);
-                                    console.log('[CHECKBOX_DEBUG] Disabling from default - keeping enabled:', otherCategoryTools);
-                                    return {
-                                      ...prev,
-                                      enabled_custom_tools: otherCategoryTools,
-                                    };
-                                  } else {
-                                    // Category not enabled, not default - remove this tool from current list
-                                    // Simply filter out the tool being disabled from the current list
-                                    const finalTools = current.filter((t: string) => t !== toolName);
-                                    
-                                    console.log('[CHECKBOX_DEBUG] Removing tool from explicit list:', {
-                                      removed: toolName,
-                                      before: current.length,
-                                      after: finalTools.length,
-                                      finalTools,
-                                    });
-                                    
-                                    return {
-                                      ...prev,
-                                      enabled_custom_tools: finalTools.length > 0 ? finalTools : undefined,
-                                    };
-                                  }
-                                }
-                                return prev; // No change
-                              });
+                              if (e.target.checked) {
+                                setEnabledCustomTools(prev => enableTool('human_tools', toolName, prev));
+                              } else {
+                                setEnabledCustomTools(prev => disableTool('human_tools', toolName, prev));
+                              }
                             }}
-                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                           />
                           <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
                         </label>

@@ -4,7 +4,7 @@ import { agentApi } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { EventModeProvider } from './events'
-import { ChatInput } from './ChatInput'
+import { ChatInput, type ChatInputRef } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { ToastContainer } from './ui/Toast'
@@ -34,9 +34,11 @@ export interface ChatAreaRef {
 
 
 // Inner component that can use the EventMode context
-const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
-  onNewChat
-}, ref) => {
+const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
+  const { onNewChat } = props
+  // Ref for ChatInput to get code execution mode
+  const chatInputRef = useRef<ChatInputRef>(null)
+  
   // Store subscriptions
   const { 
     agentMode, 
@@ -1222,6 +1224,32 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         'hasAllToolsMarkers': currentPresetTools?.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
       });
       
+      // Get code execution mode: prefer preset value, fallback to ChatInput ref (only for chat mode with simple agent)
+      const activePreset = selectedWorkflowPreset ? getActivePreset('workflow') : getActivePreset('chat')
+      const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
+      const chatInputUseCodeExecutionMode = agentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
+      
+      // Determine final code execution mode value
+      // If preset has explicit value (true or false), use it
+      // Otherwise, for simple mode, use ChatInput value; for workflow mode, default to undefined (backend will handle)
+      let useCodeExecutionMode: boolean | undefined
+      if (presetUseCodeExecutionMode !== undefined) {
+        useCodeExecutionMode = presetUseCodeExecutionMode
+      } else if (agentMode === 'simple') {
+        useCodeExecutionMode = chatInputUseCodeExecutionMode
+      } else {
+        // For workflow mode without preset, don't set it (let backend use default)
+        useCodeExecutionMode = undefined
+      }
+      
+      console.log('[code_execution] [ChatArea] Mode determination:', {
+        activePreset: activePreset?.label,
+        presetUseCodeExecutionMode,
+        chatInputUseCodeExecutionMode,
+        agentMode,
+        finalUseCodeExecutionMode: useCodeExecutionMode
+      })
+      
       // Build llm_config with API keys from provider configs
       const llmConfigWithApiKeys = {
         ...llmConfig,
@@ -1234,8 +1262,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         }
       }
       
-      // Submit query to backend
-      const response = await agentApi.startQuery({
+      // Prepare API request payload
+      const requestPayload = {
         query: enhancedQuery,
         agent_mode: agentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
@@ -1245,7 +1273,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         model_id: llmConfig.model_id,
         llm_config: llmConfigWithApiKeys,
         preset_query_id: selectedWorkflowPreset || undefined,
+        // Send boolean value directly - don't use || undefined as it converts false to undefined
+        use_code_execution_mode: useCodeExecutionMode !== undefined ? useCodeExecutionMode : undefined,
+      }
+      
+      console.log('[code_execution] [ChatArea] API Request payload:', {
+        use_code_execution_mode: requestPayload.use_code_execution_mode,
+        type: typeof requestPayload.use_code_execution_mode,
+        preset_query_id: requestPayload.preset_query_id
       })
+      
+      // Submit query to backend
+      const response = await agentApi.startQuery(requestPayload)
 
       if (response.status === 'started' || response.status === 'workflow_started') {
         // Update session ID for subsequent requests
@@ -1445,6 +1484,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       {/* Input Area - Completely isolated from event updates */}
       {!chatSessionId && (
         <ChatInput
+          ref={chatInputRef}
           onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}

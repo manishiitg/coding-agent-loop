@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  planner-api:
+    build: .
+    ports:
+      - "8081:8080"
+    environment:
+      # GitHub Configuration (Viper converts GITHUB_TOKEN to github_token)
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPO:-city-mall/mcp-agent-docs}
+      
+      # Server Configuration
+      - PORT=8080
+      - DOCS_DIR=/app/workspace-docs
+      
+      # Semantic Search Configuration
+      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
+      
+      # Optional: Debug mode
+      - DEBUG=${DEBUG:-false}
+      
+      # MCP Cache Configuration
+      - MCP_CACHE_TTL_MINUTES=${MCP_CACHE_TTL_MINUTES:-10080}
+    volumes:
+      # Persist documents outside container
+      - workspace-docs:/app/workspace-docs
+      # Mount local docs for development (optional)
+      - ./test-docs:/app/test-docs:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+
+volumes:
+  workspace-docs:
+    driver: local
+
+networks:
+  default:
+    name: planner-network

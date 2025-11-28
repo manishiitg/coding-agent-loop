@@ -1,7 +1,7 @@
 import React from 'react'
 import type { ToolCallEndEvent } from '../../../generated/events'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
-import { WorkspaceToolCallEndDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay } from './ToolCallSpecialRender'
 
 interface ToolCallEndEventProps {
   event: ToolCallEndEvent
@@ -23,9 +23,23 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
     return isWorkspace
   }
 
+  // Check if this is a code execution tool
+  const isCodeExecutionTool = (toolName: string): boolean => {
+    return toolName === 'discover_code_structure' || toolName === 'discover_code_files' || toolName === 'write_code'
+  }
+
   // If it's a workspace tool, use the specialized component
   if (event.tool_name && isWorkspaceTool(event.tool_name)) {
     const specializedDisplay = <WorkspaceToolCallEndDisplay event={event} />
+    // If the specialized renderer returns null, fall back to default
+    if (specializedDisplay) {
+      return specializedDisplay
+    }
+  }
+
+  // If it's a code execution tool, use the specialized component
+  if (event.tool_name && isCodeExecutionTool(event.tool_name)) {
+    const specializedDisplay = <CodeExecutionToolCallEndDisplay event={event} />
     // If the specialized renderer returns null, fall back to default
     if (specializedDisplay) {
       return specializedDisplay

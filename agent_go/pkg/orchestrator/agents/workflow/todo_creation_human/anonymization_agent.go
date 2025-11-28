@@ -65,14 +65,15 @@ func NewAnonymizationManager(
 // createAnonymizationAgent creates and sets up an anonymization agent with all necessary configuration
 // This method handles folder guard setup, LLM config selection, tool combination, and agent initialization
 func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from learnings ONLY, writes only to learnings
+	// Set folder guard paths: allow reads from both learnings folders, writes to both learnings folders
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
+	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", workspacePath)
 
-	// Agent has access ONLY to learnings folder (read and write)
-	readPaths := []string{learningsPath}
-	writePaths := []string{learningsPath}
+	// Agent has access to both learnings folders (read and write)
+	readPaths := []string{learningsPath, learningCodeExecPath}
+	writePaths := []string{learningsPath, learningCodeExecPath}
 	am.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	am.GetLogger().Infof("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (learnings only)", readPaths, writePaths)
+	am.GetLogger().Infof("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (both learnings folders)", readPaths, writePaths)
 
 	// Determine LLM config: Priority: preset default > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -101,6 +102,10 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 
 	// Anonymization agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}
+
+	// Code execution mode only applies to execution agents, not anonymization agents
+	config.UseCodeExecutionMode = false
+	am.GetLogger().Infof("🔧 Disabling code execution mode for anonymization agent (only execution agents use MCP tools)")
 
 	// Large output virtual tools are enabled for anonymization (agent may generate large reports)
 
@@ -287,11 +292,13 @@ This makes learnings reusable across different environments, accounts, and confi
 
 ### **Process (Step-by-Step):**
 
-1. **Understand Available Variables** - The variables are provided in the template variables (VariablesJSON). You have access ONLY to the learnings/ folder - variables are passed to you, not read from files.
+1. **Understand Available Variables** - The variables are provided in the template variables (VariablesJSON). You have access to both learnings/ and learning_code_exec/ folders - variables are passed to you, not read from files.
 
-2. **Scan Learnings Folder** - Use list_workspace_files tool to scan the learnings/ folder recursively:
+2. **Scan Learnings Folders** - Use list_workspace_files tool to scan both learnings folders recursively:
    - Scan all .md files in learnings/
    - Scan all .py files in learnings/scripts/ (if scripts folder exists)
+   - Scan all .md files in learning_code_exec/
+   - Scan all .go files in learning_code_exec/code/ (if code folder exists)
    - Identify all files that may contain actual values
 
 3. **Read Files and Identify Values** - For each file:
@@ -373,7 +380,7 @@ This makes learnings reusable across different environments, accounts, and confi
 
 ### **Important Rules:**
 
-1. **ONLY Access Learnings Folder**: You have access ONLY to the learnings/ folder. Variables are provided in template variables, not read from files.
+1. **Access Both Learnings Folders**: You have access to both learnings/ and learning_code_exec/ folders. Variables are provided in template variables, not read from files.
 
 2. **Preserve Existing Placeholders**: If a file already contains {{VARIABLE_NAME}} placeholders, preserve them exactly as-is. Do NOT replace them.
 
@@ -387,8 +394,14 @@ This makes learnings reusable across different environments, accounts, and confi
    - Comments and documentation can reference variables
    - Newly detected hardcoded values should be anonymized with appropriate variable names
 
+6. **File Types**: Process all:
+   - Markdown files (.md) in learnings/ (learning documentation)
+   - Python files (.py) in learnings/scripts/ (Python scripts)
+   - Markdown files (.md) in learning_code_exec/ (code execution learning documentation)
+   - Go files (.go) in learning_code_exec/code/ (Go code patterns)
+
 ### **Available Tools:**
-- **list_workspace_files**: List files in learnings/ folder (recursively)
+- **list_workspace_files**: List files in learnings/ and learning_code_exec/ folders (recursively)
 - **read_workspace_file**: Read file content to analyze
 - **update_workspace_file**: Modify files in place (AFTER human approval)
 - **human_feedback**: **REQUIRED** - Get user confirmation before making changes
@@ -406,8 +419,6 @@ This makes learnings reusable across different environments, accounts, and confi
 
 **Example Output:**
 "Anonymization complete. Scanned 5 files (3 .md, 2 .py), modified 4 files. Replaced known variables: {{AWS_ACCOUNT_ID}}, {{AWS_REGION}}, {{S3_BUCKET_NAME}}. Created new variables: {{EMAIL_ADDRESS}}, {{API_ENDPOINT}}. Refactored 2 Python scripts to use argparse parameters."
-
-` + GetTodoCreationHumanMemoryRequirements() + `
 `
 }
 
@@ -415,14 +426,14 @@ This makes learnings reusable across different environments, accounts, and confi
 func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationUserMessageProcessor(templateVars map[string]string) string {
 	return `# Anonymize Learnings Task
 
-**PRIMARY GOAL**: Scan the learnings folder and anonymize actual values to make learnings reusable across different environments:
+**PRIMARY GOAL**: Scan both learnings folders and anonymize actual values to make learnings reusable across different environments:
 - **For .md files**: Replace values with {{VARIABLE_NAME}} placeholders
 - **For .py files**: Refactor to accept variables as parameters (argparse/env vars), NOT placeholders in code
 
 ## 📋 **CONTEXT**
 
 - **Workspace Path**: ` + templateVars["WorkspacePath"] + `
-- **Learnings Folder**: ` + templateVars["WorkspacePath"] + `/learnings/
+- **Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/ and ` + templateVars["WorkspacePath"] + `/learning_code_exec/
 
 ## 🔑 **AVAILABLE VARIABLES**
 
@@ -447,7 +458,9 @@ These variables are available for replacement. When you find actual values in le
 		return ""
 	}() + `## 🧠 **YOUR TASK**
 
-1. **Scan learnings folder**: Use list_workspace_files to find all .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
+1. **Scan learnings folders**: Use list_workspace_files to find all files in both folders:
+   - .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
+   - .md and .go files in ` + templateVars["WorkspacePath"] + `/learning_code_exec/ (including subdirectories)
 
 2. **Read and analyze files**: For each file, read its content and identify:
    - **Known variables**: Values that match the variables provided above
@@ -481,6 +494,19 @@ These variables are available for replacement. When you find actual values in le
    - **For .md files**: Replace actual values with {{VARIABLE_NAME}} placeholders
    - **For .py files**: Refactor to accept variables as parameters (argparse or env vars), NOT use placeholders in code
    - Make replacements in place (overwrite files)
+
+7. **Process all file types**:
+   - .md files in learnings/
+   - .py files in learnings/scripts/
+   - .md files in learning_code_exec/
+   - .go files in learning_code_exec/code/
+
+**Remember**: 
+- You have access to both learnings/ and learning_code_exec/ folders
+- Variables are provided above (not read from files)
+- ALWAYS get human approval before modifying files
+- Preserve existing {{VARIABLE_NAME}} placeholders
+- Make replacements in place (overwrite files)
 
 **Start by listing files in the learnings folder.**
 `

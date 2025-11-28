@@ -283,6 +283,10 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 	// Variable extraction agent doesn't need MCP servers - pure LLM extraction
 	config.ServerNames = []string{mcpclient.NoServers}
 
+	// Code execution mode only applies to execution agents, not variable extraction agents
+	config.UseCodeExecutionMode = false
+	vm.GetLogger().Infof("🔧 Disabling code execution mode for variable extraction agent (only execution agents use MCP tools)")
+
 	// Wrapper function to match OrchestratorAgent interface
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewVariableExtractionAgent(cfg, logger, tracer, eventBridge)

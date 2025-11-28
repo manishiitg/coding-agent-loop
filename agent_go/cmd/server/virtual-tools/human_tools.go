@@ -39,6 +39,11 @@ func CreateHumanTools() []llmtypes.Tool {
 	return humanTools
 }
 
+// GetToolCategory returns the category name for human tools
+func GetHumanToolCategory() string {
+	return "human"
+}
+
 // CreateHumanToolExecutors creates the execution functions for human tools
 func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))

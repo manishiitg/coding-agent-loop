@@ -70,9 +70,10 @@ func (e *GenericEventData) GetEventType() EventType {
 // AgentStartEvent represents the start of an agent session
 type AgentStartEvent struct {
 	BaseEventData
-	AgentType string `json:"agent_type"`
-	ModelID   string `json:"model_id"`
-	Provider  string `json:"provider"`
+	AgentType            string `json:"agent_type"`
+	ModelID              string `json:"model_id"`
+	Provider             string `json:"provider"`
+	UseCodeExecutionMode bool   `json:"use_code_execution_mode,omitempty"`
 }
 
 func (e *AgentStartEvent) GetEventType() EventType {
@@ -543,19 +544,20 @@ func NewAgentEvent(eventData EventData) *AgentEvent {
 // NewAgentEndEvent function removed - no longer needed
 
 // NewAgentStartEvent creates a new AgentStartEvent
-func NewAgentStartEvent(agentType, modelID, provider string) *AgentStartEvent {
+func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 		},
-		AgentType: agentType,
-		ModelID:   modelID,
-		Provider:  provider,
+		AgentType:            agentType,
+		ModelID:              modelID,
+		Provider:             provider,
+		UseCodeExecutionMode: useCodeExecutionMode,
 	}
 }
 
 // NewAgentStartEventWithHierarchy creates a new AgentStartEvent with hierarchy fields
-func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID string, level int, sessionID, component string) *AgentStartEvent {
+func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID string, level int, sessionID, component string, useCodeExecutionMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
 		BaseEventData: BaseEventData{
 			Timestamp:      time.Now(),
@@ -564,9 +566,10 @@ func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID stri
 			SessionID:      sessionID,
 			Component:      component,
 		},
-		AgentType: agentType,
-		ModelID:   modelID,
-		Provider:  provider,
+		AgentType:            agentType,
+		ModelID:              modelID,
+		Provider:             provider,
+		UseCodeExecutionMode: useCodeExecutionMode,
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 
 const (
 	// DefaultLargeToolOutputThreshold is the default character threshold for considering tool output as "large"
-	DefaultLargeToolOutputThreshold = 10000
+	DefaultLargeToolOutputThreshold = 20000
 
 	// DefaultToolOutputFolder is the default folder for storing large tool outputs
 	DefaultToolOutputFolder = "tool_output_folder"

@@ -130,6 +130,11 @@ func CreateMemoryTools() []llmtypes.Tool {
 	return memoryTools
 }
 
+// GetToolCategory returns the category name for memory tools
+func GetMemoryToolCategory() string {
+	return "memory"
+}
+
 // CreateMemoryToolExecutors creates the execution functions for memory tools
 func CreateMemoryToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))

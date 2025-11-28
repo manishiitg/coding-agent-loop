@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronUp, Settings } from 'lucide-react';
+import { ChevronDown, ChevronUp, Settings, Sparkles, Code2 } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import LLMSelectionDropdown from '../../LLMSelectionDropdown';
 import { ToolSelectionSection } from '../../ToolSelectionSection';
@@ -8,6 +8,7 @@ import type { TodoStepWithConfigs, AgentConfigs, AgentLLMConfig } from '../../..
 import type { PresetLLMConfig } from '../../../services/api-types';
 import type { LLMOption } from '../../../types/llm';
 import { useLLMStore } from '../../../stores/useLLMStore';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../../ui/tooltip';
 import { 
   HUMAN_TOOLS, 
   getToolsByCategory,
@@ -22,6 +23,7 @@ interface StepEditPanelProps {
   isSaving?: boolean;
   presetServers?: string[]; // Preset's selected servers (subset to show in UI)
   presetLLMConfig?: PresetLLMConfig | null; // Preset's LLM config with agent defaults
+  presetUseCodeExecutionMode?: boolean; // Preset's code execution mode (default value for step)
   isExpanded?: boolean; // Controlled expanded state from parent
   onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
 }
@@ -35,6 +37,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   isSaving = false,
   presetServers = [],
   presetLLMConfig = null,
+  presetUseCodeExecutionMode = false,
   isExpanded: controlledIsExpanded,
   onToggleExpanded,
 }) => {
@@ -58,6 +61,14 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   // Ensure validation is enabled for loop steps (required to check loop conditions)
   const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>(() => {
     const configs = step.agent_configs || {};
+    console.log('[StepEditPanel] Initializing agentConfigs from step:', {
+      stepTitle: step.title,
+      stepId: step.id,
+      step_agent_configs: step.agent_configs,
+      disable_learning: configs.disable_learning,
+      disable_validation: configs.disable_validation,
+      configs,
+    });
     // Force enable validation for loop steps
     if (step.has_loop && configs.disable_validation) {
       return {
@@ -152,14 +163,28 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   // This ensures state resets properly when switching between different steps
   const stepIdentifier = `${step.title || ''}-${stepIndex}`;
   const prevStepIdentifierRef = useRef<string>(stepIdentifier);
+  const prevAgentConfigsRef = useRef<string>(''); // Track previous agent_configs as JSON string
 
-  // Sync state when step changes (different step identifier)
-  // This prevents infinite loops by only syncing when we switch to a different step
+  // Sync state when step changes (different step identifier) OR when agent_configs changes (after save)
+  // This ensures state updates both when switching steps and when the same step's config is updated
   useEffect(() => {
     const isDifferentStep = prevStepIdentifierRef.current !== stepIdentifier;
+    const currentConfigs = step.agent_configs || {};
+    const currentConfigsJson = JSON.stringify(currentConfigs);
+    const configsChanged = prevAgentConfigsRef.current !== currentConfigsJson;
     
-    if (isDifferentStep) {
-      const currentConfigs = step.agent_configs || {};
+    // Sync if it's a different step OR if agent_configs has changed (e.g., after save)
+    // We need to sync when agent_configs changes to reflect saved changes
+    if (isDifferentStep || configsChanged) {
+      console.log('[StepEditPanel] Syncing state from step config:', {
+        isDifferentStep,
+        configsChanged,
+        stepTitle: step.title,
+        stepId: step.id,
+        currentConfigs,
+        disable_learning: currentConfigs.disable_learning,
+        disable_validation: currentConfigs.disable_validation,
+      });
       
       // Reset agentConfigs state from step's config
       // Force enable validation for loop steps
@@ -205,11 +230,12 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       setExpandedToolCategories(new Set());
       setExpandedWorkspaceSubCategories(new Set(['basic_workspace', 'advanced_workspace', 'plus_tools']));
 
-      // Update ref for next comparison
+      // Update refs for next comparison
       prevStepIdentifierRef.current = stepIdentifier;
+      prevAgentConfigsRef.current = currentConfigsJson;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepIdentifier, step.agent_configs, presetServers, currentPresetTools]); // Include stepIdentifier and relevant dependencies
+  }, [stepIdentifier, step.agent_configs, presetServers, currentPresetTools]); // Include stepIdentifier and agent_configs to detect changes
 
   // Helper to convert AgentLLMConfig to LLMOption
   const llmConfigToOption = (config: AgentLLMConfig | undefined): LLMOption | null => {
@@ -451,12 +477,15 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
   // Handle save
   const handleSave = async () => {
-    // Ensure validation is not disabled for loop steps
+    // Start with a clean config object - we'll explicitly set each field
     const finalConfigs: AgentConfigs = {
       ...agentConfigs,
-      // Force enable validation for loop steps (required to check loop conditions)
-      disable_validation: step.has_loop ? false : agentConfigs.disable_validation,
     };
+    
+    // Force enable validation for loop steps (required to check loop conditions)
+    if (step.has_loop) {
+      finalConfigs.disable_validation = false;
+    }
 
     // Handle server/tool selection:
     // - If NO_SERVERS is selected → save ["NO_SERVERS"] explicitly
@@ -501,14 +530,58 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       finalConfigs.enable_large_output_virtual_tools = undefined;
     }
 
+    // Handle disable_learning: explicitly save false when enabled, true when disabled
+    // nil/undefined = not set (default enabled), false = explicitly enabled, true = disabled
+    if (agentConfigs.disable_learning === false) {
+      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      finalConfigs.disable_learning = false;
+    } else if (agentConfigs.disable_learning === true) {
+      // Explicitly disabled - save true
+      finalConfigs.disable_learning = true;
+    } else {
+      // Not set - keep undefined (default enabled)
+      finalConfigs.disable_learning = undefined;
+    }
+
+    // Handle disable_validation: explicitly save false when enabled, true when disabled
+    // Similar logic to disable_learning
+    if (agentConfigs.disable_validation === false) {
+      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      finalConfigs.disable_validation = false;
+    } else if (agentConfigs.disable_validation === true) {
+      // Explicitly disabled - save true
+      finalConfigs.disable_validation = true;
+    } else {
+      // Not set - keep undefined (default enabled)
+      finalConfigs.disable_validation = undefined;
+    }
+
+    // Handle use_code_execution_mode: save if explicitly set by user
+    // If undefined, step will use preset default (field will be omitted from JSON)
+    if (agentConfigs.use_code_execution_mode !== undefined) {
+      // User has explicitly set it - save the value
+      finalConfigs.use_code_execution_mode = agentConfigs.use_code_execution_mode;
+    } else {
+      // Not explicitly set - delete the field so it uses preset default
+      // JSON.stringify will omit undefined fields automatically
+      delete finalConfigs.use_code_execution_mode;
+    }
+
     // Debug logging to verify data being saved
     console.log('[StepEditPanel] Saving step config:', {
       stepTitle: step.title,
       selectedServers,
       selectedTools,
+      agentConfigs_disable_learning: agentConfigs.disable_learning,
+      agentConfigs_use_code_execution_mode: agentConfigs.use_code_execution_mode,
+      finalConfigs_disable_learning: finalConfigs.disable_learning,
+      finalConfigs_use_code_execution_mode: finalConfigs.use_code_execution_mode,
       finalConfigs: {
         selected_servers: finalConfigs.selected_servers,
         selected_tools: finalConfigs.selected_tools,
+        disable_learning: finalConfigs.disable_learning,
+        disable_validation: finalConfigs.disable_validation,
+        use_code_execution_mode: finalConfigs.use_code_execution_mode,
       },
     });
 
@@ -533,8 +606,16 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     const valLLM = llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption();
     const learnLLM = llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption();
     
+    // Get effective code execution mode (step config > preset default)
+    const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
+      ? agentConfigs.use_code_execution_mode 
+      : presetUseCodeExecutionMode;
+    
     const parts = [];
-    if (execLLM) parts.push(`Exec: ${execLLM.label}`);
+    if (execLLM) {
+      const codeExecLabel = effectiveCodeExecMode ? 'Code Exec' : 'Simple';
+      parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
+    }
     if (valLLM && !agentConfigs.disable_validation) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
       const detailLevel = agentConfigs.learning_detail_level || 'general';
@@ -742,8 +823,67 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
             {/* Execution Agent Configuration */}
             <div className="space-y-2">
-              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                Execution
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                  Execution
+                </div>
+                {/* Code Execution Mode Toggle */}
+                <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.log('[StepEditPanel] Setting use_code_execution_mode to false');
+                            setAgentConfigs((prev) => ({
+                              ...prev,
+                              use_code_execution_mode: false,
+                            }));
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                            agentConfigs.use_code_execution_mode === false || 
+                            (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode)
+                              ? 'agent-mode-selected rounded-l-md rounded-r-none'
+                              : 'agent-mode-unselected rounded-none'
+                          }`}
+                        >
+                          <Sparkles className="w-3 h-3 inline mr-1" />
+                          Simple
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Simple mode - Direct MCP tool access</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.log('[StepEditPanel] Setting use_code_execution_mode to true');
+                            setAgentConfigs((prev) => ({
+                              ...prev,
+                              use_code_execution_mode: true,
+                            }));
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors ${
+                            agentConfigs.use_code_execution_mode === true ||
+                            (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode)
+                              ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                              : 'agent-mode-unselected rounded-none'
+                          }`}
+                        >
+                          <Code2 className="w-3 h-3 inline mr-1" />
+                          Code Exec
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex-1 min-w-0">

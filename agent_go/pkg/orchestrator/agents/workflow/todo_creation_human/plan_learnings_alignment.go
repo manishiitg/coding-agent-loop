@@ -80,12 +80,13 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	// Set folder guard paths: read-only access to planning/ and learnings/ folders
 	planningPath := fmt.Sprintf("%s/planning", workspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
+	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", workspacePath)
 
-	// Agent has read-only access to planning/ folder (for plan.json) and learnings/ folder (for learning files)
-	readPaths := []string{planningPath, learningsPath}
+	// Agent has read-only access to planning/ folder (for plan.json) and both learnings/ folders (for learning files)
+	readPaths := []string{planningPath, learningsPath, learningCodeExecPath}
 	writePaths := []string{} // No write access - read-only agent
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	plam.GetLogger().Infof("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/ and learnings/ folders)", readPaths, writePaths)
+	plam.GetLogger().Infof("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/ and both learnings/ folders)", readPaths, writePaths)
 
 	// Use preset LLM config if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := plam.GetLLMConfig()
@@ -116,6 +117,10 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 
 	// Alignment agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}
+
+	// Code execution mode only applies to execution agents, not plan learnings alignment agents
+	config.UseCodeExecutionMode = false
+	plam.GetLogger().Infof("🔧 Disabling code execution mode for plan learnings alignment agent (only execution agents use MCP tools)")
 
 	// Large output virtual tools are enabled for alignment (agent may generate large reports)
 
@@ -180,7 +185,7 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 	// Prepare template variables
 	// Use actual workspace path so agent can navigate correctly
 	// Explicitly list allowed paths for the agent
-	allowedPaths := "['planning/', 'learnings/']"
+	allowedPaths := "['planning/', 'learnings/', 'learning_code_exec/']"
 	alignmentTemplateVars := map[string]string{
 		"WorkspacePath": plam.GetWorkspacePath(),
 		"PlanJSON":      string(planJSONBytes),
@@ -383,9 +388,11 @@ Your main goal is to analyze the plan and learnings folder, identify misalignmen
    - Step titles (used for matching learning file names)
    - Step structure and hierarchy
 
-2. **Discover Learnings Folder**: Use 'list_workspace_files' to explore the learnings folder:
+2. **Discover Learnings Folders**: Use 'list_workspace_files' to explore both learnings folders:
    - List files in 'learnings/' folder (look for *_learning.md files)
    - List files in 'learnings/scripts/' folder (look for *_script.py files)
+   - List files in 'learning_code_exec/' folder (look for *_learning.md files)
+   - List files in 'learning_code_exec/code/' folder (look for *_code.go files)
    - Read learning files to understand their content and match them to plan steps
 
 3. **Match Learnings to Steps**: For each learning file:
@@ -408,7 +415,7 @@ Your main goal is to analyze the plan and learnings folder, identify misalignmen
 - **Read-Only**: You cannot modify or delete files. You can only analyze and report.
 - **Restricted Access**: You ONLY have access to these subdirectories: ` + templateVars["AllowedPaths"] + `
    - You CANNOT list the root workspace (folder=".").
-   - Always start listing from the allowed subdirectories (e.g., folder="learnings" or folder="planning").
+   - Always start listing from the allowed subdirectories (e.g., folder="learnings", folder="learning_code_exec", or folder="planning").
 - **Pathing**: All tool paths are relative to the Workspace Path provided.
 - **Focus on Alignment**: Your primary output should be alignment analysis and recommendations. Present findings clearly and ask user what they want to do with orphaned files.
 
@@ -442,9 +449,11 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 **YOUR TASKS**:
 1. **Extract all step IDs from plan**: Review the plan.json above and extract all step IDs (including branch steps in if_true_steps and if_false_steps). Note step titles for matching.
 
-2. **Discover learnings folder**: Use 'list_workspace_files' (folder="learnings") to list all learning files:
+2. **Discover learnings folders**: Use 'list_workspace_files' to list all learning files from both folders:
    - Look for *.md files in learnings/ folder
    - Look for *.py files in learnings/scripts/ folder
+   - Look for *.md files in learning_code_exec/ folder
+   - Look for *.go files in learning_code_exec/code/ folder
 
 3. **Match learnings to steps**: For each learning file:
    - Extract step title from filename (remove _learning.md or _script.py suffix)

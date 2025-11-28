@@ -11,6 +11,12 @@ interface LLMGenerationEndEventProps {
 export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> = ({ event }) => {
   
   const isSuccess = true // LLM generation end is typically successful
+  
+  // Type assertion for extended UsageMetrics properties
+  const extendedUsageMetrics = event.usage_metrics ? (event.usage_metrics as typeof event.usage_metrics & {
+    cache_tokens?: number
+    reasoning_tokens?: number
+  }) : null
 
   const bgColor = isSuccess
     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
@@ -53,14 +59,14 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
                       {event.usage_metrics.total_tokens && (
                         <> • Total: {event.usage_metrics.total_tokens.toLocaleString()}</>
                       )}
-                      {event.usage_metrics.cache_tokens && event.usage_metrics.cache_tokens > 0 && (
+                      {extendedUsageMetrics?.cache_tokens && extendedUsageMetrics.cache_tokens > 0 && (
                         <span className="text-cyan-600 dark:text-cyan-400">
-                          {' • Cache: '}{event.usage_metrics.cache_tokens.toLocaleString()}
+                          {' • Cache: '}{extendedUsageMetrics.cache_tokens.toLocaleString()}
                         </span>
                       )}
-                      {event.usage_metrics.reasoning_tokens && event.usage_metrics.reasoning_tokens > 0 && (
+                      {extendedUsageMetrics?.reasoning_tokens && extendedUsageMetrics.reasoning_tokens > 0 && (
                         <span className="text-purple-600 dark:text-purple-400">
-                          {' • Reasoning: '}{event.usage_metrics.reasoning_tokens.toLocaleString()}
+                          {' • Reasoning: '}{extendedUsageMetrics.reasoning_tokens.toLocaleString()}
                         </span>
                       )}
                     </>

@@ -365,7 +365,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 				origModelID := a.ModelID
 				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 				if ferr != nil {
 					a.ModelID = origModelID
 					// Emit fallback attempt event for initialization failure (replaced span-based tracing)
@@ -519,7 +519,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 					origModelID := a.ModelID
 					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 					if ferr != nil {
 						a.ModelID = origModelID
 						// Emit cross-provider fallback initialization failure event (replaced span-based tracing)
@@ -646,9 +646,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			// Provide a detailed summary of all failed fallback attempts
 			sendMessage(fmt.Sprintf("\n❌ All fallback models failed for context length error (turn %d):", turn))
-			sendMessage(fmt.Sprintf("   - Tried %d Bedrock models: %v", len(sameProviderFallbacks), sameProviderFallbacks))
+			sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(sameProviderFallbacks), string(a.provider), sameProviderFallbacks))
 			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
+				sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(crossProviderFallbacks), crossProviderName, crossProviderFallbacks))
 			}
 			sendMessage("   - Original error: " + fmt.Sprint(originalError))
 			sendMessage("   - Suggestion: Try reducing conversation history or input length")
@@ -701,10 +701,10 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			}
 			a.EmitTypedEvent(ctx, throttlingFallbackEvent)
 
-			sendMessage(fmt.Sprintf("\n⚠️ AWS Bedrock throttling detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries))
+			sendMessage(fmt.Sprintf("\n⚠️ %s throttling detected (turn %d, attempt %d/%d). Trying fallback models...", strings.Title(string(a.provider)), turn, attempt+1, maxRetries))
 
 			// Phase 1: Try same-provider fallbacks first
-			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (Bedrock) fallback models...", len(sameProviderFallbacks)))
+			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), strings.Title(string(a.provider))))
 			for i, fallbackModelID := range sameProviderFallbacks {
 				// Create throttling fallback attempt event (replaced span-based tracing)
 				throttlingFallbackAttemptEvent := &events.GenericEventData{
@@ -728,7 +728,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 				origModelID := a.ModelID
 				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 				if ferr != nil {
 					a.ModelID = origModelID
 					// Emit throttling fallback initialization failure event (replaced span-based tracing)
@@ -855,7 +855,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 					origModelID := a.ModelID
 					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 					if ferr != nil {
 						a.ModelID = origModelID
 						// Emit cross-provider throttling fallback initialization failure event (replaced span-based tracing)
@@ -1133,7 +1133,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 				origModelID := a.ModelID
 				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 				if ferr != nil {
 					a.ModelID = origModelID
 					// Emit fallback initialization failure event (replaced span-based tracing)
@@ -1259,7 +1259,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 					origModelID := a.ModelID
 					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 					if ferr != nil {
 						a.ModelID = origModelID
 						// Emit cross-provider fallback initialization failure event (replaced span-based tracing)
@@ -1366,7 +1366,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			sendMessage(fmt.Sprintf("\n❌ All fallback models failed for empty content error (turn %d):", turn))
 			sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(sameProviderFallbacks), string(a.provider), sameProviderFallbacks))
 			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
+				sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(crossProviderFallbacks), crossProviderName, crossProviderFallbacks))
 			}
 			sendMessage("   - Original error: " + err.Error())
 			sendMessage("   - Suggestion: Try rephrasing your question or providing more context")
@@ -1446,7 +1446,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 				origModelID := a.ModelID
 				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 				if ferr != nil {
 					a.ModelID = origModelID
 					// Emit fallback initialization failure event
@@ -1539,7 +1539,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 					origModelID := a.ModelID
 					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 					if ferr != nil {
 						a.ModelID = origModelID
 						// Emit cross-provider fallback initialization failure event
@@ -1608,7 +1608,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			sendMessage(fmt.Sprintf("\n❌ All fallback models failed for connection error (turn %d):", turn))
 			sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(sameProviderFallbacks), string(a.provider), sameProviderFallbacks))
 			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("   - Tried %d OpenAI models: %v", len(crossProviderFallbacks), crossProviderFallbacks))
+				sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(crossProviderFallbacks), crossProviderName, crossProviderFallbacks))
 			}
 			sendMessage("   - Original error: " + err.Error())
 			sendMessage("   - Suggestion: Check network connectivity and try again")
@@ -1719,7 +1719,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 
 		origModelID := a.ModelID
 		a.ModelID = fallbackModelID
-		fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+		fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 		if ferr != nil {
 			a.ModelID = origModelID
 			sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
@@ -1786,7 +1786,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 
 			origModelID := a.ModelID
 			a.ModelID = fallbackModelID
-			fallbackLLM, ferr := a.createFallbackLLM(fallbackModelID)
+			fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 			if ferr != nil {
 				a.ModelID = origModelID
 				sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
@@ -1861,7 +1861,8 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 }
 
 // createFallbackLLM creates a fallback LLM instance for the given modelID
-func (a *Agent) createFallbackLLM(modelID string) (llmtypes.Model, error) {
+// ctx is used for cancellation/timeout during initialization
+func (a *Agent) createFallbackLLM(ctx context.Context, modelID string) (llmtypes.Model, error) {
 	// ✅ FIXED: Detect provider from model ID instead of using agent's provider
 	provider := detectProviderFromModelID(modelID)
 
@@ -1903,7 +1904,7 @@ func (a *Agent) createFallbackLLM(modelID string) (llmtypes.Model, error) {
 		Tracers:     a.Tracers,
 		TraceID:     a.TraceID,
 		Logger:      logger,
-		Context:     context.Background(),
+		Context:     ctx,
 		APIKeys:     llmAPIKeys,
 	}
 

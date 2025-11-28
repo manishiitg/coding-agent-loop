@@ -125,7 +125,10 @@ func HandleWorkflowConstants(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
 }
 
 // WorkflowOrchestrator handles todo-list-based workflow execution
@@ -192,10 +195,12 @@ func NewWorkflowOrchestrator(
 	tracer observability.Tracer,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
+	toolCategories map[string]string, // NEW: tool category map
 	presetLLMConfig *database.PresetLLMConfig, // Optional preset LLM config for agent defaults
 ) (*WorkflowOrchestrator, error) {
 
@@ -210,11 +215,13 @@ func NewWorkflowOrchestrator(
 		temperature,
 		agentMode,
 		selectedServers,
-		selectedTools, // NEW: Pass through
-		llmConfig,     // LLM configuration
+		selectedTools,        // NEW: Pass through
+		useCodeExecutionMode, // NEW: Pass through
+		llmConfig,            // LLM configuration
 		maxTurns,
 		customTools,
 		customToolExecutors,
+		toolCategories, // NEW: Pass category map
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
@@ -438,6 +445,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
 		wo.GetSelectedTools(),
+		wo.GetUseCodeExecutionMode(), // NEW: Pass code execution mode
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),
@@ -446,6 +454,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.GetContextAwareBridge(),
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
+		wo.ToolCategories,     // NEW: Pass category map
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,
@@ -575,7 +584,8 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
-		wo.GetSelectedTools(), // NEW: Pass selected tools
+		wo.GetSelectedTools(),        // NEW: Pass selected tools
+		wo.GetUseCodeExecutionMode(), // NEW: Pass code execution mode
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),
@@ -584,6 +594,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetContextAwareBridge(),
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
+		wo.ToolCategories,     // NEW: Pass category map
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,

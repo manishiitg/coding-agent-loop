@@ -37,8 +37,9 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => Promise<void>
+  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => Promise<void>
+  savePreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string) => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
@@ -169,7 +170,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedTools, // NEW
               agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
               selectedFolder,
-              llmConfig
+              llmConfig,
+              useCodeExecutionMode: preset.use_code_execution_mode
             }
           })
           
@@ -212,7 +214,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selectedTools: [], // NEW: Predefined presets don't have custom tool selection
                 agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
                 selectedFolder,
-                llmConfig
+                llmConfig,
+                useCodeExecutionMode: preset.use_code_execution_mode
               }
             })
           
@@ -230,7 +233,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig) => {
+      addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode) => {
         try {
           // Filter out "*" markers - these indicate "all tools" mode
           // For "all tools", we send empty array to backend (which means use all tools from server)
@@ -257,8 +260,18 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             request.llm_config = llmConfig
           }
           
-          console.log('[PRESET_SAVE] Sending to backend:', {
-            request
+          // Include code execution mode - always send it if it's a boolean (true or false)
+          // Don't use !== undefined check as it will skip false values
+          if (useCodeExecutionMode !== undefined) {
+            request.use_code_execution_mode = useCodeExecutionMode
+            console.log('[code_execution] [PRESET_SAVE] Including code execution mode in create request:', useCodeExecutionMode)
+          } else {
+            console.log('[code_execution] [PRESET_SAVE] Code execution mode is undefined, not including in request')
+          }
+          
+          console.log('[code_execution] [PRESET_SAVE] Sending to backend:', {
+            request,
+            use_code_execution_mode: request.use_code_execution_mode
           });
           
           const response = await agentApi.createPresetQuery(request)
@@ -272,7 +285,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selectedTools, // NEW
             agentMode,
             selectedFolder,
-            llmConfig
+            llmConfig,
+            useCodeExecutionMode
           }
           
           set(state => ({
@@ -286,7 +300,51 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig) => {
+      updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode) => {
+        // CRITICAL: Log ALL arguments using rest parameters to see what's actually passed
+        console.error('[code_execution] [PRESET_STORE] ========== updatePreset CALLED ==========')
+        console.error('[code_execution] [PRESET_STORE] Arguments received:', {
+          'arg1-id': id,
+          'arg2-label': label,
+          'arg3-query': query?.substring(0, 30),
+          'arg4-selectedServers': selectedServers,
+          'arg5-selectedTools': selectedTools,
+          'arg6-agentMode': agentMode,
+          'arg7-selectedFolder': selectedFolder ? 'defined' : 'undefined',
+          'arg8-llmConfig': llmConfig ? 'defined' : 'undefined',
+          'arg9-useCodeExecutionMode': useCodeExecutionMode,
+          'arg9-type': typeof useCodeExecutionMode
+        })
+        
+        console.log('[code_execution] [PRESET_STORE] updatePreset called')
+        console.log('[code_execution] [PRESET_STORE] id:', id)
+        console.log('[code_execution] [PRESET_STORE] label:', label)
+        console.log('[code_execution] [PRESET_STORE] param8 (useCodeExecutionMode):', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
+        console.log('[code_execution] [PRESET_STORE] All params:', {
+          'param1-id': id,
+          'param2-label': label,
+          'param3-query': query?.substring(0, 50) + '...',
+          'param4-selectedServers': selectedServers,
+          'param5-selectedTools': selectedTools,
+          'param6-agentMode': agentMode,
+          'param7-selectedFolder': selectedFolder ? 'defined' : 'undefined',
+          'param8-llmConfig': llmConfig ? 'defined' : 'undefined',
+          'param9-useCodeExecutionMode': useCodeExecutionMode,
+          'param9-type': typeof useCodeExecutionMode
+        })
+        
+        // Check if maybe parameters are shifted
+        console.log('[code_execution] [PRESET_STORE] Parameter count check - function expects 9 params, checking each:')
+        console.log('[code_execution] [PRESET_STORE] 1. id:', id)
+        console.log('[code_execution] [PRESET_STORE] 2. label:', label)
+        console.log('[code_execution] [PRESET_STORE] 3. query:', query?.substring(0, 30))
+        console.log('[code_execution] [PRESET_STORE] 4. selectedServers:', selectedServers)
+        console.log('[code_execution] [PRESET_STORE] 5. selectedTools:', selectedTools)
+        console.log('[code_execution] [PRESET_STORE] 6. agentMode:', agentMode)
+        console.log('[code_execution] [PRESET_STORE] 7. selectedFolder:', selectedFolder ? 'defined' : 'undefined')
+        console.log('[code_execution] [PRESET_STORE] 8. llmConfig:', llmConfig ? 'defined' : 'undefined')
+        console.log('[code_execution] [PRESET_STORE] 9. useCodeExecutionMode:', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
+        
         try {
           // Filter out "*" markers - these indicate "all tools" mode
           // For "all tools", we send empty array to backend (which means use all tools from server)
@@ -306,7 +364,16 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             request.llm_config = llmConfig
           }
           
-          console.log('[PRESET] Updating preset with request:', request)
+          // Include code execution mode - always send it if it's a boolean (true or false)
+          // Don't use !== undefined check as it will skip false values
+          if (useCodeExecutionMode !== undefined) {
+            request.use_code_execution_mode = useCodeExecutionMode
+            console.log('[code_execution] [PRESET] Including code execution mode in update request:', useCodeExecutionMode)
+          } else {
+            console.log('[code_execution] [PRESET] Code execution mode is undefined, not including in request')
+          }
+          
+          console.log('[code_execution] [PRESET] Updating preset with request:', request)
           
           await agentApi.updatePresetQuery(id, request)
           
@@ -321,7 +388,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     selectedTools, // NEW
                     agentMode,
                     selectedFolder,
-                    llmConfig
+                    llmConfig,
+                    useCodeExecutionMode
                   }
                 : preset
             )
@@ -329,6 +397,144 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         } catch (error) {
           console.error('[PRESET] Error updating preset:', error)
           throw error
+        }
+      },
+      
+      savePreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id) => {
+        // CRITICAL: Log ALL arguments to trace parameter flow
+        console.error('[code_execution] [PRESET_STORE] ========== savePreset CALLED ==========')
+        console.error('[code_execution] [PRESET_STORE] Arguments received:', {
+          'arg1-label': label,
+          'arg2-query': query?.substring(0, 30),
+          'arg3-selectedServers': selectedServers,
+          'arg4-selectedTools': selectedTools,
+          'arg5-agentMode': agentMode,
+          'arg6-selectedFolder': selectedFolder ? 'defined' : 'undefined',
+          'arg7-llmConfig': llmConfig ? 'defined' : 'undefined',
+          'arg8-useCodeExecutionMode': useCodeExecutionMode,
+          'arg8-type': typeof useCodeExecutionMode,
+          'arg9-id': id,
+          'operation': id ? 'UPDATE' : 'CREATE'
+        })
+        
+        
+        if (id) {
+          // Update existing preset
+          console.log('[code_execution] [PRESET_STORE] Updating existing preset:', id)
+          
+          try {
+            // Filter out "*" markers - these indicate "all tools" mode
+            const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+            
+            const request: UpdatePresetQueryRequest = {
+              label,
+              query,
+              selected_servers: selectedServers,
+              selected_tools: toolsForBackend,
+              agent_mode: agentMode,
+              selected_folder: selectedFolder?.filepath
+            }
+            
+            // Include LLM config if provided
+            if (llmConfig) {
+              request.llm_config = llmConfig
+            }
+            
+            // Include code execution mode if provided
+            if (useCodeExecutionMode !== undefined) {
+              request.use_code_execution_mode = useCodeExecutionMode
+              console.log('[code_execution] [PRESET_STORE] Including code execution mode in update request:', useCodeExecutionMode)
+            }
+            
+            console.log('[code_execution] [PRESET_STORE] Updating preset with request:', {
+              ...request,
+              use_code_execution_mode: request.use_code_execution_mode
+            })
+            
+            await agentApi.updatePresetQuery(id, request)
+            
+            set(state => ({
+              customPresets: state.customPresets.map(preset =>
+                preset.id === id
+                  ? {
+                      ...preset,
+                      label,
+                      query,
+                      selectedServers,
+                      selectedTools,
+                      agentMode,
+                      selectedFolder,
+                      llmConfig,
+                      useCodeExecutionMode
+                    }
+                  : preset
+              )
+            }))
+            
+            // Return the updated preset
+            const updatedPreset = get().customPresets.find(p => p.id === id)
+            return updatedPreset || null
+          } catch (error) {
+            console.error('[code_execution] [PRESET_STORE] Error updating preset:', error)
+            throw error
+          }
+        } else {
+          // Create new preset
+          console.log('[code_execution] [PRESET_STORE] Creating new preset')
+          
+          try {
+            // Filter out "*" markers - these indicate "all tools" mode
+            const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+            
+            const request: CreatePresetQueryRequest = {
+              label,
+              query,
+              selected_servers: selectedServers,
+              selected_tools: toolsForBackend,
+              agent_mode: agentMode,
+              selected_folder: selectedFolder?.filepath
+            }
+            
+            // Include LLM config if provided
+            if (llmConfig) {
+              request.llm_config = llmConfig
+            }
+            
+            // Include code execution mode if provided
+            if (useCodeExecutionMode !== undefined) {
+              request.use_code_execution_mode = useCodeExecutionMode
+              console.log('[code_execution] [PRESET_STORE] Including code execution mode in create request:', useCodeExecutionMode)
+            }
+            
+            console.log('[code_execution] [PRESET_STORE] Creating preset with request:', {
+              ...request,
+              use_code_execution_mode: request.use_code_execution_mode
+            })
+            
+            const response = await agentApi.createPresetQuery(request)
+            
+            const newPreset: CustomPreset = {
+              id: response.id,
+              label: response.label,
+              query: response.query,
+              createdAt: new Date(response.created_at).getTime(),
+              selectedServers,
+              selectedTools,
+              agentMode,
+              selectedFolder,
+              llmConfig,
+              useCodeExecutionMode
+            }
+            
+            set(state => ({
+              customPresets: [...state.customPresets, newPreset]
+            }))
+            
+            return newPreset
+          } catch (error) {
+            console.error('[code_execution] [PRESET_STORE] Error creating preset:', error)
+            throw error
+          }
         }
       },
       
@@ -429,11 +635,16 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           if (preset.llmConfig) {
             console.log('[PRESET] Applying LLM config:', preset.llmConfig)
             const { setPrimaryConfig, primaryConfig } = useLLMStore.getState()
-            setPrimaryConfig({
+            const updatedConfig: typeof primaryConfig = {
               ...primaryConfig, // Preserve existing configuration
-              provider: preset.llmConfig.provider,
-              model_id: preset.llmConfig.model_id
-            })
+            }
+            if (preset.llmConfig.provider) {
+              updatedConfig.provider = preset.llmConfig.provider
+            }
+            if (preset.llmConfig.model_id) {
+              updatedConfig.model_id = preset.llmConfig.model_id
+            }
+            setPrimaryConfig(updatedConfig)
             console.log('[PRESET] LLM config applied successfully')
           } else {
             console.log('[PRESET] No LLM config found in preset')
@@ -616,6 +827,7 @@ export const usePresetManagement = () => {
     refreshPresets: store.refreshPresets,
     addPreset: store.addPreset,
     updatePreset: store.updatePreset,
+    savePreset: store.savePreset,
     deletePreset: store.deletePreset,
     updatePredefinedServerSelection: store.updatePredefinedServerSelection
   }

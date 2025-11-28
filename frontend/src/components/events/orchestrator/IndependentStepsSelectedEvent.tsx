@@ -1,5 +1,19 @@
 import React from "react";
-import type { IndependentStepsSelectedEvent } from "../../../generated/events";
+
+// Local type definition for IndependentStepsSelectedEvent (not in generated schema)
+interface IndependentStepsSelectedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  session_id?: string;
+  component?: string;
+  steps_count?: number;
+  execution_mode?: string;
+  plan_id?: string;
+  selected_steps?: Array<string | { id?: string; description?: string }>;
+}
 
 interface IndependentStepsSelectedEventDisplayProps {
   event: IndependentStepsSelectedEvent;
@@ -46,7 +60,7 @@ export const IndependentStepsSelectedEventDisplay: React.FC<
             Selected Steps:
           </div>
           <div className="flex flex-wrap gap-1">
-            {event.selected_steps.map((step, index) => {
+            {event.selected_steps.map((step: string | { id?: string; description?: string }, index: number) => {
               // Handle both string and object step formats
               const stepId = typeof step === 'string' ? step : step.id || `Step ${index + 1}`
               const stepDescription = typeof step === 'object' && step.description ? step.description : null

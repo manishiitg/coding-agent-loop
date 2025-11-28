@@ -83,21 +83,23 @@ type BaseOrchestrator struct {
 	// Workspace tools for file operations
 	WorkspaceTools         []llmtypes.Tool
 	WorkspaceToolExecutors map[string]interface{}
+	ToolCategories         map[string]string // Tool name to category mapping
 
 	// Orchestrator type and configuration
 	orchestratorType OrchestratorType
 	startTime        time.Time
 
 	// Common configuration shared between orchestrators
-	provider        string
-	model           string
-	mcpConfigPath   string
-	temperature     float64
-	agentMode       string
-	selectedServers []string
-	selectedTools   []string   // Selected tools in "server:tool" format
-	llmConfig       *LLMConfig // LLM configuration
-	maxTurns        int        // Maximum turns for the orchestrator
+	provider             string
+	model                string
+	mcpConfigPath        string
+	temperature          float64
+	agentMode            string
+	selectedServers      []string
+	selectedTools        []string   // Selected tools in "server:tool" format
+	useCodeExecutionMode bool       // MCP code execution mode
+	llmConfig            *LLMConfig // LLM configuration
+	maxTurns             int        // Maximum turns for the orchestrator
 
 	// Optional simple state (for workflow orchestrators)
 	objective     string
@@ -124,10 +126,12 @@ func NewBaseOrchestrator(
 	agentMode string,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	llmConfig *LLMConfig,
 	maxTurns int,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
+	toolCategories map[string]string, // NEW: tool category map
 ) (*BaseOrchestrator, error) {
 
 	// Create context-aware event bridge that wraps the main event bridge
@@ -139,18 +143,20 @@ func NewBaseOrchestrator(
 		logger:                 logger,
 		WorkspaceTools:         customTools,
 		WorkspaceToolExecutors: customToolExecutors,
+		ToolCategories:         toolCategories, // NEW: store category map
 		orchestratorType:       orchestratorType,
 		startTime:              time.Now(),
 		// Common configuration
-		provider:        provider,
-		model:           model,
-		mcpConfigPath:   mcpConfigPath,
-		temperature:     temperature,
-		agentMode:       agentMode,
-		selectedServers: selectedServers,
-		selectedTools:   selectedTools, // NEW field
-		llmConfig:       llmConfig,
-		maxTurns:        maxTurns,
+		provider:             provider,
+		model:                model,
+		mcpConfigPath:        mcpConfigPath,
+		temperature:          temperature,
+		agentMode:            agentMode,
+		selectedServers:      selectedServers,
+		selectedTools:        selectedTools,        // NEW field
+		useCodeExecutionMode: useCodeExecutionMode, // NEW field
+		llmConfig:            llmConfig,
+		maxTurns:             maxTurns,
 		// Initialize step token tracking
 		stepTokenAccumulator: make(map[string]*StepTokenUsage),
 	}
@@ -159,6 +165,15 @@ func NewBaseOrchestrator(
 	contextAwareBridge.SetTokenAccumulator(orchestrator)
 
 	return orchestrator, nil
+}
+
+// getMapKeys returns all keys from a map as a slice (helper for logging)
+func getMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // GetLogger returns the orchestrator's logger
@@ -291,6 +306,11 @@ func (bo *BaseOrchestrator) SetWorkspacePathForFolderGuard(readPaths []string, w
 	}
 }
 
+// GetFolderGuardPaths returns the current folder guard read and write paths
+func (bo *BaseOrchestrator) GetFolderGuardPaths() (readPaths []string, writePaths []string) {
+	return bo.folderGuardReadPaths, bo.folderGuardWritePaths
+}
+
 // GetContextAwareBridge returns the context-aware event bridge
 func (bo *BaseOrchestrator) GetContextAwareBridge() mcpagent.AgentEventListener {
 	return bo.contextAwareBridge
@@ -329,6 +349,11 @@ func (bo *BaseOrchestrator) GetSelectedServers() []string {
 // GetSelectedTools returns the selected tools
 func (bo *BaseOrchestrator) GetSelectedTools() []string {
 	return bo.selectedTools
+}
+
+// GetUseCodeExecutionMode returns the code execution mode setting
+func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
+	return bo.useCodeExecutionMode
 }
 
 // GetLLMConfig returns the LLM configuration
@@ -912,9 +937,9 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.MCPConfigPath = bo.GetMCPConfigPath()
 	config.MaxTurns = maxTurns
 	config.ToolChoice = "auto"
-	config.CacheOnly = false // Allow fresh connections when cache is not available
 	config.ServerNames = bo.GetSelectedServers()
-	config.SelectedTools = bo.GetSelectedTools() // NEW field
+	config.SelectedTools = bo.GetSelectedTools()               // NEW field
+	config.UseCodeExecutionMode = bo.GetUseCodeExecutionMode() // NEW field
 	config.Mode = agents.AgentMode(bo.GetAgentMode())
 	config.OutputFormat = outputFormat
 	config.MaxRetries = 3
@@ -1020,6 +1045,25 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 			}
 		}
 
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+		if bo.ToolCategories != nil {
+			bo.GetLogger().Infof("🔍 [DISCOVERY] ToolCategories map has %d entries", len(bo.ToolCategories))
+			// Log ALL entries for debugging (not just first 10)
+			for toolName, category := range bo.ToolCategories {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s -> %s", toolName, category)
+			}
+		} else {
+			bo.GetLogger().Warnf("🔍 [DISCOVERY] ToolCategories map is nil - all tools will default to 'custom' category")
+		}
+
+		// Also log all tool names being registered for comparison
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Tools being registered (count: %d):", len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - Tool name: %s", tool.Function.Name)
+			}
+		}
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), agentName, baseAgent.GetMode(), len(customTools))
 
 		for _, tool := range filteredTools {
@@ -1029,7 +1073,10 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
 					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
 					}
 				}
 				if params == nil {
@@ -1039,19 +1086,76 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
-					)
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
 				}
 			}
 		}
 
+		// Log summary of category assignments
+		categorySummary := make(map[string]int)
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				category := "custom"
+				if bo.ToolCategories != nil {
+					if cat, exists := bo.ToolCategories[toolName]; exists {
+						category = cat
+					}
+				}
+				categorySummary[category]++
+			}
+		}
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Category assignment summary:")
+		for category, count := range categorySummary {
+			bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s: %d tools", category, count)
+		}
+
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	return agent, nil
@@ -1137,6 +1241,25 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 			}
 		}
 
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+		if bo.ToolCategories != nil {
+			bo.GetLogger().Infof("🔍 [DISCOVERY] ToolCategories map has %d entries", len(bo.ToolCategories))
+			// Log ALL entries for debugging (not just first 10)
+			for toolName, category := range bo.ToolCategories {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s -> %s", toolName, category)
+			}
+		} else {
+			bo.GetLogger().Warnf("🔍 [DISCOVERY] ToolCategories map is nil - all tools will default to 'custom' category")
+		}
+
+		// Also log all tool names being registered for comparison
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Tools being registered (count: %d):", len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - Tool name: %s", tool.Function.Name)
+			}
+		}
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), agentName, baseAgent.GetMode(), len(customTools))
 
 		for _, tool := range filteredTools {
@@ -1146,7 +1269,10 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
 					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
 					}
 				}
 				if params == nil {
@@ -1156,19 +1282,76 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
-					)
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
 				}
 			}
 		}
 
+		// Log summary of category assignments
+		categorySummary := make(map[string]int)
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				category := "custom"
+				if bo.ToolCategories != nil {
+					if cat, exists := bo.ToolCategories[toolName]; exists {
+						category = cat
+					}
+				}
+				categorySummary[category]++
+			}
+		}
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Category assignment summary:")
+		for category, count := range categorySummary {
+			bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s: %d tools", category, count)
+		}
+
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	return agent, nil
@@ -1262,7 +1445,10 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
 					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
 					}
 				}
 				if params == nil {
@@ -1272,12 +1458,39 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
-					)
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
 				}
@@ -1381,6 +1594,25 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 			}
 		}
 
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+		if bo.ToolCategories != nil {
+			bo.GetLogger().Infof("🔍 [DISCOVERY] ToolCategories map has %d entries", len(bo.ToolCategories))
+			// Log ALL entries for debugging (not just first 10)
+			for toolName, category := range bo.ToolCategories {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s -> %s", toolName, category)
+			}
+		} else {
+			bo.GetLogger().Warnf("🔍 [DISCOVERY] ToolCategories map is nil - all tools will default to 'custom' category")
+		}
+
+		// Also log all tool names being registered for comparison
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Tools being registered (count: %d):", len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - Tool name: %s", tool.Function.Name)
+			}
+		}
+
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), agentName, baseAgent.GetMode(), len(customTools))
 
 		for _, tool := range filteredTools {
@@ -1390,7 +1622,10 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
 					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
 					}
 				}
 				if params == nil {
@@ -1400,19 +1635,76 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
-					)
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
 				}
 			}
 		}
 
+		// Log summary of category assignments
+		categorySummary := make(map[string]int)
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				category := "custom"
+				if bo.ToolCategories != nil {
+					if cat, exists := bo.ToolCategories[toolName]; exists {
+						category = cat
+					}
+				}
+				categorySummary[category]++
+			}
+		}
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Category assignment summary:")
+		for category, count := range categorySummary {
+			bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s: %d tools", category, count)
+		}
+
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	// Processors are now stored in BaseOrchestratorAgent, agent can use them directly

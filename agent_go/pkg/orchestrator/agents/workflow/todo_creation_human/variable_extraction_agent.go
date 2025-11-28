@@ -269,8 +269,6 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 6. **Write JSON to**: {{.WorkspacePath}}/variables/variables.json ONLY
 7. **DO NOT** search the entire workspace or create files elsewhere
 8. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
-
-` + GetTodoCreationHumanMemoryRequirements() + `
 `
 
 	// Parse and execute the template
@@ -571,19 +569,28 @@ func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context,
 	// Note: human_feedback tool is already registered via WorkspaceTools (which includes human tools)
 	// No need to register it manually here
 
-	mcpAgent.RegisterCustomTool(
+	// Register workflow-specific variable tools with "workflow" category
+	if err := mcpAgent.RegisterCustomTool(
 		"update_variable",
 		"Update, add, or delete variables in variables.json. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update. The variables.json file is updated immediately when this tool is called.",
 		updateVariableParams,
 		createUpdateVariableExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		logger.Errorf("❌ Failed to register update_variable tool: %v", err)
+		return nil, nil, fmt.Errorf("failed to register update_variable tool: %w", err)
+	}
 
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"update_objective",
 		"Update the templated objective in variables.json. Provide the updated objective with {{VARIABLE}} placeholders. The variables.json file is updated immediately when this tool is called.",
 		updateObjectiveParams,
 		createUpdateObjectiveExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		logger.Errorf("❌ Failed to register update_objective tool: %v", err)
+		return nil, nil, fmt.Errorf("failed to register update_objective tool: %w", err)
+	}
 
 	// Generate system prompt for update mode
 	systemPrompt := variableExtractionSystemPromptProcessorForUpdate(templateVars)
@@ -692,8 +699,6 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 5. **Provide clear descriptions** - what does this variable represent?
 6. **DO NOT** search the entire workspace or create files - use structured output tool instead
 7. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
-
-` + GetTodoCreationHumanMemoryRequirements() + `
 
 ## 📤 OUTPUT REQUIREMENTS
 
@@ -838,8 +843,6 @@ Update these variables based on human feedback. Use judgment to determine what c
 3. **Variable Name Consistency**: Preserve existing variable names unless feedback explicitly requests changes
 4. **Use descriptive variable names** - UPPER_SNAKE_CASE, descriptive (or user-provided names)
 5. **Provide clear descriptions** - what does this variable represent?
-
-` + GetTodoCreationHumanMemoryRequirements() + `
 
 ## 📤 OUTPUT REQUIREMENTS
 

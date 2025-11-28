@@ -57,7 +57,7 @@ type agentTestFlags struct {
 	complex            bool
 	comprehensive      bool
 	comprehensiveAWS   bool
-	comprehensiveReAct bool // DEPRECATED: Use comprehensive-react command instead
+	comprehensiveReAct bool // DEPRECATED: Use comprehensive-simple command instead
 	tokenTest          bool
 	multiTurn          bool
 	showMetrics        bool
@@ -75,7 +75,7 @@ func init() {
 	agentCmd.Flags().BoolVar(&agentFlags.complex, "complex", false, "run complex multi-tool test")
 	agentCmd.Flags().BoolVar(&agentFlags.comprehensive, "comprehensive", false, "run comprehensive multi-server test")
 	agentCmd.Flags().BoolVar(&agentFlags.comprehensiveAWS, "comprehensive-aws", false, "run comprehensive AWS cost report test")
-	agentCmd.Flags().BoolVar(&agentFlags.comprehensiveReAct, "comprehensive-react", false, "DEPRECATED: Use 'test comprehensive-react' command instead")
+	agentCmd.Flags().BoolVar(&agentFlags.comprehensiveReAct, "comprehensive-react", false, "DEPRECATED: Use 'test comprehensive-simple' command instead")
 	agentCmd.Flags().BoolVar(&agentFlags.tokenTest, "token-test", false, "run token management test")
 	agentCmd.Flags().BoolVar(&agentFlags.multiTurn, "multi-turn", false, "run multi-turn conversation test")
 	agentCmd.Flags().BoolVar(&agentFlags.showMetrics, "show-metrics", false, "display detailed metrics")
@@ -388,10 +388,10 @@ Make this a thorough analysis that demonstrates the agent's ability to use multi
 		}
 	}
 
-	// Test 4.7: Comprehensive ReAct Agent Test (DEPRECATED)
+	// Test 4.7: Comprehensive Simple Agent Test (DEPRECATED)
 	if agentFlags.comprehensiveReAct {
-		logger.Warn("⚠️ DEPRECATED: Comprehensive ReAct test has been moved to its own command")
-		logger.Info("💡 Use 'go run main.go test comprehensive-react' instead")
+		logger.Warn("⚠️ DEPRECATED: Comprehensive Simple test has been moved to its own command")
+		logger.Info("💡 Use 'go run main.go test comprehensive-simple' instead")
 		logger.Info("📝 This provides better isolation and more configuration options")
 		return
 	}

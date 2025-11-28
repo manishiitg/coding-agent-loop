@@ -268,14 +268,14 @@ func testCodeGenerationMock(generatedDir string, logger utils.ExtendedLogger) er
 				Function: &llmtypes.FunctionDefinition{
 					Name:        "test_get_document",
 					Description: "Get a document by ID",
-					Parameters: llmtypes.NewParameters(map[string]interface{}{
+					Parameters: llmtypes.NewParameters(map[string]any{
 						"type": "object",
-						"properties": map[string]interface{}{
-							"documentId": map[string]interface{}{
+						"properties": map[string]any{
+							"documentId": map[string]any{
 								"type":        "string",
 								"description": "The document ID",
 							},
-							"fields": map[string]interface{}{
+							"fields": map[string]any{
 								"type":        "string",
 								"description": "Optional fields to return",
 							},
@@ -289,9 +289,9 @@ func testCodeGenerationMock(generatedDir string, logger utils.ExtendedLogger) er
 				Function: &llmtypes.FunctionDefinition{
 					Name:        "test_list_items",
 					Description: "List all items",
-					Parameters: llmtypes.NewParameters(map[string]interface{}{
+					Parameters: llmtypes.NewParameters(map[string]any{
 						"type":       "object",
-						"properties": map[string]interface{}{},
+						"properties": map[string]any{},
 						"required":   []string{},
 					}),
 				},
@@ -473,7 +473,7 @@ func testCacheSaveGeneratesCode(config *mcpclient.MCPConfig, logger utils.Extend
 
 	// Get server info
 	serverInfo := client.GetServerInfo()
-	serverInfoMap := make(map[string]interface{})
+	serverInfoMap := make(map[string]any)
 	if serverInfo != nil {
 		serverInfoMap["name"] = serverInfo.Name
 		serverInfoMap["version"] = serverInfo.Version
@@ -605,17 +605,18 @@ func testGenerateCodeForAllServers(config *mcpclient.MCPConfig, logger utils.Ext
 
 		// List tools
 		tools, err := client.ListTools(ctx)
-		client.Close() // Close immediately after listing tools
 
 		if err != nil {
 			logger.Warnf("⚠️  Failed to list tools from %s: %v", serverName, err)
 			failedCount++
+			client.Close()
 			continue
 		}
 
 		if len(tools) == 0 {
 			logger.Warnf("⚠️  No tools found from %s", serverName)
 			failedCount++
+			client.Close()
 			continue
 		}
 
@@ -626,16 +627,20 @@ func testGenerateCodeForAllServers(config *mcpclient.MCPConfig, logger utils.Ext
 		if err != nil {
 			logger.Warnf("⚠️  Failed to convert tools from %s: %v", serverName, err)
 			failedCount++
+			client.Close()
 			continue
 		}
 
 		// Get server info
 		serverInfo := client.GetServerInfo()
-		serverInfoMap := make(map[string]interface{})
+		serverInfoMap := make(map[string]any)
 		if serverInfo != nil {
 			serverInfoMap["name"] = serverInfo.Name
 			serverInfoMap["version"] = serverInfo.Version
 		}
+
+		// Close client after all client operations are complete
+		client.Close()
 
 		// Create cache entry
 		cacheEntry := &mcpcache.CacheEntry{
@@ -916,7 +921,7 @@ func testDiscoverCodeFilesFiltering(config *mcpclient.MCPConfig, logger utils.Ex
 
 	// Test 1: Call discover_code_files without server_name (should return filtered results)
 	logger.Infof("Test 1: Calling discover_code_files without server_name...")
-	result1, err := agent.HandleVirtualTool(ctx, "discover_code_files", map[string]interface{}{})
+	result1, err := agent.HandleVirtualTool(ctx, "discover_code_files", map[string]any{})
 	if err != nil {
 		return fmt.Errorf("failed to call discover_code_files: %w", err)
 	}
@@ -931,8 +936,8 @@ func testDiscoverCodeFilesFiltering(config *mcpclient.MCPConfig, logger utils.Ex
 	}
 	type DiscoveryResult struct {
 		Servers      []ServerInfo `json:"servers"`
-		CustomTools  interface{}  `json:"custom_tools,omitempty"`
-		VirtualTools interface{}  `json:"virtual_tools,omitempty"`
+		CustomTools  any          `json:"custom_tools,omitempty"`
+		VirtualTools any          `json:"virtual_tools,omitempty"`
 	}
 
 	var discoveryResult DiscoveryResult
@@ -968,7 +973,7 @@ func testDiscoverCodeFilesFiltering(config *mcpclient.MCPConfig, logger utils.Ex
 
 	// Test 2: Call discover_code_files with server_name (should return filtered code)
 	logger.Infof("\nTest 2: Calling discover_code_files with server_name='%s'...", testServerName)
-	result2, err := agent.HandleVirtualTool(ctx, "discover_code_files", map[string]interface{}{
+	result2, err := agent.HandleVirtualTool(ctx, "discover_code_files", map[string]any{
 		"server_name": testServerName,
 	})
 	if err != nil {
@@ -999,7 +1004,7 @@ func testDiscoverCodeFilesFiltering(config *mcpclient.MCPConfig, logger utils.Ex
 		logger.Infof("\nTest 3: Calling discover_code_files with filtered-out server_name='%s'...", otherServerName)
 		// This should still work (server-level filtering allows all servers, tool-level filters tools)
 		// But we can verify that if we had selectedTools for this server, it would be filtered
-		result3, err := agent.HandleVirtualTool(ctx, "discover_code_files", map[string]interface{}{
+		result3, err := agent.HandleVirtualTool(ctx, "discover_code_files", map[string]any{
 			"server_name": otherServerName,
 		})
 		if err != nil {

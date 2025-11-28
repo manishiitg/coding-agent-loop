@@ -94,13 +94,18 @@ For executing custom tools (e.g., workspace tools, human tools)
 ```
 
 #### Virtual Tools: `POST /api/virtual/execute`
-For executing virtual tools (e.g., discover_code_structure, write_code)
+For executing virtual tools (e.g., discover_code_files, write_code)
+
+**Note**: The `discover_code_structure` tool has been retired in favor of `discover_code_files`, which provides more targeted code discovery by requiring both `server_name` and `tool_name` parameters.
 
 **Request Format**:
 ```json
 {
-  "tool": "discover_code_structure",
-  "args": {}
+  "tool": "discover_code_files",
+  "args": {
+    "server_name": "aws",
+    "tool_name": "GetDocument"
+  }
 }
 ```
 
@@ -159,19 +164,21 @@ func ReadWorkspaceFile(params map[string]interface{}) (string, error) {
 
 #### Virtual Tools (`GenerateVirtualToolFunction`)
 ```go
-func DiscoverCodeStructure(params map[string]interface{}) (string, error) {
+func DiscoverCodeFiles(params map[string]interface{}) (string, error) {
     apiURL := os.Getenv("MCP_API_URL")
     if apiURL == "" {
         apiURL = "http://localhost:8000"
     }
     reqBody, _ := json.Marshal(map[string]interface{}{
-        "tool": "discover_code_structure",
+        "tool": "discover_code_files",
         "args": params,
     })
     resp, err := http.Post(apiURL+"/api/virtual/execute", "application/json", bytes.NewBuffer(reqBody))
     // ... response handling
 }
 ```
+
+**Note**: The `discover_code_files` tool requires both `server_name` and `tool_name` parameters. The old `discover_code_structure` tool (which returned all available tools) has been removed, as tool structure information is now automatically included in the system prompt.
 
 **Key Changes**:
 - Removed `context.Context` parameter (not needed for HTTP calls)

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
 	llmproviders "llm-providers"
 	"llm-providers/interfaces"
+	"llm-providers/llmtypes"
+	"mcp-agent/agent_go/internal/observability"
 )
 
 // LLM Event Types - Constants for event type names
@@ -469,10 +469,9 @@ func NewEventEmitterAdapter(tracers []observability.Tracer) *EventEmitterAdapter
 	}
 }
 
-// EmitLLMInitializationStart implements llm-providers EventEmitter interface
-func (e *EventEmitterAdapter) EmitLLMInitializationStart(provider string, modelID string, temperature float64, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
-	// Convert llm-providers metadata to internal metadata
-	internalMetadata := LLMMetadata{
+// convertMetadata converts llm-providers metadata to internal LLMMetadata
+func convertMetadata(metadata llmproviders.LLMMetadata) LLMMetadata {
+	return LLMMetadata{
 		ModelVersion:     metadata.ModelVersion,
 		MaxTokens:        metadata.MaxTokens,
 		TopP:             metadata.TopP,
@@ -482,69 +481,34 @@ func (e *EventEmitterAdapter) EmitLLMInitializationStart(provider string, modelI
 		User:             metadata.User,
 		CustomFields:     metadata.CustomFields,
 	}
+}
+
+// EmitLLMInitializationStart implements llm-providers EventEmitter interface
+func (e *EventEmitterAdapter) EmitLLMInitializationStart(provider string, modelID string, temperature float64, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
+	internalMetadata := convertMetadata(metadata)
 	emitLLMInitializationStart(e.tracers, provider, modelID, temperature, observability.TraceID(traceID), internalMetadata)
 }
 
 // EmitLLMInitializationSuccess implements llm-providers EventEmitter interface
 func (e *EventEmitterAdapter) EmitLLMInitializationSuccess(provider string, modelID string, capabilities string, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
-	// Convert llm-providers metadata to internal metadata
-	internalMetadata := LLMMetadata{
-		ModelVersion:     metadata.ModelVersion,
-		MaxTokens:        metadata.MaxTokens,
-		TopP:             metadata.TopP,
-		FrequencyPenalty: metadata.FrequencyPenalty,
-		PresencePenalty:  metadata.PresencePenalty,
-		StopSequences:    metadata.StopSequences,
-		User:             metadata.User,
-		CustomFields:     metadata.CustomFields,
-	}
+	internalMetadata := convertMetadata(metadata)
 	emitLLMInitializationSuccess(e.tracers, provider, modelID, capabilities, observability.TraceID(traceID), internalMetadata)
 }
 
 // EmitLLMInitializationError implements llm-providers EventEmitter interface
 func (e *EventEmitterAdapter) EmitLLMInitializationError(provider string, modelID string, operation string, err error, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
-	// Convert llm-providers metadata to internal metadata
-	internalMetadata := LLMMetadata{
-		ModelVersion:     metadata.ModelVersion,
-		MaxTokens:        metadata.MaxTokens,
-		TopP:             metadata.TopP,
-		FrequencyPenalty: metadata.FrequencyPenalty,
-		PresencePenalty:  metadata.PresencePenalty,
-		StopSequences:    metadata.StopSequences,
-		User:             metadata.User,
-		CustomFields:     metadata.CustomFields,
-	}
+	internalMetadata := convertMetadata(metadata)
 	emitLLMInitializationError(e.tracers, provider, modelID, operation, err, observability.TraceID(traceID), internalMetadata)
 }
 
 // EmitLLMGenerationSuccess implements llm-providers EventEmitter interface
 func (e *EventEmitterAdapter) EmitLLMGenerationSuccess(provider string, modelID string, operation string, messages int, temperature float64, messageContent string, responseLength int, choicesCount int, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
-	// Convert llm-providers metadata to internal metadata
-	internalMetadata := LLMMetadata{
-		ModelVersion:     metadata.ModelVersion,
-		MaxTokens:        metadata.MaxTokens,
-		TopP:             metadata.TopP,
-		FrequencyPenalty: metadata.FrequencyPenalty,
-		PresencePenalty:  metadata.PresencePenalty,
-		StopSequences:    metadata.StopSequences,
-		User:             metadata.User,
-		CustomFields:     metadata.CustomFields,
-	}
+	internalMetadata := convertMetadata(metadata)
 	emitLLMGenerationSuccess(e.tracers, provider, modelID, operation, messages, temperature, messageContent, responseLength, choicesCount, observability.TraceID(traceID), internalMetadata)
 }
 
 // EmitLLMGenerationError implements llm-providers EventEmitter interface
 func (e *EventEmitterAdapter) EmitLLMGenerationError(provider string, modelID string, operation string, messages int, temperature float64, messageContent string, err error, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
-	// Convert llm-providers metadata to internal metadata
-	internalMetadata := LLMMetadata{
-		ModelVersion:     metadata.ModelVersion,
-		MaxTokens:        metadata.MaxTokens,
-		TopP:             metadata.TopP,
-		FrequencyPenalty: metadata.FrequencyPenalty,
-		PresencePenalty:  metadata.PresencePenalty,
-		StopSequences:    metadata.StopSequences,
-		User:             metadata.User,
-		CustomFields:     metadata.CustomFields,
-	}
+	internalMetadata := convertMetadata(metadata)
 	emitLLMGenerationError(e.tracers, provider, modelID, operation, messages, temperature, messageContent, err, observability.TraceID(traceID), internalMetadata)
 }

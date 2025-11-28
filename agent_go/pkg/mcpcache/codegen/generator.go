@@ -18,6 +18,32 @@ type CacheEntryForCodeGen struct {
 	Tools      []llmtypes.Tool
 }
 
+// parseToolSchema extracts and parses the JSON schema from a tool's parameters
+func parseToolSchema(toolName string, params interface{}, logger utils.ExtendedLogger) (map[string]interface{}, *GoStruct, error) {
+	var schema map[string]interface{}
+	if params != nil {
+		paramsBytes, err := json.Marshal(params)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal parameters: %w", err)
+		}
+		if err := json.Unmarshal(paramsBytes, &schema); err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal parameters: %w", err)
+		}
+	} else {
+		schema = map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
+		}
+	}
+
+	goStruct, err := ParseJSONSchemaToGoStruct(toolName, schema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse schema: %w", err)
+	}
+	return schema, goStruct, nil
+}
+
 // GenerateServerToolsCode generates Go code for MCP server tools
 // Creates one file per tool with snake_case file names
 func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, generatedDir string, logger utils.ExtendedLogger, timeout time.Duration) error {
@@ -37,14 +63,19 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 
 	// Generate common API client file once per package
 	apiClientFile := filepath.Join(packageDir, "api_client.go")
-	if _, err := os.Stat(apiClientFile); os.IsNotExist(err) {
-		apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
-		if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
-			logger.Warnf("Failed to write API client file: %v", err)
-			// Continue even if API client generation fails
+	apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
+	// Use O_EXCL to atomically create file only if it doesn't exist
+	f, err := os.OpenFile(apiClientFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err == nil {
+		_, writeErr := f.WriteString(apiClientCode)
+		f.Close()
+		if writeErr != nil {
+			logger.Warnf("Failed to write API client file: %v", writeErr)
 		} else {
 			logger.Debugf("Generated common API client file: %s", apiClientFile)
 		}
+	} else if !os.IsExist(err) {
+		logger.Warnf("Failed to create API client file: %v", err)
 	}
 
 	generatedCount := 0
@@ -60,28 +91,7 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 		toolDescription := tool.Function.Description
 
 		// Parse parameters schema
-		var schema map[string]interface{}
-		if tool.Function.Parameters != nil {
-			// Convert Parameters to map[string]interface{}
-			paramsBytes, err := json.Marshal(tool.Function.Parameters)
-			if err != nil {
-				logger.Warnf("Failed to marshal parameters for tool %s: %v", toolName, err)
-				continue
-			}
-			if err := json.Unmarshal(paramsBytes, &schema); err != nil {
-				logger.Warnf("Failed to unmarshal parameters for tool %s: %v", toolName, err)
-				continue
-			}
-		} else {
-			schema = map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-				"required":   []string{},
-			}
-		}
-
-		// Generate struct
-		goStruct, err := ParseJSONSchemaToGoStruct(toolName, schema)
+		_, goStruct, err := parseToolSchema(toolName, tool.Function.Parameters, logger)
 		if err != nil {
 			logger.Warnf("Failed to parse schema for tool %s: %v", toolName, err)
 			continue
@@ -190,15 +200,22 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 		// Generate common API client file once per package
 		apiClientFile := filepath.Join(packageDir, "api_client.go")
-		if _, err := os.Stat(apiClientFile); os.IsNotExist(err) {
-			apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
-			if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+		apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
+		// Use O_EXCL to atomically create file only if it doesn't exist
+		f, err := os.OpenFile(apiClientFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		if err == nil {
+			_, writeErr := f.WriteString(apiClientCode)
+			f.Close()
+			if writeErr != nil {
 				if logger != nil {
-					logger.Warnf("Failed to write API client file: %v", err)
+					logger.Warnf("Failed to write API client file: %v", writeErr)
 				}
-				// Continue even if API client generation fails
 			} else if logger != nil {
 				logger.Debugf("Generated common API client file: %s", apiClientFile)
+			}
+		} else if !os.IsExist(err) {
+			if logger != nil {
+				logger.Warnf("Failed to create API client file: %v", err)
 			}
 		}
 
@@ -214,28 +231,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 			toolDescription := customTool.Definition.Function.Description
 
 			// Parse parameters schema
-			var schema map[string]interface{}
-			if customTool.Definition.Function.Parameters != nil {
-				// Convert Parameters to map[string]interface{}
-				paramsBytes, err := json.Marshal(customTool.Definition.Function.Parameters)
-				if err != nil {
-					logger.Warnf("Failed to marshal parameters for custom tool %s: %v", toolName, err)
-					continue
-				}
-				if err := json.Unmarshal(paramsBytes, &schema); err != nil {
-					logger.Warnf("Failed to unmarshal parameters for custom tool %s: %v", toolName, err)
-					continue
-				}
-			} else {
-				schema = map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-					"required":   []string{},
-				}
-			}
-
-			// Generate struct
-			goStruct, err := ParseJSONSchemaToGoStruct(toolName, schema)
+			_, goStruct, err := parseToolSchema(toolName, customTool.Definition.Function.Parameters, logger)
 			if err != nil {
 				logger.Warnf("Failed to parse schema for custom tool %s: %v", toolName, err)
 				continue
@@ -340,14 +336,19 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 
 	// Generate common API client file once per package
 	apiClientFile := filepath.Join(packageDir, "api_client.go")
-	if _, err := os.Stat(apiClientFile); os.IsNotExist(err) {
-		apiClientCode := GeneratePackageHeader("virtual_tools") + "\n" + GenerateAPIClient(timeout)
-		if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
-			logger.Warnf("Failed to write API client file: %v", err)
-			// Continue even if API client generation fails
+	apiClientCode := GeneratePackageHeader("virtual_tools") + "\n" + GenerateAPIClient(timeout)
+	// Use O_EXCL to atomically create file only if it doesn't exist
+	f, err := os.OpenFile(apiClientFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err == nil {
+		_, writeErr := f.WriteString(apiClientCode)
+		f.Close()
+		if writeErr != nil {
+			logger.Warnf("Failed to write API client file: %v", writeErr)
 		} else {
 			logger.Debugf("Generated common API client file: %s", apiClientFile)
 		}
+	} else if !os.IsExist(err) {
+		logger.Warnf("Failed to create API client file: %v", err)
 	}
 
 	generatedCount := 0
@@ -363,28 +364,7 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 		toolDescription := tool.Function.Description
 
 		// Parse parameters schema
-		var schema map[string]interface{}
-		if tool.Function.Parameters != nil {
-			// Convert Parameters to map[string]interface{}
-			paramsBytes, err := json.Marshal(tool.Function.Parameters)
-			if err != nil {
-				logger.Warnf("Failed to marshal parameters for virtual tool %s: %v", toolName, err)
-				continue
-			}
-			if err := json.Unmarshal(paramsBytes, &schema); err != nil {
-				logger.Warnf("Failed to unmarshal parameters for virtual tool %s: %v", toolName, err)
-				continue
-			}
-		} else {
-			schema = map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-				"required":   []string{},
-			}
-		}
-
-		// Generate struct
-		goStruct, err := ParseJSONSchemaToGoStruct(toolName, schema)
+		_, goStruct, err := parseToolSchema(toolName, tool.Function.Parameters, logger)
 		if err != nil {
 			logger.Warnf("Failed to parse schema for virtual tool %s: %v", toolName, err)
 			continue
@@ -448,7 +428,8 @@ func GenerateIndexFile(generatedDir string, logger utils.ExtendedLogger) error {
 		indexFile := filepath.Join(generatedDir, "index.go")
 		emptyIndex := `package generated
 
-// No tool packages available yet
+// Available tool packages:
+// No packages have been generated yet.
 `
 		if err := os.WriteFile(indexFile, []byte(emptyIndex), 0644); err != nil {
 			return fmt.Errorf("failed to write empty index file: %w", err)

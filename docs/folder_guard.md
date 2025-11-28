@@ -40,6 +40,8 @@ The folder guard system is a **fine-grained access control mechanism** that rest
    - LLM receives explicit directory restrictions in tool descriptions
 
 3. **Tool Setup Phase (Code Execution Mode)**
+   - **CRITICAL:** Folder guard paths must be set on MCP agent BEFORE calling `UpdateCodeExecutionRegistry()`
+   - The registry generation uses these paths to create the path validation code
    - Agent-specific `workspace_tools` package generated with embedded folder guards
    - Generated code includes `validatePath()` and `isPathAllowed()` functions
    - Folder guard paths compiled into Go code as `folderGuardReadPaths` and `folderGuardWritePaths` variables
@@ -114,16 +116,23 @@ hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 ### Code Execution Mode Setup
 
-**File:** [`agent.go`](file:///Users/mipl/ai-work/mcp-agent/agent_go/pkg/mcpagent/agent.go)
+**File:** [`controller.go`](file:///Users/mipl/ai-work/mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
 
 ```go
-// Set folder guard paths for code execution agent
-readPaths := []string{"/workspace/learnings", "/workspace/planning"}
-writePaths := []string{"/workspace/execution"}
+// CRITICAL: Set folder guard paths BEFORE updating code execution registry
+// The registry generation uses these paths to create the path validation code
+readPaths, writePaths := hcpo.GetFolderGuardPaths()
+mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
+hcpo.GetLogger().Infof("🔒 [CODE_EXECUTION] Folder guard paths set - Read: %v, Write: %v", readPaths, writePaths)
 
-agent.SetFolderGuardPaths(readPaths, writePaths)
+// Now update the code execution registry (generates workspace_tools with embedded paths)
+if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+    return fmt.Errorf("failed to update code execution registry: %w", err)
+}
 
-// Logs: 🔒 [CODE_EXECUTION] Folder guard paths set - Read: [/workspace/learnings /workspace/planning], Write: [/workspace/execution]
+// Logs: 
+// 🔒 [CODE_EXECUTION] Folder guard paths set - Read: [/workspace/learnings], Write: [/workspace/execution]
+// ✅ [CODE_EXECUTION] Registry updated for agent - folder guard enabled
 ```
 
 ### Generated Code Example (Code Execution Mode)
@@ -276,6 +285,7 @@ orchestrator.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | `path is outside allowed boundaries` | Path not in configured `readPaths` or `writePaths` | Add path to appropriate array in `SetWorkspacePathForFolderGuard()` call |
+| `path is not within any of the allowed paths: [only_readPaths]` (code execution mode) | Folder guard paths set AFTER `UpdateCodeExecutionRegistry()` | **CRITICAL:** Call `SetFolderGuardPaths()` BEFORE `UpdateCodeExecutionRegistry()` so generated code includes both readPaths and writePaths |
 | Write tool missing from LLM | `folderGuardWritePaths` is empty | Add write paths via `SetWorkspacePathForFolderGuard(readPaths, writePaths)` |
 | Folder guard not enforcing | Empty arrays passed | Pass non-empty arrays to enable: `SetWorkspacePathForFolderGuard(readPaths, writePaths)` |
 | Code execution validation error | LLM using `os.WriteFile` directly | Update system prompt to emphasize `workspace_tools` usage; AST validation blocks forbidden file I/O |
@@ -431,6 +441,14 @@ func validatePathInAllowedPaths(allowedPaths []string, inputPath string) error {
 **Problem:** Runtime wrappers don't work for code execution mode (code calls tools directly).
 
 **Solution:** Generate workspace_tools with built-in validatePath() called before every API request.
+
+### Why Must Paths Be Set Before Registry Update?
+
+**Problem:** If `SetFolderGuardPaths()` is called after `UpdateCodeExecutionRegistry()`, the generated code uses empty or stale paths, causing validation failures.
+
+**Example:** Execution agent tries to read from `execution/` folder but generated code only has `learning_code_exec` in allowed paths.
+
+**Solution:** Always call `SetFolderGuardPaths()` BEFORE `UpdateCodeExecutionRegistry()` so the generated path validation code includes both readPaths and writePaths.
 
 ---
 

@@ -77,16 +77,16 @@ func NewPlanLearningsAlignmentManager(
 // createPlanLearningsAlignmentAgent creates and sets up a plan learnings alignment agent with all necessary configuration
 // This method handles folder guard setup, LLM config selection, tool combination, and agent initialization
 func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: read-only access to planning/ and learnings/ folders
+	// Set folder guard paths: read-only access to planning/, write access to learnings/ folders
 	planningPath := fmt.Sprintf("%s/planning", workspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
 	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", workspacePath)
 
-	// Agent has read-only access to planning/ folder (for plan.json) and both learnings/ folders (for learning files)
+	// Agent has read-only access to planning/ folder (for plan.json) and write access to both learnings/ folders (for deleting orphaned files)
 	readPaths := []string{planningPath, learningsPath, learningCodeExecPath}
-	writePaths := []string{} // No write access - read-only agent
+	writePaths := []string{learningsPath, learningCodeExecPath} // Write access to learnings folders for deleting orphaned files
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	plam.GetLogger().Infof("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/ and both learnings/ folders)", readPaths, writePaths)
+	plam.GetLogger().Infof("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/, write access to learnings/ folders)", readPaths, writePaths)
 
 	// Use preset LLM config if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := plam.GetLLMConfig()
@@ -411,13 +411,25 @@ Your main goal is to analyze the plan and learnings folder, identify misalignmen
    - List of steps without learnings (if any)
    - Recommendations for what to do with orphaned files
 
+6. **Get User Approval Before Any Write Operations**: 
+   - **CRITICAL**: You MUST use 'human_feedback' tool to get explicit user approval BEFORE calling any write/delete tools
+   - Present the list of files you want to delete and wait for user confirmation
+   - Only proceed with deletion after receiving explicit approval via 'human_feedback' response
+   - Never delete files without first getting user confirmation through 'human_feedback'
+
+7. **Clean Up Orphaned Files** (only after user approval):
+   - After receiving approval via 'human_feedback', you can delete orphaned learning files using 'delete_workspace_file' tool
+   - Only delete files that the user explicitly approved for deletion
+   - Be careful to only delete files in learnings/ folders, never modify planning/ folder
+
 ## ⚠️ IMPORTANT RULES
-- **Read-Only**: You cannot modify or delete files. You can only analyze and report.
+- **MANDATORY HUMAN CONFIRMATION**: You MUST use 'human_feedback' tool to get user approval BEFORE any write/delete/edit operations. Never call write tools (delete_workspace_file, write_workspace_file, update_workspace_file, etc.) without first getting explicit confirmation via 'human_feedback'. The 'human_feedback' tool is available in your tool list - use it to pause execution and get user input.
+- **Write Access**: You have write access to learnings/ folders and can delete orphaned learning files, but ONLY after user approval via 'human_feedback'. The planning/ folder is read-only (you cannot modify plan.json).
 - **Restricted Access**: You ONLY have access to these subdirectories: ` + templateVars["AllowedPaths"] + `
    - You CANNOT list the root workspace (folder=".").
    - Always start listing from the allowed subdirectories (e.g., folder="learnings", folder="learning_code_exec", or folder="planning").
 - **Pathing**: All tool paths are relative to the Workspace Path provided.
-- **Focus on Alignment**: Your primary output should be alignment analysis and recommendations. Present findings clearly and ask user what they want to do with orphaned files.
+- **Workflow**: Analyze → Present findings with 'human_feedback' → Wait for user approval → Then delete approved files
 
 ## 🔍 MATCHING STRATEGY
 - Learning files typically follow pattern: {StepTitle}_learning.md or {StepTitle}_script.py
@@ -466,10 +478,25 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
    - Orphaned learning files (if any) - files for deleted steps
    - Steps without learnings (if any) - new steps that don't have learning files yet
    - Ask user what they want to do with orphaned files (keep, delete, review individually)
+   - **List specific files you propose to delete** and request explicit approval
 
-**IMPORTANT**: 
-- You cannot delete or modify files - only analyze and report
+5. **Get user approval BEFORE any deletions**:
+   - **CRITICAL**: You MUST use 'human_feedback' tool to get explicit user approval BEFORE calling 'delete_workspace_file'
+   - Present the exact list of files you want to delete
+   - Wait for user confirmation in the 'human_feedback' response
+   - Do NOT proceed with deletion until you receive explicit approval
+
+6. **Clean up orphaned files** (ONLY after receiving approval via 'human_feedback'):
+   - After receiving approval in 'human_feedback' response, you can delete orphaned learning files using 'delete_workspace_file' tool
+   - Only delete files that the user explicitly approved for deletion
+   - Be careful to only delete files in learnings/ folders, never modify planning/ folder
+   - If user says "no" or "keep", do NOT delete any files
+
+**CRITICAL WORKFLOW RULES**: 
+- **MANDATORY**: Always use 'human_feedback' tool BEFORE any write/delete/edit operations
+- **NEVER** call 'delete_workspace_file', 'write_workspace_file', or 'update_workspace_file' without first getting user approval via 'human_feedback'
+- The planning/ folder is read-only - you cannot modify plan.json
 - Use fuzzy matching for step titles (normalize before comparing)
-- Present findings clearly and ask user for approval or feedback
+- Workflow: Analyze → Present with 'human_feedback' → Wait for approval → Then delete (if approved)
 `
 }

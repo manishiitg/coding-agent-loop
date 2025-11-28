@@ -27,6 +27,66 @@ declare global {
 
 const queryClient = new QueryClient();
 
+// Utility function to detect code files and get their language
+const getCodeFileLanguage = (filepath: string): string | null => {
+  const ext = filepath.toLowerCase().split('.').pop() || ''
+  const codeExtensions: Record<string, string> = {
+    'go': 'go',
+    'py': 'python',
+    'ts': 'typescript',
+    'tsx': 'typescript',
+    'js': 'javascript',
+    'jsx': 'javascript',
+    'java': 'java',
+    'c': 'c',
+    'cpp': 'cpp',
+    'cc': 'cpp',
+    'cxx': 'cpp',
+    'cs': 'csharp',
+    'php': 'php',
+    'rb': 'ruby',
+    'sql': 'sql',
+    'html': 'html',
+    'htm': 'html',
+    'css': 'css',
+    'scss': 'scss',
+    'sass': 'sass',
+    'sh': 'shell',
+    'bash': 'shell',
+    'zsh': 'shell',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'xml': 'xml',
+    'vue': 'vue',
+    'svelte': 'svelte',
+    'rs': 'rust',
+    'swift': 'swift',
+    'kt': 'kotlin',
+    'scala': 'scala',
+    'r': 'r',
+    'lua': 'lua',
+    'pl': 'perl',
+    'dart': 'dart',
+    'ex': 'elixir',
+    'exs': 'elixir',
+    'clj': 'clojure',
+    'hs': 'haskell',
+    'ml': 'ocaml',
+    'fs': 'fsharp',
+    'vb': 'vbnet',
+    'ps1': 'powershell',
+    'dockerfile': 'dockerfile',
+    'makefile': 'makefile',
+    'mk': 'makefile'
+  }
+  return codeExtensions[ext] || null
+}
+
+// Check if a file is a code file
+const isCodeFile = (filepath: string): boolean => {
+  return getCodeFileLanguage(filepath) !== null
+}
+
 function App() {
   // Ref for ChatArea component to access its methods
   const chatAreaRef = useRef<ChatAreaRef>(null)
@@ -660,6 +720,7 @@ function App() {
                     ) : (
                       <div className="p-4">
                         {(() => {
+                          // Check for JSON files first
                           if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
                             // Check if content looks like formatted JSON (has proper indentation)
                             const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')
@@ -681,7 +742,40 @@ function App() {
                                 </div>
                               </div>
                             )
-                          } else {
+                          } 
+                          // Check for code files
+                          else if (selectedFile?.path && isCodeFile(selectedFile.path)) {
+                            const language = getCodeFileLanguage(selectedFile.path)
+                            const fileName = selectedFile.path.split('/').pop() || selectedFile.path
+                            
+                            // Wrap content in markdown code block for syntax highlighting
+                            const codeBlockContent = `\`\`\`${language}\n${fileContent}\n\`\`\``
+                            
+                            return (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                                  <span className="font-medium">💻 Code File</span>
+                                  <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded font-mono">
+                                    {language}
+                                  </span>
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    {fileName}
+                                  </span>
+                                </div>
+                                <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                                  <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
+                                    <MarkdownRenderer 
+                                      content={codeBlockContent} 
+                                      className="max-w-none"
+                                      showScrollbar={true}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          } 
+                          // Default: render as markdown
+                          else {
                             return (
                               <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
                                 <MarkdownRenderer 

@@ -1,7 +1,7 @@
 package external
 
 import (
-	"mcp-agent/agent_go/internal/llm"
+	"mcpagent/llm"
 	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -14,11 +14,11 @@ import (
 type HTTPManager struct {
 	url     string
 	headers map[string]string
-	logger  utils.ExtendedLogger
+	logger  logger.ExtendedLogger
 }
 
 // NewHTTPManager creates a new HTTP manager
-func NewHTTPManager(url string, headers map[string]string, logger utils.ExtendedLogger) *HTTPManager {
+func NewHTTPManager(url string, headers map[string]string, logger logger.ExtendedLogger) *HTTPManager {
 	return &HTTPManager{
 		url:     url,
 		headers: headers,

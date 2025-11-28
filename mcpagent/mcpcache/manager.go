@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpcache/codegen"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/logger"
+	"mcpagent/mcpcache/codegen"
+	"mcpagent/mcpclient"
 
 	"llm-providers/llmtypes"
 
@@ -71,7 +71,7 @@ func (ce *CacheEntry) UpdateAccessTime() {
 type CacheManager struct {
 	cacheDir   string
 	ttlMinutes int
-	logger     utils.ExtendedLogger
+	logger     logger.ExtendedLogger
 	mu         sync.RWMutex
 	cache      map[string]*CacheEntry // cache key -> entry
 }
@@ -83,7 +83,7 @@ var (
 )
 
 // GetCacheManager returns the singleton cache manager instance
-func GetCacheManager(logger utils.ExtendedLogger) *CacheManager {
+func GetCacheManager(logger logger.ExtendedLogger) *CacheManager {
 	once.Do(func() {
 		// Use environment variable if set, otherwise default to agent_go/cache
 		cacheDir := os.Getenv("MCP_CACHE_DIR")

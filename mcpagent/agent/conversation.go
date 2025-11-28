@@ -19,12 +19,12 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpcache"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/llm"
+	"mcpagent/observability"
+	"mcpagent/logger"
+	"mcpagent/events"
+	"mcpagent/mcpcache"
+	"mcpagent/mcpclient"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -32,7 +32,7 @@ import (
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)
-func getLogger(a *Agent) utils.ExtendedLogger {
+func getLogger(a *Agent) logger.ExtendedLogger {
 	// Agent logger is guaranteed to be non-nil in the new architecture
 	return a.Logger
 }

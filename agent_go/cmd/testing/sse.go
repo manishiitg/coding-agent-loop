@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent/agent_go/internal/llm"
+	"mcpagent/llm"
 	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 )

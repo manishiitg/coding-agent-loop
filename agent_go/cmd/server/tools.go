@@ -12,9 +12,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/pkg/mcpagent/codeexec"
-	"mcp-agent/agent_go/pkg/mcpcache"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/agent/codeexec"
+	"mcpagent/mcpcache"
+	"mcpagent/mcpclient"
 )
 
 // --- TOOL MANAGEMENT TYPES ---

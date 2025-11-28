@@ -13,12 +13,12 @@ import (
 	"github.com/spf13/viper"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpcache"
-	"mcp-agent/agent_go/pkg/mcpcache/codegen"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
+	"mcpagent/mcpcache"
+	"mcpagent/mcpcache/codegen"
+	"mcpagent/mcpclient"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )

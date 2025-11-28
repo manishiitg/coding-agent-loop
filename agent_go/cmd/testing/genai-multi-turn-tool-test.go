@@ -12,7 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	"mcp-agent/agent_go/internal/llm"
+	"mcpagent/llm"
 	"llm-providers/llmtypes"
 )
 

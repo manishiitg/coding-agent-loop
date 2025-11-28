@@ -1,12 +1,12 @@
 package mcpclient
 
 import (
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 )
 
-// FileLoggerAdapter adapts our utils.ExtendedLogger to the mcp-go util.Logger interface
+// FileLoggerAdapter adapts our logger.ExtendedLogger to the mcp-go util.Logger interface
 type FileLoggerAdapter struct {
-	logger utils.ExtendedLogger
+	logger logger.ExtendedLogger
 }
 
 func (l *FileLoggerAdapter) Infof(format string, args ...interface{}) {

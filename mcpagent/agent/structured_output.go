@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 )
 
 // LangchaingoStructuredOutputConfig contains configuration for structured output generation
@@ -26,11 +26,11 @@ type LangchaingoStructuredOutputConfig struct {
 type LangchaingoStructuredOutputGenerator struct {
 	config LangchaingoStructuredOutputConfig
 	llm    llmtypes.Model
-	logger utils.ExtendedLogger
+	logger logger.ExtendedLogger
 }
 
 // NewLangchaingoStructuredOutputGenerator creates a new structured output generator using Langchaingo
-func NewLangchaingoStructuredOutputGenerator(llm llmtypes.Model, config LangchaingoStructuredOutputConfig, logger utils.ExtendedLogger) *LangchaingoStructuredOutputGenerator {
+func NewLangchaingoStructuredOutputGenerator(llm llmtypes.Model, config LangchaingoStructuredOutputConfig, logger logger.ExtendedLogger) *LangchaingoStructuredOutputGenerator {
 	return &LangchaingoStructuredOutputGenerator{
 		config: config,
 		llm:    llm,

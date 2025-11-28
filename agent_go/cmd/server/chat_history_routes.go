@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/pkg/database"
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/events"
 
 	"github.com/gin-gonic/gin"
 )

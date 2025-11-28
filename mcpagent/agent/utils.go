@@ -12,7 +12,7 @@
 package mcpagent
 
 import (
-	"mcp-agent/agent_go/internal/observability"
+	"mcpagent/observability"
 
 	"llm-providers/llmtypes"
 )

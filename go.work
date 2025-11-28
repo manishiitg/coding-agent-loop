@@ -4,4 +4,5 @@ use (
 	./agent_go
 	./llm-providers
 	./workspace
+	./mcpagent
 )

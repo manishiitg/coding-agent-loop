@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/mcpcache"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/mcpcache"
+	"mcpagent/mcpclient"
 )
 
 // MCPConfigRequest represents a request to save MCP config

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -14,11 +14,11 @@ import (
 type SSEManager struct {
 	url     string
 	headers map[string]string
-	logger  utils.ExtendedLogger
+	logger  logger.ExtendedLogger
 }
 
 // NewSSEManager creates a new SSE manager
-func NewSSEManager(url string, headers map[string]string, logger utils.ExtendedLogger) *SSEManager {
+func NewSSEManager(url string, headers map[string]string, logger logger.ExtendedLogger) *SSEManager {
 	return &SSEManager{
 		url:     url,
 		headers: headers,

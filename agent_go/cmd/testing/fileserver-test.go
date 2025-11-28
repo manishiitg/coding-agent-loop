@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/mcpclient"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

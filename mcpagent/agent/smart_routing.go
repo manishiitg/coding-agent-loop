@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/llm"
+	"mcpagent/events"
 	"strings"
 	"time"
 

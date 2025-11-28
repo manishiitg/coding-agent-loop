@@ -14,15 +14,15 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpagent/codeexec"
-	"mcp-agent/agent_go/pkg/mcpagent/prompt"
-	"mcp-agent/agent_go/pkg/mcpcache"
-	"mcp-agent/agent_go/pkg/mcpcache/codegen"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/llm"
+	"mcpagent/observability"
+	"mcpagent/logger"
+	"mcpagent/events"
+	"mcpagent/agent/codeexec"
+	"mcpagent/agent/prompt"
+	"mcpagent/mcpcache"
+	"mcpagent/mcpcache/codegen"
+	"mcpagent/mcpclient"
 )
 
 // CustomTool represents a custom tool with its definition and execution function
@@ -57,7 +57,7 @@ func WithMode(mode AgentMode) AgentOption {
 }
 
 // WithLogger sets a custom logger
-func WithLogger(logger utils.ExtendedLogger) AgentOption {
+func WithLogger(logger logger.ExtendedLogger) AgentOption {
 	return func(a *Agent) {
 		a.Logger = logger
 	}
@@ -237,7 +237,7 @@ type Agent struct {
 	provider llm.Provider
 
 	// Large tool output handling
-	toolOutputHandler *utils.ToolOutputHandler
+	toolOutputHandler *ToolOutputHandler
 
 	// Large output virtual tools configuration
 	EnableLargeOutputVirtualTools bool
@@ -253,7 +253,7 @@ type Agent struct {
 	customTools map[string]CustomTool
 
 	// Custom logger (optional) - uses our ExtendedLogger interface for consistency
-	Logger utils.ExtendedLogger
+	Logger logger.ExtendedLogger
 
 	// Listeners for typed events
 	listeners []AgentEventListener
@@ -348,7 +348,7 @@ func (a *Agent) GetProvider() llm.Provider {
 }
 
 // GetToolOutputHandler returns the tool output handler
-func (a *Agent) GetToolOutputHandler() *utils.ToolOutputHandler {
+func (a *Agent) GetToolOutputHandler() *ToolOutputHandler {
 	return a.toolOutputHandler
 }
 
@@ -373,7 +373,7 @@ func (a *Agent) SetProvider(provider llm.Provider) {
 }
 
 // SetToolOutputHandler sets the tool output handler
-func (a *Agent) SetToolOutputHandler(handler *utils.ToolOutputHandler) {
+func (a *Agent) SetToolOutputHandler(handler *ToolOutputHandler) {
 	a.toolOutputHandler = handler
 }
 
@@ -394,7 +394,7 @@ func (a *Agent) GetFolderGuardPaths() (readPaths, writePaths []string) {
 }
 
 // NewAgent creates a new Agent with the given options
-func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 
 	logger.Info("🔍 NewAgent started", map[string]interface{}{"config_path": configPath})
 
@@ -505,7 +505,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	}
 
 	// Initialize tool output handler
-	toolOutputHandler := utils.NewToolOutputHandler()
+	toolOutputHandler := NewToolOutputHandler()
 
 	// Large output handling is now done via virtual tools, not MCP server
 	// Virtual tools are enabled by default and handle file operations directly
@@ -1301,7 +1301,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 }
 
 // NewAgentWithObservability creates a new Agent with observability configuration
-func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, logger logger.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 	logger.Info("[MCP AGENT DEBUG] Reading merged config from", map[string]interface{}{"config_path": configPath})
 
 	// Load merged MCP servers configuration (base + user)
@@ -1346,7 +1346,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 	}
 
 	// Initialize tool output handler
-	toolOutputHandler := utils.NewToolOutputHandler()
+	toolOutputHandler := NewToolOutputHandler()
 
 	// Large output handling is now done via virtual tools, not MCP server
 	// Virtual tools are enabled by default and handle file operations directly
@@ -1396,7 +1396,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 }
 
 // Convenience constructors for common use cases
-func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(SimpleAgent))...)
 }
 

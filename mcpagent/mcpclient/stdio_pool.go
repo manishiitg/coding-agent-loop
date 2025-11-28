@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,13 +30,13 @@ type StdioConnectionPool struct {
 	connections   map[string]*StdioConnection
 	mutex         sync.RWMutex
 	maxSize       int
-	logger        utils.ExtendedLogger
+	logger        logger.ExtendedLogger
 	cleanupTicker *time.Ticker
 	cleanupDone   chan bool
 }
 
 // NewStdioConnectionPool creates a new stdio connection pool
-func NewStdioConnectionPool(maxSize int, logger utils.ExtendedLogger) *StdioConnectionPool {
+func NewStdioConnectionPool(maxSize int, logger logger.ExtendedLogger) *StdioConnectionPool {
 	pool := &StdioConnectionPool{
 		connections: make(map[string]*StdioConnection),
 		maxSize:     maxSize,

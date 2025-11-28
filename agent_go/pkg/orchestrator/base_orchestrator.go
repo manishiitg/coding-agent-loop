@@ -11,11 +11,11 @@ import (
 	"time"
 
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
-	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
+	"mcpagent/events"
+	"mcpagent/observability"
 
 	"llm-providers/llmtypes"
 )

@@ -8,7 +8,7 @@ import (
 	llmproviders "llm-providers"
 	"llm-providers/interfaces"
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
+	"mcpagent/observability"
 )
 
 // LLM Event Types - Constants for event type names

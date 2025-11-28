@@ -20,15 +20,15 @@ import (
 
 	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/events"
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/database"
-	unifiedevents "mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
+	unifiedevents "mcpagent/events"
+	"mcpagent/llm"
+	"mcpagent/mcpclient"
+	"mcpagent/observability"
 
 	"mcp-agent/agent_go/pkg/logger"
 
@@ -36,7 +36,7 @@ import (
 
 	eventbridge "mcp-agent/agent_go/cmd/server/event_bridge"
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
-	mcpagent "mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
 	"strconv"
 )
 

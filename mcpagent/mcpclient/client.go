@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -41,14 +41,14 @@ type Client struct {
 	mcpClient     *client.Client
 	serverInfo    *mcp.Implementation
 	retryConfig   RetryConfig
-	logger        utils.ExtendedLogger
+	logger        logger.ExtendedLogger
 	contextCancel context.CancelFunc // Store context cancel function for SSE connections
 	context       context.Context    // Store context for SSE connections
 	mu            sync.RWMutex       // Protect access to contextCancel and context
 }
 
 // New creates a new MCP client for the given server configuration
-func New(config MCPServerConfig, logger utils.ExtendedLogger) *Client {
+func New(config MCPServerConfig, logger logger.ExtendedLogger) *Client {
 	return &Client{
 		config:      config,
 		retryConfig: DefaultRetryConfig(),
@@ -57,7 +57,7 @@ func New(config MCPServerConfig, logger utils.ExtendedLogger) *Client {
 }
 
 // NewWithRetryConfig creates a new MCP client with custom retry configuration
-func NewWithRetryConfig(config MCPServerConfig, retryConfig RetryConfig, logger utils.ExtendedLogger) *Client {
+func NewWithRetryConfig(config MCPServerConfig, retryConfig RetryConfig, logger logger.ExtendedLogger) *Client {
 	return &Client{
 		config:      config,
 		retryConfig: retryConfig,
@@ -467,7 +467,7 @@ type ParallelToolDiscoveryResult struct {
 }
 
 // DiscoverAllToolsParallel connects to all servers in the config in parallel, lists tools, and returns results per server.
-func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger utils.ExtendedLogger) []ParallelToolDiscoveryResult {
+func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger.ExtendedLogger) []ParallelToolDiscoveryResult {
 	servers := cfg.ListServers()
 	if len(servers) == 0 {
 		logger.Infof("🔍 DiscoverAllToolsParallel: No servers configured, returning empty result")

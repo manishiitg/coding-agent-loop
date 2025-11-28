@@ -4,15 +4,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	"time"
 
 	"llm-providers/llmtypes"
 )
 
 // AgentEventType represents the type of event in the agent flow
 // Note: EventType constants are now defined in types.go
+// DefaultLargeToolOutputThreshold is the default character threshold for considering tool output as "large"
+const DefaultLargeToolOutputThreshold = 20000
+
 type AgentEventType = EventType
 
 // AgentEvent represents a generic agent event with typed data
@@ -1040,7 +1042,7 @@ func NewLargeToolOutputDetectedEvent(toolName string, outputSize int, outputFold
 		},
 		ToolName:        toolName,
 		OutputSize:      outputSize,
-		Threshold:       utils.DefaultLargeToolOutputThreshold, // Default threshold
+		Threshold:       DefaultLargeToolOutputThreshold, // Default threshold
 		OutputFolder:    outputFolder,
 		ServerAvailable: true, // Will be set by caller
 	}
@@ -1080,7 +1082,7 @@ func NewLargeToolOutputServerUnavailableEvent(toolName string, outputSize int, s
 		},
 		ToolName:   toolName,
 		OutputSize: outputSize,
-		Threshold:  utils.DefaultLargeToolOutputThreshold, // Default threshold
+		Threshold:  DefaultLargeToolOutputThreshold, // Default threshold
 		ServerName: serverName,
 		Reason:     reason,
 	}

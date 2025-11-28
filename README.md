@@ -21,7 +21,7 @@ MCP Agent provides sophisticated workflow orchestration capabilities for complex
 
 ### **📚 Available Workflows**
 
-- **[Todo Creation Human Workflow](docs/todo_creation_human_workflow.md)**: Multi-agent system for creating validated todo lists via step-by-step execution, learning, and synthesis. Features human-in-the-loop control, conditional branching, loop execution, and comprehensive learning system.
+- **[Workflow Orchestrator](docs/workflow_orchestrator.md)**: Comprehensive multi-phase orchestration system with 7 isolated phases (variable extraction, planning, execution, anonymization, plan improvement, alignment, tool optimization) and 10 specialized agents. Features human-in-the-loop control, conditional branching, loop execution, learning capture, and preset LLM configuration.
 
 - **[Code Execution Agent](docs/code_execution_agent.md)**: Specialized agent for executing Python code with security sandboxing and comprehensive error handling.
 
@@ -34,6 +34,10 @@ MCP Agent provides sophisticated workflow orchestration capabilities for complex
 - **[Large Tool Output Handling](docs/large_output_handling.md)**: Automatic system for handling tool outputs that exceed context window limits by saving to files and providing specialized query tools.
 
 - **[MCP Cache System](docs/mcp_cache_system.md)**: Multi-layer caching system that reduces MCP server connection times by 60-85% through intelligent caching of tool definitions and server metadata.
+
+- **[Folder Guard System](docs/folder_guard.md)**: Fine-grained access control mechanism that restricts agent file operations to specific directories with separate read/write permissions for both simple and code execution modes.
+
+- **[Human Feedback Tool](docs/human_feedback_tool.md)**: Interactive virtual tool that pauses LLM execution to request real-time user input via browser notifications and UI, enabling human-in-the-loop workflows for 2FA, confirmations, and critical decisions.
 
 
 See the [docs/](docs/) folder for detailed documentation on each workflow and agent.

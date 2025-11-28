@@ -572,6 +572,159 @@ func normalizePathForWorkspace(workspacePath, inputPath string) (string, error) 
 	return rel, nil
 }
 
+// ShouldFilterWriteTool checks if a write tool should be filtered out (not registered)
+// Returns true if the tool is a write tool and there's no write access (folder guard enabled but no write paths)
+func (bo *BaseOrchestrator) ShouldFilterWriteTool(toolName string) bool {
+	// Check if folder guard paths are set
+	useFolderGuardPaths := len(bo.folderGuardReadPaths) > 0 || len(bo.folderGuardWritePaths) > 0
+
+	// If folder guard is not enabled, don't filter (allow all tools)
+	if !useFolderGuardPaths {
+		return false
+	}
+
+	// Define write tools
+	writeTools := map[string]bool{
+		"update_workspace_file":     true,
+		"diff_patch_workspace_file": true,
+		"delete_workspace_file":     true,
+		"write_workspace_file":      true,
+		"move_workspace_file":       true,
+	}
+
+	// If it's a write tool and there are no write paths, filter it out
+	if writeTools[toolName] && len(bo.folderGuardWritePaths) == 0 {
+		return true
+	}
+
+	return false
+}
+
+// EnhanceToolDescriptionWithFolderGuard enhances a tool description with directory access information
+// based on folder guard settings. Returns the original description if folder guard is disabled.
+func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, originalDescription string) string {
+	// Special tools that don't operate on specific directories - skip directory access restrictions
+	// GitHub tools operate on the entire workspace/repository, not specific file paths
+	// Human feedback is an interactive tool that doesn't use file paths
+	// Note: human_feedback may be included in WorkspaceTools (combined in server.go createCustomTools)
+	specialTools := map[string]bool{
+		"sync_workspace_to_github":    true,
+		"get_workspace_github_status": true,
+		"human_feedback":              true,
+	}
+	if specialTools[toolName] {
+		return originalDescription
+	}
+
+	// Check if folder guard paths are set
+	useFolderGuardPaths := len(bo.folderGuardReadPaths) > 0 || len(bo.folderGuardWritePaths) > 0
+	workspacePath := bo.GetWorkspacePath()
+
+	// If no folder guard paths and no workspace path, return original description
+	if !useFolderGuardPaths && workspacePath == "" {
+		return originalDescription
+	}
+
+	// Tool classification (same as in WrapWorkspaceToolsWithFolderGuard)
+	readOnlyTools := map[string]bool{
+		"read_workspace_file":             true,
+		"list_workspace_files":            true,
+		"regex_search_workspace_files":    true,
+		"semantic_search_workspace_files": true,
+		"execute_shell_command":           true,
+		"read_image":                      true,
+	}
+
+	writeTools := map[string]bool{
+		"update_workspace_file":     true,
+		"diff_patch_workspace_file": true,
+		"delete_workspace_file":     true,
+		"write_workspace_file":      true,
+		"move_workspace_file":       true,
+	}
+
+	// Determine tool type
+	isReadOnly := readOnlyTools[toolName]
+	isWrite := writeTools[toolName]
+
+	// Build directory access information with clear LLM instructions
+	var accessInfo strings.Builder
+	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS:**")
+
+	if useFolderGuardPaths {
+		if isWrite {
+			// Write operations use writePaths only
+			if len(bo.folderGuardWritePaths) > 0 {
+				accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY write to these directories. All file paths in your tool calls must be within these directories:\n")
+				accessInfo.WriteString(strings.Join(bo.folderGuardWritePaths, "\n"))
+				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of restrictions.")
+				accessInfo.WriteString("\n\nUse ONLY these directories (or Downloads/) when calling this tool. Paths outside these directories will be rejected.")
+			} else {
+				accessInfo.WriteString("\n\n⚠️ **RESTRICTED:** You have NO write access to restricted directories.")
+				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations.")
+				accessInfo.WriteString("\n\nYou can ONLY use the Downloads/ folder when calling this tool.")
+			}
+		} else if isReadOnly {
+			// Read operations can use both readPaths AND writePaths
+			// Combine readPaths and writePaths, removing duplicates
+			allowedPathsMap := make(map[string]bool)
+			for _, path := range bo.folderGuardReadPaths {
+				allowedPathsMap[path] = true
+			}
+			for _, path := range bo.folderGuardWritePaths {
+				allowedPathsMap[path] = true
+			}
+			// Convert map back to slice
+			allowedPaths := make([]string, 0, len(allowedPathsMap))
+			for path := range allowedPathsMap {
+				allowedPaths = append(allowedPaths, path)
+			}
+			if len(allowedPaths) > 0 {
+				accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY read from these directories. All file/folder paths in your tool calls must be within these directories:\n")
+				accessInfo.WriteString(strings.Join(allowedPaths, "\n"))
+				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of restrictions.")
+				accessInfo.WriteString("\n\nUse ONLY these directories (or Downloads/) when calling this tool. Paths outside these directories will be rejected.")
+			} else {
+				accessInfo.WriteString("\n\n⚠️ **RESTRICTED:** You have NO read access to restricted directories.")
+				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations.")
+				accessInfo.WriteString("\n\nYou can ONLY use the Downloads/ folder when calling this tool.")
+			}
+		} else {
+			// Unknown tool type - show both read and write paths
+			if len(bo.folderGuardReadPaths) > 0 || len(bo.folderGuardWritePaths) > 0 {
+				accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY access these directories. All paths in your tool calls must be within these directories:\n")
+				if len(bo.folderGuardReadPaths) > 0 {
+					accessInfo.WriteString("\n**Read access:**\n")
+					accessInfo.WriteString(strings.Join(bo.folderGuardReadPaths, "\n"))
+				}
+				if len(bo.folderGuardWritePaths) > 0 {
+					accessInfo.WriteString("\n**Write access:**\n")
+					accessInfo.WriteString(strings.Join(bo.folderGuardWritePaths, "\n"))
+				}
+				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of restrictions.")
+				accessInfo.WriteString("\n\nUse ONLY these directories (or Downloads/) when calling this tool. Paths outside these directories will be rejected.")
+			} else {
+				accessInfo.WriteString("\n\n⚠️ **RESTRICTED:** You have NO access to restricted directories.")
+				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations.")
+				accessInfo.WriteString("\n\nYou can ONLY use the Downloads/ folder when calling this tool.")
+			}
+		}
+	} else {
+		// Fallback to workspacePath (single path mode)
+		if workspacePath != "" {
+			accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY access files within this workspace directory:\n")
+			accessInfo.WriteString(workspacePath)
+			accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of workspace restrictions.")
+			accessInfo.WriteString("\n\nUse ONLY paths within this workspace (or Downloads/) when calling this tool.")
+		} else {
+			// No restrictions - don't add confusing message
+			return originalDescription
+		}
+	}
+
+	return originalDescription + accessInfo.String()
+}
+
 // WrapWorkspaceToolsWithFolderGuard wraps workspace tool executors with path validation
 // Uses folderGuardReadPaths and folderGuardWritePaths if set, otherwise falls back to workspacePath
 func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[string]interface{}) map[string]interface{} {
@@ -869,8 +1022,28 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Filter out write tools if there's no write access
+		filteredTools := make([]llmtypes.Tool, 0, len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil && !bo.ShouldFilterWriteTool(tool.Function.Name) {
+				filteredTools = append(filteredTools, tool)
+			} else if tool.Function != nil && bo.ShouldFilterWriteTool(tool.Function.Name) {
+				bo.GetLogger().Infof("🚫 Filtering out write tool %s (no write access)", tool.Function.Name)
+			}
+		}
+
 		// Wrap executors with folder guard if workspacePath is set
 		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
+		// Enhance tool descriptions with folder guard information automatically
+		for i := range filteredTools {
+			if filteredTools[i].Function != nil {
+				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
+					filteredTools[i].Function.Name,
+					filteredTools[i].Function.Description,
+				)
+			}
+		}
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 		if bo.ToolCategories != nil {
@@ -891,7 +1064,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 			}
 		}
 
-		for _, tool := range customTools {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), agentName, baseAgent.GetMode(), len(customTools))
+
+		for _, tool := range filteredTools {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
@@ -1043,8 +1218,28 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Filter out write tools if there's no write access
+		filteredTools := make([]llmtypes.Tool, 0, len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil && !bo.ShouldFilterWriteTool(tool.Function.Name) {
+				filteredTools = append(filteredTools, tool)
+			} else if tool.Function != nil && bo.ShouldFilterWriteTool(tool.Function.Name) {
+				bo.GetLogger().Infof("🚫 Filtering out write tool %s (no write access)", tool.Function.Name)
+			}
+		}
+
 		// Wrap executors with folder guard if workspacePath is set
 		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
+		// Enhance tool descriptions with folder guard information automatically
+		for i := range filteredTools {
+			if filteredTools[i].Function != nil {
+				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
+					filteredTools[i].Function.Name,
+					filteredTools[i].Function.Description,
+				)
+			}
+		}
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 		if bo.ToolCategories != nil {
@@ -1065,7 +1260,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 			}
 		}
 
-		for _, tool := range customTools {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), agentName, baseAgent.GetMode(), len(customTools))
+
+		for _, tool := range filteredTools {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
@@ -1216,12 +1413,32 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Filter out write tools if there's no write access
+		filteredTools := make([]llmtypes.Tool, 0, len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil && !bo.ShouldFilterWriteTool(tool.Function.Name) {
+				filteredTools = append(filteredTools, tool)
+			} else if tool.Function != nil && bo.ShouldFilterWriteTool(tool.Function.Name) {
+				bo.GetLogger().Infof("🚫 Filtering out write tool %s (no write access)", tool.Function.Name)
+			}
+		}
+
 		// Wrap executors with folder guard if workspacePath is set
 		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
 
-		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), config.AgentName, baseAgent.GetMode())
+		// Enhance tool descriptions with folder guard information automatically
+		for i := range filteredTools {
+			if filteredTools[i].Function != nil {
+				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
+					filteredTools[i].Function.Name,
+					filteredTools[i].Function.Description,
+				)
+			}
+		}
 
-		for _, tool := range customTools {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), config.AgentName, baseAgent.GetMode(), len(customTools))
+
+		for _, tool := range filteredTools {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}
@@ -1354,8 +1571,28 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 
 	// Register custom tools
 	if customTools != nil && customToolExecutors != nil {
+		// Filter out write tools if there's no write access
+		filteredTools := make([]llmtypes.Tool, 0, len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil && !bo.ShouldFilterWriteTool(tool.Function.Name) {
+				filteredTools = append(filteredTools, tool)
+			} else if tool.Function != nil && bo.ShouldFilterWriteTool(tool.Function.Name) {
+				bo.GetLogger().Infof("🚫 Filtering out write tool %s (no write access)", tool.Function.Name)
+			}
+		}
+
 		// Wrap executors with folder guard if workspacePath is set
 		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
+		// Enhance tool descriptions with folder guard information automatically
+		for i := range filteredTools {
+			if filteredTools[i].Function != nil {
+				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
+					filteredTools[i].Function.Name,
+					filteredTools[i].Function.Description,
+				)
+			}
+		}
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 		if bo.ToolCategories != nil {
@@ -1376,7 +1613,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 			}
 		}
 
-		for _, tool := range customTools {
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), agentName, baseAgent.GetMode(), len(customTools))
+
+		for _, tool := range filteredTools {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
 				// Convert Parameters to map[string]interface{}
 				var params map[string]interface{}

@@ -307,6 +307,9 @@ type Agent struct {
 	// Cross-provider fallback configuration
 	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration from frontend
 
+	// API keys for providers (used for fallback LLM creation)
+	APIKeys *AgentAPIKeys
+
 	// Cumulative token tracking for entire conversation
 	cumulativePromptTokens     int          // Cumulative prompt/input tokens
 	cumulativeCompletionTokens int          // Cumulative completion/output tokens
@@ -323,6 +326,20 @@ type Agent struct {
 type CrossProviderFallback struct {
 	Provider string   `json:"provider"`
 	Models   []string `json:"models"`
+}
+
+// AgentAPIKeys holds API keys for different providers (for Agent struct)
+type AgentAPIKeys struct {
+	OpenRouter *string
+	OpenAI     *string
+	Anthropic  *string
+	Vertex     *string
+	Bedrock    *AgentBedrockConfig
+}
+
+// AgentBedrockConfig holds Bedrock-specific configuration (for Agent struct)
+type AgentBedrockConfig struct {
+	Region string
 }
 
 // GetProvider returns the provider

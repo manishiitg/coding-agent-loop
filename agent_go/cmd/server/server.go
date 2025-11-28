@@ -1457,6 +1457,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			underlyingAgent := llmAgent.GetUnderlyingAgent()
 			for _, tool := range workspaceTools {
+				if tool.Function == nil {
+					log.Printf("[WORKSPACE TOOLS] Warning: Skipping tool with nil Function")
+					continue
+				}
 				toolName := tool.Function.Name
 				if executor, exists := workspaceExecutors[toolName]; exists {
 					// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
@@ -1508,6 +1512,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Register each custom tool with the agent
 			// This will trigger code generation and update the registry
 			// Note: Workspace tools are already registered above, skip them in allTools
+			registeredCount := 0
 			for _, tool := range allTools {
 				if tool.Function != nil {
 					toolName := tool.Function.Name
@@ -1552,12 +1557,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								// Continue to next tool instead of failing entire request
 								continue
 							}
+							registeredCount++
 							log.Printf("[CUSTOM TOOLS] Registered custom tool: %s (category: %s)", toolName, toolCategory)
 						}
 					}
 				}
 			}
-			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", len(allTools))
+			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
 
 			// Add base instructions for all agents
 			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())

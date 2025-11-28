@@ -29,39 +29,15 @@ const (
 type AgentType string
 
 const (
-	PlanningAgentType          AgentType = "planning"
-	ExecutionAgentType         AgentType = "execution"
-	ParallelExecutionAgentType AgentType = "parallel_execution" // Executes specific step in parallel
-	ValidationAgentType        AgentType = "validation"
-	PlanOrganizerAgentType     AgentType = "plan_organizer"
-	PlanBreakdownAgentType     AgentType = "plan_breakdown" // Analyzes dependencies and creates independent steps
-	PlanReaderAgentType        AgentType = "plan_reader"    // Reads plan markdown and returns structured JSON (read-only)
-
-	// Orchestrator types
-	WorkflowOrchestratorAgentType AgentType = "workflow_orchestrator" // AI-controlled workflow orchestrator
-
-	// 🆕 NEW: Workflow-specific types
-	TodoPlannerAgentType       AgentType = "todo_planner"        // Creates todo list once
-	TodoExecutionAgentType     AgentType = "todo_execution"      // Executes one todo at a time
-	TodoValidationAgentType    AgentType = "todo_validation"     // Validates todo completion
-	WorkspaceUpdateAgentType   AgentType = "workspace_update"    // Updates Tasks/ folder
-	TodoRefinePlannerAgentType AgentType = "todo_refine_planner" // Refines todo list based on execution history
-	DataCritiqueAgentType      AgentType = "data_critique"       // Critiques any input data for factual accuracy and analytical quality
-	ReportGenerationAgentType  AgentType = "report_generation"   // Generates comprehensive reports from workflow execution
-	TodoOptimizationAgentType  AgentType = "todo_optimization"   // Orchestrates optimization processes (refinement, critique, reports)
-
-	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
-	VariableExtractionAgentType         AgentType = "variable_extraction"           // Extracts variables from objective
-	TodoPlannerAnonymizationAgentType   AgentType = "todo_planner_anonymization"    // Anonymizes learnings by replacing values with variables
-	TodoPlannerPlanImprovementAgentType AgentType = "todo_planner_plan_improvement" // Analyzes execution and provides plan improvement feedback
-	TodoPlannerPlanningAgentType        AgentType = "todo_planner_planning"         // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType       AgentType = "todo_planner_execution"        // Executes first step of plan
-	TodoPlannerValidationAgentType      AgentType = "todo_planner_validation"       // Validates execution results
-	TodoPlannerWriterAgentType          AgentType = "todo_planner_writer"           // Creates optimal todo list
-	TodoPlannerCleanupAgentType         AgentType = "todo_planner_cleanup"          // Manages workspace cleanup
-	TodoPlannerCritiqueAgentType        AgentType = "todo_planner_critique"         // Critiques execution/validation data for planning
-	TodoPlannerSuccessLearningAgentType AgentType = "todo_planner_success_learning" // Analyzes successful executions to capture best practices
-	ConditionalLLMAgentType             AgentType = "conditional_llm"               // Makes conditional decisions
+	// Multi-agent TodoPlanner sub-agents (actively used)
+	VariableExtractionAgentType              AgentType = "variable_extraction"                 // Extracts variables from objective
+	TodoPlannerAnonymizationAgentType        AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
+	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
+	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
+	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results
+	TodoPlannerSuccessLearningAgentType      AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
+	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
 )
 
 // BaseAgentInterface defines the interface for base agent operations

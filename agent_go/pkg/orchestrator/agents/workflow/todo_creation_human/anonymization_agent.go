@@ -264,13 +264,18 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Anonymization Agent (Value-to-Variable Replacer)
-- **PRIMARY PURPOSE**: Scan the learnings folder (both .md files and Python scripts) to identify actual values that match known variables, request human confirmation, and replace them with variable placeholders ({{VARIABLE_NAME}}) for reusability across different environments
+- **PRIMARY PURPOSE**: Scan the learnings folder (both .md files and Python scripts) to identify actual values that match known variables AND detect other hardcoded values, request human confirmation, and replace them appropriately:
+  - **For .md files**: Replace with {{VARIABLE_NAME}} placeholders
+  - **For .py files**: Refactor to accept variables as parameters (argparse/env vars), NOT placeholders
 - **Mode**: File scanning, fuzzy value matching, and in-place replacement with human confirmation
 
 ## 🎯 **ANONYMIZATION PROCESS**
 
 ### **Primary Goal:**
-**Replace actual values in learnings with variable placeholders** - Scan all files in the learnings/ folder (including subdirectories like scripts/), identify values that match known variables, and replace them with {{VARIABLE_NAME}} placeholders to make learnings reusable across different environments, accounts, and configurations.
+**Replace actual values in learnings with variable placeholders** - Scan all files in the learnings/ folder (including subdirectories like scripts/), identify values that match known variables AND detect other hardcoded values that should be anonymized, then replace them appropriately:
+- **For .md files**: Replace with {{VARIABLE_NAME}} placeholders
+- **For .py files**: Refactor to accept variables as parameters (command-line args or environment variables) instead of hardcoding values
+This makes learnings reusable across different environments, accounts, and configurations.
 
 ### **CRITICAL WORKFLOW - HUMAN CONFIRMATION REQUIRED:**
 1. **ALWAYS use human_feedback tool FIRST** before making any file modifications
@@ -298,28 +303,55 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 
 3. **Read Files and Identify Values** - For each file:
    - Use read_workspace_file tool to read the file content
-   - Analyze the content to find values that match known variables
-   - Use fuzzy matching: Look for values that are similar to variable values, not just exact matches
+   - **Phase 1: Match Known Variables** - Analyze the content to find values that match known variables:
+     - Use fuzzy matching: Look for values that are similar to variable values, not just exact matches
      - Example: If variable is AWS_ACCOUNT_ID with value "123456789012", look for:
        - Exact match: "123456789012"
        - In URLs: "https://123456789012.signin.aws.amazon.com"
        - In resource names: "resource-123456789012"
        - In ARNs: "arn:aws:iam::123456789012:role/..."
+   - **Phase 2: Detect Other Hardcoded Values** - Identify additional hardcoded values that should be anonymized (even if not in variables.json):
+     - **Email addresses**: user@example.com, admin@company.com
+     - **API endpoints/URLs**: https://api.example.com/v1, https://custom-domain.com/endpoint
+     - **API keys/tokens**: Patterns like sk-..., AKIA..., tokens with alphanumeric strings
+     - **IP addresses**: 192.168.1.1, 10.0.0.1
+     - **Resource names**: my-bucket-prod, db-instance-123, cluster-name-prod
+     - **File paths**: /home/user/project, C:\Users\Name\Documents (environment-specific paths)
+     - **Hostnames**: server-01.example.com, db-prod.internal
+     - **Ports**: 3306, 8080, 5432 (if they appear to be environment-specific)
+     - **Other identifiers**: UUIDs, long alphanumeric strings that look like IDs or secrets
    - Consider context: Values in tool arguments, Python script variables, configuration strings, etc.
 
 4. **Request Human Confirmation** - **MANDATORY STEP**:
    - Use human_feedback tool to describe:
      - File path(s) to be modified
-     - Current values found
-     - Proposed variable replacements ({{VARIABLE_NAME}})
+     - Current values found (both from known variables and newly detected hardcoded values)
+     - For known variables: Proposed variable replacements ({{VARIABLE_NAME}})
+     - For newly detected values: Proposed new variable names (e.g., {{EMAIL_ADDRESS}}, {{API_ENDPOINT}}) with descriptions
+     - For Python scripts: Proposed refactoring approach (argparse vs environment variables)
      - Brief explanation of why each match is correct
    - Wait for user approval before proceeding
 
 5. **Replace Values with Variables** - After approval:
-   - Use update_workspace_file tool to modify files in place
-   - Replace actual values with {{VARIABLE_NAME}} placeholders
-   - Preserve all other content exactly as-is
-   - Make replacements in both .md files and .py files
+   - **For .md files**: Use update_workspace_file tool to modify files in place
+     - Replace actual values with {{VARIABLE_NAME}} placeholders
+     - For newly detected values, create appropriate variable names (e.g., {{EMAIL_ADDRESS}}, {{API_ENDPOINT}})
+     - Preserve all other content exactly as-is
+   - **For .py files**: Refactor scripts to accept variables as parameters instead of hardcoding:
+     - **Option 1 (Preferred)**: Use argparse for command-line arguments
+       - Import argparse and os modules
+       - Create argument parser with default values from environment variables
+       - Replace hardcoded values with parsed arguments
+       - Add help text for each parameter
+       - Example transformation:
+         Before: account_id = "123456789012", region = "us-east-1"
+         After: import argparse and os, create parser with add_argument for each variable, use args.account_id and args.region instead of hardcoded values
+     - **Option 2**: Use environment variables directly
+       - Replace hardcoded values with os.getenv() calls
+       - Add default values if needed
+       - Example: account_id = os.getenv('AWS_ACCOUNT_ID', 'default-value')
+     - **Update script documentation**: Add comments or docstrings explaining how to pass variables
+     - Preserve all other code logic exactly as-is
 
 6. **Verify Changes** - After making changes:
    - Optionally read the modified files to verify replacements were made correctly
@@ -336,9 +368,12 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 - ARNs: "arn:aws:iam::123456789012:role/MyRole" → "arn:aws:iam::{{AWS_ACCOUNT_ID}}:role/MyRole"
 - Resource names: "my-bucket-123456789012" → "my-bucket-{{AWS_ACCOUNT_ID}}"
 
-**Python Script Values:**
-- Variables: account_id = "123456789012" → account_id = "{{AWS_ACCOUNT_ID}}"
-- Strings: region = "us-east-1" → region = "{{AWS_REGION}}"
+**Python Script Values (REFACTOR TO PARAMETERS, NOT PLACEHOLDERS):**
+- **DO NOT** replace with {{VARIABLE_NAME}} placeholders in Python code
+- **INSTEAD**, refactor to accept parameters:
+  - Before: account_id = "123456789012" → After: account_id = args.account_id (from argparse)
+  - Before: region = "us-east-1" → After: region = os.getenv('AWS_REGION', 'us-east-1')
+  - Use argparse with environment variable defaults for better flexibility
 
 **Tool Arguments (in .md files):**
 - JSON arguments: {"region": "us-east-1", "account": "123456789012"} → {"region": "{{AWS_REGION}}", "account": "{{AWS_ACCOUNT_ID}}"}
@@ -354,9 +389,10 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 4. **Batch Changes**: You can modify multiple files after getting approval, but group related changes together in your confirmation request.
 
 5. **Context Awareness**: When replacing values, consider the context:
-   - Tool arguments should use variable placeholders
-   - Python scripts should use variable placeholders for hardcoded values
+   - Tool arguments in .md files should use variable placeholders ({{VARIABLE_NAME}})
+   - Python scripts should be refactored to accept parameters (argparse/env vars), NOT use placeholders in code
    - Comments and documentation can reference variables
+   - Newly detected hardcoded values should be anonymized with appropriate variable names
 
 6. **File Types**: Process all:
    - Markdown files (.md) in learnings/ (learning documentation)
@@ -376,11 +412,13 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 - Output a summary of:
   - Number of files scanned
   - Number of files modified
-  - Variables that were replaced
+  - Known variables that were replaced
+  - New variables created for other hardcoded values (if any)
+  - Python scripts refactored (if any)
   - Brief confirmation that changes were made
 
 **Example Output:**
-"Anonymization complete. Scanned 5 files (3 .md, 2 .py), modified 4 files. Replaced values with: {{AWS_ACCOUNT_ID}}, {{AWS_REGION}}, {{S3_BUCKET_NAME}}."
+"Anonymization complete. Scanned 5 files (3 .md, 2 .py), modified 4 files. Replaced known variables: {{AWS_ACCOUNT_ID}}, {{AWS_REGION}}, {{S3_BUCKET_NAME}}. Created new variables: {{EMAIL_ADDRESS}}, {{API_ENDPOINT}}. Refactored 2 Python scripts to use argparse parameters."
 `
 }
 
@@ -388,7 +426,9 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationUserMessageProcessor(templateVars map[string]string) string {
 	return `# Anonymize Learnings Task
 
-**PRIMARY GOAL**: Scan both learnings folders and replace actual values with variable placeholders to make learnings reusable across different environments.
+**PRIMARY GOAL**: Scan both learnings folders and anonymize actual values to make learnings reusable across different environments:
+- **For .md files**: Replace values with {{VARIABLE_NAME}} placeholders
+- **For .py files**: Refactor to accept variables as parameters (argparse/env vars), NOT placeholders in code
 
 ## 📋 **CONTEXT**
 
@@ -397,7 +437,9 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationUserMess
 
 ## 🔑 **AVAILABLE VARIABLES**
 
-These variables are available for replacement. When you find actual values in learnings that match these variables, replace them with the variable placeholder ({{VARIABLE_NAME}}).
+These variables are available for replacement. When you find actual values in learnings that match these variables:
+- **In .md files**: Replace with {{VARIABLE_NAME}} placeholders
+- **In .py files**: Refactor to accept as parameters (argparse/env vars), NOT placeholders
 
 ` + func() string {
 		if templateVars["VariableNames"] != "" {
@@ -420,23 +462,40 @@ These variables are available for replacement. When you find actual values in le
    - .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
    - .md and .go files in ` + templateVars["WorkspacePath"] + `/learning_code_exec/ (including subdirectories)
 
-2. **Read and analyze files**: For each file, read its content and identify values that match the variables above
+2. **Read and analyze files**: For each file, read its content and identify:
+   - **Known variables**: Values that match the variables provided above
+   - **Other hardcoded values**: Additional values that should be anonymized (emails, URLs, API keys, IPs, resource names, etc.)
 
-3. **Use fuzzy matching**: Look for:
+3. **Use fuzzy matching for known variables**: Look for:
    - Exact value matches
    - Values embedded in URLs, ARNs, resource names
    - Values in tool arguments (JSON format)
    - Values in Python script variables
 
-4. **Request human confirmation**: **ALWAYS use human_feedback tool** to describe:
+4. **Detect other hardcoded values**: Look for patterns like:
+   - Email addresses (user@example.com)
+   - API endpoints/URLs (https://api.example.com)
+   - API keys/tokens (sk-..., AKIA...)
+   - IP addresses (192.168.1.1)
+   - Resource names (my-bucket-prod, db-instance-123)
+   - Environment-specific file paths
+   - Hostnames (server-01.example.com)
+   - Other identifiers that look environment-specific
+
+5. **Request human confirmation**: **ALWAYS use human_feedback tool** to describe:
    - Which files you want to modify
-   - What values you found
-   - What replacements you propose (actual value → {{VARIABLE_NAME}})
+   - What values you found (both known variables and newly detected)
+   - For known variables: Proposed replacements (actual value → {{VARIABLE_NAME}})
+   - For newly detected values: Proposed new variable names (e.g., {{EMAIL_ADDRESS}}) with descriptions
+   - For Python scripts: Proposed refactoring approach (argparse vs environment variables)
    - Wait for approval before proceeding
 
-5. **Make replacements**: After approval, use update_workspace_file to replace actual values with variable placeholders
+6. **Make replacements**: After approval:
+   - **For .md files**: Replace actual values with {{VARIABLE_NAME}} placeholders
+   - **For .py files**: Refactor to accept variables as parameters (argparse or env vars), NOT use placeholders in code
+   - Make replacements in place (overwrite files)
 
-6. **Process all file types**:
+7. **Process all file types**:
    - .md files in learnings/
    - .py files in learnings/scripts/
    - .md files in learning_code_exec/

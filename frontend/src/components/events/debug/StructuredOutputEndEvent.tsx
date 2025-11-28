@@ -1,6 +1,20 @@
 import React from 'react'
-import type { StructuredOutputEndEvent } from '../../../generated/events'
 import { formatDuration } from '../../../utils/duration'
+
+// Local type definition for StructuredOutputEndEvent (not in generated schema)
+interface StructuredOutputEndEvent {
+  timestamp?: string
+  trace_id?: string
+  span_id?: string
+  event_id?: string
+  parent_id?: string
+  session_id?: string
+  component?: string
+  operation?: string
+  event_type?: string
+  duration?: number
+  error?: string
+}
 
 interface StructuredOutputEndEventDisplayProps {
   event: StructuredOutputEndEvent

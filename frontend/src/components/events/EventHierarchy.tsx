@@ -239,7 +239,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     
     if (hasNewSessions || orderedSessions.length > 0) {
       const newCollapsed = new Set(collapsedSessions);
-      const newManuallyExpanded = new Set(manuallyExpandedSessions);
       let hasChanges = false;
       
       if (orderedSessions.length === 1) {

@@ -19,6 +19,7 @@ export interface LLMConfiguration {
       // AWS credentials handled via IAM roles
     }
     anthropic?: string
+    vertex?: string
   }
 }
 
@@ -29,12 +30,6 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
 }
 
 // Execution mode constants matching backend enum
-export const EXECUTION_MODES = {
-  SEQUENTIAL: 'sequential_execution',
-  PARALLEL: 'parallel_execution'
-} as const
-
-export type OrchestratorExecutionMode = typeof EXECUTION_MODES[keyof typeof EXECUTION_MODES]
 
 // Agent streaming types
 export interface AgentQueryRequest {
@@ -46,11 +41,9 @@ export interface AgentQueryRequest {
   enabled_tools?: string[]
   enabled_servers?: string[]
   selected_tools?: string[] // Array of "server:tool" strings
-  agent_mode?: 'simple' | 'orchestrator' | 'workflow'
+  agent_mode?: 'simple' | 'workflow'
   llm_config?: LLMConfiguration
   preset_query_id?: string
-  // Orchestrator execution mode selection
-  orchestrator_execution_mode?: OrchestratorExecutionMode
   // Code execution mode: When enabled, only virtual tools are added to LLM
   // MCP tools are accessed via generated Go code using discover_code_files and write_code
   use_code_execution_mode?: boolean
@@ -243,6 +236,8 @@ export interface PlannerFile {
   children?: PlannerFile[];
   depth?: number;
   is_image?: boolean;
+  // Store original path when filepath is adjusted for display (e.g., in workflow mode)
+  originalFilepath?: string;
 }
 
 export interface PlannerFileContent {
@@ -457,9 +452,24 @@ export interface UpdateChatSessionRequest {
 }
 
 // Preset LLM Configuration types
-export interface PresetLLMConfig {
+export interface AgentLLMConfig {
   provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
   model_id: string
+}
+
+export interface PresetLLMConfig {
+  // Legacy: Single default model (for backward compatibility)
+  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  model_id?: string
+
+  // New: Agent-specific default models (takes priority over legacy fields)
+  execution_llm?: AgentLLMConfig        // Default for execution agents
+  validation_llm?: AgentLLMConfig       // Default for validation agents
+  learning_llm?: AgentLLMConfig         // Default for learning agents
+  planning_llm?: AgentLLMConfig         // Default for planning agent
+  variable_extraction_llm?: AgentLLMConfig // Default for variable extraction agent
+  anonymization_llm?: AgentLLMConfig    // Default for anonymization agent
+  plan_improvement_llm?: AgentLLMConfig // Default for plan improvement agent
 }
 
 // Preset Query API types

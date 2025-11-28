@@ -105,8 +105,25 @@ type GetEventsResponse struct {
 }
 
 // PresetLLMConfig represents LLM configuration stored with presets
+// Supports both legacy single default model and new agent-specific defaults
 type PresetLLMConfig struct {
-	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex
+	// Legacy: Single default model (for backward compatibility)
+	Provider string `json:"provider,omitempty"` // openrouter, bedrock, openai, vertex, anthropic
+	ModelID  string `json:"model_id,omitempty"`
+
+	// New: Agent-specific default models (takes priority over legacy fields)
+	ExecutionLLM          *AgentLLMConfig `json:"execution_llm,omitempty"`           // Default for execution agents
+	ValidationLLM         *AgentLLMConfig `json:"validation_llm,omitempty"`          // Default for validation agents
+	LearningLLM           *AgentLLMConfig `json:"learning_llm,omitempty"`            // Default for learning agents
+	PlanningLLM           *AgentLLMConfig `json:"planning_llm,omitempty"`            // Default for planning agent
+	VariableExtractionLLM *AgentLLMConfig `json:"variable_extraction_llm,omitempty"` // Default for variable extraction agent
+	AnonymizationLLM      *AgentLLMConfig `json:"anonymization_llm,omitempty"`       // Default for anonymization agent
+	PlanImprovementLLM    *AgentLLMConfig `json:"plan_improvement_llm,omitempty"`    // Default for plan improvement agent
+}
+
+// AgentLLMConfig represents LLM configuration for a specific agent type
+type AgentLLMConfig struct {
+	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex, anthropic
 	ModelID  string `json:"model_id"`
 }
 
@@ -179,6 +196,75 @@ type CreatePresetQueryRequest struct {
 	IsPredefined         bool             `json:"is_predefined,omitempty"`
 }
 
+// validatePresetLLMConfig validates a PresetLLMConfig, accepting either legacy Provider+ModelID
+// or at least one non-nil AgentLLMConfig with valid provider and model_id
+func validatePresetLLMConfig(config *PresetLLMConfig) error {
+	validProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic"}
+
+	// Check if legacy config is provided
+	hasLegacyConfig := config.Provider != "" && config.ModelID != ""
+
+	// Validate legacy config if present
+	if hasLegacyConfig {
+		valid := false
+		for _, provider := range validProviders {
+			if config.Provider == provider {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("invalid provider: %s, must be one of: %v", config.Provider, validProviders)
+		}
+	}
+
+	// Collect all AgentLLMConfig fields
+	agentConfigs := []struct {
+		config *AgentLLMConfig
+		name   string
+	}{
+		{config.ExecutionLLM, "execution_llm"},
+		{config.ValidationLLM, "validation_llm"},
+		{config.LearningLLM, "learning_llm"},
+		{config.PlanningLLM, "planning_llm"},
+		{config.VariableExtractionLLM, "variable_extraction_llm"},
+		{config.AnonymizationLLM, "anonymization_llm"},
+		{config.PlanImprovementLLM, "plan_improvement_llm"},
+	}
+
+	// Validate each non-nil AgentLLMConfig
+	hasValidAgentConfig := false
+	for _, agentConfig := range agentConfigs {
+		if agentConfig.config != nil {
+			// Validate model_id is non-empty
+			if agentConfig.config.ModelID == "" {
+				return fmt.Errorf("model_id is required for %s", agentConfig.name)
+			}
+
+			// Validate provider is in valid set
+			valid := false
+			for _, provider := range validProviders {
+				if agentConfig.config.Provider == provider {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return fmt.Errorf("invalid provider for %s: %s, must be one of: %v", agentConfig.name, agentConfig.config.Provider, validProviders)
+			}
+
+			hasValidAgentConfig = true
+		}
+	}
+
+	// Ensure either legacy config OR at least one valid agent config is present
+	if !hasLegacyConfig && !hasValidAgentConfig {
+		return fmt.Errorf("llm_config must have either legacy provider+model_id or at least one non-nil agent-specific config with valid provider and model_id")
+	}
+
+	return nil
+}
+
 // Validate validates the CreatePresetQueryRequest
 func (r *CreatePresetQueryRequest) Validate() error {
 	// Validate required fields
@@ -213,19 +299,8 @@ func (r *CreatePresetQueryRequest) Validate() error {
 
 	// Validate LLM config
 	if r.LLMConfig != nil {
-		if r.LLMConfig.ModelID == "" {
-			return fmt.Errorf("model_id is required when llm_config is provided")
-		}
-		validProviders := []string{"openrouter", "bedrock", "openai", "vertex"}
-		valid := false
-		for _, provider := range validProviders {
-			if r.LLMConfig.Provider == provider {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return fmt.Errorf("invalid provider: %s, must be one of: %v", r.LLMConfig.Provider, validProviders)
+		if err := validatePresetLLMConfig(r.LLMConfig); err != nil {
+			return err
 		}
 	}
 
@@ -270,19 +345,8 @@ func (r *UpdatePresetQueryRequest) Validate() error {
 
 	// Validate LLM config if provided
 	if r.LLMConfig != nil {
-		if r.LLMConfig.ModelID == "" {
-			return fmt.Errorf("model_id is required when llm_config is provided")
-		}
-		validProviders := []string{"openrouter", "bedrock", "openai", "vertex"}
-		valid := false
-		for _, provider := range validProviders {
-			if r.LLMConfig.Provider == provider {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return fmt.Errorf("invalid provider: %s, must be one of: %v", r.LLMConfig.Provider, validProviders)
+		if err := validatePresetLLMConfig(r.LLMConfig); err != nil {
+			return err
 		}
 	}
 

@@ -2,7 +2,7 @@ import { ChevronDown } from 'lucide-react'
 import { usePresetApplication } from '../../stores/useGlobalPresetStore'
 
 interface ActivePresetDisplayProps {
-  modeCategory: 'deep-research' | 'workflow'
+  modeCategory: 'workflow'
   showSelector: boolean
   onToggle: () => void
 }

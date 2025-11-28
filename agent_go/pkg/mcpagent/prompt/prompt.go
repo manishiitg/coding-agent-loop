@@ -1,5 +1,7 @@
 package prompt
 
+import "strings"
+
 // SystemPromptTemplate is the complete system prompt template with placeholders
 const SystemPromptTemplate = `# AI Staff Engineer - MCP Tool Integration Specialist
 
@@ -87,3 +89,23 @@ const (
 	CurrentTimePlaceholder         = "{{CURRENT_TIME}}"
 	ToolStructurePlaceholder       = "{{TOOL_STRUCTURE}}"
 )
+
+// RemoveAIStaffEngineerText removes the "AI Staff Engineer" header and description from a system prompt
+// This is used when appending/prepending custom prompts to avoid duplicate role descriptions
+func RemoveAIStaffEngineerText(prompt string) string {
+	// Remove the header line: "# AI Staff Engineer - MCP Tool Integration Specialist"
+	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist\n\n", "")
+	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist\n", "")
+	prompt = strings.ReplaceAll(prompt, "# AI Staff Engineer - MCP Tool Integration Specialist", "")
+
+	// Remove the description line: "You are an **AI Staff Engineer** specializing in..."
+	aiStaffEngineerDesc := "You are an **AI Staff Engineer** specializing in MCP tools and system analysis with capabilities for multi-server integration, data analysis, strategic tool usage, and robust error handling."
+	prompt = strings.ReplaceAll(prompt, aiStaffEngineerDesc+"\n\n", "")
+	prompt = strings.ReplaceAll(prompt, aiStaffEngineerDesc+"\n", "")
+	prompt = strings.ReplaceAll(prompt, aiStaffEngineerDesc, "")
+
+	// Clean up any double newlines that might result
+	prompt = strings.ReplaceAll(prompt, "\n\n\n", "\n\n")
+
+	return strings.TrimSpace(prompt)
+}

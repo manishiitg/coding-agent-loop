@@ -2,7 +2,7 @@ package llm
 
 import (
 	"context"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // LLMCallFunc is a type-safe function signature for LLM calls.
@@ -13,6 +13,7 @@ type Model = llmtypes.Model
 type ChatMessageType = llmtypes.ChatMessageType
 type ContentPart = llmtypes.ContentPart
 type TextContent = llmtypes.TextContent
+type ImageContent = llmtypes.ImageContent
 type ToolCall = llmtypes.ToolCall
 type FunctionCall = llmtypes.FunctionCall
 type ToolCallResponse = llmtypes.ToolCallResponse
@@ -48,4 +49,7 @@ var (
 	WithStreamingFunc = llmtypes.WithStreamingFunc
 	TextPart          = llmtypes.TextPart
 	TextParts         = llmtypes.TextParts
+	ImagePart         = llmtypes.ImagePart
+	ImagePartBase64   = llmtypes.ImagePartBase64
+	ImagePartURL      = llmtypes.ImagePartURL
 )

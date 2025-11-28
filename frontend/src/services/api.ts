@@ -1,7 +1,7 @@
 import axios from 'axios'
-import type { 
-  AgentQueryRequest, 
-  AgentQueryResponse, 
+import type {
+  AgentQueryRequest,
+  AgentQueryResponse,
   RegisterObserverResponse,
   GetEventsResponse,
   ObserverStatusResponse,
@@ -26,9 +26,9 @@ import type {
 } from './api-types'
 
 // Re-export types for other components to use
-export type { 
-  AgentQueryRequest, 
-  AgentQueryResponse, 
+export type {
+  AgentQueryRequest,
+  AgentQueryResponse,
   RegisterObserverResponse,
   GetEventsResponse,
   ObserverStatusResponse,
@@ -53,7 +53,7 @@ export type {
 } from './api-types'
 
 const API_BASE_URL = 'http://localhost:8000'
-const PLANNER_API_BASE_URL = 'http://localhost:8081'
+const WORKSPACE_API_BASE_URL = 'http://localhost:8081'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -62,8 +62,8 @@ const api = axios.create({
   },
 })
 
-const plannerApi = axios.create({
-  baseURL: PLANNER_API_BASE_URL,
+const workspaceApi = axios.create({
+  baseURL: WORKSPACE_API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -102,13 +102,13 @@ function getObserverId(): string {
 api.interceptors.request.use((config) => {
   config.headers = config.headers || {}
   config.headers['X-Session-ID'] = getSessionId()
-  
+
   // Add observer ID if available
   const observerId = getObserverId()
   if (observerId) {
     config.headers['X-Observer-ID'] = observerId
   }
-  
+
   return config
 })
 
@@ -119,7 +119,7 @@ export const agentApi = {
       session_id: sessionId || getSessionId()
     })
     const data = response.data
-    
+
     // Store observer ID for future requests
     if (data.observer_id) {
       localStorage.setItem('agent_observer_id', data.observer_id)
@@ -127,7 +127,7 @@ export const agentApi = {
     } else {
       console.error('[API] No observer_id received from server')
     }
-    
+
     return data
   },
 
@@ -187,7 +187,7 @@ export const agentApi = {
   startQuery: async (request: AgentQueryRequest): Promise<AgentQueryResponse> => {
     // Get the current observer ID from localStorage
     const observerId = localStorage.getItem('agent_observer_id')
-    
+
     // Create headers with observer ID if available
     const headers: Record<string, string> = {}
     if (observerId) {
@@ -196,7 +196,7 @@ export const agentApi = {
     } else {
       console.warn('[API] No observer ID available for query')
     }
-    
+
     const response = await api.post('/api/query', request, { headers })
     return response.data
   },
@@ -282,13 +282,23 @@ export const agentApi = {
     if (folder) {
       params.folder = folder
     }
-    const response = await plannerApi.get('/api/documents', { params })
+    const response = await workspaceApi.get('/api/documents', { params })
     return response.data
   },
 
   getPlannerFileContent: async (filepath: string) => {
     // API handles path conversion internally
-    const response = await plannerApi.get(`/api/documents/${encodeURIComponent(filepath)}`)
+    const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(filepath)}`)
+    return response.data
+  },
+
+  updatePlannerFile: async (filepath: string, content: string, commitMessage?: string) => {
+    const requestBody: { content: string; commit_message?: string } = { content }
+    if (commitMessage) {
+      requestBody.commit_message = commitMessage
+    }
+    // API handles path conversion internally
+    const response = await workspaceApi.put(`/api/documents/${encodeURIComponent(filepath)}`, requestBody)
     return response.data
   },
 
@@ -298,7 +308,7 @@ export const agentApi = {
       params.commit_message = commitMessage
     }
     // API handles path conversion internally
-    const response = await plannerApi.delete(`/api/documents/${encodeURIComponent(filepath)}`, { params })
+    const response = await workspaceApi.delete(`/api/documents/${encodeURIComponent(filepath)}`, { params })
     return response.data
   },
 
@@ -307,7 +317,7 @@ export const agentApi = {
     if (commitMessage) {
       params.commit_message = commitMessage
     }
-    const response = await plannerApi.delete(`/api/folders/${encodeURIComponent(folderPath)}`, { params })
+    const response = await workspaceApi.delete(`/api/folders/${encodeURIComponent(folderPath)}`, { params })
     return response.data
   },
 
@@ -316,7 +326,17 @@ export const agentApi = {
     if (commitMessage) {
       params.commit_message = commitMessage
     }
-    const response = await plannerApi.delete(`/api/folders/${encodeURIComponent(folderPath)}/files`, { params })
+    const response = await workspaceApi.delete(`/api/folders/${encodeURIComponent(folderPath)}/files`, { params })
+    return response.data
+  },
+
+  movePlannerFile: async (filepath: string, destinationPath: string, commitMessage?: string) => {
+    const requestBody: { destination_path: string; commit_message?: string } = { destination_path: destinationPath }
+    if (commitMessage) {
+      requestBody.commit_message = commitMessage
+    }
+    // API handles path conversion internally
+    const response = await workspaceApi.post(`/api/documents/${encodeURIComponent(filepath)}/move`, requestBody)
     return response.data
   },
 
@@ -327,8 +347,8 @@ export const agentApi = {
     if (commitMessage) {
       formData.append('commit_message', commitMessage)
     }
-    
-    const response = await plannerApi.post('/api/upload', formData, {
+
+    const response = await workspaceApi.post('/api/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -337,7 +357,7 @@ export const agentApi = {
   },
 
   createPlannerFolder: async (folderPath: string, commitMessage?: string) => {
-    const response = await plannerApi.post('/api/folders', {
+    const response = await workspaceApi.post('/api/folders', {
       folder_path: folderPath,
       commit_message: commitMessage
     })
@@ -346,12 +366,12 @@ export const agentApi = {
 
   // Git Sync API
   getGitSyncStatus: async () => {
-    const response = await plannerApi.get('/api/sync/status')
+    const response = await workspaceApi.get('/api/sync/status')
     return response.data
   },
 
   syncWithGitHub: async (force: boolean = false, commitMessage?: string) => {
-    const response = await plannerApi.post('/api/sync/github', {
+    const response = await workspaceApi.post('/api/sync/github', {
       force,
       commit_message: commitMessage,
       operation: 'sync'
@@ -360,7 +380,7 @@ export const agentApi = {
   },
 
   forcePushLocal: async (commitMessage?: string) => {
-    const response = await plannerApi.post('/api/sync/github', {
+    const response = await workspaceApi.post('/api/sync/github', {
       force: true,
       commit_message: commitMessage,
       operation: 'force_push_local'
@@ -369,7 +389,7 @@ export const agentApi = {
   },
 
   forcePullRemote: async () => {
-    const response = await plannerApi.post('/api/sync/github', {
+    const response = await workspaceApi.post('/api/sync/github', {
       force: true,
       operation: 'force_pull_remote'
     })
@@ -378,17 +398,17 @@ export const agentApi = {
 
   // Semantic Search Sync API
   getSemanticSearchStatus: async () => {
-    const response = await plannerApi.get('/api/semantic/stats')
+    const response = await workspaceApi.get('/api/semantic/stats')
     return response.data
   },
 
   getSemanticJobStatus: async () => {
-    const response = await plannerApi.get('/api/semantic/jobs')
+    const response = await workspaceApi.get('/api/semantic/jobs')
     return response.data
   },
 
   triggerSemanticResync: async (dryRun: boolean = false, force: boolean = false) => {
-    const response = await plannerApi.post('/api/semantic/resync', {
+    const response = await workspaceApi.post('/api/semantic/resync', {
       dry_run: dryRun,
       force: force
     })
@@ -396,26 +416,34 @@ export const agentApi = {
   },
 
   searchDocuments: async (params: { query: string; search_type?: string; folder?: string; limit?: number }) => {
-    const response = await plannerApi.get('/api/search', { params })
+    const response = await workspaceApi.get('/api/search', { params })
     return response.data
   },
 
-  searchSemanticDocuments: async (params: { 
-    query: string; 
-    folder?: string; 
-    limit?: number; 
-    similarity_threshold?: number; 
-    include_regex?: boolean; 
-    regex_limit?: number 
+  searchSemanticDocuments: async (params: {
+    query: string;
+    folder?: string;
+    limit?: number;
+    similarity_threshold?: number;
+    include_regex?: boolean;
+    regex_limit?: number
   }) => {
-    const response = await plannerApi.get('/api/search/semantic', { params })
+    const response = await workspaceApi.get('/api/search/semantic', { params })
     return response.data
   },
 
   // File Version History API
   getFileVersions: async (filepath: string, limit: number = 10) => {
-    const response = await plannerApi.get(`/api/versions/${encodeURIComponent(filepath)}`, {
+    const response = await workspaceApi.get(`/api/versions/${encodeURIComponent(filepath)}`, {
       params: { limit }
+    })
+    return response.data
+  },
+
+  restoreFileVersion: async (filepath: string, commitHash: string, commitMessage?: string) => {
+    const response = await workspaceApi.post(`/api/restore/${encodeURIComponent(filepath)}`, {
+      commit_hash: commitHash,
+      commit_message: commitMessage
     })
     return response.data
   },
@@ -503,15 +531,15 @@ export const agentApi = {
     const body: { preset_query_id: string; workflow_status?: string; selected_options?: WorkflowSelectedOptions | null } = {
       preset_query_id: presetQueryId
     }
-    
+
     if (workflowStatus !== undefined) {
       body.workflow_status = workflowStatus
     }
-    
+
     if (selectedOptions !== undefined) {
       body.selected_options = selectedOptions
     }
-    
+
     const response = await api.post('/api/workflow/update', body)
     return response.data
   },

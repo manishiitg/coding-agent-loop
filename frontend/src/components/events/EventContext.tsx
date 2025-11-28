@@ -1,6 +1,6 @@
 import { createContext } from 'react';
 
-export type EventMode = 'basic' | 'advanced' | 'orchestrator' | 'workflow';
+export type EventMode = 'basic' | 'advanced';
 
 interface EventModeContextType {
   mode: EventMode;

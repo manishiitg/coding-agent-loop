@@ -22,7 +22,9 @@ export const processHierarchicalFiles = (files: PlannerFile[]): PlannerFile[] =>
  */
 export const findFileInTree = (fileList: PlannerFile[], targetPath: string): boolean => {
   for (const file of fileList) {
-    if (file.filepath === targetPath) {
+    // Check both filepath (adjusted for display) and originalFilepath (original path)
+    // This ensures workspace tool events can find files even when paths are adjusted in workflow mode
+    if (file.filepath === targetPath || file.originalFilepath === targetPath) {
       return true
     }
     if (file.children && file.children.length > 0) {

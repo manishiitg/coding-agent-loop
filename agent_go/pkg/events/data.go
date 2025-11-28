@@ -8,7 +8,7 @@ import (
 
 	"mcp-agent/agent_go/internal/utils"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // AgentEventType represents the type of event in the agent flow
@@ -70,9 +70,10 @@ func (e *GenericEventData) GetEventType() EventType {
 // AgentStartEvent represents the start of an agent session
 type AgentStartEvent struct {
 	BaseEventData
-	AgentType string `json:"agent_type"`
-	ModelID   string `json:"model_id"`
-	Provider  string `json:"provider"`
+	AgentType            string `json:"agent_type"`
+	ModelID              string `json:"model_id"`
+	Provider             string `json:"provider"`
+	UseCodeExecutionMode bool   `json:"use_code_execution_mode,omitempty"`
 }
 
 func (e *AgentStartEvent) GetEventType() EventType {
@@ -82,9 +83,16 @@ func (e *AgentStartEvent) GetEventType() EventType {
 // AgentEndEvent represents the end of an agent session
 type AgentEndEvent struct {
 	BaseEventData
-	AgentType string `json:"agent_type"`
-	Success   bool   `json:"success"`
-	Error     string `json:"error,omitempty"`
+	AgentType             string `json:"agent_type"`
+	Success               bool   `json:"success"`
+	Error                 string `json:"error,omitempty"`
+	PromptTokens          int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens      int    `json:"completion_tokens,omitempty"`
+	TotalTokens           int    `json:"total_tokens,omitempty"`
+	CacheTokens           int    `json:"cache_tokens,omitempty"`
+	ReasoningTokens       int    `json:"reasoning_tokens,omitempty"`
+	LLMCallCount          int    `json:"llm_call_count,omitempty"`
+	CacheEnabledCallCount int    `json:"cache_enabled_call_count,omitempty"`
 }
 
 func (e *AgentEndEvent) GetEventType() EventType {
@@ -184,6 +192,22 @@ func serializeMessage(msg llmtypes.MessageContent) SerializedMessage {
 			case llmtypes.TextContent:
 				messagePart.Type = "text"
 				messagePart.Content = p.Text
+			case llmtypes.ImageContent:
+				messagePart.Type = "image"
+				// Store metadata only, not full base64 data (too large for events)
+				imageMeta := map[string]interface{}{
+					"source_type": p.SourceType,
+					"media_type":  p.MediaType,
+				}
+				if p.SourceType == "url" {
+					// Include URL since it's not as large as base64 data
+					imageMeta["url"] = p.Data
+				} else {
+					// For base64, just indicate data length
+					imageMeta["data_length"] = len(p.Data)
+					imageMeta["data_preview"] = "base64_encoded_image_data"
+				}
+				messagePart.Content = imageMeta
 			case llmtypes.ToolCall:
 				messagePart.Type = "tool_call"
 				messagePart.Content = map[string]interface{}{
@@ -242,6 +266,8 @@ type UsageMetrics struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	CacheTokens      int `json:"cache_tokens,omitempty"`     // Cache tokens (CachedContentTokens, CacheReadInputTokens, etc.)
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"` // Reasoning tokens (for models like o3)
 }
 
 // ToolCallStartEvent represents the start of a tool call
@@ -518,19 +544,20 @@ func NewAgentEvent(eventData EventData) *AgentEvent {
 // NewAgentEndEvent function removed - no longer needed
 
 // NewAgentStartEvent creates a new AgentStartEvent
-func NewAgentStartEvent(agentType, modelID, provider string) *AgentStartEvent {
+func NewAgentStartEvent(agentType, modelID, provider string, useCodeExecutionMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
 		BaseEventData: BaseEventData{
 			Timestamp: time.Now(),
 		},
-		AgentType: agentType,
-		ModelID:   modelID,
-		Provider:  provider,
+		AgentType:            agentType,
+		ModelID:              modelID,
+		Provider:             provider,
+		UseCodeExecutionMode: useCodeExecutionMode,
 	}
 }
 
 // NewAgentStartEventWithHierarchy creates a new AgentStartEvent with hierarchy fields
-func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID string, level int, sessionID, component string) *AgentStartEvent {
+func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID string, level int, sessionID, component string, useCodeExecutionMode bool) *AgentStartEvent {
 	return &AgentStartEvent{
 		BaseEventData: BaseEventData{
 			Timestamp:      time.Now(),
@@ -539,9 +566,10 @@ func NewAgentStartEventWithHierarchy(agentType, modelID, provider, parentID stri
 			SessionID:      sessionID,
 			Component:      component,
 		},
-		AgentType: agentType,
-		ModelID:   modelID,
-		Provider:  provider,
+		AgentType:            agentType,
+		ModelID:              modelID,
+		Provider:             provider,
+		UseCodeExecutionMode: useCodeExecutionMode,
 	}
 }
 
@@ -570,6 +598,25 @@ func NewAgentEndEventWithHierarchy(agentType string, success bool, error, parent
 		AgentType: agentType,
 		Success:   success,
 		Error:     error,
+	}
+}
+
+// NewAgentEndEventWithTokens creates a new AgentEndEvent with token usage information
+func NewAgentEndEventWithTokens(agentType string, success bool, error string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) *AgentEndEvent {
+	return &AgentEndEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		AgentType:             agentType,
+		Success:               success,
+		Error:                 error,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		TotalTokens:           totalTokens,
+		CacheTokens:           cacheTokens,
+		ReasoningTokens:       reasoningTokens,
+		LLMCallCount:          llmCallCount,
+		CacheEnabledCallCount: cacheEnabledCallCount,
 	}
 }
 
@@ -1629,22 +1676,30 @@ func (e *OrchestratorAgentStartEvent) GetEventType() EventType {
 
 type OrchestratorAgentEndEvent struct {
 	BaseEventData
-	AgentType          string                 `json:"agent_type"`           // planning, execution, validation, organizer
-	AgentName          string                 `json:"agent_name"`           // specific agent name
-	Objective          string                 `json:"objective"`            // what the agent was trying to accomplish
-	InputData          map[string]string       `json:"input_data"`           // template variables passed to agent
-	Result             string                 `json:"result"`               // agent's output/result (text summary)
+	AgentType          string                 `json:"agent_type"`                    // planning, execution, validation, organizer
+	AgentName          string                 `json:"agent_name"`                    // specific agent name
+	Objective          string                 `json:"objective"`                     // what the agent was trying to accomplish
+	InputData          map[string]string      `json:"input_data"`                    // template variables passed to agent
+	Result             string                 `json:"result"`                        // agent's output/result (text summary)
 	StructuredResponse map[string]interface{} `json:"structured_response,omitempty"` // structured response data (for ExecuteStructured calls)
-	Success            bool                   `json:"success"`              // whether agent completed successfully
-	Error              string                 `json:"error,omitempty"`      // error message if failed
-	Duration           time.Duration          `json:"duration"`             // how long the agent took
-	ModelID            string                 `json:"model_id"`             // which LLM model was used
-	Provider           string                 `json:"provider"`             // which LLM provider
-	ServersCount       int                    `json:"servers_count"`        // number of MCP servers used
-	MaxTurns           int                    `json:"max_turns"`            // maximum conversation turns
-	PlanID             string                 `json:"plan_id,omitempty"`    // associated plan ID
-	StepIndex          int                    `json:"step_index,omitempty"` // which step in the plan
-	Iteration          int                    `json:"iteration,omitempty"`  // which iteration of the loop
+	Success            bool                   `json:"success"`                       // whether agent completed successfully
+	Error              string                 `json:"error,omitempty"`               // error message if failed
+	Duration           time.Duration          `json:"duration"`                      // how long the agent took
+	ModelID            string                 `json:"model_id"`                      // which LLM model was used
+	Provider           string                 `json:"provider"`                      // which LLM provider
+	ServersCount       int                    `json:"servers_count"`                 // number of MCP servers used
+	MaxTurns           int                    `json:"max_turns"`                     // maximum conversation turns
+	PlanID             string                 `json:"plan_id,omitempty"`             // associated plan ID
+	StepIndex          int                    `json:"step_index,omitempty"`          // which step in the plan
+	Iteration          int                    `json:"iteration,omitempty"`           // which iteration of the loop
+	// Token usage fields
+	PromptTokens          int `json:"prompt_tokens,omitempty"`
+	CompletionTokens      int `json:"completion_tokens,omitempty"`
+	TotalTokens           int `json:"total_tokens,omitempty"`
+	CacheTokens           int `json:"cache_tokens,omitempty"`
+	ReasoningTokens       int `json:"reasoning_tokens,omitempty"`
+	LLMCallCount          int `json:"llm_call_count,omitempty"`
+	CacheEnabledCallCount int `json:"cache_enabled_call_count,omitempty"`
 }
 
 func (e *OrchestratorAgentEndEvent) GetEventType() EventType {
@@ -1669,6 +1724,44 @@ type OrchestratorAgentErrorEvent struct {
 
 func (e *OrchestratorAgentErrorEvent) GetEventType() EventType {
 	return OrchestratorAgentError
+}
+
+// StepTokenUsageEvent represents token usage summary for a workflow step
+type StepTokenUsageEvent struct {
+	BaseEventData
+	Phase                 string `json:"phase"`                // e.g., "execution"
+	Step                  int    `json:"step"`                 // step index (0-based)
+	StepTitle             string `json:"step_title,omitempty"` // optional step title for display
+	PromptTokens          int    `json:"prompt_tokens"`
+	CompletionTokens      int    `json:"completion_tokens"`
+	TotalTokens           int    `json:"total_tokens"`
+	CacheTokens           int    `json:"cache_tokens"`
+	ReasoningTokens       int    `json:"reasoning_tokens"`
+	LLMCallCount          int    `json:"llm_call_count"`
+	CacheEnabledCallCount int    `json:"cache_enabled_call_count"`
+}
+
+func (e *StepTokenUsageEvent) GetEventType() EventType {
+	return StepTokenUsage
+}
+
+// NewStepTokenUsageEvent creates a new StepTokenUsageEvent
+func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) *StepTokenUsageEvent {
+	return &StepTokenUsageEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Phase:                 phase,
+		Step:                  step,
+		StepTitle:             stepTitle,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		TotalTokens:           totalTokens,
+		CacheTokens:           cacheTokens,
+		ReasoningTokens:       reasoningTokens,
+		LLMCallCount:          llmCallCount,
+		CacheEnabledCallCount: cacheEnabledCallCount,
+	}
 }
 
 // Human Verification Events
@@ -1707,19 +1800,16 @@ func (e *RequestHumanFeedbackEvent) GetEventType() EventType {
 
 type BlockingHumanFeedbackEvent struct {
 	BaseEventData
-	Question        string `json:"question"`       // Question to ask user
-	AllowFeedback   bool   `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
-	Context         string `json:"context"`        // Additional context (e.g., validation results)
-	SessionID       string `json:"session_id"`
-	WorkflowID      string `json:"workflow_id"`
-	RequestID       string `json:"request_id"`                  // Unique ID for this feedback request
-	YesNoOnly       bool   `json:"yes_no_only"`                 // If true, show only Approve/Reject buttons (no textarea)
-	YesLabel        string `json:"yes_label,omitempty"`         // Custom label for Approve button (default: "Approve")
-	NoLabel         string `json:"no_label,omitempty"`          // Custom label for Reject button (default: "Reject")
-	ThreeChoiceMode bool   `json:"three_choice_mode,omitempty"` // If true, show three option buttons
-	Option1Label    string `json:"option1_label,omitempty"`     // Label for first option
-	Option2Label    string `json:"option2_label,omitempty"`     // Label for second option
-	Option3Label    string `json:"option3_label,omitempty"`     // Label for third option
+	Question      string   `json:"question"`       // Question to ask user
+	AllowFeedback bool     `json:"allow_feedback"` // Whether to allow text feedback (defaults to true)
+	Context       string   `json:"context"`        // Additional context (e.g., validation results)
+	SessionID     string   `json:"session_id"`
+	WorkflowID    string   `json:"workflow_id"`
+	RequestID     string   `json:"request_id"`          // Unique ID for this feedback request
+	YesNoOnly     bool     `json:"yes_no_only"`         // If true, show only Approve/Reject buttons (no textarea)
+	YesLabel      string   `json:"yes_label,omitempty"` // Custom label for Approve button (default: "Approve")
+	NoLabel       string   `json:"no_label,omitempty"`  // Custom label for Reject button (default: "Reject")
+	Options       []string `json:"options,omitempty"`   // Array of option labels for multiple choice (renders as buttons)
 }
 
 func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {
@@ -1728,6 +1818,7 @@ func (e *BlockingHumanFeedbackEvent) GetEventType() EventType {
 
 // TodoStep represents a todo step in the execution
 type TodoStep struct {
+	ID                  string   `json:"id,omitempty"` // Stable step ID (from PlanStep) - required for frontend matching
 	Title               string   `json:"title"`
 	Description         string   `json:"description"`
 	SuccessCriteria     string   `json:"success_criteria"`

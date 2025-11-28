@@ -2,7 +2,7 @@ package shared
 
 import (
 	"fmt"
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"strings"
 )
 

@@ -41,7 +41,30 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
                   {event.turn && `• Turn ${event.turn}`}
                   {event.duration && ` • ${formatDuration(event.duration)}`}
                   {event.tool_calls !== undefined && ` • ${event.tool_calls} tool calls`}
-                  {event.usage_metrics && ` • Tokens: ${event.usage_metrics.total_tokens || 'N/A'}`}
+                  {event.usage_metrics && (
+                    <>
+                      {' • Tokens: '}
+                      {event.usage_metrics.prompt_tokens && (
+                        <>Input: {event.usage_metrics.prompt_tokens.toLocaleString()}</>
+                      )}
+                      {event.usage_metrics.completion_tokens && (
+                        <> • Output: {event.usage_metrics.completion_tokens.toLocaleString()}</>
+                      )}
+                      {event.usage_metrics.total_tokens && (
+                        <> • Total: {event.usage_metrics.total_tokens.toLocaleString()}</>
+                      )}
+                      {event.usage_metrics.cache_tokens && event.usage_metrics.cache_tokens > 0 && (
+                        <span className="text-cyan-600 dark:text-cyan-400">
+                          {' • Cache: '}{event.usage_metrics.cache_tokens.toLocaleString()}
+                        </span>
+                      )}
+                      {event.usage_metrics.reasoning_tokens && event.usage_metrics.reasoning_tokens > 0 && (
+                        <span className="text-purple-600 dark:text-purple-400">
+                          {' • Reasoning: '}{event.usage_metrics.reasoning_tokens.toLocaleString()}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </span>
               </div>
             </div>
@@ -54,15 +77,21 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
           )}
         </div>
         
-        {/* Content with markdown rendering - always visible */}
-        {event.content && (
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Content:</div>
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+        {/* Content with markdown rendering - show even if empty */}
+        <div className="space-y-2 mt-2">
+          <div className="text-xs font-medium text-gray-700 dark:text-gray-300">Content:</div>
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+            {event.content ? (
               <ConversationMarkdownRenderer content={event.content} />
-            </div>
+            ) : (
+              <div className="text-xs text-gray-500 dark:text-gray-400 italic">
+                {event.tool_calls && event.tool_calls > 0 
+                  ? `No text content (${event.tool_calls} tool call${event.tool_calls > 1 ? 's' : ''} made)` 
+                  : 'No content generated'}
+              </div>
+            )}
           </div>
-        )}
+        </div>
         
       </div>
     </div>

@@ -56,14 +56,16 @@ const (
 	StreamingConnectionLost EventType = "streaming_connection_lost"
 
 	// Debug events
-	Debug       EventType = "debug"
-	Performance EventType = "performance"
-	TokenUsage  EventType = "token_usage"
-	ErrorDetail EventType = "error_detail"
+	Debug         EventType = "debug"
+	Performance   EventType = "performance"
+	TokenUsage    EventType = "token_usage"
+	LLMTokenUsage EventType = "llm_token_usage" // Per-call token usage (advanced mode only)
+	ErrorDetail   EventType = "error_detail"
 
 	// Event type aliases for backward compatibility
-	TokenUsageEventType  EventType = "token_usage"
-	ErrorDetailEventType EventType = "error_detail"
+	TokenUsageEventType    EventType = "token_usage"
+	LLMTokenUsageEventType EventType = "llm_token_usage"
+	ErrorDetailEventType   EventType = "error_detail"
 
 	// Large output events
 	LargeToolOutputDetected    EventType = "large_tool_output_detected"
@@ -159,11 +161,15 @@ const (
 
 	// Todo planning events
 	TodoStepsExtracted EventType = "todo_steps_extracted"
+	VariablesExtracted EventType = "variables_extracted"
 
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"
 	RequestHumanFeedback      EventType = "request_human_feedback"
 	BlockingHumanFeedback     EventType = "blocking_human_feedback"
+
+	// Step token usage event
+	StepTokenUsage EventType = "step_token_usage"
 )
 
 // Unified Event structure with hierarchy support
@@ -225,7 +231,8 @@ func GetComponentFromEventType(eventType EventType) string {
 		eventType == OrchestratorAgentStart || eventType == OrchestratorAgentEnd || eventType == OrchestratorAgentError ||
 		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
 		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
-		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted:
+		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted || eventType == VariablesExtracted ||
+		eventType == StepTokenUsage:
 		return "orchestrator"
 	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
 		return "agent"

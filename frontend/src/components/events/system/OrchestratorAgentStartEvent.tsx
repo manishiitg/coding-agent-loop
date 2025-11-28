@@ -1,21 +1,21 @@
-import React, { useState } from 'react';
+import React from 'react';
 import type { OrchestratorAgentStartEvent } from '../../../generated/events';
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
 
 interface OrchestratorAgentStartEventDisplayProps {
   event: OrchestratorAgentStartEvent;
+  isCollapsed?: boolean;
+  eventCount?: number;
+  onToggleCollapse?: () => void;
 }
 
-export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
-  
+export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';
     return new Date(timestamp).toLocaleTimeString();
   };
 
   const hasInputData = event.input_data && Object.keys(event.input_data).length > 0;
-  const hasExpandableContent = hasInputData || event.plan_id || event.step_index !== undefined || event.iteration !== undefined;
 
   const getLabel = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
@@ -121,13 +121,14 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
                   | Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
+                  {isCollapsed && eventCount !== undefined && ` | ${eventCount} events collapsed`}
                 </span>
               </div>
             </div>
           </div>
         </div>
         
-        {/* Right side: Time and expand button */}
+        {/* Right side: Time and expand buttons */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {event.timestamp && (
             <div className={`text-xs ${colors.textSecondary}`}>
@@ -135,27 +136,30 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
             </div>
           )}
           
-          {hasExpandableContent && (
+          {/* Session collapse/expand button */}
+          {onToggleCollapse && (
             <button 
-              onClick={() => setIsExpanded(!isExpanded)}
-              className={`${colors.textSecondary} ${colors.hover}`}
+              onClick={onToggleCollapse}
+              className={`${colors.textSecondary} ${colors.hover} px-1`}
+              aria-label={isCollapsed ? 'Expand session' : 'Collapse session'}
+              title={isCollapsed ? 'Expand session' : 'Collapse session'}
             >
-              {isExpanded ? '▼' : '▶'}
+              {isCollapsed ? '+' : '−'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Objective content - always visible with markdown rendering */}
-      {event.objective && (
+      {/* Objective content - only show when not collapsed */}
+      {!isCollapsed && event.objective && (
         <div className="mt-3">
           <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Objective:</div>
           <ConversationMarkdownRenderer content={event.objective} maxHeight="400px" />
         </div>
       )}
 
-      {/* Expandable content */}
-      {isExpanded && hasExpandableContent && (
+      {/* Expandable content - only show when not collapsed */}
+      {!isCollapsed && hasInputData && (
         <div className="mt-3 space-y-3">
           {/* Input Data */}
           {hasInputData && (

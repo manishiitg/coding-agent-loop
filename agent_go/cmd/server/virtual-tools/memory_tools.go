@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // MemoryAPIResponse represents the response structure from the memory API

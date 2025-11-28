@@ -1,19 +1,16 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import debounce from 'lodash.debounce'
 import { agentApi } from '../services/api'
-import type { PollingEvent, ActiveSessionInfo, OrchestratorExecutionMode } from '../services/api-types'
-import { EXECUTION_MODES } from '../services/api-types'
+import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
+import type { AgentMode } from '../stores/types'
 import { EventModeProvider } from './events'
 import { ChatInput, type ChatInputRef } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
-import { OrchestratorModeHandler, type OrchestratorModeHandlerRef } from './orchestrator/OrchestratorModeHandler'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { WORKFLOW_PHASES } from '../constants/workflow'
-import { OrchestratorExplanation } from './OrchestratorExplanation'
+import { getWorkflowPhases, getDefaultWorkflowPhase } from '../constants/workflow'
 import { WorkflowExplanation } from './WorkflowExplanation'
-import GuidanceFloatingIcon from './GuidanceFloatingIcon'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
@@ -21,6 +18,7 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
+import { VariablesIcon } from './workflow/VariablesIcon'
 
 interface ChatAreaProps {
   // New chat handler
@@ -36,9 +34,8 @@ export interface ChatAreaRef {
 
 
 // Inner component that can use the EventMode context
-const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
-  onNewChat
-}, ref) => {
+const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
+  const { onNewChat } = props
   // Ref for ChatInput to get code execution mode
   const chatInputRef = useRef<ChatInputRef>(null)
   
@@ -57,7 +54,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = usePresetApplication()
   
   const { 
-    primaryConfig: llmConfig
+    primaryConfig: llmConfig,
+    openrouterConfig,
+    openaiConfig,
+    anthropicConfig,
+    vertexConfig,
+    bedrockConfig
   } = useLLMStore()
   
   const { 
@@ -67,18 +69,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   
   // Determine which servers to use based on agent mode
   const effectiveServers = useMemo(() => {
-    // For workflow/deep-research modes, use preset servers
-    if (agentMode === 'workflow' || agentMode === 'orchestrator') {
+    // For workflow mode, use preset servers
+    if (agentMode === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
-    // For simple/ReAct modes, use manually selected servers
+    // For simple mode, use manually selected servers
     return selectedServers
   }, [agentMode, currentPresetServers, selectedServers])
   
   // Filter tools to only include those from effective servers
-  const enabledTools = allTools.filter(tool => 
-    tool.server && effectiveServers.includes(tool.server)
-  )
+  // If "NO_SERVERS" is selected, return empty tools (pure LLM mode)
+  const enabledTools = useMemo(() => {
+    if (effectiveServers.includes("NO_SERVERS")) {
+      return []
+    }
+    return allTools.filter(tool => 
+      tool.server && effectiveServers.includes(tool.server)
+    )
+  }, [allTools, effectiveServers])
   
   const {
     // Chat state
@@ -92,11 +100,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setPollingInterval,
     totalEvents,
     setTotalEvents,
-    lastEventCount,
     setLastEventCount,
     events,
     setEvents,
-    sessionId,
     setSessionId,
     setHasActiveChat,
     autoScroll,
@@ -130,16 +136,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
-    if (agentMode !== 'orchestrator' && agentMode !== 'workflow') return true; // No validation needed for other modes
-    
-    if (agentMode === 'orchestrator') {
-      // Deep Search mode requires Tasks/ folder
-      const hasTasksFolder = chatFileContext.some((file: { type: string; path: string }) => 
-        file.type === 'folder' && file.path.startsWith('Tasks/')
-      );
-      return hasTasksFolder;
-    } else if (agentMode === 'workflow') {
-      // Workflow mode requires Workflow/ folder
+    if (agentMode !== 'workflow') return true; // No validation needed for other modes
+
+    // Workflow mode requires Workflow/ folder
+    if (agentMode === 'workflow') {
       const hasWorkflowFolder = chatFileContext.some((file: { type: string; path: string }) => 
         file.type === 'folder' && file.path.startsWith('Workflow/')
       );
@@ -153,15 +153,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   // State for preset selection overlay
   const [showPresetSelection, setShowPresetSelection] = useState(false)
-  const [pendingModeCategory, setPendingModeCategory] = useState<'deep-research' | 'workflow' | null>(null)
+  const [pendingModeCategory, setPendingModeCategory] = useState<'workflow' | null>(null)
   
   // State for mode switch dialog
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
-  const [pendingModeSwitch, setPendingModeSwitch] = useState<'chat' | 'deep-research' | 'workflow' | null>(null)
+  const [pendingModeSwitch, setPendingModeSwitch] = useState<'chat' | 'workflow' | null>(null)
   
 
   // Handle mode selection from dropdown
-  const handleModeSelect = (category: 'chat' | 'deep-research' | 'workflow') => {
+  const handleModeSelect = (category: 'chat' | 'workflow') => {
     if (category === selectedModeCategory) {
       return
     }
@@ -181,20 +181,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
   }
 
-  // Handle mode switching with preset selection for Deep Research/Workflow
-  const handleModeSwitchWithPreset = (category: 'chat' | 'deep-research' | 'workflow') => {
+  // Handle mode switching with preset selection for Workflow
+  const handleModeSwitchWithPreset = (category: 'chat' | 'workflow') => {
     if (category === 'chat') {
       // Chat mode doesn't need preset selection
       // Clear any active presets when switching to chat mode
-      clearActivePreset('deep-research')
       clearActivePreset('workflow')
       switchMode(category)
     } else {
-      // Deep Research or Workflow mode - always show preset selection when switching between modes
+      // Workflow mode - always show preset selection when switching between modes
       // Clear the current mode's preset first
-      if (selectedModeCategory === 'deep-research') {
-        clearActivePreset('deep-research')
-      } else if (selectedModeCategory === 'workflow') {
+      if (selectedModeCategory === 'workflow') {
         clearActivePreset('workflow')
       }
       
@@ -213,14 +210,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   }
 
   // Switch mode function
-  const switchMode = (category: 'chat' | 'deep-research' | 'workflow') => {
+  const switchMode = (category: 'chat' | 'workflow') => {
     const { setModeCategory, getAgentModeFromCategory } = useModeStore.getState()
     const { setAgentMode } = useAppStore.getState()
     
     setModeCategory(category)
     
     // Set the corresponding agent mode using centralized mapping
-    const agentModeToSet = getAgentModeFromCategory(category) as 'simple' | 'ReAct' | 'orchestrator' | 'workflow'
+    const agentModeToSet = getAgentModeFromCategory(category) as AgentMode
     setAgentMode(agentModeToSet)
   }
 
@@ -254,11 +251,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Filter toasts to only include types supported by ToastContainer
   const filteredToasts = toasts.filter((toast: { type: string }) => toast.type === 'success' || toast.type === 'info') as Array<{id: string, message: string, type: 'success' | 'info'}>
   
-  // Handle guidance change (simplified - just log for now)
-  const handleGuidanceChange = useCallback(() => {
-    // Guidance updated
-  }, [])
-  
   // Handle mode switch dialog confirmation
   const handleModeSwitchConfirm = () => {
     if (pendingModeSwitch) {
@@ -282,44 +274,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Add ref for workflow mode handler
   const workflowModeHandlerRef = useRef<WorkflowModeHandlerRef>(null)
   
-  // Add ref for orchestrator mode handler
-  const orchestratorModeHandlerRef = useRef<OrchestratorModeHandlerRef>(null)
-  
-  
-  // Orchestrator execution mode state
-  const [orchestratorExecutionMode, setOrchestratorExecutionMode] = useState<OrchestratorExecutionMode>(EXECUTION_MODES.PARALLEL)
-  
-  // Performance metrics tracking (dev mode only)
-  const [performanceMetrics, setPerformanceMetrics] = useState({
-    renderCount: 0,
-    lastRenderTime: 0,
-    memoryEstimate: 0
-  })
-  
-  // Handle orchestrator execution mode change
-  const handleOrchestratorExecutionModeChange = useCallback((mode: OrchestratorExecutionMode) => {
-    setOrchestratorExecutionMode(mode)
-  }, [])
-  
-  // Track performance metrics when events change (dev mode only)
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      const startTime = performance.now()
-      
-      // Calculate memory estimate (rough approximation)
-      const memoryEstimate = events.reduce((total, event) => {
-        return total + JSON.stringify(event).length * 2 // Rough estimate
-      }, 0)
-
-      const endTime = performance.now()
-      
-      setPerformanceMetrics(prev => ({
-        renderCount: prev.renderCount + 1,
-        lastRenderTime: endTime - startTime,
-        memoryEstimate: Math.round(memoryEstimate / 1024) // KB
-      }))
-    }
-  }, [events])
   
   // Track processed completion events to avoid stopping on old ones
   const processedCompletionEventsRef = useRef<Set<string>>(new Set())
@@ -327,11 +281,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
   // Selected preset folder state
   const lastEventIndexRef = useRef<number>(-1)
   const totalEventsRef = useRef<number>(0)
-
-  // Toast wrapper for components that only support limited types
-  const addToastLimited = useCallback((message: string, type: 'success' | 'info') => {
-    addToast(message, type)
-  }, [addToast])
 
   // Immediate scroll handler for better responsiveness
   const handleScroll = useCallback(() => {
@@ -404,7 +353,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         behavior
       });
     });
-  }, []);
+  }, [])
+
+  // Callback to re-enable auto-scroll and scroll to bottom after feedback submission
+  const handleFeedbackSubmitted = useCallback(() => {
+    setAutoScroll(true)
+    scrollToBottom('smooth')
+  }, [setAutoScroll, scrollToBottom])
 
   // Auto-scroll to bottom when new events arrive (only if autoScroll is enabled)
   useEffect(() => {
@@ -455,6 +410,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     setCurrentWorkflowQueryId(presetId) // Store the preset query ID for workflow approval
     
     try {
+      // Get available phases from backend to validate status
+      const phases = await getWorkflowPhases()
+      const phaseIds = phases.map(p => p.id)
+      const defaultPhase = phases.length > 0 ? phases[0].id : 'variable-extraction'
+      
       // Check if workflow already exists for this preset
       const workflowStatus = await agentApi.getWorkflowStatus(presetId)
       
@@ -463,41 +423,44 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         const status = workflow.workflow_status
         
         // Set the workflow phase based on the database status
-        if (status === WORKFLOW_PHASES.POST_VERIFICATION) {
-          setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
-        } else if (status === WORKFLOW_PHASES.POST_VERIFICATION_TODO_REFINEMENT) {
-          setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION_TODO_REFINEMENT)
+        // Use the status if it's a valid phase ID, otherwise use default (first phase)
+        if (status && phaseIds.includes(status)) {
+          setCurrentWorkflowPhase(status)
         } else {
-          setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+          // Default to first phase if status is invalid or not found
+          setCurrentWorkflowPhase(defaultPhase)
         }
         
         // Use presetContent directly (this is the objective from preset query)
         setCurrentQuery(presetContent)
       } else {
-        // No workflow exists, proceed with normal flow
-        setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+        // No workflow exists, proceed with default phase
+        setCurrentWorkflowPhase(defaultPhase)
         setCurrentQuery(presetContent)
       }
     } catch (error) {
       console.error('[WORKFLOW] Error checking workflow status:', error)
-      // Fallback to normal flow on error
-      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+      // Fallback to default phase on error
+      const defaultPhase = await getDefaultWorkflowPhase()
+      setCurrentWorkflowPhase(defaultPhase)
       setCurrentQuery(presetContent)
     }
   }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId, clearFileContext])
 
-  const handleWorkflowPresetCleared = useCallback(() => {
+  const handleWorkflowPresetCleared = useCallback(async () => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null) // Clear the stored preset query ID
-    setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION) // Reset to preset selection phase
+    const defaultPhase = await getDefaultWorkflowPhase()
+    setCurrentWorkflowPhase(defaultPhase) // Reset to default phase
     setCurrentQuery('')
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase, setCurrentQuery])
   
   // Clear workflow state when starting a new chat
-  const clearWorkflowState = useCallback(() => {
+  const clearWorkflowState = useCallback(async () => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null)
-    setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+    const defaultPhase = await getDefaultWorkflowPhase()
+    setCurrentWorkflowPhase(defaultPhase)
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase])
 
   // Handle human verification actions
@@ -517,7 +480,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     
     try {
       // Determine next phase based on event data
-      const nextPhase = eventData?.next_phase || WORKFLOW_PHASES.POST_VERIFICATION
+      // If next_phase is provided, use it; otherwise get the second phase (planning) as default
+      let nextPhase = eventData?.next_phase
+      if (!nextPhase) {
+        const phases = await getWorkflowPhases()
+        // Use second phase (planning) if available, otherwise first phase
+        nextPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+      }
       
       // Update workflow status to the determined next phase
       await agentApi.updateWorkflow(presetQueryId, nextPhase)
@@ -684,13 +653,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         // Update last event index immediately
         setLastEventIndex(response.last_event_index)
         
-        // Add new events to batch for debounced processing
+        // Filter events first (synchronous)
         const newEvents = response.events.filter(event => {
-            
             // Detect request human feedback event and stop streaming
             if (event.type === 'request_human_feedback') {
               setIsStreaming(false)
               setIsCompleted(false) // Not completed, just paused for human input
+              
+              // Disable auto-scroll when human feedback is requested
+              setAutoScroll(false)
               
               // Stop polling when human feedback is requested
               if (pollingInterval) {
@@ -699,41 +670,48 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               }
             }
             
-            
             // Process workspace events using the centralized store
             const { processWorkspaceEvent } = useWorkspaceStore.getState()
             processWorkspaceEvent(event)
-
-            // Process workflow-specific events
-            if (agentMode === 'workflow') {
-              // Handle todo list generation from orchestrator agent
-              if (event.type === 'orchestrator_agent_end') {
-                const agentEvent = event.data?.orchestrator_agent_end
-                if (agentEvent?.agent_type === 'todo_planner') {
-
-                  const result = agentEvent.result || ''
-                  if (result) {
-                    // Only reset to PRE_VERIFICATION if workflow hasn't been approved yet
-                    // This prevents resetting the phase after user approval
-                    if (currentWorkflowPhase === WORKFLOW_PHASES.POST_VERIFICATION) {
-                      // Workflow already approved, keeping POST_VERIFICATION phase
-                    } else {
-                      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
-                    }
-                  }
-                }
-              }
-
-              // Handle workflow completion events
-              if (event.type === 'workflow_end') {
-                setCurrentWorkflowPhase(WORKFLOW_PHASES.POST_VERIFICATION)
-              }
-
-            }
             
             // Only filter out user_message events from backend since we add them immediately in submitQuery
             return event.type !== 'user_message'
           })
+          
+        // Process workflow-specific events asynchronously (after filtering)
+        if (agentMode === 'workflow') {
+          for (const event of response.events) {
+            // Handle todo list generation from workflow agent
+            // Note: orchestrator events removed, using agent_end events instead
+            if (event.type === 'agent_end') {
+              const agentEvent = event.data?.agent_end
+              if (agentEvent && (agentEvent as { agent_type?: string })?.agent_type === 'todo_planner') {
+                const result = (agentEvent as { result?: string })?.result || ''
+                if (result) {
+                  // Get phases to determine planning phase
+                  const phases = await getWorkflowPhases()
+                  const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+                  
+                  // Only reset to planning phase if workflow hasn't been approved yet
+                  // This prevents resetting the phase after user approval
+                  if (currentWorkflowPhase === planningPhase) {
+                    // Workflow already in planning phase, keep it
+                  } else {
+                    setCurrentWorkflowPhase(planningPhase)
+                  }
+                }
+              }
+            }
+
+            // Handle workflow completion events
+            if (event.type === 'workflow_end') {
+              // Get phases to determine completion phase (second phase = planning/execution)
+              const phases = await getWorkflowPhases()
+              const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+              setCurrentWorkflowPhase(completionPhase)
+            }
+          }
+        }
           
     // Add events to batch instead of immediately processing
     eventBatchRef.current.push(...newEvents)
@@ -749,17 +727,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           }
           
           // Completion detection based on agent mode
-          if (agentMode === 'orchestrator') {
-            // For Deep Search mode, only check Deep Search-specific events
-            // Don't check unified_completion as orchestrator uses multiple agents
-            return event.type === 'orchestrator_end' ||
-                   event.type === 'orchestrator_error'
-          } else if (agentMode === 'workflow') {
+          if (agentMode === 'workflow') {
             // For workflow mode, check workflow-specific events
             return event.type === 'workflow_end' ||
                    event.type === 'request_human_feedback'
           } else {
-            // For simple and ReAct modes, check standard completion events
+            // For simple mode, check standard completion events
             return event.type === 'unified_completion' ||
                    event.type === 'agent_end' ||
                    event.type === 'conversation_end' || 
@@ -791,7 +764,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           let hasError = false
           let finalResult = ''
           
-          if (agentMode !== 'orchestrator') {
+          if (agentMode !== 'workflow') {
             const unifiedCompletionEvent = completionEvents.find((event: PollingEvent) => 
               event.type === 'unified_completion'
             )
@@ -813,18 +786,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           
           // If no unified_completion event or no final result, check for individual error events
           if (!finalResult) {
-            if (agentMode === 'orchestrator') {
-              // For Deep Search mode, check Deep Search-specific errors
-              hasError = completionEvents.some((event: PollingEvent) => 
-                event.type === 'orchestrator_error'
-              )
-            } else if (agentMode === 'workflow') {
+            if (agentMode === 'workflow') {
               // For workflow mode, check workflow-specific errors
               hasError = completionEvents.some((event: PollingEvent) => 
-                event.type === 'agent_error'
+                event.type === 'agent_error' || 
+                event.type === 'workflow_error'
               )
             } else {
-              // For simple and ReAct modes, check standard errors
+              // For simple mode, check standard errors
               hasError = completionEvents.some((event: PollingEvent) => 
                 event.type === 'conversation_error' || 
                 event.type === 'agent_error'
@@ -848,19 +817,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
             for (const event of completionEvents) {
               let result: string | undefined
               
-              if (agentMode === 'orchestrator') {
-                // For Deep Search mode, only check orchestrator_end events
-                if (event.type === 'orchestrator_end' && event.data && typeof event.data === 'object') {
-                  if ('result' in event.data) {
-                    result = (event.data as { result?: string }).result
-                  } else if ('orchestrator_end' in event.data) {
-                    const orchData = (event.data as { orchestrator_end?: { result?: string } }).orchestrator_end
-                    if (orchData && orchData.result) {
-                      result = orchData.result
-                    }
-                  }
-                }
-              } else if (agentMode === 'workflow') {
+              if (agentMode === 'workflow') {
                 // For workflow mode, check workflow_end events
                 if (event.type === 'workflow_end' && event.data && typeof event.data === 'object') {
                   if ('result' in event.data) {
@@ -872,26 +829,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                     }
                   }
                 }
-                // Also check conversation_end events for workflow mode
-                if (!result && event.type === 'conversation_end' && event.data && typeof event.data === 'object') {
-                  if ('result' in event.data) {
-                    result = (event.data as { result?: string }).result
-                  } else if ('conversation_end' in event.data) {
-                    const convData = (event.data as { conversation_end?: { result?: string } }).conversation_end
-                    if (convData && convData.result) {
-                      result = convData.result
-                    }
-                  }
-                }
               } else {
-                // For simple and ReAct modes, check standard events
+                // For simple mode, check standard completion events
                 // Skip unified_completion events since we already handled them above
                 if (event.type === 'unified_completion') {
                   continue
                 }
                 
-                // Check legacy conversation_end events
-                if (!result && event.type === 'conversation_end' && event.data && typeof event.data === 'object') {
+                // Check conversation_end events
+                if (event.type === 'conversation_end' && event.data && typeof event.data === 'object') {
                   if ('result' in event.data) {
                     result = (event.data as { result?: string }).result
                   } else if ('conversation_end' in event.data) {
@@ -1039,6 +985,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
                           setIsStreaming(false)
                           setIsCompleted(false)
                           
+                          // Disable auto-scroll when human feedback is requested
+                          setAutoScroll(false)
+                          
                           // Stop polling when human feedback is requested
                           if (pollingInterval) {
                             clearInterval(pollingInterval)
@@ -1152,7 +1101,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
 
     // Reset event polling index so next workflow/chat starts fresh
-    // This prevents the frontend from missing orchestrator events
+    // This prevents the frontend from missing workflow events
     console.log('[STOP] Resetting event polling index for next workflow/chat')
     setLastEventIndex(-1)
     setLastEventCount(0)
@@ -1165,7 +1114,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     }
 
     // Add validation check for Tasks folder requirement in Deep Search and Workflow modes
-    if ((agentMode === 'orchestrator' || agentMode === 'workflow') && !isRequiredFolderSelected) {
+    if (agentMode === 'workflow' && !isRequiredFolderSelected) {
       console.error(
         '[SUBMIT] Validation failed -',
         agentMode === 'workflow' ? 'Workflow' : 'Tasks',
@@ -1279,10 +1228,42 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       const activePreset = selectedWorkflowPreset ? getActivePreset('workflow') : getActivePreset('chat')
       const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
       const chatInputUseCodeExecutionMode = agentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
-      const useCodeExecutionMode = presetUseCodeExecutionMode !== undefined ? presetUseCodeExecutionMode : chatInputUseCodeExecutionMode
       
-      // Submit query to backend
-      const response = await agentApi.startQuery({
+      // Determine final code execution mode value
+      // If preset has explicit value (true or false), use it
+      // Otherwise, for simple mode, use ChatInput value; for workflow mode, default to undefined (backend will handle)
+      let useCodeExecutionMode: boolean | undefined
+      if (presetUseCodeExecutionMode !== undefined) {
+        useCodeExecutionMode = presetUseCodeExecutionMode
+      } else if (agentMode === 'simple') {
+        useCodeExecutionMode = chatInputUseCodeExecutionMode
+      } else {
+        // For workflow mode without preset, don't set it (let backend use default)
+        useCodeExecutionMode = undefined
+      }
+      
+      console.log('[code_execution] [ChatArea] Mode determination:', {
+        activePreset: activePreset?.label,
+        presetUseCodeExecutionMode,
+        chatInputUseCodeExecutionMode,
+        agentMode,
+        finalUseCodeExecutionMode: useCodeExecutionMode
+      })
+      
+      // Build llm_config with API keys from provider configs
+      const llmConfigWithApiKeys = {
+        ...llmConfig,
+        api_keys: {
+          ...(openrouterConfig.api_key ? { openrouter: openrouterConfig.api_key } : {}),
+          ...(openaiConfig.api_key ? { openai: openaiConfig.api_key } : {}),
+          ...(anthropicConfig.api_key ? { anthropic: anthropicConfig.api_key } : {}),
+          ...(vertexConfig.api_key ? { vertex: vertexConfig.api_key } : {}),
+          ...(bedrockConfig.region ? { bedrock: { region: bedrockConfig.region } } : {}),
+        }
+      }
+      
+      // Prepare API request payload
+      const requestPayload = {
         query: enhancedQuery,
         agent_mode: agentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
@@ -1290,11 +1271,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? filteredPresetTools : undefined, // Only send when preset is active
         provider: llmConfig.provider,
         model_id: llmConfig.model_id,
-        llm_config: llmConfig,
+        llm_config: llmConfigWithApiKeys,
         preset_query_id: selectedWorkflowPreset || undefined,
-        orchestrator_execution_mode: agentMode === 'orchestrator' ? orchestratorExecutionMode : undefined,
-        use_code_execution_mode: useCodeExecutionMode || undefined,
+        // Send boolean value directly - don't use || undefined as it converts false to undefined
+        use_code_execution_mode: useCodeExecutionMode !== undefined ? useCodeExecutionMode : undefined,
+      }
+      
+      console.log('[code_execution] [ChatArea] API Request payload:', {
+        use_code_execution_mode: requestPayload.use_code_execution_mode,
+        type: typeof requestPayload.use_code_execution_mode,
+        preset_query_id: requestPayload.preset_query_id
       })
+      
+      // Submit query to backend
+      const response = await agentApi.startQuery(requestPayload)
 
       if (response.status === 'started' || response.status === 'workflow_started') {
         // Update session ID for subsequent requests
@@ -1316,11 +1306,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
       setHasActiveChat(false)
     }
 
-    // Reset orchestrator mode selection after submission
-    if (agentMode === 'orchestrator') {
-      orchestratorModeHandlerRef.current?.resetSelection?.()
-    }
-  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, orchestratorExecutionMode, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
+  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {
@@ -1339,8 +1325,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     
     // For workflow mode, preserve the selected preset but reset workflow phase
     if (agentMode === 'workflow' && selectedWorkflowPreset) {
-      // Keep the preset selected, just reset the workflow phase
-      setCurrentWorkflowPhase(WORKFLOW_PHASES.PRE_VERIFICATION)
+      // Keep the preset selected, just reset the workflow phase to default
+      getDefaultWorkflowPhase().then(defaultPhase => {
+        setCurrentWorkflowPhase(defaultPhase)
+      })
       // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
     } else {
       // For other modes, clear workflow state completely
@@ -1362,7 +1350,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
     
     // Call the parent's new chat handler
     onNewChat()
-  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, setOrchestratorExecutionMode, agentMode, selectedWorkflowPreset, setCurrentWorkflowPhase])
+  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, agentMode, selectedWorkflowPreset, setCurrentWorkflowPhase])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {
@@ -1412,14 +1400,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
       {/* Chat Content - Separated to prevent input re-renders */}
       <div ref={chatContentRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative">
-        {/* Auto-scroll indicator */}
-        {!autoScroll && (
-          <div className="absolute top-4 right-4 z-10">
-            <div className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-3 py-1 rounded-full text-xs font-medium shadow-sm border border-blue-200 dark:border-blue-700">
-              Auto-scroll disabled
-            </div>
-          </div>
-        )}
+        {/* Variables Icon - Top Right */}
+        <VariablesIcon onSubmitQuery={submitQueryWithQuery} />
         
         <div className="min-w-0 p-4">
           {/* Loading indicator for historical events */}
@@ -1468,33 +1450,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           {/* Show workflow explanation when in workflow mode but no preset selected */}
           <WorkflowExplanation agentMode={agentMode} selectedWorkflowPreset={selectedWorkflowPreset} />
 
-          {/* Show preset selection message when in workflow mode with preset selected but no workflow started */}
-          {agentMode === 'workflow' && selectedWorkflowPreset && !events.length && (
-            <div className="flex items-center justify-center py-12">
-              <div className="text-center max-w-md">
-                <div className="w-16 h-16 mx-auto mb-4 bg-blue-100 dark:bg-blue-900/20 rounded-full flex items-center justify-center">
-                  <svg className="w-8 h-8 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                  Preset Selected - Ready to Start Workflow
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  Your preset has been loaded. Enter your query below to begin the workflow execution with the selected tools and context.
-                </p>
-                <div className="flex items-center justify-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>Type your query in the input field below to start</span>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Show Deep Search explanation when in Deep Search mode */}
-          <OrchestratorExplanation agentMode={agentMode} />
 
 
         {agentMode === 'workflow' ? (
@@ -1509,20 +1466,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
           </WorkflowModeHandler>
-        ) : agentMode === 'orchestrator' ? (
-          <OrchestratorModeHandler
-            ref={orchestratorModeHandlerRef}
-            onExecutionModeChange={handleOrchestratorExecutionModeChange}
-          >
-            {/* Empty State - Show when no events and not in historical session */}
-            {!chatSessionId && events.length === 0 && !isStreaming && (
-              <ModeEmptyState modeCategory={selectedModeCategory} />
-            )}
-            
-            <EventDisplay />
-          </OrchestratorModeHandler>
         ) : (
           <>
             {/* Empty State - Show when no events and not in historical session */}
@@ -1530,7 +1475,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
           </>
         )}
         </div>
@@ -1544,27 +1489,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}
         />
-      )}
-      
-      {/* Streaming Status - Show at bottom when streaming */}
-      {isStreaming && !chatSessionId && (
-        <div className="px-3 py-1 border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
-          <div className="flex items-center justify-center gap-1 text-xs text-blue-600 dark:text-blue-400">
-            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
-            <span>Streaming</span>
-            <span>📊 {totalEvents} ({lastEventCount})</span>
-            
-            {/* Performance Metrics (Dev Mode Only) */}
-            {process.env.NODE_ENV === 'development' && (
-              <>
-                <span className="text-gray-500 dark:text-gray-400">|</span>
-                <span>Renders: {performanceMetrics.renderCount}</span>
-                <span>Memory: ~{performanceMetrics.memoryEstimate}KB</span>
-                <span>Render: {performanceMetrics.lastRenderTime.toFixed(1)}ms</span>
-              </>
-            )}
-          </div>
-        </div>
       )}
       
       {/* Historical Session Notice */}
@@ -1590,15 +1514,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>(({
         toasts={filteredToasts} 
         onRemoveToast={removeToast} 
       />
-      
-      {/* Floating Guidance Icon - Only show for Deep Search/workflow modes when streaming */}
-      {(agentMode === 'orchestrator' || agentMode === 'workflow') && !chatSessionId && isStreaming && (
-        <GuidanceFloatingIcon 
-          sessionId={sessionId}
-          onGuidanceChange={handleGuidanceChange}
-          onAddToast={addToastLimited}
-        />
-      )}
     </div>
   )
 })

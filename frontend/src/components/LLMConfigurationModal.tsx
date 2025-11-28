@@ -6,6 +6,7 @@ import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore } from '../stores'
 import type { LLMConfiguration, ExtendedLLMConfiguration } from '../services/api-types'
 import { AnthropicSection } from './AnthropicSection'
+import { OPENAI_MODELS } from '../utils/llmConfig'
 
 interface LLMConfigurationModalProps {
   isOpen: boolean
@@ -99,7 +100,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
   // Handle API key testing
   const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string) => {
-    if (!apiKey.trim()) return
+    // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
+    if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
+      return
+    }
 
     setApiKeyStatus(prev => ({ ...prev, [provider]: 'testing' }))
     setApiKeyErrors(prev => ({ ...prev, [provider]: null }))
@@ -154,6 +158,46 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [isOpen, onClose])
+
+  // Helper function to sync primaryConfig when provider config changes
+  const syncPrimaryConfig = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic', config: ExtendedLLMConfiguration) => {
+    if (primaryConfig.provider === provider) {
+      // If this provider is currently primary, sync the primaryConfig
+      const updatedPrimaryConfig: LLMConfiguration = {
+        provider: provider,
+        model_id: config.model_id,
+        fallback_models: config.fallback_models,
+        cross_provider_fallback: config.cross_provider_fallback
+      }
+      setPrimaryConfig(updatedPrimaryConfig)
+    }
+  }
+
+  // Wrapper functions that sync primaryConfig when provider is primary
+  const handleOpenrouterConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setOpenrouterConfig(config)
+    syncPrimaryConfig('openrouter', config)
+  }
+
+  const handleBedrockConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setBedrockConfig(config)
+    syncPrimaryConfig('bedrock', config)
+  }
+
+  const handleOpenaiConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setOpenaiConfig(config)
+    syncPrimaryConfig('openai', config)
+  }
+
+  const handleVertexConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setVertexConfig(config)
+    syncPrimaryConfig('vertex', config)
+  }
+
+  const handleAnthropicConfigUpdate = (config: ExtendedLLMConfiguration) => {
+    setAnthropicConfig(config)
+    syncPrimaryConfig('anthropic', config)
+  }
 
   // Handle primary provider selection
   const handleSetPrimaryProvider = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic') => {
@@ -355,8 +399,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'openrouter' && (
             <OpenRouterSection
               config={openrouterConfig}
-              onUpdate={setOpenrouterConfig}
-              onTestAPIKey={(apiKey) => handleTestAPIKey('openrouter', apiKey)}
+                onUpdate={handleOpenrouterConfigUpdate}
+              onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openrouter', apiKey, modelId)}
               apiKeyStatus={apiKeyStatus.openrouter}
               apiKeyError={apiKeyErrors.openrouter}
               isPrimary={primaryConfig.provider === 'openrouter'}
@@ -369,7 +413,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'bedrock' && (
                 <BedrockSection
                   config={bedrockConfig}
-                  onUpdate={setBedrockConfig}
+                  onUpdate={handleBedrockConfigUpdate}
                   onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('bedrock', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus}
                   apiKeyErrors={apiKeyErrors}
@@ -383,8 +427,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'openai' && (
                 <OpenAISection
                   config={openaiConfig}
-                  onUpdate={setOpenaiConfig}
-                  onTestAPIKey={(apiKey) => handleTestAPIKey('openai', apiKey)}
+                  onUpdate={handleOpenaiConfigUpdate}
+                  onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('openai', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.openai}
                   apiKeyError={apiKeyErrors.openai}
                   isPrimary={primaryConfig.provider === 'openai'}
@@ -397,8 +441,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'vertex' && (
                 <VertexSection
                   config={vertexConfig}
-                  onUpdate={setVertexConfig}
-                  onTestAPIKey={(apiKey: string) => handleTestAPIKey('vertex', apiKey)}
+                  onUpdate={handleVertexConfigUpdate}
+                  onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('vertex', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.vertex}
                   apiKeyError={apiKeyErrors.vertex}
                   isPrimary={primaryConfig.provider === 'vertex'}
@@ -411,8 +455,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               {activeTab === 'anthropic' && (
                 <AnthropicSection
                   config={anthropicConfig}
-                  onUpdate={setAnthropicConfig}
-                  onTestAPIKey={(apiKey: string) => handleTestAPIKey('anthropic', apiKey)}
+                  onUpdate={handleAnthropicConfigUpdate}
+                  onTestAPIKey={(apiKey, modelId) => handleTestAPIKey('anthropic', apiKey, modelId)}
                   apiKeyStatus={apiKeyStatus.anthropic}
                   apiKeyError={apiKeyErrors.anthropic}
                   isPrimary={primaryConfig.provider === 'anthropic'}
@@ -604,7 +648,7 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
                 className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey)}
+                onClick={() => onTestAPIKey(apiKey, config.model_id)}
                 disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"
@@ -1136,8 +1180,9 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
 // OpenAI Section Component
 function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
+  const [newCustomModel, setNewCustomModel] = useState('')
   
-  const { availableOpenAIModels } = useLLMStore()
+  const { availableOpenAIModels, customOpenAIModels, addCustomOpenAIModel, removeCustomOpenAIModel } = useLLMStore()
 
   // Update local state when config changes (e.g., when loaded from backend)
   useEffect(() => {
@@ -1151,7 +1196,31 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
     onUpdate({ ...config, api_key: newApiKey })
   }
 
-  const allModels = availableOpenAIModels
+  // Combine backend models, constant models, and custom models (deduplicated)
+  const allModels = Array.from(new Set([
+    ...OPENAI_MODELS,
+    ...availableOpenAIModels,
+    ...customOpenAIModels
+  ]))
+
+  const handleAddCustomModel = () => {
+    if (newCustomModel.trim() && !allModels.includes(newCustomModel.trim())) {
+      addCustomOpenAIModel(newCustomModel.trim())
+      setNewCustomModel('')
+      
+      // Refresh available LLMs in the store to sync with ChatInput
+      const { refreshAvailableLLMs } = useLLMStore.getState()
+      refreshAvailableLLMs()
+    }
+  }
+  
+  const handleRemoveCustomModel = (model: string) => {
+    removeCustomOpenAIModel(model)
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
+  }
 
   return (
     <div className="space-y-6">
@@ -1192,7 +1261,7 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                 className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey)}
+                onClick={() => onTestAPIKey(apiKey, config.model_id)}
                 disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"
@@ -1264,6 +1333,55 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
               ))}
             </select>
           </div>
+        </div>
+      </Card>
+
+      {/* Custom Models */}
+      <Card className="p-4">
+        <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
+        
+        {/* Add Custom Model */}
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newCustomModel}
+              onChange={(e) => setNewCustomModel(e.target.value)}
+              placeholder="Enter custom model ID (e.g., gpt-4.1, gpt-4-turbo)"
+              className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+              onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()}
+            />
+            <Button
+              onClick={handleAddCustomModel}
+              disabled={!newCustomModel.trim() || allModels.includes(newCustomModel.trim())}
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          
+          {/* Custom Models List */}
+          {customOpenAIModels.length > 0 && (
+            <div className="space-y-2">
+              <h5 className="text-sm font-medium text-muted-foreground">Custom Models:</h5>
+              <div className="space-y-1">
+                {customOpenAIModels.map((model) => (
+                  <div key={model} className="flex items-center justify-between bg-muted/50 p-2 rounded-md">
+                    <span className="text-sm text-foreground font-mono">{model}</span>
+                    <Button
+                      onClick={() => handleRemoveCustomModel(model)}
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -1370,7 +1488,8 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
 // Vertex Section Component
 function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
-  const { availableVertexModels } = useLLMStore()
+  const [newCustomModel, setNewCustomModel] = useState('')
+  const { availableVertexModels, customVertexModels, addCustomVertexModel, removeCustomVertexModel } = useLLMStore()
 
   useEffect(() => {
     if (config.api_key) {
@@ -1383,7 +1502,34 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
     onUpdate({ ...config, api_key: newApiKey })
   }
 
-  const allModels = availableVertexModels.length > 0 ? availableVertexModels : ['gemini-2.5-flash', 'gemini-2.5-pro']
+  const allModels = [...(availableVertexModels.length > 0 ? availableVertexModels : ['gemini-2.5-flash', 'gemini-2.5-pro']), ...customVertexModels]
+
+  // Auto-select first model if no model is selected
+  useEffect(() => {
+    if (!config.model_id && allModels.length > 0) {
+      onUpdate({ ...config, model_id: allModels[0] })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allModels.length]) // Only run when models list changes
+
+  const handleAddCustomModel = () => {
+    if (newCustomModel.trim() && !allModels.includes(newCustomModel.trim())) {
+      addCustomVertexModel(newCustomModel.trim())
+      setNewCustomModel('')
+      
+      // Refresh available LLMs in the store to sync with ChatInput
+      const { refreshAvailableLLMs } = useLLMStore.getState()
+      refreshAvailableLLMs()
+    }
+  }
+  
+  const handleRemoveCustomModel = (model: string) => {
+    removeCustomVertexModel(model)
+    
+    // Refresh available LLMs in the store to sync with ChatInput
+    const { refreshAvailableLLMs } = useLLMStore.getState()
+    refreshAvailableLLMs()
+  }
 
   return (
     <div className="space-y-6">
@@ -1397,8 +1543,30 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <Key className="w-4 h-4 text-muted-foreground" />
-            <h4 className="font-medium text-foreground">API Key</h4>
+            <h4 className="font-medium text-foreground">API Key (Optional)</h4>
           </div>
+          {/* Info about authentication methods */}
+          <div className="text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md border border-blue-200 dark:border-blue-800">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-medium mb-1">Authentication Methods</p>
+                <p className="text-xs">API key is optional. If not provided, the system will automatically try: 1) gcloud CLI auth, 2) Service Account (GOOGLE_APPLICATION_CREDENTIALS), 3) Application Default Credentials.</p>
+              </div>
+            </div>
+          </div>
+          {/* Info about Anthropic models */}
+          {config.model_id && config.model_id.startsWith('claude-') && (
+            <div className="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-medium mb-1">Anthropic Model Detected</p>
+                  <p className="text-xs">This model requires <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">VERTEX_PROJECT_ID</code> and <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">VERTEX_LOCATION_ID</code> environment variables set on the server. Authentication uses gcloud auth, service account, or Application Default Credentials.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {apiKey && (
             <div className="text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md">
               <div className="flex items-center gap-2">
@@ -1413,12 +1581,12 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                 type="password"
                 value={apiKey}
                 onChange={(e) => handleAPIKeyChange(e.target.value)}
-                placeholder="Enter your Vertex AI API key"
-                className="flex-1❇ px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+                placeholder="Enter your Vertex AI API key (optional)"
+                className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey)}
-                disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
+                onClick={() => onTestAPIKey(apiKey || '', config.model_id)}
+                disabled={apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"
               >
@@ -1433,13 +1601,18 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
                 )}
               </Button>
             </div>
+            {!apiKey && (
+              <div className="text-xs text-muted-foreground">
+                No API key provided - will test using OAuth authentication (gcloud/service account/ADC). Make sure GOOGLE_CLOUD_PROJECT or VERTEX_PROJECT_ID is set.
+              </div>
+            )}
             {apiKey && (
               <div className="text-xs text-muted-foreground">
                 <button onClick={() => handleAPIKeyChange('')} className="text-primary hover:underline">Clear and enter new key</button>
               </div>
             )}
-            {apiKeyStatus === 'valid' && <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1"><CheckCircle className="w-4 h-4" />API key is valid</div>}
-            {apiKeyStatus === 'invalid' && <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{apiKeyError || 'API key is invalid'}</div>}
+            {apiKeyStatus === 'valid' && <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1"><CheckCircle className="w-4 h-4" />Authentication successful</div>}
+            {apiKeyStatus === 'invalid' && <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{apiKeyError || 'Authentication failed'}</div>}
             {apiKeyStatus === 'timeout' && <div className="text-sm text-yellow-600 dark:text-yellow-400 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{apiKeyError || 'Validation timeout - check your connection'}</div>}
           </div>
         </div>
@@ -1449,10 +1622,64 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
         <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium text-muted-foreground mb-2">Primary Model</label>
-            <select value={config.model_id} onChange={(e) => onUpdate({ ...config, model_id: e.target.value })} className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary">
+            <select 
+              value={config.model_id || ''} 
+              onChange={(e) => onUpdate({ ...config, model_id: e.target.value })} 
+              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+            >
+              {!config.model_id && <option value="">Select a model</option>}
               {allModels.map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
           </div>
+        </div>
+      </Card>
+
+      {/* Custom Models */}
+      <Card className="p-4">
+        <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
+        
+        {/* Add Custom Model */}
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newCustomModel}
+              onChange={(e) => setNewCustomModel(e.target.value)}
+              placeholder="Enter custom model ID (e.g., gemini-2.0-flash-exp or claude-sonnet-4-5)"
+              className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+              onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()}
+            />
+            <Button
+              onClick={handleAddCustomModel}
+              disabled={!newCustomModel.trim() || allModels.includes(newCustomModel.trim())}
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          
+          {/* Custom Models List */}
+          {customVertexModels.length > 0 && (
+            <div className="space-y-2">
+              <h5 className="text-sm font-medium text-muted-foreground">Custom Models:</h5>
+              <div className="space-y-1">
+                {customVertexModels.map((model) => (
+                  <div key={model} className="flex items-center justify-between bg-muted/50 p-2 rounded-md">
+                    <span className="text-sm text-foreground font-mono">{model}</span>
+                    <Button
+                      onClick={() => handleRemoveCustomModel(model)}
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
       <Card className="p-4">

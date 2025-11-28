@@ -14,15 +14,15 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcpagent/llm"
-	"mcpagent/observability"
-	"mcpagent/logger"
-	"mcpagent/events"
 	"mcpagent/agent/codeexec"
 	"mcpagent/agent/prompt"
+	"mcpagent/events"
+	"mcpagent/llm"
+	"mcpagent/logger"
 	"mcpagent/mcpcache"
 	"mcpagent/mcpcache/codegen"
 	"mcpagent/mcpclient"
+	"mcpagent/observability"
 )
 
 // CustomTool represents a custom tool with its definition and execution function
@@ -2041,6 +2041,19 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		Definition: tool,
 		Execution:  executionFunc,
 		Category:   toolCategory,
+	}
+
+	// 🔧 CRITICAL FIX: Add custom tools to toolToServer mapping with special "custom" marker
+	// This ensures they're recognized during tool lookup even when NoServers is used
+	if a.toolToServer == nil {
+		a.toolToServer = make(map[string]string)
+		if a.Logger != nil {
+			a.Logger.Debugf("🔧 [TOOL_REGISTRATION] Initialized toolToServer map for custom tools")
+		}
+	}
+	a.toolToServer[name] = "custom"
+	if a.Logger != nil {
+		a.Logger.Debugf("🔧 [TOOL_REGISTRATION] Added custom tool '%s' to toolToServer mapping (category: %s)", name, toolCategory)
 	}
 
 	// In code execution mode, do NOT add custom tools to LLM tools list

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"llm-providers/llmtypes"
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
@@ -975,7 +974,8 @@ func extractToolCallsFromMessages(messages []llmtypes.MessageContent) []string {
 	return result
 }
 
-// registerPlanModificationTools registers all plan modification tools (human_feedback and plan update tools)
+// registerPlanModificationTools registers all plan modification tools (plan update tools only)
+// Note: human_feedback is NOT registered here because it's already included in WorkspaceTools
 // This shared function is used by both planning agent and plan improvement agent
 func registerPlanModificationTools(
 	mcpAgent *mcpagent.Agent,
@@ -985,38 +985,8 @@ func registerPlanModificationTools(
 	writeFile func(context.Context, string, string) error,
 	agentName string, // e.g., "planning agent" or "plan improvement agent"
 ) error {
-	// Register human_feedback tool first (required before making plan changes)
-	humanTools := virtualtools.CreateHumanTools()
-	humanToolExecutors := virtualtools.CreateHumanToolExecutors()
-	if len(humanTools) > 0 && len(humanToolExecutors) > 0 {
-		humanTool := humanTools[0] // Get the first (and only) human tool
-		if humanTool.Function != nil {
-			// Convert Parameters to map[string]interface{}
-			var params map[string]interface{}
-			if humanTool.Function.Parameters != nil {
-				paramsBytes, err := json.Marshal(humanTool.Function.Parameters)
-				if err == nil {
-					json.Unmarshal(paramsBytes, &params)
-				}
-			}
-			if params != nil {
-				if executor, exists := humanToolExecutors[humanTool.Function.Name]; exists {
-					// human_feedback is a human tool, category is "human"
-					if err := mcpAgent.RegisterCustomTool(
-						humanTool.Function.Name,
-						humanTool.Function.Description,
-						params,
-						executor,
-						"human",
-					); err != nil {
-						logger.Errorf("❌ Failed to register human_feedback tool: %v", err)
-					} else {
-						logger.Infof("✅ Registered human_feedback tool for %s", agentName)
-					}
-				}
-			}
-		}
-	}
+	// Note: human_feedback is already registered via WorkspaceTools (created by createCustomTools in server.go)
+	// No need to register it again here to avoid duplicate registration errors
 
 	// Register workflow-specific plan tools with "workflow" category
 	updateSchema := getUpdatePlanStepsSchema()

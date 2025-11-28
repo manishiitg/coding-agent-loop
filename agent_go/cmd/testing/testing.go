@@ -37,9 +37,9 @@ Examples:
   orchestrator test agent --comprehensive-aws --provider bedrock
   orchestrator test agent --complex --provider openai
   
-  # ReAct comprehensive testing
-  orchestrator test comprehensive-react --provider openrouter
-  orchestrator test comprehensive-react --provider bedrock --verbose
+  # Simple comprehensive testing
+  orchestrator test comprehensive-simple --provider openrouter
+  orchestrator test comprehensive-simple --provider bedrock --verbose
   
   # Max tokens flexibility testing
   orchestrator test max-tokens-flexibility --provider bedrock --verbose
@@ -94,7 +94,7 @@ func initTestingCommands() {
 	// Note: LLM provider tests (anthropic, bedrock, openai, vertex, etc.) are now in llm-providers/
 	// Use ./bin/llm-test for comprehensive provider testing
 	TestingCmd.AddCommand(agentCmd)
-	TestingCmd.AddCommand(comprehensiveReactCmd)
+	TestingCmd.AddCommand(comprehensiveSimpleCmd)
 	TestingCmd.AddCommand(langfuseCmd)
 	TestingCmd.AddCommand(awsTestCmd)
 	TestingCmd.AddCommand(mcpCacheTestCmd) // MCP Connection Caching Test

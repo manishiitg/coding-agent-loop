@@ -1401,21 +1401,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed via generated Go code using discover_code_files and write_code
 			UseCodeExecutionMode: useCodeExecutionMode,
-			// Convert API keys from request to wrapper format
-			APIKeys: func() *agent.WrapperAPIKeys {
+			// Convert API keys from request to LLM format
+			APIKeys: func() *llm.ProviderAPIKeys {
 				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
-					wrapperKeys := &agent.WrapperAPIKeys{
+					llmKeys := &llm.ProviderAPIKeys{
 						OpenRouter: req.LLMConfig.APIKeys.OpenRouter,
 						OpenAI:     req.LLMConfig.APIKeys.OpenAI,
 						Anthropic:  req.LLMConfig.APIKeys.Anthropic,
 						Vertex:     req.LLMConfig.APIKeys.Vertex,
 					}
 					if req.LLMConfig.APIKeys.Bedrock != nil {
-						wrapperKeys.Bedrock = &agent.WrapperBedrockConfig{
+						llmKeys.Bedrock = &llm.BedrockConfig{
 							Region: req.LLMConfig.APIKeys.Bedrock.Region,
 						}
 					}
-					return wrapperKeys
+					return llmKeys
 				}
 				return nil
 			}(),
@@ -1507,9 +1507,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Register each custom tool with the agent
 			// This will trigger code generation and update the registry
+			// Note: Workspace tools are already registered above, skip them in allTools
 			for _, tool := range allTools {
 				if tool.Function != nil {
 					toolName := tool.Function.Name
+
+					// Skip workspace tools - already registered above
+					if toolCategories[toolName] == virtualtools.GetWorkspaceToolCategory() {
+						continue
+					}
+
 					if executor, exists := allExecutors[toolName]; exists {
 						// Convert executor to the expected function signature
 						if execFunc, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {

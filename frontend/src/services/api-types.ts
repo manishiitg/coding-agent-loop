@@ -482,7 +482,7 @@ export interface PresetQuery {
   selected_folder?: string; // Single folder path (nullable)
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
-  use_code_execution_mode?: string; // JSON string (boolean as string from DB)
+  use_code_execution_mode?: boolean;
   is_predefined: boolean;
   created_at: string;
   updated_at: string;

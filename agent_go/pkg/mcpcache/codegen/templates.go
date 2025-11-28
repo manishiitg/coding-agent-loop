@@ -122,54 +122,6 @@ func GenerateStruct(goStruct *GoStruct) string {
 	return builder.String()
 }
 
-// GenerateFunction generates a Go function that calls MCP tool via HTTP API
-// Note: This function is kept for backward compatibility but uses HTTP API now
-func GenerateFunction(toolName string, structName string, actualToolName string) string {
-	funcName := sanitizeFunctionName(toolName)
-
-	var builder strings.Builder
-
-	// Function signature - simple parameters map (no context needed for HTTP calls)
-	builder.WriteString(fmt.Sprintf("func %s(params map[string]interface{}) (string, error) {\n", funcName))
-
-	// Get API URL from environment or use default
-	builder.WriteString("\tapiURL := os.Getenv(\"MCP_API_URL\")\n")
-	builder.WriteString("\tif apiURL == \"\" {\n")
-	builder.WriteString("\t\tapiURL = \"http://localhost:8000\"\n")
-	builder.WriteString("\t}\n\n")
-
-	// Build request payload
-	builder.WriteString("\treqBody, _ := json.Marshal(map[string]interface{}{\n")
-	builder.WriteString("\t\t\"server\": os.Getenv(\"MCP_SERVER_NAME\"),\n")
-	builder.WriteString(fmt.Sprintf("\t\t\"tool\":   \"%s\",\n", actualToolName))
-	builder.WriteString("\t\t\"args\":   params,\n")
-	builder.WriteString("\t})\n\n")
-
-	// Make HTTP request
-	builder.WriteString("\tresp, err := http.Post(apiURL+\"/api/mcp/execute\", \"application/json\", bytes.NewBuffer(reqBody))\n")
-	builder.WriteString("\tif err != nil {\n")
-	builder.WriteString("\t\treturn \"\", err\n")
-	builder.WriteString("\t}\n")
-	builder.WriteString("\tdefer resp.Body.Close()\n\n")
-
-	// Parse response
-	builder.WriteString("\tvar result struct {\n")
-	builder.WriteString("\t\tSuccess bool   `json:\"success\"`\n")
-	builder.WriteString("\t\tResult  string `json:\"result\"`\n")
-	builder.WriteString("\t\tError   string `json:\"error\"`\n")
-	builder.WriteString("\t}\n")
-	builder.WriteString("\tjson.NewDecoder(resp.Body).Decode(&result)\n\n")
-
-	// Handle response
-	builder.WriteString("\tif !result.Success {\n")
-	builder.WriteString("\t\treturn \"\", fmt.Errorf(result.Error)\n")
-	builder.WriteString("\t}\n")
-	builder.WriteString("\treturn result.Result, nil\n")
-	builder.WriteString("}\n\n")
-
-	return builder.String()
-}
-
 // GenerateFunctionWithParams generates a Go function that accepts typed struct and calls MCP API via HTTP
 func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolName string, toolDescription string, serverName string, timeout time.Duration) string {
 	funcName := sanitizeFunctionName(toolName)
@@ -211,13 +163,8 @@ func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolN
 	builder.WriteString("//\n")
 
 	// Function signature - typed struct parameter
-	var paramType string
-	if goStruct != nil && len(goStruct.Fields) > 0 {
-		paramType = goStruct.Name
-	} else {
-		// For tools with no parameters, still use a struct but it will be empty
-		paramType = goStruct.Name
-	}
+	// Use struct name for parameter type (empty struct if no fields)
+	paramType := goStruct.Name
 	builder.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, paramType))
 
 	// Convert struct to map for API call with proper error handling
@@ -286,12 +233,8 @@ func GenerateCustomToolFunction(toolName string, goStruct *GoStruct, actualToolN
 	builder.WriteString("//\n")
 
 	// Function signature - typed struct parameter
-	var paramType string
-	if goStruct != nil && len(goStruct.Fields) > 0 {
-		paramType = goStruct.Name
-	} else {
-		paramType = goStruct.Name
-	}
+	// Use struct name for parameter type (empty struct if no fields)
+	paramType := goStruct.Name
 	builder.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, paramType))
 
 	// Convert struct to map for API call with proper error handling
@@ -359,12 +302,8 @@ func GenerateVirtualToolFunction(toolName string, goStruct *GoStruct, actualTool
 	builder.WriteString("//\n")
 
 	// Function signature - typed struct parameter
-	var paramType string
-	if goStruct != nil && len(goStruct.Fields) > 0 {
-		paramType = goStruct.Name
-	} else {
-		paramType = goStruct.Name
-	}
+	// Use struct name for parameter type (empty struct if no fields)
+	paramType := goStruct.Name
 	builder.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, paramType))
 
 	// Convert struct to map for API call with error handling

@@ -161,23 +161,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               llmConfig = undefined
             }
             
-            // Parse use_code_execution_mode safely
-            let useCodeExecutionMode: boolean | undefined
-            try {
-              if (preset.use_code_execution_mode !== undefined && preset.use_code_execution_mode !== null) {
-                if (typeof preset.use_code_execution_mode === 'string') {
-                  // Could be "true"/"false" string or JSON string
-                  const parsed = preset.use_code_execution_mode === 'true' || preset.use_code_execution_mode === '1'
-                  useCodeExecutionMode = parsed
-                } else if (typeof preset.use_code_execution_mode === 'boolean') {
-                  useCodeExecutionMode = preset.use_code_execution_mode
-                }
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing use_code_execution_mode:', error)
-              useCodeExecutionMode = undefined
-            }
-            
             return {
               id: preset.id,
               label: preset.label,
@@ -188,7 +171,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
               selectedFolder,
               llmConfig,
-              useCodeExecutionMode
+              useCodeExecutionMode: preset.use_code_execution_mode
             }
           })
           
@@ -223,23 +206,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 }
               }
               
-              // Parse use_code_execution_mode safely
-              let useCodeExecutionMode: boolean | undefined
-              try {
-                if (preset.use_code_execution_mode !== undefined && preset.use_code_execution_mode !== null) {
-                  if (typeof preset.use_code_execution_mode === 'string') {
-                    // Could be "true"/"false" string or JSON string
-                    const parsed = preset.use_code_execution_mode === 'true' || preset.use_code_execution_mode === '1'
-                    useCodeExecutionMode = parsed
-                  } else if (typeof preset.use_code_execution_mode === 'boolean') {
-                    useCodeExecutionMode = preset.use_code_execution_mode
-                  }
-                }
-              } catch (error) {
-                console.error('[PRESET] Error parsing use_code_execution_mode:', error)
-                useCodeExecutionMode = undefined
-              }
-              
               return {
                 id: preset.id,
                 label: preset.label,
@@ -249,7 +215,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
                 selectedFolder,
                 llmConfig,
-                useCodeExecutionMode
+                useCodeExecutionMode: preset.use_code_execution_mode
               }
             })
           
@@ -451,14 +417,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           'operation': id ? 'UPDATE' : 'CREATE'
         })
         
-        // Ensure useCodeExecutionMode is always a boolean (never undefined)
-        const codeExecutionModeToPass = useCodeExecutionMode === undefined ? false : useCodeExecutionMode
-        
-        console.log('[code_execution] [PRESET_STORE] Code execution mode:', {
-          original: useCodeExecutionMode,
-          passed: codeExecutionModeToPass,
-          type: typeof codeExecutionModeToPass
-        })
         
         if (id) {
           // Update existing preset
@@ -482,12 +440,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               request.llm_config = llmConfig
             }
             
-            // Include code execution mode - always send it if it's a boolean (true or false)
-            if (codeExecutionModeToPass !== undefined) {
-              request.use_code_execution_mode = codeExecutionModeToPass
-              console.log('[code_execution] [PRESET_STORE] Including code execution mode in update request:', codeExecutionModeToPass)
-            } else {
-              console.log('[code_execution] [PRESET_STORE] Code execution mode is undefined, not including in request')
+            // Include code execution mode if provided
+            if (useCodeExecutionMode !== undefined) {
+              request.use_code_execution_mode = useCodeExecutionMode
+              console.log('[code_execution] [PRESET_STORE] Including code execution mode in update request:', useCodeExecutionMode)
             }
             
             console.log('[code_execution] [PRESET_STORE] Updating preset with request:', {
@@ -509,7 +465,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                       agentMode,
                       selectedFolder,
                       llmConfig,
-                      useCodeExecutionMode: codeExecutionModeToPass
+                      useCodeExecutionMode
                     }
                   : preset
               )
@@ -544,12 +500,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               request.llm_config = llmConfig
             }
             
-            // Include code execution mode - always send it if it's a boolean (true or false)
-            if (codeExecutionModeToPass !== undefined) {
-              request.use_code_execution_mode = codeExecutionModeToPass
-              console.log('[code_execution] [PRESET_STORE] Including code execution mode in create request:', codeExecutionModeToPass)
-            } else {
-              console.log('[code_execution] [PRESET_STORE] Code execution mode is undefined, not including in request')
+            // Include code execution mode if provided
+            if (useCodeExecutionMode !== undefined) {
+              request.use_code_execution_mode = useCodeExecutionMode
+              console.log('[code_execution] [PRESET_STORE] Including code execution mode in create request:', useCodeExecutionMode)
             }
             
             console.log('[code_execution] [PRESET_STORE] Creating preset with request:', {
@@ -569,7 +523,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               agentMode,
               selectedFolder,
               llmConfig,
-              useCodeExecutionMode: codeExecutionModeToPass
+              useCodeExecutionMode
             }
             
             set(state => ({

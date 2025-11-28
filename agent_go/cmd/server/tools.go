@@ -763,10 +763,11 @@ func (api *StreamingAPI) getOrCreateMCPClient(ctx context.Context, serverName st
 		api.logger.Warnf("Failed to create temp merged config, using base config: %v", err)
 		tmpConfigPath = api.mcpConfigPath
 	} else {
-		// Schedule cleanup
-		go func() {
-			time.Sleep(5 * time.Minute)
-			os.Remove(tmpConfigPath)
+		// Clean up temp file when done with deterministic cleanup
+		defer func() {
+			if err := os.Remove(tmpConfigPath); err != nil {
+				api.logger.Warnf("Failed to remove temp config file %s: %v", tmpConfigPath, err)
+			}
 		}()
 	}
 

@@ -184,8 +184,8 @@ func WithSelectedServers(servers []string) AgentOption {
 }
 
 // WithCodeExecutionMode enables/disables code execution mode
-// When enabled: Only virtual tools (discover_code_structure, discover_code_files, write_code) are added to LLM
-// MCP tools are NOT added directly - LLM must use generated Go code via write_code
+// When enabled: Only virtual tools (discover_code_files, write_code) are exposed to the LLM
+// MCP tools and custom tools are NOT added directly - LLM must use generated Go code via write_code
 // When disabled (default): All MCP tools are added directly as LLM tools
 func WithCodeExecutionMode(enabled bool) AgentOption {
 	return func(a *Agent) {
@@ -294,8 +294,8 @@ type Agent struct {
 	DiscoverPrompt bool // If true, include prompt details in system prompt (default: true)
 
 	// Code execution mode configuration
-	// When enabled: Only virtual tools (discover_code_structure, discover_code_files, write_code) are added to LLM
-	// MCP tools are NOT added directly - LLM must use generated Go code via write_code
+	// When enabled: Only virtual tools (discover_code_files, write_code) are exposed to the LLM
+	// MCP tools and custom tools are NOT added directly - LLM must use generated Go code via write_code
 	// When disabled (default): All MCP tools are added directly as LLM tools
 	UseCodeExecutionMode bool
 
@@ -547,7 +547,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// Handle code execution mode: filter out MCP tools and custom tools if enabled
 	var toolsToUse []llmtypes.Tool
 	if ag.UseCodeExecutionMode {
-		// Code execution mode: Only include virtual tools (discover_code_structure, discover_code_files, write_code)
+		// Code execution mode: Only include virtual tools (discover_code_files, write_code)
 		// Exclude all MCP server tools and custom tools (they'll be accessed via generated code)
 		logger.Infof("🔧 Code execution mode enabled - excluding MCP tools and custom tools from LLM (will use generated code)")
 
@@ -564,7 +564,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 			isCustomTool := customToolNames[tool.Function.Name]
 
 			// In code execution mode, exclude both MCP tools and custom tools
-			// Only include virtual tools (which will be filtered later to only discover_code_structure, discover_code_files, and write_code)
+			// Only include virtual tools (which will be filtered later to only discover_code_files and write_code)
 			if !isMCPTool && !isCustomTool {
 				// Not an MCP tool or custom tool - include it (virtual tools only)
 				toolsToUse = append(toolsToUse, tool)

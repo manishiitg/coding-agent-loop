@@ -76,23 +76,8 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 	}
 
 	// Check if package directory exists
-	packageDirExists := false
-	if serverName == "virtual_tools" || serverName == "custom_tools" {
-		// For virtual_tools and custom_tools, check if directory exists
-		if _, err := os.Stat(packageDir); err == nil {
-			packageDirExists = true
-		}
-	} else if strings.HasSuffix(serverName, "_tools") {
-		// Category directory (workspace_tools, human_tools, etc.)
-		if _, err := os.Stat(packageDir); err == nil {
-			packageDirExists = true
-		}
-	} else {
-		// MCP server - check if directory exists
-		if _, err := os.Stat(packageDir); err == nil {
-			packageDirExists = true
-		}
-	}
+	_, err := os.Stat(packageDir)
+	packageDirExists := err == nil
 
 	// Apply filtering using unified ToolFilter
 	// Check if server/package should be included based on filtering configuration
@@ -756,7 +741,11 @@ func (a *Agent) validateCodeForForbiddenFileIO(code string) error {
 
 				// Check os package function calls
 				if packageName == "os" && hasOSImport {
-					if forbiddenOSFunctions[functionName] && !allowedOSFunctions[functionName] {
+					// Whitelist behavior: check allowed first, then apply forbidden logic
+					if allowedOSFunctions[functionName] {
+						// Function is explicitly allowed, skip forbidden check
+					} else if forbiddenOSFunctions[functionName] {
+						// Function is not allowed and is in forbidden list
 						validationErr.ForbiddenCalls = append(validationErr.ForbiddenCalls, fmt.Sprintf("os.%s", functionName))
 					}
 				}
@@ -1391,6 +1380,14 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 	// Run 'go work sync' to initialize the workspace and resolve modules
 	// This ensures Go recognizes the workspace modules correctly
 	if err := a.syncGoWorkspace(workspaceDir); err != nil {
+		// Clean up go.work file on failure to avoid inconsistent state
+		if removeErr := os.Remove(goWorkPath); removeErr != nil {
+			if a.Logger != nil {
+				a.Logger.Warnf("⚠️ Failed to remove go.work file after sync failure: %v", removeErr)
+			}
+		} else if a.Logger != nil {
+			a.Logger.Debugf("🧹 Cleaned up go.work file after sync failure")
+		}
 		return fmt.Errorf("failed to sync Go workspace: %w", err)
 	}
 

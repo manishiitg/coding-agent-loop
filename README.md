@@ -15,102 +15,28 @@ A sophisticated **Go-based MCP (Model Context Protocol) Agent** featuring a comp
 
 MCP Agent is a production-ready AI orchestrator that connects to **12+ MCP servers** across multiple protocols (HTTP, SSE, stdio) to provide intelligent automation across AWS, GitHub, Kubernetes, databases, monitoring tools, and more. It features both **Simple** and **ReAct** agent modes with comprehensive observability and security scanning.
 
-## 🏗️ **3-Agent Orchestrator Architecture**
+## 🏗️ **Workflow Orchestration**
 
-The system implements a **complete sequential workflow** with three specialized agents:
+MCP Agent provides sophisticated workflow orchestration capabilities for complex AI automation:
 
-### **🏗️ Planning Agent**
-- **Role**: Strategic planner that creates comprehensive execution plans
-- **Purpose**: Breaks down complex objectives into executable steps
-- **Capabilities**:
-  - Multi-step plan generation with dependencies
-  - MCP server assignment for each step
-  - Structured output with clear execution instructions
-  - Adaptive planning based on previous executions
+### **📚 Available Workflows**
 
-### **⚡ Execution Agent**
-- **Role**: Operational executor that runs planned steps using MCP tools
-- **Purpose**: Executes plans using real-world tools and APIs
-- **Capabilities**:
-  - Multi-MCP server integration (AWS, GitHub, Database, Kubernetes, etc.)
-  - Tool execution with proper error handling
-  - Result aggregation and formatting
-  - Large output handling with file generation
+- **[Todo Creation Human Workflow](docs/todo_creation_human_workflow.md)**: Multi-agent system for creating validated todo lists via step-by-step execution, learning, and synthesis. Features human-in-the-loop control, conditional branching, loop execution, and comprehensive learning system.
 
-### **🔍 Validation Agent**
-- **Role**: Quality assurance agent that validates execution results
-- **Purpose**: Prevents hallucinations and ensures factual accuracy
-- **Capabilities**:
-  - Fact-checking against external sources
-  - Assumption detection and verification
-  - Confidence scoring and evidence validation
-  - False positive identification
+- **[Code Execution Agent](docs/code_execution_agent.md)**: Specialized agent for executing Python code with security sandboxing and comprehensive error handling.
 
-## 🚀 **Complete Workflow: Planning → Execution → Validation**
+- **[Standard Tool-Use Agent](docs/tool_use_agent.md)**: The default agent mode where the LLM interacts with the system by invoking tools directly through the LLM provider's native tool calling capability.
 
-```
-🎯 User Request → 🏗️ Planning Agent → ⚡ Execution Agent → 🔍 Validation Agent → 📊 Final Report
-    ↓                ↓                     ↓                    ↓                   ↓
-Complex Objective → Structured Plan → Tool Execution → Fact-Checking → Validated Results
-```
+- **[Smart Routing](docs/smart_routing.md)**: Advanced optimization that dynamically filters tools based on conversation context to reduce token usage.
 
-## ✨ **Key Features**
+- **[LLM Resilience](docs/llm_resilience.md)**: Comprehensive system for handling API errors, rate limits, and context window exhaustion with multi-phase fallbacks.
 
-### **🧠 Multi-Server MCP Support**
-- **12+ MCP Servers**: AWS, GitHub, Kubernetes, Grafana, Slack, Sentry, Database, etc.
-- **Protocol Detection**: Auto-detect HTTP, SSE, stdio protocols
-- **Connection Caching**: 30-minute TTL file-based cache
-- **Performance**: 60-85% faster subsequent connections
+- **[Large Tool Output Handling](docs/large_output_handling.md)**: Automatic system for handling tool outputs that exceed context window limits by saving to files and providing specialized query tools.
 
-### **🤖 Advanced Agent Modes**
-- **Simple Agent**: Direct tool usage without explicit reasoning
-- **ReAct Agent**: Step-by-step reasoning with tool integration
-- **Conversation End Detection**: Smart completion detection
-- **Multi-turn Conversations**: Full conversation history support
+- **[MCP Cache System](docs/mcp_cache_system.md)**: Multi-layer caching system that reduces MCP server connection times by 60-85% through intelligent caching of tool definitions and server metadata.
 
-### **🔧 Multi-Provider LLM Support**
-- **AWS Bedrock**: Claude 3 Sonnet, Claude 3 Haiku, Claude 3 Opus
-- **OpenAI**: GPT-4o, GPT-4, GPT-3.5-turbo
-- **Anthropic**: Claude models via API
-- **OpenRouter**: Access to 100+ models
-- **Smart Fallback**: Automatic provider failover
 
-### **📊 Comprehensive Observability**
-- **Langfuse Integration**: Complete tracing and monitoring
-- **Event Architecture**: Structured event emission system
-- **Performance Metrics**: Real-time performance monitoring
-- **Debug Logging**: Comprehensive logging infrastructure
-
-### **🔒 Enterprise Security**
-- **Gitleaks Integration**: Automated secret scanning
-- **Pre-commit Hooks**: Prevent secret leaks before commits
-- **GitHub Actions**: Continuous security monitoring
-- **Dependency Scanning**: Automated vulnerability detection
-
-### **🎨 Modern Frontend**
-- **React 19**: Latest React with modern hooks
-- **TypeScript**: Full type safety
-- **Tailwind CSS**: Modern, responsive design
-- **Real-time Updates**: Live agent interaction
-- **Event Streaming**: Real-time event monitoring
-
-## 🛠️ **Supported MCP Servers**
-
-### **Production Servers (Orchestrator Ready)**
-- **AWS Services**: Complete AWS ecosystem (EC2, S3, IAM, CloudWatch, etc.)
-- **GitHub Integration**: Repository analysis, security alerts, code review
-- **Database Security**: Multi-database security assessment and monitoring
-- **Kubernetes**: Cluster security, pod analysis, RBAC review
-- **Grafana**: Monitoring and alerting integration
-- **Sentry**: Error tracking and performance monitoring
-- **Slack**: Team communication and notifications
-- **Profiler**: Performance analysis and optimization
-- **Scripts**: Custom script execution and automation
-
-### **Development Servers**
-- **Filesystem**: Local file operations and management
-- **Memory**: Vector database and knowledge management
-- **Planner**: Intelligent task planning and execution
+See the [docs/](docs/) folder for detailed documentation on each workflow and agent.
 
 ## 🚀 **Quick Start**
 

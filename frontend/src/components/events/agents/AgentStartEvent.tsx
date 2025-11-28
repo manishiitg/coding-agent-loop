@@ -24,7 +24,10 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
             <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
               🤖 Agent Started{' '}
               <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                | Type: {event.agent_type || 'Unknown'} | Model: {event.model_id || 'Unknown'} | Provider: {event.provider || 'Unknown'}
+                | Type: {event.agent_type || 'Unknown'}
+                {event.use_code_execution_mode && ' | Execution: Code Exec'}
+                {' | Model: '}{event.model_id || 'Unknown'}
+                {' | Provider: '}{event.provider || 'Unknown'}
               </span>
             </div>
           </div>

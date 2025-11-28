@@ -3,9 +3,10 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings } from 'lucide-react';
+import { Folder, Plus, X, Settings, Sparkles, Code2 } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
@@ -16,7 +17,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -41,6 +42,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
+  const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(false);
   // Agent-specific LLM configs (for workflow mode)
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
@@ -98,6 +100,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       };
       setLlmConfig(presetLLM);
+      setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
       // Load agent-specific configs if available
       setExecutionLLM(presetLLM.execution_llm || null);
       setValidationLLM(presetLLM.validation_llm || null);
@@ -123,6 +126,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       };
       setLlmConfig(defaultLLM);
+      setUseCodeExecutionMode(false);
       // Initialize agent-specific configs to null (will use legacy default)
       setExecutionLLM(null);
       setValidationLLM(null);
@@ -198,10 +202,44 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           plan_learnings_alignment_llm: planLearningsAlignmentLLM || undefined,
         };
       }
-      onSave(label.trim(), query.trim(), selectedServers, selectedTools, effectiveAgentMode, selectedFolder || undefined, finalLLMConfig);
+      console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
+        useCodeExecutionMode,
+        type: typeof useCodeExecutionMode,
+        label: label.trim(),
+        finalLLMConfig: finalLLMConfig ? 'defined' : 'undefined',
+        selectedFolder: selectedFolder ? 'defined' : 'undefined'
+      })
+      
+      console.log('[code_execution] [PRESET_MODAL] Calling onSave with all parameters:', {
+        param1: label.trim(),
+        param2: query.trim(),
+        param3: selectedServers,
+        param4: selectedTools,
+        param5: effectiveAgentMode,
+        param6: selectedFolder || undefined,
+        param7: finalLLMConfig,
+        param8: useCodeExecutionMode
+      })
+      
+      // CRITICAL FIX: Always pass useCodeExecutionMode explicitly, even if it's undefined
+      // JavaScript can drop trailing undefined parameters, so we ensure it's always a boolean
+      const codeExecutionModeToPass = useCodeExecutionMode === undefined ? false : useCodeExecutionMode
+      
+      console.log('[code_execution] [PRESET_MODAL] Final onSave call - param8:', codeExecutionModeToPass, 'original:', useCodeExecutionMode)
+      
+      onSave(
+        label.trim(), 
+        query.trim(), 
+        selectedServers, 
+        selectedTools, 
+        effectiveAgentMode, 
+        selectedFolder || undefined, 
+        finalLLMConfig, 
+        codeExecutionModeToPass  // Always pass explicit boolean, never undefined
+      );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, planningLLM, variableExtractionLLM, anonymizationLLM, planImprovementLLM, planToolOptimizationLLM, planLearningsAlignmentLLM, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, planningLLM, variableExtractionLLM, anonymizationLLM, planImprovementLLM, planToolOptimizationLLM, planLearningsAlignmentLLM, useCodeExecutionMode, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -309,9 +347,54 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                       <>
                         {/* Workflow mode: Show agent-specific LLM selections */}
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                            Execution Agent Default Model
-                          </label>
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Execution Agent Default Model
+                            </label>
+                            {/* Code Execution Mode Toggle - Only for Execution Agent */}
+                            <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={() => setUseCodeExecutionMode(false)}
+                                      className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                                        !useCodeExecutionMode
+                                          ? 'agent-mode-selected rounded-l-md rounded-r-none'
+                                          : 'agent-mode-unselected rounded-none'
+                                      }`}
+                                    >
+                                      <Sparkles className="w-3 h-3 inline mr-1" />
+                                      Simple
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Simple mode - Direct MCP tool access</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={() => setUseCodeExecutionMode(true)}
+                                      className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                        useCodeExecutionMode
+                                          ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                                          : 'agent-mode-unselected rounded-none'
+                                      }`}
+                                    >
+                                      <Code2 className="w-3 h-3 inline mr-1" />
+                                      Code Exec
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                          </div>
                           <LLMSelectionDropdown
                             availableLLMs={availableLLMs}
                             selectedLLM={executionLLM ? availableLLMs.find(llm => 

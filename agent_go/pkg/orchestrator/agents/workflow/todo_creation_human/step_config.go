@@ -73,7 +73,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 
 	// Ensure planning directory exists
 	planningDir := filepath.Join(workspacePath, "planning")
-	if err := os.MkdirAll(planningDir, 0755); err != nil {
+	if err := os.MkdirAll(planningDir, 0750); err != nil {
 		return fmt.Errorf("failed to create planning directory: %w", err)
 	}
 

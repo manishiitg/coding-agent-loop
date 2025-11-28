@@ -77,18 +77,19 @@ func NewPlanImprovementManager(
 // createPlanImprovementAgent creates and sets up a plan improvement agent with all necessary configuration
 // This method handles folder guard setup, LLM config selection, tool combination, and agent initialization
 func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: read-only access to runs/ folder and learnings/ folder
+	// Set folder guard paths: read-only access to runs/ folder, learnings/ folders, and planning/ folder
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
+	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", workspacePath)
 	planningPath := fmt.Sprintf("%s/planning", workspacePath)
 
-	// Agent has read-only access to runs/ folder for execution results, learnings/ folder for learnings analysis,
+	// Agent has read-only access to runs/ folder for execution results, both learnings/ folders for learnings analysis,
 	// and planning/ folder to read plan.json. Plan modifications are done via custom tools (not workspace tools),
 	// so the agent doesn't need write access - the tool executors handle file writing directly.
-	readPaths := []string{runsPath, learningsPath, planningPath}
+	readPaths := []string{runsPath, learningsPath, learningCodeExecPath, planningPath}
 	writePaths := []string{} // No write access - plan updates are done via custom tool executors, not workspace tools
 	pim.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	pim.GetLogger().Infof("📊 Setting folder guard for plan improvement agent - Read paths: %v, Write paths: %v (read-only access to runs/, learnings/, and planning/ folders. Plan updates via custom tools)", readPaths, writePaths)
+	pim.GetLogger().Infof("📊 Setting folder guard for plan improvement agent - Read paths: %v, Write paths: %v (read-only access to runs/, learnings/, learning_code_exec/, and planning/ folders. Plan updates via custom tools)", readPaths, writePaths)
 
 	// Determine LLM config: Priority: preset default > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -129,6 +130,10 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 
 	// Plan improvement agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}
+
+	// Code execution mode only applies to execution agents, not plan improvement agents
+	config.UseCodeExecutionMode = false
+	pim.GetLogger().Infof("🔧 Disabling code execution mode for plan improvement agent (only execution agents use MCP tools)")
 
 	// Large output virtual tools are enabled for plan improvement (agent may generate large feedback reports)
 
@@ -195,8 +200,8 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, work
 
 	// Prepare template variables
 	// Use actual workspace path so agent can navigate correctly (runs/ is a subdirectory)
-	// Explicitly list allowed paths for the agent (now includes planning/ for write access)
-	allowedPaths := "['runs/', 'learnings/', 'planning/']"
+	// Explicitly list allowed paths for the agent (includes planning/ for reading plan.json, learning_code_exec/ for code execution mode learnings)
+	allowedPaths := "['runs/', 'learnings/', 'learning_code_exec/', 'planning/']"
 	planImprovementTemplateVars := map[string]string{
 		"WorkspacePath":           pim.GetWorkspacePath(),
 		"PlanJSON":                string(planJSONBytes),
@@ -259,7 +264,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
 	if allowedPaths == "" {
-		allowedPaths = "['runs/', 'learnings/', 'planning/']"
+		allowedPaths = "['runs/', 'learnings/', 'learning_code_exec/', 'planning/']"
 	}
 
 	// Prepare template variables
@@ -439,6 +444,7 @@ Your main goal is to help the user improve their plan by answering their questio
    - 'runs/<run_id>/execution/step_X_results.md' (Success/Failure details)
    - 'runs/<run_id>/validation/' (if present)
    - 'learnings/' folder (for accumulated knowledge)
+   - 'learning_code_exec/' folder (for code execution mode learnings)
 3. **Provide Improvements**: Based on user questions and execution insights:
    - Answer specific questions about the plan
    - Suggest concrete improvements to steps, dependencies, or logic
@@ -479,7 +485,7 @@ You have access to tools that can directly update plan.json:
 - **Write Access**: You CAN directly update plan.json using the plan modification tools (after getting user confirmation via human_feedback).
 - **Restricted Access**: You ONLY have access to these subdirectories: ` + templateVars["AllowedPaths"] + `
    - You CANNOT list the root workspace (folder=".").
-   - Always start listing from the allowed subdirectories (e.g., folder="runs", folder="learnings", or folder="planning").
+   - Always start listing from the allowed subdirectories (e.g., folder="runs", folder="learnings", folder="learning_code_exec", or folder="planning").
 - **Pathing**: All tool paths are relative to the Workspace Path provided.
 - **Focus on Plan Improvement**: Your primary output should be plan improvements or answers to plan-related questions. When user requests changes, directly update the plan using the modification tools.
 `

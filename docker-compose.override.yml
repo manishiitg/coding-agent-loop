@@ -11,7 +11,7 @@ services:
       - ./agent_go/reports:/app/reports
       - ./agent_go/logs:/app/logs:rw
       - ./agent_go/chat_history.db:/app/chat_history.db:rw  # SQLite database for chat history and workflows
-      - ./agent_go/cache:/app/cache:rw  # MCP server cache for cache-only mode
+      - ./agent_go/cache:/app/cache:rw  # MCP server cache directory
     env_file:
       - ./agent_go/.env
     extra_hosts:
@@ -53,7 +53,7 @@ services:
       
       # External Service URLs (internal Docker network)
       - MEMORY_API_URL=http://memory-api:8000
-      - PLANNER_API_URL=http://planner-api:8080
+      - WORKSPACE_API_URL=http://planner-api:8080
       - DOCKER_CONTAINER=true
       - MEMORY_API_INTERNAL_URL=http://memory-api:8000
     depends_on:

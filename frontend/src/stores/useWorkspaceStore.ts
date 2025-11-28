@@ -3,6 +3,7 @@ import { devtools } from 'zustand/middleware'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { findFileInTree, extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
+import { parseWorkspaceToolCalls, selectPrimaryFile } from '../utils/goCodeParser'
 
 interface WorkspaceState {
   // File Management
@@ -344,29 +345,79 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         files: [...state.files, file]
       })),
       removeFile: (filepath) => set((state) => {
+        // IMPORTANT: In workflow mode, state.files is already filtered to only contain files
+        // within the workflow folder (this filtering happens in Workspace component).
+        // This means we can only remove files that are within the workflow folder scope,
+        // which respects the global workflow mode restriction.
+        //
+        // The filepath parameter is the original path from the tool result (e.g., "Workflow/Some Task/file.txt").
+        // In workflow mode, files in the store have:
+        //   - filepath: adjusted path (workflow folder prefix removed, e.g., "file.txt")
+        //   - originalFilepath: original path (e.g., "Workflow/Some Task/file.txt")
+        // We match against both to handle either format.
+        
         const removeItem = (files: PlannerFile[]): PlannerFile[] => {
-          return files.filter(file => {
-            if (file.filepath === filepath) {
-              return false // Remove this item
-            }
-            if (file.children) {
-              return {
-                ...file,
-                children: removeItem(file.children)
+          return files
+            .filter(file => {
+              // Match by filepath (adjusted in workflow mode) or originalFilepath (original path)
+              // This ensures we can remove files whether they have adjusted or original paths
+              const matchesFilepath = file.filepath === filepath
+              const matchesOriginal = 'originalFilepath' in file && file.originalFilepath === filepath
+              
+              // If this file matches, don't include it (filter it out)
+              if (matchesFilepath || matchesOriginal) {
+                return false
               }
-            }
-            return true
-          }).map(file => {
-            if (file.children) {
-              return {
-                ...file,
-                children: removeItem(file.children)
+              
+              // File doesn't match - keep it
+              return true
+            })
+            .map(file => {
+              // Recursively process children if they exist
+              if (file.children && file.children.length > 0) {
+                return {
+                  ...file,
+                  children: removeItem(file.children)
+                }
               }
-            }
-            return file
-          })
+              return file
+            })
         }
-        return { files: removeItem(state.files) }
+        
+        const updatedFiles = removeItem(state.files)
+        
+        // Check if any file was actually removed (files count decreased)
+        // This helps ensure we're only removing files that exist in the store
+        // (which should already be filtered to workflow folder in workflow mode)
+        const fileWasRemoved = updatedFiles.length < state.files.length || 
+          JSON.stringify(updatedFiles) !== JSON.stringify(state.files)
+        
+        // Remove the deleted file/folder from expandedFolders if it was expanded
+        // Also remove any child folders that were expanded
+        const updatedExpanded = new Set(state.expandedFolders)
+        
+        if (fileWasRemoved) {
+          const removeFromExpanded = (path: string) => {
+            // Remove the exact path
+            updatedExpanded.delete(path)
+            // Also remove any paths that start with the deleted path (child folders)
+            // This handles both adjusted and original paths
+            Array.from(updatedExpanded).forEach(expandedPath => {
+              if (expandedPath.startsWith(path + '/') || expandedPath === path) {
+                updatedExpanded.delete(expandedPath)
+              }
+            })
+          }
+          
+          // Remove from expanded folders using the filepath parameter
+          // This could be either adjusted or original path, but we remove both possibilities
+          removeFromExpanded(filepath)
+        }
+        
+        return { 
+          files: updatedFiles,
+          expandedFolders: updatedExpanded // Preserve other expanded folders
+        }
       }),
       updateFile: (filepath, updates) => set((state) => {
         const updateItem = (files: PlannerFile[]): PlannerFile[] => {
@@ -389,6 +440,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // File fetching
       fetchFiles: async () => {
         try {
+          const state = get()
+          // Preserve expanded folders before fetching
+          const previouslyExpanded = new Set(state.expandedFolders)
+          
           set({ loading: true, error: null })
           const response = await agentApi.getPlannerFiles()
           if (response.success && response.data) {
@@ -397,6 +452,62 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             // Process hierarchical structure from API
             const processedFiles = processHierarchicalFiles(allFiles)
             set({ files: processedFiles })
+            
+            // Restore expanded folders after fetching
+            // Collect all folder paths from the new file tree
+            // IMPORTANT: In workflow mode, files may have adjusted paths (filepath) and original paths (originalFilepath)
+            // We need to collect both to match against expanded folders which may use either format
+            const collectFolderPaths = (fileList: PlannerFile[]): Set<string> => {
+              const paths = new Set<string>()
+              fileList.forEach(file => {
+                if (file.type === 'folder') {
+                  // Add both filepath (adjusted in workflow mode) and originalFilepath (original)
+                  paths.add(file.filepath)
+                  if ('originalFilepath' in file && file.originalFilepath) {
+                    paths.add(file.originalFilepath)
+                  }
+                  if (file.children) {
+                    collectFolderPaths(file.children).forEach(path => paths.add(path))
+                  }
+                }
+              })
+              return paths
+            }
+            
+            const availableFolderPaths = collectFolderPaths(processedFiles)
+            
+            // Restore previously expanded folders that still exist
+            // Match against both adjusted and original paths
+            const restoredExpanded = new Set<string>()
+            previouslyExpanded.forEach(folderPath => {
+              // Check if this path exists in either format (adjusted or original)
+              if (availableFolderPaths.has(folderPath)) {
+                restoredExpanded.add(folderPath)
+              } else {
+                // Also check if any file has this as its originalFilepath or filepath
+                // This handles cases where paths were adjusted between fetches
+                const pathExists = processedFiles.some(file => {
+                  const checkFile = (f: PlannerFile): boolean => {
+                    if (f.type === 'folder') {
+                      if (f.filepath === folderPath || ('originalFilepath' in f && f.originalFilepath === folderPath)) {
+                        return true
+                      }
+                      if (f.children) {
+                        return f.children.some(checkFile)
+                      }
+                    }
+                    return false
+                  }
+                  return checkFile(file)
+                })
+                if (pathExists) {
+                  restoredExpanded.add(folderPath)
+                }
+              }
+            })
+            
+            // Restore the expanded folders (preserve state)
+            set({ expandedFolders: restoredExpanded })
           } else {
             set({ error: response.message || 'Failed to load files' })
           }
@@ -462,6 +573,36 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           const toolName = toolData.tool_name as string
           const toolParams = toolData.tool_params as Record<string, unknown>
           
+          // Check if this is write_code tool (code execution mode)
+          if (toolName === 'write_code') {
+            try {
+              const args = JSON.parse((toolParams?.arguments as string) || '{}')
+              const code = args.code as string
+              
+              if (code) {
+                // Parse Go code to find workspace tool calls
+                const workspaceCalls = parseWorkspaceToolCalls(code)
+                
+                if (workspaceCalls.length > 0) {
+                  // Select the most relevant file to highlight (prioritizes update/delete over read/list)
+                  const primaryCall = selectPrimaryFile(workspaceCalls)
+                  
+                  if (primaryCall && primaryCall.filepath) {
+                    // Trigger highlighting for the primary file only
+                    // This prevents overwhelming the UI when multiple files are involved
+                    get().highlightFile(primaryCall.filepath)
+                    
+                    return true
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('[WorkspaceStore] Failed to parse write_code arguments:', error)
+            }
+            
+            return false
+          }
+          
           // Check if this is a file creation/modification tool
           const fileCreationTools = ['update_workspace_file', 'patch_workspace_file', 'diff_patch_workspace_file', 'read_workspace_file', 'get_workspace_file_nested']
           if (!fileCreationTools.includes(toolName)) {
@@ -498,6 +639,15 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           
           const toolData = eventData.data as Record<string, unknown>
           const toolName = toolData.tool_name as string
+          
+          // Check if this is write_code tool (code execution mode)
+          // We need to check the original arguments to see if delete operations were performed
+          if (toolName === 'write_code') {
+            // For write_code, we can't reliably detect deletions from the result
+            // Deletions would need to be detected from the code itself during tool_call_start
+            // So we skip deletion handling for write_code here
+            return false
+          }
           
           // Check if this is a delete_workspace_file tool
           if (toolName !== 'delete_workspace_file') {

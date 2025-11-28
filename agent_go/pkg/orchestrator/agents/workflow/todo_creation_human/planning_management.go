@@ -263,9 +263,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
+	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", baseWorkspacePath)
 
 	// Only specify learnings in readPaths - planning is automatically readable since it's in writePaths
-	readPaths := []string{learningsPath}
+	// Include both learnings folders for comprehensive access
+	readPaths := []string{learningsPath, learningCodeExecPath}
 	writePaths := []string{planningPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Infof("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths)
@@ -292,6 +294,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	// Create agent config with custom LLM
 	agentConfig := hcpo.CreateStandardAgentConfigWithLLM("human-controlled-planning-agent", hcpo.GetMaxTurns(), agents.OutputFormatStructured, llmConfigToUse)
 	agentConfig.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM planning agent
+
+	// Code execution mode only applies to execution agents, not planning agents
+	agentConfig.UseCodeExecutionMode = false
+	hcpo.GetLogger().Infof("🔧 Disabling code execution mode for planning agent (only execution agents use MCP tools)")
 
 	// Disable large output virtual tools for planning agent
 	disabled := false
@@ -418,10 +424,11 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) []Tod
 
 		// Validation is required for loop steps to check loop conditions
 		// Ensure validation is not disabled for loop steps
-		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation {
+		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation {
 			// Create a copy of configs with validation enabled
 			enabledConfigs := *agentConfigs
-			enabledConfigs.DisableValidation = false
+			val := false
+			enabledConfigs.DisableValidation = &val
 			agentConfigs = &enabledConfigs
 		}
 
@@ -493,11 +500,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 
 		// Validation is required for loop steps to check loop conditions
 		// Ensure validation is not disabled for loop steps
-		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation {
+		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation {
 			hcpo.GetLogger().Warnf("⚠️ Step '%s' is a loop step but has validation disabled - enabling validation (required for loop condition checks)", step.Title)
 			// Create a copy of configs with validation enabled
 			enabledConfigs := *agentConfigs
-			enabledConfigs.DisableValidation = false
+			val := false
+			enabledConfigs.DisableValidation = &val
 			agentConfigs = &enabledConfigs
 		}
 

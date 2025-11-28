@@ -39,8 +39,12 @@ func getLogger(a *Agent) utils.ExtendedLogger {
 
 // isVirtualTool checks if a tool name is a virtual tool
 func isVirtualTool(toolName string) bool {
-	// Check hardcoded virtual tools
-	virtualTools := []string{"get_prompt", "get_resource", "read_large_output", "search_large_output", "query_large_output"}
+	// Check hardcoded virtual tools (includes all possible virtual tools)
+	virtualTools := []string{
+		"get_prompt", "get_resource",
+		"read_large_output", "search_large_output", "query_large_output",
+		"discover_code_files", "write_code", // Code execution mode tools (discover_code_structure removed)
+	}
 	for _, vt := range virtualTools {
 		if vt == toolName {
 			return true
@@ -263,13 +267,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	a.filteredTools = a.Tools // Start with all tools, then filter based on conversation context
 
 	// Only run smart routing if it was enabled during initialization
-	// In cache-only mode, use cached servers count; otherwise use active clients count
-	var serverCount int
-	if a.CacheOnly {
-		serverCount = len(a.servers) // Use cached servers count
-	} else {
-		serverCount = len(a.Clients) // Use active clients count
-	}
+	// Use active clients count
+	serverCount := len(a.Clients)
 
 	if a.EnableSmartRouting && len(a.Tools) > a.SmartRoutingThreshold.MaxTools && serverCount > a.SmartRoutingThreshold.MaxServers {
 		logger := getLogger(a)
@@ -848,7 +847,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 				// Only check for client errors for non-custom tools and non-virtual tools
 				if !isCustomTool && !isVirtualTool(tc.FunctionCall.Name) && client == nil {
-					// Check if we're in cache-only mode with no active connections
+					// Check if we have no active connections
 					if len(a.Clients) == 0 {
 
 						// Create connection on-demand for the specific server
@@ -948,6 +947,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
 						}
 					} else {
+						// Ensure resultText is never empty for virtual tools
+						// This prevents empty content from being sent to LLM
+						if resultText == "" {
+							logger.Warnf("⚠️ Virtual tool '%s' returned empty result - using default message", tc.FunctionCall.Name)
+							resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
+						}
 						result = &mcp.CallToolResult{
 							IsError: false,
 							Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
@@ -1041,6 +1046,13 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					// Get the tool result as string (without prefix)
 					resultText = mcpclient.ToolResultAsString(result, getLogger(a))
+
+					// Ensure resultText is never empty when sending to LLM
+					// This is a safety check for all tool types (virtual, custom, MCP)
+					if resultText == "" && !result.IsError {
+						logger.Warnf("⚠️ Tool '%s' returned empty result - using default message", tc.FunctionCall.Name)
+						resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
+					}
 
 					// 🔧 BROKEN PIPE DETECTION IN SUCCESSFUL RESULT PATH
 					if result.IsError && (strings.Contains(resultText, "Broken pipe") || strings.Contains(resultText, "[Errno 32]")) {

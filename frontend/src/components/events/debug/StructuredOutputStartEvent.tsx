@@ -1,5 +1,17 @@
 import React from 'react'
-import type { StructuredOutputStartEvent } from '../../../generated/events'
+
+// Local type definition for StructuredOutputStartEvent (not in generated schema)
+interface StructuredOutputStartEvent {
+  timestamp?: string
+  trace_id?: string
+  span_id?: string
+  event_id?: string
+  parent_id?: string
+  session_id?: string
+  component?: string
+  operation?: string
+  event_type?: string
+}
 
 interface StructuredOutputStartEventDisplayProps {
   event: StructuredOutputStartEvent

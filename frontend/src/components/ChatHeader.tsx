@@ -50,8 +50,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   // Use the new global preset store
   const { 
     customPresets, 
-    addPreset, 
-    updatePreset,
+    savePreset,
     deletePreset
   } = usePresetManagement()
   
@@ -96,26 +95,41 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     selectedTools?: string[],
     agentMode?: 'simple' | 'workflow', 
     selectedFolder?: PlannerFile,
-    llmConfig?: PresetLLMConfig
+    llmConfig?: PresetLLMConfig,
+    useCodeExecutionMode?: boolean
   ) => {
     try {
-      if (editingPreset) {
-        // Editing existing preset - use the existing agent mode
-        await updatePreset(editingPreset.id, label, query, selectedServers, selectedTools, editingPreset.agentMode, selectedFolder, llmConfig)
-      } else {
-        // Creating new preset - allow agent mode selection
-        const newPreset = await addPreset(label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig)
-        // Apply the new preset immediately
-        if (newPreset) {
-          handlePresetClick(newPreset)
-        }
+      console.log('[code_execution] [ChatHeader] handleSavePreset called with:', {
+        label,
+        editingPreset: editingPreset?.id,
+        useCodeExecutionMode,
+        type: typeof useCodeExecutionMode
+      })
+      
+      // Use consolidated savePreset function - pass id if editing, undefined if creating
+      const savedPreset = await savePreset(
+        label, 
+        query, 
+        selectedServers, 
+        selectedTools,
+        editingPreset ? editingPreset.agentMode : agentMode, // Use existing agent mode when editing
+        selectedFolder, 
+        llmConfig,
+        useCodeExecutionMode,
+        editingPreset?.id // Pass id if editing, undefined if creating
+      )
+      
+      // Apply the preset immediately if it's a new one
+      if (savedPreset && !editingPreset) {
+        handlePresetClick(savedPreset)
       }
+      
       setShowPresetModal(false)
       setEditingPreset(null)
     } catch (error) {
-      console.error('Failed to save preset:', error)
+      console.error('[code_execution] [ChatHeader] Failed to save preset:', error)
     }
-  }, [editingPreset, updatePreset, addPreset, handlePresetClick])
+  }, [editingPreset, savePreset, handlePresetClick])
 
   const handleDeletePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation()

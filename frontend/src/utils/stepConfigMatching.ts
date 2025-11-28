@@ -22,6 +22,7 @@ export interface AgentConfigs {
   selected_tools?: string[];
   enabled_custom_tools?: string[]; // Format: "category:tool" or "category:*" (e.g., "workspace_tools:*", "human_tools:human_feedback")
   enable_large_output_virtual_tools?: boolean;
+  use_code_execution_mode?: boolean; // Step-level code execution mode override (undefined = use preset default)
 }
 
 // Extended TodoStep with agent_configs

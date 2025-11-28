@@ -417,7 +417,6 @@ You have access to all MCP tools to examine workspace files and gather additiona
      - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs (e.g., [Runs: 3 | Success: 75%] → [Runs: 3 | Success: 60%])
      - This tracks which patterns are consistently reliable across multiple executions
 
-` + GetTodoCreationHumanMemoryRequirements() + `
 `
 }
 

@@ -2,6 +2,7 @@ import { Server, Loader2, AlertCircle, Search } from 'lucide-react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import MCPRegistryModal from '../MCPRegistryModal'
 import MCPConfigEditor from '../MCPConfigEditor'
+import MCPToolApiTester from '../MCPToolApiTester'
 import { useMCPStore } from '../../stores'
 
 // Tool detail type for cached data
@@ -37,6 +38,8 @@ export default function MCPServersSection() {
     setShowRegistryModal,
     showConfigEditor,
     setShowConfigEditor,
+    showApiTester,
+    setShowApiTester,
     getServerGroups,
     loadToolDetails
   } = useMCPStore()
@@ -240,6 +243,16 @@ export default function MCPServersSection() {
                                 <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
                                   tool
                                 </span>
+                                {/* Test API button */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setShowApiTester({ serverName, toolName, toolDetail })
+                                  }}
+                                  className="px-2 py-1 text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30 hover:bg-green-100 dark:hover:bg-green-900/50 rounded transition-colors"
+                                >
+                                  Test API
+                                </button>
                                 <span className="text-xs text-gray-400">
                                   {isSelected ? '▼' : '▶'}
                                 </span>
@@ -339,6 +352,17 @@ export default function MCPServersSection() {
             />
           </div>
         </div>
+      )}
+
+      {/* MCP Tool API Tester Modal */}
+      {showApiTester && (
+        <MCPToolApiTester
+          isOpen={!!showApiTester}
+          onClose={() => setShowApiTester(null)}
+          serverName={showApiTester.serverName}
+          toolName={showApiTester.toolName}
+          toolDetail={showApiTester.toolDetail}
+        />
       )}
     </div>
   )

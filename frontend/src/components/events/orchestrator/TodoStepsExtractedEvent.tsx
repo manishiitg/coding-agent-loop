@@ -34,6 +34,10 @@ export const TodoStepsExtractedEventDisplay: React.FC<
   const { currentPresetServers, getActivePreset } = usePresetApplication();
   const activePreset = getActivePreset('workflow');
   const presetLLMConfig = activePreset?.llmConfig;
+  // Get code execution mode from preset (both CustomPreset and PredefinedPreset have this field)
+  const presetUseCodeExecutionMode = activePreset && 'useCodeExecutionMode' in activePreset 
+    ? (activePreset as { useCodeExecutionMode?: boolean }).useCodeExecutionMode || false
+    : false;
   
   // Use local state to track steps with saved configs
   const [steps, setSteps] = useState<TodoStepWithConfigs[]>(() => {
@@ -436,6 +440,29 @@ export const TodoStepsExtractedEventDisplay: React.FC<
     setEditedLoopDescription("");
   };
 
+  // Helper function to collect all step IDs recursively (including nested branch steps)
+  const collectAllStepIds = (steps: TodoStepWithConfigs[]): Set<string> => {
+    const ids = new Set<string>();
+    
+    const collectIds = (stepList: TodoStepWithConfigs[]) => {
+      for (const step of stepList) {
+        if (step.id) {
+          ids.add(step.id);
+        }
+        // Recursively collect IDs from branch steps
+        if (step.if_true_steps && step.if_true_steps.length > 0) {
+          collectIds(step.if_true_steps);
+        }
+        if (step.if_false_steps && step.if_false_steps.length > 0) {
+          collectIds(step.if_false_steps);
+        }
+      }
+    };
+    
+    collectIds(steps);
+    return ids;
+  };
+
   // Handle save step configuration
   // stepPath: optional path for branch steps (e.g., "step-2-if-true-0") - only used temporarily to extract parent step info, not saved
   const handleSaveStep = async (updatedStep: TodoStepWithConfigs, stepIndex: number, stepPath?: string) => {
@@ -512,6 +539,29 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         stepConfigFile.steps.push(stepConfig);
       }
 
+      // Cleanup: Remove orphaned step configs (IDs that no longer exist in plan.json)
+      // Collect all valid step IDs from current plan (including nested branch steps)
+      const validStepIds = collectAllStepIds(steps);
+      
+      // Filter out configs with IDs that don't exist in the current plan
+      const beforeCleanupCount = stepConfigFile.steps.length;
+      stepConfigFile.steps = stepConfigFile.steps.filter((config) => {
+        if (!config.id) {
+          // Remove configs without IDs (shouldn't happen, but be safe)
+          return false;
+        }
+        const isValid = validStepIds.has(config.id);
+        if (!isValid) {
+          console.log(`[TodoStepsExtractedEvent] Removing orphaned step config: ID="${config.id}", Title="${config.title || 'unknown'}"`);
+        }
+        return isValid;
+      });
+      
+      const removedCount = beforeCleanupCount - stepConfigFile.steps.length;
+      if (removedCount > 0) {
+        console.log(`[TodoStepsExtractedEvent] Cleaned up ${removedCount} orphaned step config(s) from step_config.json`);
+      }
+
       // Write back to step_config.json
       const updatedContent = JSON.stringify(stepConfigFile, null, 2);
       
@@ -523,8 +573,14 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         stepId: stepConfig.id,
         stepType,
         agent_configs: updatedStep.agent_configs,
+        disable_learning: updatedStep.agent_configs?.disable_learning,
+        disable_validation: updatedStep.agent_configs?.disable_validation,
+        use_code_execution_mode: updatedStep.agent_configs?.use_code_execution_mode,
         stepConfig: stepConfig,
-        fileContent: updatedContent.substring(0, 500), // First 500 chars for preview
+        stepConfig_disable_learning: stepConfig.agent_configs?.disable_learning,
+        stepConfig_disable_validation: stepConfig.agent_configs?.disable_validation,
+        stepConfig_use_code_execution_mode: stepConfig.agent_configs?.use_code_execution_mode,
+        fileContent: updatedContent.substring(0, 1000), // First 1000 chars for preview
       });
       
       const updateResponse = await agentApi.updatePlannerFile(
@@ -747,6 +803,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                     eventId={eventId}
                     currentPresetServers={currentPresetServers}
                     presetLLMConfig={presetLLMConfig}
+                    presetUseCodeExecutionMode={presetUseCodeExecutionMode}
                     onEditStep={handleEditStep}
                     onDeleteStep={setStepToDelete}
                     onSaveStep={handleSaveStep}
@@ -1060,6 +1117,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                   isSaving={isSaving}
                   presetServers={currentPresetServers}
                   presetLLMConfig={presetLLMConfig}
+                  presetUseCodeExecutionMode={presetUseCodeExecutionMode}
                   isExpanded={expandedStepIndex === index}
                   onToggleExpanded={(expanded) => {
                     // If expanding, set this step as expanded (closes others)
@@ -1105,6 +1163,7 @@ interface ConditionalStepCardProps {
   eventId: string;
   currentPresetServers: string[];
   presetLLMConfig?: PresetLLMConfig | null;
+  presetUseCodeExecutionMode?: boolean;
   onEditStep: (index: number) => Promise<void>;
   onDeleteStep: (index: number) => void;
   onSaveStep: (updatedStep: TodoStepWithConfigs, index: number, path?: string) => Promise<void>;
@@ -1134,6 +1193,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
   eventId,
   currentPresetServers,
   presetLLMConfig,
+  presetUseCodeExecutionMode = false,
   onEditStep,
   onDeleteStep,
   onSaveStep,
@@ -1398,6 +1458,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
                   isSaving={isSaving}
                   presetServers={currentPresetServers}
                   presetLLMConfig={presetLLMConfig}
+                  presetUseCodeExecutionMode={presetUseCodeExecutionMode}
                   isExpanded={isConfigExpanded}
                   onToggleExpanded={(expanded) => {
                     setExpandedBranchStepConfigs(prev => {
@@ -1417,7 +1478,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
         </div>
       </div>
     );
-  }, [stepIndex, eventId, expandedNestedSteps, expandedBranchStepConfigs, toggleNestedStep, onSaveStep, currentPresetServers, presetLLMConfig, isSaving]);
+  }, [stepIndex, eventId, expandedNestedSteps, expandedBranchStepConfigs, toggleNestedStep, onSaveStep, currentPresetServers, presetLLMConfig, presetUseCodeExecutionMode, isSaving]);
 
   return (
     <div className="bg-white dark:bg-gray-800 border-l-4 border-purple-500 border border-purple-200 dark:border-purple-700 rounded-md p-3">
@@ -1723,6 +1784,7 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
         isSaving={isSaving}
         presetServers={currentPresetServers}
         presetLLMConfig={presetLLMConfig}
+        presetUseCodeExecutionMode={presetUseCodeExecutionMode}
         isExpanded={expandedStepIndex === stepIndex}
         onToggleExpanded={(expanded) => {
           setExpandedStepIndex(expanded ? stepIndex : null);

@@ -75,8 +75,8 @@ type AgentConfigs struct {
 	ExecutionMaxTurns             *int            `json:"execution_max_turns,omitempty"`               // default: 25
 	ValidationMaxTurns            *int            `json:"validation_max_turns,omitempty"`              // default: 25
 	LearningMaxTurns              *int            `json:"learning_max_turns,omitempty"`                // default: 25
-	DisableValidation             bool            `json:"disable_validation,omitempty"`                // skip validation entirely
-	DisableLearning               bool            `json:"disable_learning,omitempty"`                  // disable learning for this step
+	DisableValidation             *bool           `json:"disable_validation,omitempty"`                // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	DisableLearning               *bool           `json:"disable_learning,omitempty"`                  // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LearningAfterLoopIteration    bool            `json:"learning_after_loop_iteration,omitempty"`     // run learning after each loop iteration
 	LearningDetailLevel           string          `json:"learning_detail_level,omitempty"`             // "exact", "general", or "none" (default: "general")
 	SelectedServers               []string        `json:"selected_servers,omitempty"`                  // step-level MCP server selection (subset of preset servers)
@@ -84,6 +84,7 @@ type AgentConfigs struct {
 	EnabledCustomToolCategories   []string        `json:"enabled_custom_tool_categories,omitempty"`    // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
 	EnabledCustomTools            []string        `json:"enabled_custom_tools,omitempty"`              // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
 	EnableLargeOutputVirtualTools *bool           `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
+	UseCodeExecutionMode          *bool           `json:"use_code_execution_mode,omitempty"`           // Step-level code execution mode override (nil = use preset default, true/false = override)
 }
 
 // PlanStep represents a step in the planning output
@@ -1000,13 +1001,16 @@ func registerPlanModificationTools(
 			}
 			if params != nil {
 				if executor, exists := humanToolExecutors[humanTool.Function.Name]; exists {
-					mcpAgent.RegisterCustomTool(
+					// human_feedback is a human tool, category is "human"
+					if err := mcpAgent.RegisterCustomTool(
 						humanTool.Function.Name,
 						humanTool.Function.Description,
 						params,
 						executor,
-					)
-					if logger != nil {
+						"human",
+					); err != nil {
+						logger.Errorf("❌ Failed to register human_feedback tool: %v", err)
+					} else {
 						logger.Infof("✅ Registered human_feedback tool for %s", agentName)
 					}
 				}
@@ -1014,42 +1018,51 @@ func registerPlanModificationTools(
 		}
 	}
 
-	// Register basic plan modification tools
+	// Register workflow-specific plan tools with "workflow" category
 	updateSchema := getUpdatePlanStepsSchema()
 	updateParams, err := parseSchemaForToolParameters(updateSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse update schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"update_plan_steps",
 		"Update existing steps in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change. The plan.json file is updated immediately when this tool is called.",
 		updateParams,
 		createUpdatePlanStepsExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_plan_steps tool: %w", err)
+	}
 
 	deleteSchema := getDeletePlanStepsSchema()
 	deleteParams, err := parseSchemaForToolParameters(deleteSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse delete schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"delete_plan_steps",
 		"Delete steps from the plan by providing their IDs. Use the step's id field from the plan. The plan.json file is updated immediately when this tool is called.",
 		deleteParams,
 		createDeletePlanStepsExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register delete_plan_steps tool: %w", err)
+	}
 
 	addSchema := getAddPlanStepsSchema()
 	addParams, err := parseSchemaForToolParameters(addSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse add schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"add_plan_steps",
 		"Add new steps to the plan. Provide complete step definitions with all required fields (title, description, success_criteria, has_loop, insert_after_step_id). CRITICAL: Each step MUST specify insert_after_step_id (REQUIRED) to indicate where to insert it. Use the step's id field from the plan, or empty string \"\" to insert at the beginning. The plan.json file is updated immediately when this tool is called.",
 		addParams,
 		createAddPlanStepsExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_plan_steps tool: %w", err)
+	}
 
 	// Register conditional step tools
 	convertToConditionalSchema := getConvertStepToConditionalSchema()
@@ -1057,72 +1070,90 @@ func registerPlanModificationTools(
 	if err != nil {
 		return fmt.Errorf("failed to parse convert_step_to_conditional schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"convert_step_to_conditional",
 		"Convert a regular step to a conditional step with if/else branches. Provide step_id, condition_question, condition_context (optional), if_true_steps, and if_false_steps. The step will become a conditional decision point that executes one branch based on the condition evaluation.",
 		convertToConditionalParams,
 		createConvertStepToConditionalExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register convert_step_to_conditional tool: %w", err)
+	}
 
 	addBranchStepsSchema := getAddBranchStepsSchema()
 	addBranchStepsParams, err := parseSchemaForToolParameters(addBranchStepsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse add_branch_steps schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"add_branch_steps",
 		"Add new steps to a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type ('if_true' or 'if_false'), and new_steps array. The steps will be appended to the specified branch.",
 		addBranchStepsParams,
 		createAddBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_branch_steps tool: %w", err)
+	}
 
 	updateBranchStepsSchema := getUpdateBranchStepsSchema()
 	updateBranchStepsParams, err := parseSchemaForToolParameters(updateBranchStepsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse update_branch_steps schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"update_branch_steps",
 		"Update existing steps within a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type, and updated_steps array. For each step, provide existing_step_id (required) and only include fields you want to change.",
 		updateBranchStepsParams,
 		createUpdateBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_branch_steps tool: %w", err)
+	}
 
 	deleteBranchStepsSchema := getDeleteBranchStepsSchema()
 	deleteBranchStepsParams, err := parseSchemaForToolParameters(deleteBranchStepsSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse delete_branch_steps schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"delete_branch_steps",
 		"Delete steps from a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type, and deleted_step_ids array. Use the step's id field from the plan.",
 		deleteBranchStepsParams,
 		createDeleteBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register delete_branch_steps tool: %w", err)
+	}
 
 	updateConditionalStepSchema := getUpdateConditionalStepSchema()
 	updateConditionalStepParams, err := parseSchemaForToolParameters(updateConditionalStepSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse update_conditional_step schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"update_conditional_step",
 		"Update the condition question or context of a conditional step without modifying its branches. Provide step_id and optionally condition_question and/or condition_context. Only provided fields will be updated.",
 		updateConditionalStepParams,
 		createUpdateConditionalStepExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_conditional_step tool: %w", err)
+	}
 
 	convertToRegularSchema := getConvertConditionalToRegularSchema()
 	convertToRegularParams, err := parseSchemaForToolParameters(convertToRegularSchema)
 	if err != nil {
 		return fmt.Errorf("failed to parse convert_conditional_to_regular schema: %w", err)
 	}
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"convert_conditional_to_regular",
 		"Convert a conditional step back to a regular step. This removes all conditional properties and branch steps. Provide step_id of the conditional step to convert.",
 		convertToRegularParams,
 		createConvertConditionalToRegularExecutor(workspacePath, logger, readFile, writeFile),
-	)
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register convert_conditional_to_regular tool: %w", err)
+	}
 
 	if logger != nil {
 		logger.Infof("✅ Registered all plan modification tools for %s", agentName)

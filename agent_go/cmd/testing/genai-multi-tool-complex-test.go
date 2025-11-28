@@ -317,7 +317,10 @@ func executeMockToolComplex(toolName string, argumentsJSON string) string {
 
 	switch toolName {
 	case "get_weather":
-		location := args["location"].(string)
+		location, ok := args["location"].(string)
+		if !ok {
+			return "Error: missing or invalid 'location' argument"
+		}
 		weatherMap := map[string]string{
 			"Paris":         "Weather in Paris: Cloudy, 65°F, light breeze",
 			"New York":      "Weather in New York: Sunny, 72°F, light breeze",
@@ -330,7 +333,10 @@ func executeMockToolComplex(toolName string, argumentsJSON string) string {
 		}
 		return fmt.Sprintf("Weather in %s: Clear, 70°F, calm", location)
 	case "calculate_math":
-		expr := args["expression"].(string)
+		expr, ok := args["expression"].(string)
+		if !ok {
+			return "Error: missing or invalid 'expression' argument"
+		}
 		if strings.Contains(expr, "125*8") || strings.Contains(expr, "125 * 8") {
 			return "1000"
 		}
@@ -339,13 +345,19 @@ func executeMockToolComplex(toolName string, argumentsJSON string) string {
 		}
 		return fmt.Sprintf("Calculation result for %s: [mock result]", expr)
 	case "search_knowledge":
-		query := args["query"].(string)
+		query, ok := args["query"].(string)
+		if !ok {
+			return "Error: missing or invalid 'query' argument"
+		}
 		if strings.Contains(strings.ToLower(query), "machine learning") {
 			return "Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience without being explicitly programmed. It uses algorithms to analyze data, identify patterns, and make predictions or decisions."
 		}
 		return fmt.Sprintf("Information about %s: [general knowledge]", query)
 	case "get_stock_price":
-		ticker := args["ticker"].(string)
+		ticker, ok := args["ticker"].(string)
+		if !ok {
+			return "Error: missing or invalid 'ticker' argument"
+		}
 		stockPrices := map[string]string{
 			"AAPL":  "$175.50",
 			"GOOGL": "$142.30",
@@ -356,9 +368,26 @@ func executeMockToolComplex(toolName string, argumentsJSON string) string {
 		}
 		return fmt.Sprintf("Stock price for %s: $100.00", ticker)
 	case "convert_currency":
-		amount := args["amount"].(float64)
-		from := args["from"].(string)
-		to := args["to"].(string)
+		// Handle amount with type switch to accept both float64 and int
+		var amount float64
+		switch v := args["amount"].(type) {
+		case float64:
+			amount = v
+		case int:
+			amount = float64(v)
+		case int64:
+			amount = float64(v)
+		default:
+			return "Error: missing or invalid 'amount' argument"
+		}
+		from, ok := args["from"].(string)
+		if !ok {
+			return "Error: missing or invalid 'from' argument"
+		}
+		to, ok := args["to"].(string)
+		if !ok {
+			return "Error: missing or invalid 'to' argument"
+		}
 		if from == "USD" && to == "EUR" {
 			return fmt.Sprintf("Converted %.2f %s to %.2f %s (rate: 0.92)", amount, from, amount*0.92, to)
 		}

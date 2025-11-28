@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +18,10 @@ import (
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/events"
+	"mcp-agent/agent_go/pkg/mcpagent/codeexec"
 	"mcp-agent/agent_go/pkg/mcpagent/prompt"
 	"mcp-agent/agent_go/pkg/mcpcache"
+	"mcp-agent/agent_go/pkg/mcpcache/codegen"
 	"mcp-agent/agent_go/pkg/mcpclient"
 )
 
@@ -25,6 +29,7 @@ import (
 type CustomTool struct {
 	Definition llmtypes.Tool
 	Execution  func(ctx context.Context, args map[string]interface{}) (string, error)
+	Category   string // Tool category (e.g., "workspace", "human", "virtual", "custom", etc.)
 }
 
 // AgentEventListener defines the interface for event listeners
@@ -133,13 +138,6 @@ func WithSmartRoutingConfig(temperature float64, maxTokens, maxMessages, userMsg
 	}
 }
 
-// WithCacheOnly sets whether to use only cached servers (skip servers without cache)
-func WithCacheOnly(cacheOnly bool) AgentOption {
-	return func(a *Agent) {
-		a.CacheOnly = cacheOnly
-	}
-}
-
 // WithSystemPrompt sets a custom system prompt
 func WithSystemPrompt(systemPrompt string) AgentOption {
 	return func(a *Agent) {
@@ -185,6 +183,16 @@ func WithSelectedServers(servers []string) AgentOption {
 	}
 }
 
+// WithCodeExecutionMode enables/disables code execution mode
+// When enabled: Only virtual tools (discover_code_files, write_code) are exposed to the LLM
+// MCP tools and custom tools are NOT added directly - LLM must use generated Go code via write_code
+// When disabled (default): All MCP tools are added directly as LLM tools
+func WithCodeExecutionMode(enabled bool) AgentOption {
+	return func(a *Agent) {
+		a.UseCodeExecutionMode = enabled
+	}
+}
+
 // Agent wraps MCP clients, an LLM, and an observability tracer to answer questions using tool calls.
 // It is generic enough to be reused by CLI commands, services, or tests.
 type Agent struct {
@@ -213,6 +221,7 @@ type Agent struct {
 	ToolTimeout     time.Duration // Tool execution timeout (default: 5 minutes)
 	selectedTools   []string      // Selected tools in "server:tool" format
 	selectedServers []string      // Selected servers list for "all tools" mode determination
+	toolFilter      *ToolFilter   // Unified tool filter for consistent filtering
 
 	// Enhanced tracking info
 	SystemPrompt string
@@ -278,14 +287,22 @@ type Agent struct {
 	currentParentEventID  string // Track current parent event ID
 	currentHierarchyLevel int    // Track current hierarchy level (0=root, 1=child, etc.)
 
-	// Cache behavior configuration
-	CacheOnly bool // If true, only use cached servers (skip servers without cache)
-
 	// Resource discovery configuration
 	DiscoverResource bool // If true, include resource details in system prompt (default: true)
 
 	// Prompt discovery configuration
 	DiscoverPrompt bool // If true, include prompt details in system prompt (default: true)
+
+	// Code execution mode configuration
+	// When enabled: Only virtual tools (discover_code_files, write_code) are exposed to the LLM
+	// MCP tools and custom tools are NOT added directly - LLM must use generated Go code via write_code
+	// When disabled (default): All MCP tools are added directly as LLM tools
+	UseCodeExecutionMode bool
+
+	// Folder guard paths for code execution mode
+	// These paths are validated at AST level before code execution
+	FolderGuardReadPaths  []string // Paths allowed for read operations
+	FolderGuardWritePaths []string // Paths allowed for write operations
 
 	// Cross-provider fallback configuration
 	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration from frontend
@@ -360,6 +377,22 @@ func (a *Agent) SetToolOutputHandler(handler *utils.ToolOutputHandler) {
 	a.toolOutputHandler = handler
 }
 
+// SetFolderGuardPaths sets the folder guard paths for code execution validation
+// readPaths: paths allowed for read operations (workspace_tools read functions)
+// writePaths: paths allowed for write operations (workspace_tools write functions)
+func (a *Agent) SetFolderGuardPaths(readPaths, writePaths []string) {
+	a.FolderGuardReadPaths = readPaths
+	a.FolderGuardWritePaths = writePaths
+	if a.Logger != nil {
+		a.Logger.Infof("🔒 [CODE_EXECUTION] Folder guard paths set - Read: %v, Write: %v", readPaths, writePaths)
+	}
+}
+
+// GetFolderGuardPaths returns the folder guard paths
+func (a *Agent) GetFolderGuardPaths() (readPaths, writePaths []string) {
+	return a.FolderGuardReadPaths, a.FolderGuardWritePaths
+}
+
 // NewAgent creates a new Agent with the given options
 func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger, options ...AgentOption) (*Agent, error) {
 
@@ -390,7 +423,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		return nil, fmt.Errorf("LLM cannot be nil")
 	}
 
-	// Create agent with default values first to get CacheOnly setting
+	// Create agent with default values
 	ag := &Agent{
 		ctx:                           ctx,
 		LLM:                           llm,
@@ -434,9 +467,6 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		currentParentEventID:  "", // Start with no parent
 		currentHierarchyLevel: 0,  // Start at root level
 
-		// Initialize cache behavior (default: false - connect to all servers)
-		CacheOnly: false,
-
 		// Initialize resource discovery (default: true - include resources in system prompt)
 		DiscoverResource: true,
 
@@ -444,17 +474,17 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		DiscoverPrompt: true,
 	}
 
-	// Apply all options to get the final CacheOnly setting
+	// Apply all options
 	for _, option := range options {
 		option(ag)
 	}
 
 	// 🆕 DETAILED AGENT CONNECTION DEBUG LOGGING
 	logger.Infof("🤖 [DEBUG] About to call NewAgentConnection - Time: %v", time.Now())
-	logger.Infof("🤖 [DEBUG] NewAgentConnection params - ServerName: %s, ConfigPath: %s, CacheOnly: %v", serverName, configPath, ag.CacheOnly)
+	logger.Infof("🤖 [DEBUG] NewAgentConnection params - ServerName: %s, ConfigPath: %s", serverName, configPath)
 	logger.Infof("🤖 [DEBUG] LLM details - Provider: %T, Model: %v", llm, llm != nil)
 
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(traceID), tracers, logger, ag.CacheOnly)
+	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(traceID), tracers, logger)
 
 	// 🆕 POST-CONNECTION DEBUG LOGGING
 	logger.Infof("🤖 [DEBUG] NewAgentConnection completed - Time: %v", time.Now())
@@ -488,97 +518,277 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	ag.Client = firstClient
 	ag.Clients = clients
 	ag.toolToServer = toolToServer
-	ag.Tools = allLLMTools
 	ag.SystemPrompt = systemPrompt
 	ag.servers = servers
 	ag.toolOutputHandler = toolOutputHandler
 	ag.prompts = prompts
 	ag.resources = resources
-	ag.filteredTools = allLLMTools
 	ag.configPath = configPath
 
-	// Apply selected tools filter if specified
-	// Empty selectedTools array means "use all tools" (no filtering)
-	// Non-empty selectedTools array means "use only these specific tools"
-	// IMPORTANT: If a server is in selectedServers but has NO tools in selectedTools,
-	// it means "use ALL tools from that server" (all tools mode for that server)
-	// Also supports "server:*" pattern to explicitly request all tools from a server
-	if len(ag.selectedTools) > 0 {
-		logger.Infof("🔧 Tool filtering active: %d specific tools selected", len(ag.selectedTools))
+	// Set selectedServers based on serverName parameter if not already set via options
+	// This ensures discover_code_structure filters correctly when a single server is specified
+	// IMPORTANT: Only auto-assign selectedServers if BOTH selectedServers AND selectedTools are empty
+	// If selectedTools is set, the user wants specific tool filtering, not all tools from the server
+	if len(ag.selectedServers) == 0 && len(ag.selectedTools) == 0 && serverName != "" && serverName != "all" {
+		// serverName was specified and no filtering was configured via options
+		// Use the servers list from NewAgentConnection (which already filtered based on serverName)
+		ag.selectedServers = servers
+		if logger != nil {
+			logger.Infof("🔧 Set selectedServers from serverName parameter: %v (no selectedTools configured)", ag.selectedServers)
+		}
+	} else if len(ag.selectedServers) == 0 && len(ag.selectedTools) > 0 {
+		// selectedTools is set but selectedServers is not - respect the specific tool filtering
+		if logger != nil {
+			logger.Infof("🔧 Using selectedTools for filtering, not auto-assigning selectedServers (selectedTools: %v)", ag.selectedTools)
+		}
+	}
 
-		// Create set for fast lookup of specific tools
-		selectedToolSet := make(map[string]bool)
-		for _, fullName := range ag.selectedTools {
-			selectedToolSet[fullName] = true
+	// Create unified ToolFilter for consistent filtering across both modes
+	// This filter is used by both LLM tool registration and discovery
+	customCategories := ag.GetCustomToolCategories()
+	if logger != nil {
+		logger.Infof("🔍 [DISCOVERY] Creating ToolFilter with configuration:")
+		logger.Infof("🔍 [DISCOVERY]   - selectedTools: %v (count: %d)", ag.selectedTools, len(ag.selectedTools))
+		logger.Infof("🔍 [DISCOVERY]   - selectedServers: %v (count: %d)", ag.selectedServers, len(ag.selectedServers))
+		logger.Infof("🔍 [DISCOVERY]   - customCategories: %v (count: %d)", customCategories, len(customCategories))
+		logger.Infof("🔍 [DISCOVERY]   - MCP clients: %d", len(clients))
+	}
+	ag.toolFilter = NewToolFilter(
+		ag.selectedTools,
+		ag.selectedServers,
+		clients,
+		customCategories,
+		logger,
+	)
+
+	// Handle code execution mode: filter out MCP tools and custom tools if enabled
+	var toolsToUse []llmtypes.Tool
+	if ag.UseCodeExecutionMode {
+		// Code execution mode: Only include virtual tools (discover_code_files, write_code)
+		// Exclude all MCP server tools and custom tools (they'll be accessed via generated code)
+		logger.Infof("🔧 Code execution mode enabled - excluding MCP tools and custom tools from LLM (will use generated code)")
+
+		// Build set of custom tool names for filtering
+		customToolNames := make(map[string]bool)
+		for toolName := range ag.customTools {
+			customToolNames[toolName] = true
 		}
 
-		// Build map of servers that have "all tools" pattern (server:*)
-		serversWithAllTools := make(map[string]bool)
-		// Build map of which servers have specific tools (not "all tools")
-		serversWithSpecificTools := make(map[string]bool)
-		for _, fullName := range ag.selectedTools {
-			// Parse "server:tool" or "server:*" format
-			parts := strings.SplitN(fullName, ":", 2)
-			if len(parts) == 2 {
-				serverName := parts[0]
-				toolName := parts[1]
-				if toolName == "*" {
-					// "server:*" means all tools from this server
-					serversWithAllTools[serverName] = true
-				} else {
-					// Specific tool selected
-					serversWithSpecificTools[serverName] = true
-				}
+		for _, tool := range allLLMTools {
+			// Check if this tool is an MCP tool (exists in toolToServer)
+			_, isMCPTool := toolToServer[tool.Function.Name]
+			// Check if this tool is a custom tool
+			isCustomTool := customToolNames[tool.Function.Name]
+
+			// In code execution mode, exclude both MCP tools and custom tools
+			// Only include virtual tools (which will be filtered later to only discover_code_files and write_code)
+			if !isMCPTool && !isCustomTool {
+				// Not an MCP tool or custom tool - include it (virtual tools only)
+				toolsToUse = append(toolsToUse, tool)
+			}
+		}
+		logger.Infof("🔧 Code execution mode: %d tools available (only virtual tools, MCP and custom tools excluded)", len(toolsToUse))
+	} else {
+		// Normal mode: Use all tools
+		toolsToUse = allLLMTools
+	}
+
+	ag.Tools = toolsToUse
+	ag.filteredTools = toolsToUse
+
+	// Apply selected tools filter using unified ToolFilter
+	// This ensures consistent filtering between LLM tools and discovery
+	// Empty selectedTools/selectedServers means "use all tools" (no filtering)
+	// Non-empty means "use only matching tools"
+	// Also supports "server:*" pattern to explicitly request all tools from a server
+	if !ag.toolFilter.IsNoFilteringActive() {
+		logger.Infof("🔧 Tool filtering active: %d specific tools, %d servers selected", len(ag.selectedTools), len(ag.selectedServers))
+
+		// Build set of custom tool names for category determination
+		customToolNames := make(map[string]bool)
+		for toolName, customTool := range ag.customTools {
+			customToolNames[toolName] = true
+			// Also store category for this tool
+			if customTool.Category != "" {
+				customToolNames[customTool.Category+"_tools:"+toolName] = true
 			}
 		}
 
-		// Filter tools: include specific tools OR all tools from servers with "*" pattern
+		// Filter tools using unified ToolFilter
 		var filteredTools []llmtypes.Tool
-		for _, tool := range allLLMTools {
-			// Get server name for this tool
-			serverName, exists := toolToServer[tool.Function.Name]
-			if !exists {
-				// Custom/virtual tool - always include
+		for _, tool := range toolsToUse {
+			if tool.Function == nil {
+				continue
+			}
+			toolName := tool.Function.Name
+
+			// Determine the package/server name and tool type
+			serverName, isMCPTool := toolToServer[toolName]
+			isCustomTool := customToolNames[toolName]
+
+			// Determine package name for custom tools
+			var packageName string
+			if isMCPTool {
+				packageName = serverName
+			} else if isCustomTool {
+				// Find the category for this custom tool
+				if customTool, ok := ag.customTools[toolName]; ok && customTool.Category != "" {
+					packageName = customTool.Category + "_tools"
+				} else {
+					packageName = "custom_tools"
+				}
+			} else {
+				// Virtual tool - always include
 				filteredTools = append(filteredTools, tool)
 				continue
 			}
 
-			// Check if this server has "all tools" pattern
-			if serversWithAllTools[serverName] {
-				// Server has "server:*" pattern - include ALL tools from this server
-				filteredTools = append(filteredTools, tool)
-			} else if serversWithSpecificTools[serverName] {
-				// Server has specific tools - check if this tool is selected
-				fullName := fmt.Sprintf("%s:%s", serverName, tool.Function.Name)
-				if selectedToolSet[fullName] {
-					filteredTools = append(filteredTools, tool)
-				}
-			} else {
-				// Server has no tools in selectedTools - include ALL tools from this server
-				// (this is "all tools" mode for this server when it's in selectedServers)
+			// Use unified filter to check if tool should be included
+			// Virtual tools are handled above, so isVirtualTool=false here
+			if ag.toolFilter.ShouldIncludeTool(packageName, toolName, isCustomTool, false) {
 				filteredTools = append(filteredTools, tool)
 			}
 		}
 
-		logger.Infof("🔧 Tool filtering complete: %d tools selected from %d total", len(filteredTools), len(allLLMTools))
+		logger.Infof("🔧 Tool filtering complete: %d tools selected from %d total", len(filteredTools), len(toolsToUse))
 		ag.Tools = filteredTools
 		ag.filteredTools = filteredTools
 	} else {
-		// No specific tools selected - use all available tools
-		logger.Infof("🔧 Using all available tools: %d tools (no filtering applied)", len(allLLMTools))
-		ag.Tools = allLLMTools
-		ag.filteredTools = allLLMTools
+		// No filtering active - use all available tools (already filtered by code execution mode if enabled)
+		logger.Infof("🔧 Using all available tools: %d tools (no filtering applied)", len(toolsToUse))
+		ag.Tools = toolsToUse
+		ag.filteredTools = toolsToUse
 	}
 
-	// Always rebuild system prompt with the correct agent mode
-	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
-	if !ag.hasCustomSystemPrompt {
-		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.Logger)
+	// Initialize tool registry for code execution
+	// Convert custom tools to executor functions
+	customToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+	for name, customTool := range ag.customTools {
+		customToolExecutors[name] = customTool.Execution
 	}
 
 	// Add virtual tools to the LLM tools list
 	virtualTools := ag.CreateVirtualTools()
+
+	// Filter virtual tools based on code execution mode
+	if ag.UseCodeExecutionMode {
+		// In code execution mode, only include discover_code_files and write_code
+		var filteredVirtualTools []llmtypes.Tool
+		for _, tool := range virtualTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				// Only include code execution tools in code execution mode
+				if toolName == "discover_code_files" || toolName == "write_code" {
+					filteredVirtualTools = append(filteredVirtualTools, tool)
+				}
+			}
+		}
+		virtualTools = filteredVirtualTools
+		logger.Infof("🔧 Code execution mode: Filtered virtual tools - only discover_code_files and write_code available")
+	} else {
+		// In non-code execution mode, exclude discover_code_files and write_code
+		var filteredVirtualTools []llmtypes.Tool
+		for _, tool := range virtualTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				// Exclude code execution tools in non-code execution mode
+				if toolName != "discover_code_files" && toolName != "write_code" {
+					filteredVirtualTools = append(filteredVirtualTools, tool)
+				}
+			}
+		}
+		virtualTools = filteredVirtualTools
+		logger.Infof("🔧 Non-code execution mode: Excluded discover_code_files and write_code from virtual tools")
+	}
+
 	ag.Tools = append(ag.Tools, virtualTools...)
+
+	// Convert virtual tools to executor functions
+	// Note: We need to capture the tool name in the closure
+	virtualToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+	for _, virtualTool := range virtualTools {
+		if virtualTool.Function != nil {
+			toolName := virtualTool.Function.Name
+			// Create a closure that captures the tool name and agent reference
+			virtualToolExecutors[toolName] = func(name string) func(ctx context.Context, args map[string]interface{}) (string, error) {
+				return func(ctx context.Context, args map[string]interface{}) (string, error) {
+					return ag.HandleVirtualTool(ctx, name, args)
+				}
+			}(toolName)
+		}
+	}
+
+	// Initialize registry with virtual tools
+	codeexec.InitRegistryWithVirtualTools(ag.Clients, customToolExecutors, virtualToolExecutors, ag.toolToServer, logger)
+
+	// Generate Go code for virtual tools
+	generatedDir := ag.getGeneratedDir()
+	// Use agent's ToolTimeout (same as used for normal tool calls)
+	toolTimeout := getToolExecutionTimeout(ag)
+	if err := codegen.GenerateVirtualToolsCode(virtualTools, generatedDir, logger, toolTimeout); err != nil {
+		if logger != nil {
+			logger.Warnf("Failed to generate Go code for virtual tools: %v", err)
+		}
+		// Don't fail agent initialization if code generation fails
+	}
+
+	// Note: MCP server code generation is handled by the cache manager
+	// - When cache entries are saved, code is generated automatically
+	// - When cache entries are loaded, code is generated if missing
+	// - No need to regenerate here - cache manager handles it
+	if ag.UseCodeExecutionMode && logger != nil {
+		logger.Debugf("🔧 [CODE_GEN] MCP server code generation handled by cache manager (no regeneration needed)")
+	}
+
+	// In code execution mode, discover tool structure and include it in system prompt
+	var toolStructureJSON string
+	if ag.UseCodeExecutionMode {
+		if logger != nil {
+			logger.Infof("🔍 [DISCOVERY] Starting tool structure discovery for system prompt")
+			logger.Infof("🔍 [DISCOVERY] Filter configuration passed to agent:")
+			logger.Infof("🔍 [DISCOVERY]   - selectedServers: %v", ag.selectedServers)
+			logger.Infof("🔍 [DISCOVERY]   - selectedTools: %v", ag.selectedTools)
+			logger.Infof("🔍 [DISCOVERY]   - useCodeExecutionMode: %v", ag.UseCodeExecutionMode)
+		}
+
+		// Discover all available tools and include structure in system prompt
+		toolStructure, err := ag.discoverAllServersAndTools(generatedDir)
+		if err != nil {
+			if logger != nil {
+				logger.Warnf("🔍 [DISCOVERY] Failed to discover tool structure for system prompt: %v", err)
+			}
+			// Continue without tool structure if discovery fails
+		} else {
+			toolStructureJSON = toolStructure
+			if logger != nil {
+				logger.Infof("🔍 [DISCOVERY] Tool structure discovered successfully (%d bytes)", len(toolStructureJSON))
+				// Log a preview of what was discovered
+				if len(toolStructureJSON) > 0 && len(toolStructureJSON) < 1000 {
+					logger.Debugf("🔍 [DISCOVERY] Tool structure content: %s", toolStructureJSON)
+				} else if len(toolStructureJSON) > 0 {
+					logger.Debugf("🔍 [DISCOVERY] Tool structure preview (first 500 chars): %s...", toolStructureJSON[:500])
+				}
+			}
+		}
+	}
+
+	// Always rebuild system prompt with the correct agent mode and tool structure
+	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
+	// In code execution mode, tool structure is automatically included
+	if !ag.hasCustomSystemPrompt {
+		if logger != nil && ag.UseCodeExecutionMode {
+			logger.Infof("🔍 [DISCOVERY] Building system prompt with tool structure (code execution mode)")
+			if toolStructureJSON != "" {
+				logger.Debugf("🔍 [DISCOVERY] Tool structure will be included in system prompt (%d bytes)", len(toolStructureJSON))
+			} else {
+				logger.Warnf("🔍 [DISCOVERY] No tool structure available - system prompt will not include tool structure")
+			}
+		}
+		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.Logger)
+		if logger != nil && ag.UseCodeExecutionMode {
+			logger.Infof("🔍 [DISCOVERY] System prompt built successfully (total length: %d bytes)", len(ag.SystemPrompt))
+		}
+	}
 
 	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
 	// This ensures we have the complete tool count for accurate smart routing decisions
@@ -586,21 +796,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	logger.Infof("🎯 [DEBUG] Smart routing context - Time: %v", time.Now())
 
 	if ag.shouldUseSmartRouting() {
-		// Get server count for logging (cached vs active)
-		var serverCount int
-		var serverType string
-		if ag.CacheOnly {
-			// Count unique servers from tool-to-server mapping
-			serverSet := make(map[string]bool)
-			for _, serverName := range ag.toolToServer {
-				serverSet[serverName] = true
-			}
-			serverCount = len(serverSet)
-			serverType = "cached"
-		} else {
-			serverCount = len(ag.Clients)
-			serverType = "active"
-		}
+		// Get server count for logging
+		serverCount := len(ag.Clients)
+		serverType := "active"
 
 		logger.Infof("🎯 Smart routing enabled - determining relevant tools after full initialization")
 		logger.Infof("🎯 Total tools loaded: %d, %s servers: %d (thresholds: tools>%d, servers>%d)",
@@ -611,29 +809,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		ag.filteredTools = ag.Tools
 		logger.Infof("🎯 Smart routing will be applied during conversation with full context")
 	} else {
-		// Get server count for logging (cached vs active)
-		var serverCount int
-		var serverType string
-		if ag.CacheOnly {
-			// Count unique servers from tool-to-server mapping
-			serverSet := make(map[string]bool)
-			for _, serverName := range ag.toolToServer {
-				serverSet[serverName] = true
-			}
-			serverCount = len(serverSet)
-			serverType = "cached"
-			logger.Infof("🔧 DEBUG: Cache-only mode - toolToServer map has %d entries, unique servers: %d", len(ag.toolToServer), serverCount)
-			// Extract server names for debugging
-			serverNames := make([]string, 0, len(serverSet))
-			for serverName := range serverSet {
-				serverNames = append(serverNames, serverName)
-			}
-			logger.Infof("🔧 DEBUG: Server names in toolToServer: %v", serverNames)
-		} else {
-			serverCount = len(ag.Clients)
-			serverType = "active"
-			logger.Infof("🔧 DEBUG: Active mode - Clients map has %d entries", serverCount)
-		}
+		// Get server count for logging
+		serverCount := len(ag.Clients)
+		serverType := "active"
+		logger.Infof("🔧 DEBUG: Active mode - Clients map has %d entries", serverCount)
 
 		// No smart routing - use all tools
 		ag.filteredTools = ag.Tools
@@ -654,7 +833,7 @@ func (a *Agent) SetCurrentQuery(query string) {
 	// This method is no longer needed as hierarchy is removed
 }
 
-// createOnDemandConnection creates a connection to a specific server when needed in cache-only mode
+// createOnDemandConnection creates a connection to a specific server when needed
 func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
 	logger := getLogger(a)
 	startTime := time.Now()
@@ -750,7 +929,7 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 // StartAgentSession creates a new agent-level event tree
 func (a *Agent) StartAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
-	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider))
+	agentStartEvent := events.NewAgentStartEvent(string(a.AgentMode), a.ModelID, string(a.provider), a.UseCodeExecutionMode)
 	a.EmitTypedEvent(ctx, agentStartEvent)
 }
 
@@ -1004,6 +1183,29 @@ func (a *Agent) EndAgentSession(ctx context.Context, conversationDuration time.D
 		cacheEnabledCallCount,
 	)
 	a.EmitTypedEvent(ctx, agentEndEvent)
+
+	// Cleanup agent-specific generated directory
+	a.cleanupAgentGeneratedDir()
+}
+
+// cleanupAgentGeneratedDir removes the agent-specific generated directory
+func (a *Agent) cleanupAgentGeneratedDir() {
+	agentDir := a.getAgentGeneratedDir()
+
+	// Check if directory exists
+	if _, err := os.Stat(agentDir); os.IsNotExist(err) {
+		// Directory doesn't exist, nothing to clean
+		return
+	}
+
+	// Remove the entire agent directory
+	if err := os.RemoveAll(agentDir); err != nil {
+		if a.Logger != nil {
+			a.Logger.Warnf("⚠️ Failed to cleanup agent directory %s: %v", agentDir, err)
+		}
+	} else if a.Logger != nil {
+		a.Logger.Infof("🧹 Cleaned up agent directory: %s", agentDir)
+	}
 }
 
 // RebuildSystemPromptWithFilteredServers rebuilds the system prompt with only prompts/resources from relevant servers
@@ -1062,12 +1264,27 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	}
 
 	// Rebuild system prompt with filtered data
+	// In code execution mode, rediscover tool structure after filtering
+	var toolStructureJSON string
+	if a.UseCodeExecutionMode {
+		generatedDir := a.getGeneratedDir()
+		toolStructure, err := a.discoverAllServersAndTools(generatedDir)
+		if err != nil {
+			if a.Logger != nil {
+				a.Logger.Warnf("Failed to rediscover tool structure after filtering: %v", err)
+			}
+		} else {
+			toolStructureJSON = toolStructure
+		}
+	}
 	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
 		filteredPrompts,
 		filteredResources,
 		string(a.AgentMode),
 		a.DiscoverResource,
 		a.DiscoverPrompt,
+		a.UseCodeExecutionMode,
+		toolStructureJSON,
 		a.Logger,
 	)
 
@@ -1114,7 +1331,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 	// Generate a simple trace ID for this agent session
 	traceID := observability.TraceID(fmt.Sprintf("agent-session-%s-%d", modelID, time.Now().UnixNano()))
 
-	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(traceID), tracers, logger, false) // Default CacheOnly = false for observability version
+	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(traceID), tracers, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1550,7 +1767,8 @@ func AskWithHistoryStructuredViaTool[T any](
 		return "", nil
 	}
 
-	a.RegisterCustomTool(toolName, toolDescription, toolParams, executionFunc)
+	// Register with "structured_output" category so it's always available even in code execution mode
+	a.RegisterCustomTool(toolName, toolDescription, toolParams, executionFunc, "structured_output")
 
 	// Call existing AskWithHistory - will break as soon as tool is called
 	textResponse, updatedMessages, err := a.AskWithHistory(toolCalledCtx, messages)
@@ -1711,12 +1929,50 @@ func (a *Agent) IsCancelled() bool {
 }
 
 // SetSystemPrompt sets a custom system prompt and marks it as custom to prevent overwriting
+// Always overwrites the existing system prompt (removed prepending behavior for code execution mode)
+// In code execution mode, if the prompt contains {{TOOL_STRUCTURE}} placeholder, it will be replaced with actual tool structure JSON
 func (a *Agent) SetSystemPrompt(systemPrompt string) {
+	// Always overwrite the system prompt (removed prepending behavior)
+	// In code execution mode, replace {{TOOL_STRUCTURE}} placeholder if present
+	if a.UseCodeExecutionMode && strings.Contains(systemPrompt, prompt.ToolStructurePlaceholder) {
+		// Get tool structure and replace placeholder
+		generatedDir := a.getGeneratedDir()
+		toolStructure, err := a.discoverAllServersAndTools(generatedDir)
+		if err != nil {
+			if a.Logger != nil {
+				a.Logger.Warnf("⚠️ [CODE_EXECUTION] Failed to discover tool structure for placeholder replacement: %v", err)
+			}
+			// Remove placeholder if discovery fails
+			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
+		} else {
+			// Replace placeholder with tool structure section
+			toolStructureSection := "\n\n<available_code>\n" +
+				"**AVAILABLE CODE FILES AND FUNCTIONS:**\n\n" +
+				"The following code files and functions are available for use in your Go code. This structure shows all servers, custom tools, and their functions:\n\n" +
+				"```json\n" +
+				toolStructure + "\n" +
+				"```\n\n" +
+				"**How to use:**\n" +
+				"- Each server has a package name (e.g., \"aws_tools\", \"google_sheets_tools\")\n" +
+				"- Each function has a name (e.g., \"GetDocument\", \"ListSpreadsheets\")\n" +
+				"- Import the package and call the function in your Go code\n" +
+				"</available_code>\n"
+			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
+			if a.Logger != nil {
+				a.Logger.Infof("🔧 [CODE_EXECUTION] Replaced {{TOOL_STRUCTURE}} placeholder with tool structure (%d bytes)", len(toolStructure))
+			}
+		}
+	}
+
 	a.SystemPrompt = systemPrompt
+	if a.Logger != nil {
+		a.Logger.Debugf("✅ System prompt overwritten (length: %d chars)", len(systemPrompt))
+	}
 	a.hasCustomSystemPrompt = true
 }
 
 // AppendSystemPrompt appends additional content to the existing system prompt
+// Removes "AI Staff Engineer" text from existing prompt when appending
 func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 	if additionalPrompt == "" {
 		return
@@ -1731,9 +1987,14 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 		a.OriginalSystemPrompt = a.SystemPrompt
 	}
 
-	// If we already have a system prompt, append with separator
+	// If we already have a system prompt, remove AI Staff Engineer text and append with separator
 	if a.SystemPrompt != "" {
-		a.SystemPrompt = a.SystemPrompt + "\n\n" + additionalPrompt
+		// Remove "AI Staff Engineer" text from existing prompt before appending
+		existingPrompt := prompt.RemoveAIStaffEngineerText(a.SystemPrompt)
+		a.SystemPrompt = existingPrompt + "\n\n" + additionalPrompt
+		if a.Logger != nil {
+			a.Logger.Debugf("✅ System prompt appended (length: %d chars) - AI Staff Engineer text removed", len(additionalPrompt))
+		}
 	} else {
 		// If no existing system prompt, just set it
 		a.SystemPrompt = additionalPrompt
@@ -1744,9 +2005,25 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 }
 
 // RegisterCustomTool registers a single custom tool with both schema and execution function
-func (a *Agent) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error)) {
+// category is a REQUIRED parameter that specifies the tool's category (e.g., "workspace", "human", "virtual")
+// Returns error if category is missing or empty
+func (a *Agent) RegisterCustomTool(name string, description string, parameters map[string]interface{}, executionFunc func(ctx context.Context, args map[string]interface{}) (string, error), category ...string) error {
 	if a.customTools == nil {
 		a.customTools = make(map[string]CustomTool)
+	}
+
+	// Determine category - REQUIRED, no default
+	// All tools must have a category from ToolCategories map
+	var toolCategory string
+	if len(category) > 0 && category[0] != "" {
+		toolCategory = category[0]
+	} else {
+		// Category is required - return error
+		err := fmt.Errorf("tool %s registered without category - category is REQUIRED for all tools", name)
+		if a.Logger != nil {
+			a.Logger.Errorf("❌ [DISCOVERY] %v", err)
+		}
+		return err
 	}
 
 	// Create the tool definition
@@ -1759,31 +2036,232 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		},
 	}
 
-	// Store both definition and execution function
+	// Store both definition and execution function with category
 	a.customTools[name] = CustomTool{
 		Definition: tool,
 		Execution:  executionFunc,
+		Category:   toolCategory,
 	}
 
-	// Also add to the main Tools array so the LLM can see it
-	a.Tools = append(a.Tools, tool)
+	// In code execution mode, do NOT add custom tools to LLM tools list
+	// They should only be accessible via generated Go code
+	// EXCEPTION: Structured output tools (category "structured_output") must always be available
+	// because they're orchestration/control tools, not regular MCP tools
+	isStructuredOutputTool := toolCategory == "structured_output"
 
-	// 🔧 CRITICAL FIX: Also add to filteredTools if smart routing is active
-	// This ensures custom tools are available even when smart routing is enabled
-	a.filteredTools = append(a.filteredTools, tool)
+	if !a.UseCodeExecutionMode || isStructuredOutputTool {
+		// Normal mode OR structured output tool: Add to the main Tools array so the LLM can see it
+		a.Tools = append(a.Tools, tool)
+
+		// 🔧 CRITICAL FIX: Also add to filteredTools if smart routing is active
+		// This ensures custom tools are available even when smart routing is enabled
+		a.filteredTools = append(a.filteredTools, tool)
+
+		if a.UseCodeExecutionMode && isStructuredOutputTool {
+			if a.Logger != nil {
+				a.Logger.Debugf("🔧 Code execution mode: Structured output tool %s added to LLM tools (required for orchestration)", name)
+			}
+		}
+	} else {
+		// Code execution mode: Don't add to LLM tools, but still generate code and update registry
+		if a.Logger != nil {
+			a.Logger.Debugf("🔧 Code execution mode: Custom tool %s registered but not added to LLM tools (will use generated code)", name)
+		}
+	}
+
+	// Generate Go code for custom tools
+	generatedDir := a.getGeneratedDir()
+	customToolsForCodeGen := make(map[string]codegen.CustomToolForCodeGen)
+	categoryCounts := make(map[string]int)
+	for toolName, customTool := range a.customTools {
+		customToolsForCodeGen[toolName] = codegen.CustomToolForCodeGen{
+			Definition: customTool.Definition,
+			Category:   customTool.Category, // Pass category to code generation
+		}
+		// Count tools by category for logging
+		category := customTool.Category
+		if category == "" {
+			category = "custom"
+		}
+		categoryCounts[category]++
+	}
+	if a.Logger != nil {
+		a.Logger.Infof("🔍 [DISCOVERY] Generating custom tools code for %d tools", len(customToolsForCodeGen))
+		for category, count := range categoryCounts {
+			a.Logger.Infof("🔍 [DISCOVERY]   - Category %s: %d tools", category, count)
+		}
+	}
+	// Use agent's ToolTimeout (same as used for normal tool calls)
+	toolTimeout := getToolExecutionTimeout(a)
+	if err := codegen.GenerateCustomToolsCode(customToolsForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
+		if a.Logger != nil {
+			a.Logger.Warnf("🔍 [DISCOVERY] Failed to generate Go code for custom tools: %v", err)
+		}
+		// Don't fail tool registration if code generation fails
+	} else if a.Logger != nil {
+		a.Logger.Infof("🔍 [DISCOVERY] Successfully generated custom tools code")
+		// Verify workspace_tools directory was created
+		workspaceToolsDir := filepath.Join(generatedDir, "workspace_tools")
+		if _, err := os.Stat(workspaceToolsDir); err == nil {
+			a.Logger.Infof("🔍 [DISCOVERY] Verified workspace_tools directory exists: %s", workspaceToolsDir)
+		} else {
+			a.Logger.Warnf("🔍 [DISCOVERY] workspace_tools directory not found after code generation: %s (error: %v)", workspaceToolsDir, err)
+		}
+	}
+
+	// Update registry with new custom tool
+	if a.Clients != nil {
+		customToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+		for toolName, customTool := range a.customTools {
+			customToolExecutors[toolName] = customTool.Execution
+		}
+		if a.Logger != nil {
+			a.Logger.Debugf("🔧 [CODE_EXECUTION] Updating registry with %d custom tools (including %s)", len(customToolExecutors), name)
+			// Log all custom tool names for debugging
+			toolNames := make([]string, 0, len(customToolExecutors))
+			for toolName := range customToolExecutors {
+				toolNames = append(toolNames, toolName)
+			}
+			a.Logger.Debugf("🔧 [CODE_EXECUTION] Custom tools in registry: %v", toolNames)
+		}
+		codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
+		if a.Logger != nil {
+			a.Logger.Debugf("🔧 [CODE_EXECUTION] Registry updated successfully for tool: %s", name)
+		}
+	} else {
+		if a.Logger != nil {
+			a.Logger.Warnf("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil for tool: %s", name)
+		}
+	}
 
 	// Debug logging
 	if a.Logger != nil {
-		a.Logger.Infof("🔧 Registered custom tool: %s", name)
+		a.Logger.Infof("🔧 Registered custom tool: %s (category: %s)", name, toolCategory)
 		a.Logger.Infof("🔧 Total custom tools registered: %d", len(a.customTools))
 		a.Logger.Infof("🔧 Total tools in agent: %d", len(a.Tools))
 		a.Logger.Infof("🔧 Total filtered tools: %d", len(a.filteredTools))
 	}
+
+	return nil
+}
+
+// GetCustomToolsByCategory returns all custom tools filtered by category
+func (a *Agent) GetCustomToolsByCategory(category string) map[string]CustomTool {
+	result := make(map[string]CustomTool)
+	for name, tool := range a.customTools {
+		if tool.Category == category {
+			result[name] = tool
+		}
+	}
+	return result
+}
+
+// GetCustomToolCategories returns a list of all unique categories for registered custom tools
+func (a *Agent) GetCustomToolCategories() []string {
+	categorySet := make(map[string]bool)
+	for _, tool := range a.customTools {
+		if tool.Category != "" {
+			categorySet[tool.Category] = true
+		}
+	}
+
+	categories := make([]string, 0, len(categorySet))
+	for cat := range categorySet {
+		categories = append(categories, cat)
+	}
+	return categories
 }
 
 // GetCustomTools returns the registered custom tools
 func (a *Agent) GetCustomTools() map[string]CustomTool {
 	return a.customTools
+}
+
+// UpdateCodeExecutionRegistry explicitly updates the code execution registry with all custom tools
+// This is useful when tools are registered after agent initialization (e.g., workspace/human tools)
+// It also rebuilds the system prompt to include the newly registered tools in the tool structure
+func (a *Agent) UpdateCodeExecutionRegistry() error {
+	if a.Clients == nil {
+		if a.Logger != nil {
+			a.Logger.Warnf("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil")
+		}
+		return fmt.Errorf("cannot update registry: Clients is nil")
+	}
+
+	// Build custom tool executors map from all registered custom tools
+	customToolExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+	for toolName, customTool := range a.customTools {
+		customToolExecutors[toolName] = customTool.Execution
+	}
+
+	if a.Logger != nil {
+		a.Logger.Infof("🔧 [CODE_EXECUTION] Explicitly updating registry with %d custom tools", len(customToolExecutors))
+		// Log all custom tool names for debugging
+		toolNames := make([]string, 0, len(customToolExecutors))
+		for toolName := range customToolExecutors {
+			toolNames = append(toolNames, toolName)
+		}
+		a.Logger.Debugf("🔧 [CODE_EXECUTION] Custom tools being registered: %v", toolNames)
+	}
+
+	// Update the registry
+	codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
+
+	if a.Logger != nil {
+		a.Logger.Infof("✅ [CODE_EXECUTION] Registry updated successfully with %d custom tools", len(customToolExecutors))
+	}
+
+	// 🔧 CRITICAL: Rebuild system prompt with updated tool structure in code execution mode
+	// This ensures workspace and human tools appear in the system prompt
+	if a.UseCodeExecutionMode {
+		if err := a.rebuildSystemPromptWithUpdatedToolStructure(); err != nil {
+			if a.Logger != nil {
+				a.Logger.Warnf("⚠️ [CODE_EXECUTION] Failed to rebuild system prompt with updated tool structure: %v", err)
+			}
+			// Don't fail registry update if system prompt rebuild fails
+		} else {
+			if a.Logger != nil {
+				a.Logger.Infof("✅ [CODE_EXECUTION] System prompt rebuilt with updated tool structure (workspace and human tools now included)")
+			}
+		}
+	}
+
+	return nil
+}
+
+// rebuildSystemPromptWithUpdatedToolStructure rebuilds the system prompt with the latest tool structure
+// This is called after custom tools are registered to ensure they appear in the system prompt
+func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
+	if !a.UseCodeExecutionMode {
+		return nil // Only needed in code execution mode
+	}
+
+	generatedDir := a.getGeneratedDir()
+	toolStructure, err := a.discoverAllServersAndTools(generatedDir)
+	if err != nil {
+		return fmt.Errorf("failed to discover tool structure: %w", err)
+	}
+
+	// Rebuild system prompt with updated tool structure
+	newSystemPrompt := prompt.BuildSystemPromptWithoutTools(
+		a.prompts,
+		a.resources,
+		string(a.AgentMode),
+		a.DiscoverResource,
+		a.DiscoverPrompt,
+		a.UseCodeExecutionMode,
+		toolStructure,
+		a.Logger,
+	)
+
+	// Update the agent's system prompt
+	a.SystemPrompt = newSystemPrompt
+
+	if a.Logger != nil {
+		a.Logger.Debugf("🔧 [CODE_EXECUTION] System prompt rebuilt - length: %d bytes, tool structure: %d bytes", len(newSystemPrompt), len(toolStructure))
+	}
+
+	return nil
 }
 
 // GetAppendedSystemPrompts returns the list of appended system prompts
@@ -1819,4 +2297,28 @@ func (a *Agent) GetAppendedPromptSummary() string {
 		summary.WriteString(content)
 	}
 	return summary.String()
+}
+
+// getGeneratedDir returns the path to the generated/ directory
+func (a *Agent) getGeneratedDir() string {
+	// Use environment variable if set, otherwise default to agent_go/generated
+	generatedDir := os.Getenv("MCP_GENERATED_DIR")
+	if generatedDir == "" {
+		// Default to agent_go/generated directory
+		// Try to get absolute path to ensure we're in the right directory
+		absPath, err := filepath.Abs("generated")
+		if err == nil {
+			generatedDir = absPath
+		} else {
+			// Fallback to relative path
+			generatedDir = filepath.Join(".", "generated")
+		}
+	}
+	// Ensure directory exists
+	if err := os.MkdirAll(generatedDir, 0755); err != nil {
+		if a.Logger != nil {
+			a.Logger.Warnf("Failed to create generated directory %s: %v", generatedDir, err)
+		}
+	}
+	return generatedDir
 }

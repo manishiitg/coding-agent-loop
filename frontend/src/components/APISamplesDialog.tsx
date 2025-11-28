@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { X, Copy, Check, ExternalLink, Play, Square, Workflow, Search, MessageCircle } from 'lucide-react'
+import { X, Copy, Check, ExternalLink, Play, Square, Workflow, MessageCircle } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'

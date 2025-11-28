@@ -2,7 +2,9 @@ package mcpclient
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"sort"
 	"sync"
 
 	"mcp-agent/agent_go/internal/utils"
@@ -37,7 +39,9 @@ func NewStdioManager(command string, args []string, env []string, logger utils.E
 	})
 
 	// Create server key for this configuration
-	serverKey := fmt.Sprintf("%s_%v", command, args)
+	// Include environment variables in the key to ensure connections with different env vars are not reused
+	envHash := hashEnvVars(env)
+	serverKey := fmt.Sprintf("%s_%v_%s", command, args, envHash)
 
 	return &StdioManager{
 		command:   command,
@@ -115,4 +119,28 @@ func (s *StdioManager) Connect(ctx context.Context) (*client.Client, error) {
 
 	s.logger.Infof("✅ [STDIO DEBUG] Stdio connection obtained from pool successfully")
 	return mcpClient, nil
+}
+
+// hashEnvVars creates a deterministic hash of environment variables
+// This ensures that connections with different env vars get different server keys
+func hashEnvVars(env []string) string {
+	if len(env) == 0 {
+		return "noenv"
+	}
+
+	// Sort env vars to ensure deterministic hash
+	sorted := make([]string, len(env))
+	copy(sorted, env)
+	sort.Strings(sorted)
+
+	// Create hash of sorted env vars
+	hasher := sha256.New()
+	for _, e := range sorted {
+		hasher.Write([]byte(e))
+		hasher.Write([]byte("\n"))
+	}
+	hash := hasher.Sum(nil)
+
+	// Return first 16 characters of hex hash (enough for uniqueness)
+	return fmt.Sprintf("%x", hash)[:16]
 }

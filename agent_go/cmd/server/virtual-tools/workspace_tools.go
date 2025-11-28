@@ -40,7 +40,7 @@ type WorkspaceFile struct {
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
 func getWorkspaceAPIURL() string {
-	if url := os.Getenv("PLANNER_API_URL"); url != "" {
+	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
 		return url
 	}
 	return "http://localhost:8081"
@@ -417,7 +417,7 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/planner-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/planner-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/planner-docs' (e.g., '/app/planner-docs/script.py', '/app/planner-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
+			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/workspace-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/workspace-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/workspace-docs' (e.g., '/app/workspace-docs/script.py', '/app/workspace-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -432,7 +432,7 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 					},
 					"working_directory": map[string]interface{}{
 						"type":        "string",
-						"description": "Relative directory path within workspace to execute command (default: root of workspace). Example: 'scripts' resolves to '/app/planner-docs/scripts'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
+						"description": "Relative directory path within workspace to execute command (default: root of workspace). Example: 'scripts' resolves to '/app/workspace-docs/scripts'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
 					},
 					"timeout": map[string]interface{}{
 						"type":        "integer",
@@ -474,6 +474,11 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 	workspaceTools = append(workspaceTools, readImageTool)
 
 	return workspaceTools
+}
+
+// GetToolCategory returns the category name for workspace tools
+func GetWorkspaceToolCategory() string {
+	return "workspace"
 }
 
 // CreateWorkspaceToolExecutors creates the execution functions for workspace tools
@@ -1470,8 +1475,8 @@ func formatWorkspaceSearchResults(data interface{}, query string) (string, error
 			contentPreview := getStringValue(resultMap, "content_preview")
 			lastModified := getTimeValue(resultMap, "last_modified")
 
-			// Format file path (remove /app/planner-docs/ prefix if present)
-			displayPath := strings.TrimPrefix(filepath, "/app/planner-docs/")
+			// Format file path (remove /app/workspace-docs/ prefix if present)
+			displayPath := strings.TrimPrefix(filepath, "/app/workspace-docs/")
 
 			// Format the result
 			result.WriteString(fmt.Sprintf("**%d. %s** (Score: %d)\n", i+1, title, score))

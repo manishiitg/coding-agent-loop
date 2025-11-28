@@ -109,7 +109,8 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		llmInstance,
 		boa.systemPrompt,
 		boa.config.ServerNames,
-		boa.config.SelectedTools, // NEW: Pass selected tools
+		boa.config.SelectedTools,        // NEW: Pass selected tools
+		boa.config.UseCodeExecutionMode, // NEW: Pass code execution mode
 		boa.config.Mode,
 		boa.tracer,
 		traceID,
@@ -120,7 +121,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.MaxTurns,
 		boa.config.Provider,
 		boa.logger,
-		boa.config.CacheOnly,
+		false,                                    // cacheOnly - not used in orchestrator agents
 		boa.config.EnableLargeOutputVirtualTools, // NEW: Pass large output virtual tools setting
 	)
 	if err != nil {

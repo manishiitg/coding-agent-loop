@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { MessageCircle, Search, Workflow, ArrowRight, Info } from 'lucide-react'
+import { MessageCircle, Workflow, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -32,7 +32,7 @@ const ModeCard: React.FC<ModeCardProps> = ({
   onSelect
 }) => {
   return (
-    <div className="group relative bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-4 hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-lg transition-all duration-200 cursor-pointer">
+    <div className="group relative bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-4 hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-lg transition-all duration-200 cursor-pointer w-full max-w-sm">
       {/* Icon */}
       <div className="flex items-center justify-center w-10 h-10 bg-blue-50 dark:bg-blue-900/20 rounded-lg mb-3 group-hover:bg-blue-100 dark:group-hover:bg-blue-900/30 transition-colors">
         {icon}
@@ -79,7 +79,11 @@ const ModeCard: React.FC<ModeCardProps> = ({
 
       {/* Get Started Button */}
       <button
-        onClick={onSelect}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onSelect()
+        }}
         className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-md transition-colors group-hover:shadow-md"
       >
         Get Started
@@ -103,19 +107,6 @@ const ModeCard: React.FC<ModeCardProps> = ({
                     <p className="mb-2">Perfect for quick questions and conversations. Choose between:</p>
                     <ul className="list-disc list-inside space-y-1">
                       <li><strong>Simple:</strong> Direct answers without reasoning</li>
-                      <li><strong>ReAct:</strong> Step-by-step reasoning with memory</li>
-                    </ul>
-                  </div>
-                )}
-                {category === 'deep-research' && (
-                  <div>
-                    <p className="font-semibold mb-2">Deep Research Mode</p>
-                    <p className="mb-2">For complex analysis that may take hours. Features:</p>
-                    <ul className="list-disc list-inside space-y-1">
-                      <li>Multi-step planning and execution</li>
-                      <li>Long-term memory and context</li>
-                      <li>Requires Tasks/ folder for organization</li>
-                      <li>Creates detailed research reports</li>
                     </ul>
                   </div>
                 )}
@@ -150,26 +141,33 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
   
   // State for preset selection
   const [showPresetSelection, setShowPresetSelection] = useState(false)
-  const [pendingModeCategory, setPendingModeCategory] = useState<'deep-research' | 'workflow' | null>(null)
+  const [pendingModeCategory, setPendingModeCategory] = useState<'workflow' | null>(null)
 
   const handleModeSelect = (category: ModeCategory) => {
-    if (!category) return
+    if (!category) {
+      console.error('No category provided to handleModeSelect')
+      return
+    }
+
+    console.log('[ModeSelectionModal] Selecting mode:', category)
 
     if (category === 'chat') {
       // Chat mode doesn't need preset selection
       // Clear any active presets when switching to chat mode
-      useGlobalPresetStore.getState().clearActivePreset('deep-research')
       useGlobalPresetStore.getState().clearActivePreset('workflow')
+      
+      // Update both stores
+      useModeStore.getState().setModeCategory(category)
       useAppStore.getState().setModeCategory(category)
       completeInitialSetup()
+      
+      console.log('[ModeSelectionModal] Chat mode selected, setup completed')
       onClose()
     } else {
-      // Deep Research or Workflow mode - always show preset selection when switching between modes
+      // Workflow mode - always show preset selection when switching modes
       // Clear the current mode's preset first
       const currentModeCategory = useModeStore.getState().selectedModeCategory
-      if (currentModeCategory === 'deep-research') {
-        useGlobalPresetStore.getState().clearActivePreset('deep-research')
-      } else if (currentModeCategory === 'workflow') {
+      if (currentModeCategory === 'workflow') {
         useGlobalPresetStore.getState().clearActivePreset('workflow')
       }
       
@@ -178,11 +176,15 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
       
       if (activePreset) {
         // Preset already selected, proceed with mode selection
+        useModeStore.getState().setModeCategory(category)
         useAppStore.getState().setModeCategory(category)
         completeInitialSetup()
+        
+        console.log('[ModeSelectionModal] Workflow mode selected with existing preset, setup completed')
         onClose()
       } else {
         // No preset selected, show preset selection overlay
+        console.log('[ModeSelectionModal] Workflow mode selected, showing preset selection')
         setPendingModeCategory(category)
         setShowPresetSelection(true)
       }
@@ -201,8 +203,11 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
         
         if (result.success) {
           // Now proceed with mode selection
+          useModeStore.getState().setModeCategory(pendingModeCategory)
           useAppStore.getState().setModeCategory(pendingModeCategory)
           completeInitialSetup()
+          
+          console.log('[ModeSelectionModal] Preset applied, workflow mode selected, setup completed')
           
           // Close overlays
           setShowPresetSelection(false)
@@ -237,12 +242,13 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
         />
       )}
 
-      {/* Mode Selection Modal */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-        <div className="relative w-full max-w-3xl mx-4">
+      {/* Mode Selection Modal - Hide when preset selection is showing */}
+      {!showPresetSelection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div className="relative w-full max-w-4xl bg-transparent">
           {/* Header */}
-          <div className="text-center mb-4">
-            <h1 className="text-xl font-bold text-white mb-2">
+          <div className="text-center mb-6">
+            <h1 className="text-2xl font-bold text-white mb-2">
               Choose Your AI Assistant Mode
             </h1>
             <p className="text-gray-300 text-sm">
@@ -251,7 +257,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
           </div>
 
           {/* Mode Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 justify-items-center max-w-2xl mx-auto">
             {/* Chat Mode */}
             <ModeCard
               category="chat"
@@ -261,17 +267,6 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               features={getModeInfoForModal('chat').features}
               exampleQueries={getModeInfoForModal('chat').examples}
               onSelect={() => handleModeSelect('chat')}
-            />
-
-            {/* Deep Research Mode */}
-            <ModeCard
-              category="deep-research"
-              title="Deep Research Mode"
-              description="Multi-step analysis with long-term memory. Ideal for complex research, detailed analysis, and comprehensive reports."
-              icon={<Search className="w-5 h-5 text-blue-600" />}
-              features={getModeInfoForModal('deep-research').features}
-              exampleQueries={getModeInfoForModal('deep-research').examples}
-              onSelect={() => handleModeSelect('deep-research')}
             />
 
             {/* Workflow Mode */}
@@ -294,6 +289,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
           </div>
         </div>
       </div>
+      )}
     </>
   )
 }

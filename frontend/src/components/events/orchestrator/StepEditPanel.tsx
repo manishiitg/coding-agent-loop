@@ -1,0 +1,1658 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { ChevronDown, ChevronUp, Settings, Sparkles, Code2 } from 'lucide-react';
+import { Button } from '../../ui/Button';
+import LLMSelectionDropdown from '../../LLMSelectionDropdown';
+import { ToolSelectionSection } from '../../ToolSelectionSection';
+import { usePresetApplication } from '../../../stores/useGlobalPresetStore';
+import type { TodoStepWithConfigs, AgentConfigs, AgentLLMConfig } from '../../../utils/stepConfigMatching';
+import type { PresetLLMConfig } from '../../../services/api-types';
+import type { LLMOption } from '../../../types/llm';
+import { useLLMStore } from '../../../stores/useLLMStore';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../../ui/tooltip';
+import { 
+  HUMAN_TOOLS, 
+  getToolsByCategory,
+  getToolsByWorkspaceSubCategory,
+} from '../../../utils/customToolNames';
+
+interface StepEditPanelProps {
+  step: TodoStepWithConfigs;
+  stepIndex: number;
+  onSave: (updatedStep: TodoStepWithConfigs) => Promise<void>;
+  onCancel: () => void;
+  isSaving?: boolean;
+  presetServers?: string[]; // Preset's selected servers (subset to show in UI)
+  presetLLMConfig?: PresetLLMConfig | null; // Preset's LLM config with agent defaults
+  presetUseCodeExecutionMode?: boolean; // Preset's code execution mode (default value for step)
+  isExpanded?: boolean; // Controlled expanded state from parent
+  onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
+}
+
+const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100] as const;
+
+export const StepEditPanel: React.FC<StepEditPanelProps> = ({
+  step,
+  stepIndex,
+  onSave,
+  isSaving = false,
+  presetServers = [],
+  presetLLMConfig = null,
+  presetUseCodeExecutionMode = false,
+  isExpanded: controlledIsExpanded,
+  onToggleExpanded,
+}) => {
+  const { availableLLMs, getCurrentLLMOption } = useLLMStore();
+  const { currentPresetTools } = usePresetApplication();
+  
+  // Use controlled state if provided, otherwise fall back to local state
+  const [localIsExpanded, setLocalIsExpanded] = useState(false);
+  const isExpanded = controlledIsExpanded !== undefined ? controlledIsExpanded : localIsExpanded;
+  
+  const handleToggleExpanded = () => {
+    const newExpanded = !isExpanded;
+    if (onToggleExpanded) {
+      onToggleExpanded(newExpanded);
+    } else {
+      setLocalIsExpanded(newExpanded);
+    }
+  };
+
+  // Initialize state from step's agent_configs
+  // Ensure validation is enabled for loop steps (required to check loop conditions)
+  const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>(() => {
+    const configs = step.agent_configs || {};
+    console.log('[StepEditPanel] Initializing agentConfigs from step:', {
+      stepTitle: step.title,
+      stepId: step.id,
+      step_agent_configs: step.agent_configs,
+      disable_learning: configs.disable_learning,
+      disable_validation: configs.disable_validation,
+      configs,
+    });
+    // Force enable validation for loop steps
+    if (step.has_loop && configs.disable_validation) {
+      return {
+        ...configs,
+        disable_validation: false,
+      };
+    }
+    return configs;
+  });
+
+  // Initialize step-level server/tool selection
+  // If step config has selection, use it; otherwise use preset defaults for display
+  const [selectedServers, setSelectedServers] = useState<string[]>(() => {
+    // If step config has explicit selection, use it
+    if (agentConfigs.selected_servers && agentConfigs.selected_servers.length > 0) {
+      return agentConfigs.selected_servers;
+    }
+    // Otherwise, use preset defaults for display
+    return presetServers;
+  });
+  const [selectedTools, setSelectedTools] = useState<string[]>(() => {
+    // If step config has explicit selection, use it
+    if (agentConfigs.selected_tools && agentConfigs.selected_tools.length > 0) {
+      return agentConfigs.selected_tools;
+    }
+    // Otherwise, use preset defaults for display
+    return currentPresetTools || [];
+  });
+
+  // Check if NO_SERVERS is explicitly selected
+  const hasNoServers = selectedServers.includes("NO_SERVERS");
+  const actualSelectedServers = selectedServers.filter(s => s !== "NO_SERVERS");
+
+  // Helper functions for format conversion (must be defined before useState that uses them)
+  const formatToolEntry = (category: string, tool: string): string => {
+    return `${category}:${tool}`;
+  };
+
+  // Convert old format (categories + tools) to new unified format
+  const convertOldFormatToNew = (categories?: string[], tools?: string[]): string[] => {
+    const result: string[] = [];
+    
+    // Convert categories to "category:*" format
+    if (categories && categories.length > 0) {
+      for (const category of categories) {
+        result.push(formatToolEntry(category, '*'));
+      }
+    }
+    
+    // Convert specific tools - determine category for each tool
+    if (tools && tools.length > 0) {
+      const allWorkspaceTools = getToolsByCategory('workspace_tools');
+      const allHumanTools = getToolsByCategory('human_tools');
+      
+      for (const toolName of tools) {
+        if (allWorkspaceTools.includes(toolName)) {
+          result.push(formatToolEntry('workspace_tools', toolName));
+        } else if (allHumanTools.includes(toolName)) {
+          result.push(formatToolEntry('human_tools', toolName));
+        }
+      }
+    }
+    
+    return result;
+  };
+
+  // State for enabled custom tools in unified format: "category:tool" or "category:*"
+  const [enabledCustomTools, setEnabledCustomTools] = useState<string[]>(() => {
+    const configs = step.agent_configs || {};
+    // Check if already in new format
+    if (configs.enabled_custom_tools && configs.enabled_custom_tools.length > 0) {
+      const firstEntry = configs.enabled_custom_tools[0];
+      if (firstEntry.includes(':')) {
+        return configs.enabled_custom_tools;
+      }
+    }
+    // Convert from old format (backward compatibility)
+    // @ts-expect-error - old format may still exist in database
+    const oldCategories = configs.enabled_custom_tool_categories;
+    const oldTools = configs.enabled_custom_tools;
+    return convertOldFormatToNew(oldCategories, oldTools);
+  });
+
+  // State for expanded tool categories (to show individual tools)
+  const [expandedToolCategories, setExpandedToolCategories] = useState<Set<string>>(new Set());
+  // State for expanded workspace sub-categories (expanded by default to show tools)
+  const [expandedWorkspaceSubCategories, setExpandedWorkspaceSubCategories] = useState<Set<string>>(
+    new Set(['basic_workspace', 'advanced_workspace', 'plus_tools'])
+  );
+
+  // Track the step to detect when step changes (using title + index as stable identifier)
+  // This ensures state resets properly when switching between different steps
+  const stepIdentifier = `${step.title || ''}-${stepIndex}`;
+  const prevStepIdentifierRef = useRef<string>(stepIdentifier);
+  const prevAgentConfigsRef = useRef<string>(''); // Track previous agent_configs as JSON string
+
+  // Sync state when step changes (different step identifier) OR when agent_configs changes (after save)
+  // This ensures state updates both when switching steps and when the same step's config is updated
+  useEffect(() => {
+    const isDifferentStep = prevStepIdentifierRef.current !== stepIdentifier;
+    const currentConfigs = step.agent_configs || {};
+    const currentConfigsJson = JSON.stringify(currentConfigs);
+    const configsChanged = prevAgentConfigsRef.current !== currentConfigsJson;
+    
+    // Sync if it's a different step OR if agent_configs has changed (e.g., after save)
+    // We need to sync when agent_configs changes to reflect saved changes
+    if (isDifferentStep || configsChanged) {
+      console.log('[StepEditPanel] Syncing state from step config:', {
+        isDifferentStep,
+        configsChanged,
+        stepTitle: step.title,
+        stepId: step.id,
+        currentConfigs,
+        disable_learning: currentConfigs.disable_learning,
+        disable_validation: currentConfigs.disable_validation,
+      });
+      
+      // Reset agentConfigs state from step's config
+      // Force enable validation for loop steps
+      const newAgentConfigs: AgentConfigs = step.has_loop && currentConfigs.disable_validation
+        ? { ...currentConfigs, disable_validation: false }
+        : currentConfigs;
+      setAgentConfigs(newAgentConfigs);
+      
+      // Update servers: use step config if available, otherwise preset defaults
+      if (currentConfigs.selected_servers && currentConfigs.selected_servers.length > 0) {
+        // Check if NO_SERVERS is in the config
+        setSelectedServers(currentConfigs.selected_servers);
+      } else {
+        setSelectedServers(presetServers);
+      }
+
+      // Update tools: use step config if available, otherwise preset defaults
+      if (currentConfigs.selected_tools && currentConfigs.selected_tools.length > 0) {
+        setSelectedTools(currentConfigs.selected_tools);
+      } else {
+        setSelectedTools(currentPresetTools || []);
+      }
+
+      // Update enabled custom tools: convert from old format if needed
+      if (currentConfigs.enabled_custom_tools && currentConfigs.enabled_custom_tools.length > 0) {
+        const firstEntry = currentConfigs.enabled_custom_tools[0];
+        if (firstEntry.includes(':')) {
+          // Already in new format
+          setEnabledCustomTools(currentConfigs.enabled_custom_tools);
+        } else {
+          // Convert from old format
+          // @ts-expect-error - old format may still exist in database
+          const oldCategories = currentConfigs.enabled_custom_tool_categories;
+          const oldTools = currentConfigs.enabled_custom_tools;
+          setEnabledCustomTools(convertOldFormatToNew(oldCategories, oldTools));
+        }
+      } else {
+        // No tools specified - empty array (all tools enabled by default)
+        setEnabledCustomTools([]);
+      }
+
+      // Reset expanded categories when step changes
+      setExpandedToolCategories(new Set());
+      setExpandedWorkspaceSubCategories(new Set(['basic_workspace', 'advanced_workspace', 'plus_tools']));
+
+      // Update refs for next comparison
+      prevStepIdentifierRef.current = stepIdentifier;
+      prevAgentConfigsRef.current = currentConfigsJson;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIdentifier, step.agent_configs, presetServers, currentPresetTools]); // Include stepIdentifier and agent_configs to detect changes
+
+  // Helper to convert AgentLLMConfig to LLMOption
+  const llmConfigToOption = (config: AgentLLMConfig | undefined): LLMOption | null => {
+    if (!config || !config.provider || !config.model_id) {
+      return null;
+    }
+    const llm = availableLLMs.find(
+      (l) => l.provider === config.provider && l.model === config.model_id
+    );
+    return llm || null;
+  };
+
+  // Helper to get preset default LLM for an agent type
+  const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'learning'): LLMOption | null => {
+    if (!presetLLMConfig) {
+      return null;
+    }
+    let config: AgentLLMConfig | undefined;
+    if (agentType === 'execution') {
+      config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        provider: presetLLMConfig.provider,
+        model_id: presetLLMConfig.model_id
+      } : undefined);
+    } else if (agentType === 'validation') {
+      config = presetLLMConfig.validation_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        provider: presetLLMConfig.provider,
+        model_id: presetLLMConfig.model_id
+      } : undefined);
+    } else if (agentType === 'learning') {
+      config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        provider: presetLLMConfig.provider,
+        model_id: presetLLMConfig.model_id
+      } : undefined);
+    }
+    if (config) {
+      return llmConfigToOption(config);
+    }
+    return null;
+  };
+
+  // Helper to convert LLMOption to AgentLLMConfig
+  const optionToLLMConfig = (option: LLMOption | null): AgentLLMConfig | undefined => {
+    if (!option) {
+      return undefined;
+    }
+    return {
+      provider: option.provider as 'openai' | 'bedrock' | 'openrouter' | 'vertex',
+      model_id: option.model,
+    };
+  };
+
+  // Helper functions for unified format: "category:tool" or "category:*"
+  const parseToolEntry = (entry: string): { category: string; tool: string } | null => {
+    // Split only on first colon to handle tool names that might contain colons
+    const colonIndex = entry.indexOf(':');
+    if (colonIndex === -1 || colonIndex === 0) return null;
+    return { 
+      category: entry.substring(0, colonIndex), 
+      tool: entry.substring(colonIndex + 1) 
+    };
+  };
+
+  const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
+    // Empty array means all tools enabled by default
+    if (enabledTools.length === 0) return true;
+    return enabledTools.includes(formatToolEntry(category, '*'));
+  };
+
+  const isToolEnabled = (category: string, toolName: string, enabledTools: string[]): boolean => {
+    // Empty array means all tools enabled by default
+    if (enabledTools.length === 0) return true;
+    // Check if category is enabled (all tools)
+    if (isCategoryEnabled(category, enabledTools)) return true;
+    // Check if specific tool is enabled
+    return enabledTools.includes(formatToolEntry(category, toolName));
+  };
+
+  const enableCategory = (category: string, enabledTools: string[]): string[] => {
+    // Remove any specific tools from this category, add category:*
+    const filtered = enabledTools.filter(entry => {
+      const parsed = parseToolEntry(entry);
+      return !parsed || parsed.category !== category;
+    });
+    return [...filtered, formatToolEntry(category, '*')];
+  };
+
+  const disableCategory = (category: string, enabledTools: string[]): string[] => {
+    // If array is empty (default = all enabled), explicitly enable all other categories
+    if (enabledTools.length === 0) {
+      const allCategories = ['workspace_tools', 'human_tools'];
+      const otherCategories = allCategories.filter(c => c !== category);
+      const result: string[] = [];
+      for (const otherCategory of otherCategories) {
+        const otherCategoryTools = getToolsByCategory(otherCategory);
+        result.push(...otherCategoryTools.map(t => formatToolEntry(otherCategory, t)));
+      }
+      return result;
+    }
+    // Remove category:* and all specific tools from this category
+    return enabledTools.filter(entry => {
+      const parsed = parseToolEntry(entry);
+      return !parsed || parsed.category !== category;
+    });
+  };
+
+  const enableTool = (category: string, toolName: string, enabledTools: string[]): string[] => {
+    // If category is enabled, disable it first (switch to specific tools)
+    let filtered = enabledTools;
+    if (isCategoryEnabled(category, enabledTools)) {
+      filtered = disableCategory(category, enabledTools);
+      // Add all other tools from this category
+      const allCategoryTools = getToolsByCategory(category);
+      filtered = [...filtered, ...allCategoryTools.map(t => formatToolEntry(category, t))];
+    }
+    // Add this specific tool if not already present
+    const toolEntry = formatToolEntry(category, toolName);
+    if (!filtered.includes(toolEntry)) {
+      filtered = [...filtered, toolEntry];
+    }
+    return filtered;
+  };
+
+  const disableTool = (category: string, toolName: string, enabledTools: string[]): string[] => {
+    // If category is enabled, disable it and enable all other tools
+    if (isCategoryEnabled(category, enabledTools)) {
+      const allCategoryTools = getToolsByCategory(category);
+      const otherTools = allCategoryTools.filter(t => t !== toolName);
+      const filtered = enabledTools.filter(entry => {
+        const parsed = parseToolEntry(entry);
+        return !parsed || parsed.category !== category;
+      });
+      return [...filtered, ...otherTools.map(t => formatToolEntry(category, t))];
+    }
+    // Just remove this specific tool
+    return enabledTools.filter(entry => entry !== formatToolEntry(category, toolName));
+  };
+
+  // Helper to check if a sub-category is enabled
+  const isSubCategoryEnabled = (category: string, subCategoryTools: string[], enabledTools: string[]): boolean => {
+    if (isCategoryEnabled(category, enabledTools)) return true;
+    if (enabledTools.length === 0) return true; // Default: all enabled
+    
+    const enabledInSubCategory = subCategoryTools.filter(toolName => 
+      isToolEnabled(category, toolName, enabledTools)
+    );
+    return enabledInSubCategory.length === subCategoryTools.length;
+  };
+
+  // Helper to enable/disable a sub-category
+  const toggleSubCategory = (category: string, subCategoryTools: string[], enabled: boolean, enabledTools: string[]): string[] => {
+    if (enabled) {
+      // Enable sub-category - add all tools from this sub-category
+      let result = enabledTools;
+      
+      // If category is enabled, disable it first
+      if (isCategoryEnabled(category, enabledTools)) {
+        result = disableCategory(category, enabledTools);
+        // Add all other tools from the category
+        const allCategoryTools = getToolsByCategory(category);
+        result = [...result, ...allCategoryTools.map(t => formatToolEntry(category, t))];
+      }
+      
+      // Add all tools from this sub-category
+      for (const toolName of subCategoryTools) {
+        const toolEntry = formatToolEntry(category, toolName);
+        if (!result.includes(toolEntry)) {
+          result = [...result, toolEntry];
+        }
+      }
+      
+      return result;
+    } else {
+      // Disable sub-category - remove all tools from this sub-category
+      if (isCategoryEnabled(category, enabledTools)) {
+        // Category is enabled - disable it and enable all other tools
+        const allCategoryTools = getToolsByCategory(category);
+        const otherTools = allCategoryTools.filter(t => !subCategoryTools.includes(t));
+        const filtered = enabledTools.filter(entry => {
+          const parsed = parseToolEntry(entry);
+          return !parsed || parsed.category !== category;
+        });
+        return [...filtered, ...otherTools.map(t => formatToolEntry(category, t))];
+      } else {
+        // Just remove tools from this sub-category
+        return enabledTools.filter(entry => {
+          const parsed = parseToolEntry(entry);
+          if (!parsed || parsed.category !== category) return true;
+          return !subCategoryTools.includes(parsed.tool);
+        });
+      }
+    }
+  };
+
+  // Update execution LLM
+  const handleExecutionLLMSelect = (llm: LLMOption) => {
+    setAgentConfigs((prev) => ({
+      ...prev,
+      execution_llm: optionToLLMConfig(llm),
+    }));
+  };
+
+  // Update validation LLM
+  const handleValidationLLMSelect = (llm: LLMOption) => {
+    setAgentConfigs((prev) => ({
+      ...prev,
+      validation_llm: optionToLLMConfig(llm),
+    }));
+  };
+
+  // Update learning LLM
+  const handleLearningLLMSelect = (llm: LLMOption) => {
+    setAgentConfigs((prev) => ({
+      ...prev,
+      learning_llm: optionToLLMConfig(llm),
+    }));
+  };
+
+  // Update max turns
+  const handleMaxTurnsChange = (
+    agentType: 'execution' | 'validation' | 'learning',
+    value: number
+  ) => {
+    setAgentConfigs((prev) => {
+      const key = `${agentType}_max_turns` as keyof AgentConfigs;
+      return {
+        ...prev,
+        [key]: value,
+      };
+    });
+  };
+
+  // Update toggles
+  const handleToggleChange = (key: keyof AgentConfigs, value: boolean) => {
+    setAgentConfigs((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  // Handle save
+  const handleSave = async () => {
+    // Start with a clean config object - we'll explicitly set each field
+    const finalConfigs: AgentConfigs = {
+      ...agentConfigs,
+    };
+    
+    // Force enable validation for loop steps (required to check loop conditions)
+    if (step.has_loop) {
+      finalConfigs.disable_validation = false;
+    }
+
+    // Handle server/tool selection:
+    // - If NO_SERVERS is selected → save ["NO_SERVERS"] explicitly
+    // - If user has selected servers/tools → save them
+    // - If user has deselected all servers/tools → set to undefined (will use preset defaults)
+    if (hasNoServers) {
+      // Explicitly save NO_SERVERS to indicate no servers should be used
+      finalConfigs.selected_servers = ["NO_SERVERS"];
+      finalConfigs.selected_tools = []; // No tools when NO_SERVERS is selected
+    } else if (selectedServers.length > 0) {
+      finalConfigs.selected_servers = selectedServers;
+    } else {
+      // Explicitly set to undefined to remove any existing saved selection
+      // This ensures the step falls back to preset defaults
+      finalConfigs.selected_servers = undefined;
+    }
+
+    if (hasNoServers) {
+      // No tools when NO_SERVERS is selected
+      finalConfigs.selected_tools = [];
+    } else if (selectedTools.length > 0) {
+      finalConfigs.selected_tools = selectedTools;
+    } else {
+      // Explicitly set to undefined to remove any existing saved selection
+      // This ensures the step falls back to preset defaults
+      finalConfigs.selected_tools = undefined;
+    }
+
+    // Handle custom tools in unified format: "category:tool" or "category:*"
+    if (enabledCustomTools.length === 0) {
+      // Empty array means all tools enabled (default behavior)
+      finalConfigs.enabled_custom_tools = undefined;
+    } else {
+      finalConfigs.enabled_custom_tools = enabledCustomTools;
+    }
+
+    // Handle large output virtual tools: only save if explicitly set to false
+    if (agentConfigs.enable_large_output_virtual_tools === false) {
+      finalConfigs.enable_large_output_virtual_tools = false;
+    } else {
+      // Default to true (undefined means enabled for backward compatibility)
+      finalConfigs.enable_large_output_virtual_tools = undefined;
+    }
+
+    // Handle disable_learning: explicitly save false when enabled, true when disabled
+    // nil/undefined = not set (default enabled), false = explicitly enabled, true = disabled
+    if (agentConfigs.disable_learning === false) {
+      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      finalConfigs.disable_learning = false;
+    } else if (agentConfigs.disable_learning === true) {
+      // Explicitly disabled - save true
+      finalConfigs.disable_learning = true;
+    } else {
+      // Not set - keep undefined (default enabled)
+      finalConfigs.disable_learning = undefined;
+    }
+
+    // Handle disable_validation: explicitly save false when enabled, true when disabled
+    // Similar logic to disable_learning
+    if (agentConfigs.disable_validation === false) {
+      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      finalConfigs.disable_validation = false;
+    } else if (agentConfigs.disable_validation === true) {
+      // Explicitly disabled - save true
+      finalConfigs.disable_validation = true;
+    } else {
+      // Not set - keep undefined (default enabled)
+      finalConfigs.disable_validation = undefined;
+    }
+
+    // Handle use_code_execution_mode: save if explicitly set by user
+    // If undefined, step will use preset default (field will be omitted from JSON)
+    if (agentConfigs.use_code_execution_mode !== undefined) {
+      // User has explicitly set it - save the value
+      finalConfigs.use_code_execution_mode = agentConfigs.use_code_execution_mode;
+    } else {
+      // Not explicitly set - delete the field so it uses preset default
+      // JSON.stringify will omit undefined fields automatically
+      delete finalConfigs.use_code_execution_mode;
+    }
+
+    // Debug logging to verify data being saved
+    console.log('[StepEditPanel] Saving step config:', {
+      stepTitle: step.title,
+      selectedServers,
+      selectedTools,
+      agentConfigs_disable_learning: agentConfigs.disable_learning,
+      agentConfigs_use_code_execution_mode: agentConfigs.use_code_execution_mode,
+      finalConfigs_disable_learning: finalConfigs.disable_learning,
+      finalConfigs_use_code_execution_mode: finalConfigs.use_code_execution_mode,
+      finalConfigs: {
+        selected_servers: finalConfigs.selected_servers,
+        selected_tools: finalConfigs.selected_tools,
+        disable_learning: finalConfigs.disable_learning,
+        disable_validation: finalConfigs.disable_validation,
+        use_code_execution_mode: finalConfigs.use_code_execution_mode,
+      },
+    });
+
+    const updatedStep: TodoStepWithConfigs = {
+      ...step,
+      agent_configs: finalConfigs,
+    };
+    await onSave(updatedStep);
+    
+    // Collapse the panel after saving
+    if (onToggleExpanded) {
+      onToggleExpanded(false);
+    } else {
+      setLocalIsExpanded(false);
+    }
+  };
+
+  // Get current agent config summary (LLM settings only)
+  const getAgentConfigSummary = () => {
+    // Priority: step config > preset default > global default
+    const execLLM = llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption();
+    const valLLM = llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption();
+    const learnLLM = llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption();
+    
+    // Get effective code execution mode (step config > preset default)
+    const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
+      ? agentConfigs.use_code_execution_mode 
+      : presetUseCodeExecutionMode;
+    
+    const parts = [];
+    if (execLLM) {
+      const codeExecLabel = effectiveCodeExecMode ? 'Code Exec' : 'Simple';
+      parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
+    }
+    if (valLLM && !agentConfigs.disable_validation) parts.push(`Val: ${valLLM.label}`);
+    if (learnLLM && !agentConfigs.disable_learning) {
+      const detailLevel = agentConfigs.learning_detail_level || 'general';
+      const detailLabel = detailLevel === 'exact' ? 'Exact' : detailLevel === 'none' ? 'None' : 'General';
+      parts.push(`Learn: ${learnLLM.label} (${detailLabel})`);
+    }
+    if (agentConfigs.disable_validation) parts.push('Val: Disabled');
+    if (agentConfigs.disable_learning) parts.push('Learn: Disabled');
+    
+    return parts.length > 0 ? parts.join(' • ') : 'Default config';
+  };
+
+  // Get MCP config summary with detailed information
+  const getMCPConfigSummary = () => {
+    if (hasNoServers) {
+      return 'No servers (Pure LLM mode)';
+    }
+    
+    if (selectedServers.length === 0) {
+      // Using preset defaults
+      return `Using preset defaults (${presetServers.length} servers)`;
+    }
+    
+    const parts = [];
+    
+    // Server details
+    if (selectedServers.length === 1) {
+      parts.push(`Server: ${selectedServers[0]}`);
+    } else {
+      parts.push(`Servers: ${selectedServers.length} (${selectedServers.slice(0, 2).join(', ')}${selectedServers.length > 2 ? '...' : ''})`);
+    }
+    
+    // Tool details
+    if (selectedTools.length > 0) {
+      const allToolsServers = selectedTools.filter(t => t.endsWith(':*')).map(t => t.replace(':*', ''));
+      const specificTools = selectedTools.filter(t => !t.endsWith(':*'));
+      
+      if (allToolsServers.length > 0) {
+        if (allToolsServers.length === 1) {
+          parts.push(`All tools from ${allToolsServers[0]}`);
+        } else {
+          parts.push(`All tools from ${allToolsServers.length} servers`);
+        }
+      }
+      
+      if (specificTools.length > 0) {
+        if (specificTools.length === 1) {
+          parts.push(`1 specific tool`);
+        } else {
+          parts.push(`${specificTools.length} specific tools`);
+        }
+      }
+    } else {
+      parts.push('No tools selected');
+    }
+    
+    return parts.join(' • ');
+  };
+
+  // Get custom tools summary with detailed information (using unified format)
+  const getCustomToolsSummary = () => {
+    const allWorkspaceTools = getToolsByCategory('workspace_tools');
+    const allHumanTools = getToolsByCategory('human_tools');
+    
+    // Check if no filtering (default: all enabled)
+    if (enabledCustomTools.length === 0) {
+      const defaultParts = ['All custom tools enabled (default)'];
+      if (agentConfigs.enable_large_output_virtual_tools === false) {
+        defaultParts.push('Large output: disabled');
+      } else {
+        defaultParts.push('Large output: enabled');
+      }
+      return defaultParts.join(' • ');
+    }
+    
+    const parts = [];
+    
+    // Parse enabled tools
+    const workspaceCategoryEnabled = isCategoryEnabled('workspace_tools', enabledCustomTools);
+    const humanCategoryEnabled = isCategoryEnabled('human_tools', enabledCustomTools);
+    
+    // Get specific tools enabled
+    const workspaceSpecificTools: string[] = [];
+    const humanSpecificTools: string[] = [];
+    
+    for (const entry of enabledCustomTools) {
+      const parsed = parseToolEntry(entry);
+      if (!parsed) continue;
+      
+      if (parsed.category === 'workspace_tools' && parsed.tool !== '*') {
+        workspaceSpecificTools.push(parsed.tool);
+      } else if (parsed.category === 'human_tools' && parsed.tool !== '*') {
+        humanSpecificTools.push(parsed.tool);
+      }
+    }
+    
+    // Workspace tools summary
+    if (workspaceCategoryEnabled) {
+      parts.push('All workspace tools');
+    } else if (workspaceSpecificTools.length > 0) {
+      if (workspaceSpecificTools.length === allWorkspaceTools.length) {
+        parts.push('All workspace tools');
+      } else {
+        // Show sub-category breakdown
+        const basicTools = getToolsByWorkspaceSubCategory('basic_workspace');
+        const advancedTools = getToolsByWorkspaceSubCategory('advanced_workspace');
+        const plusTools = getToolsByWorkspaceSubCategory('plus_tools');
+        
+        const basicEnabled = workspaceSpecificTools.filter(t => basicTools.includes(t)).length;
+        const advancedEnabled = workspaceSpecificTools.filter(t => advancedTools.includes(t)).length;
+        const plusEnabled = workspaceSpecificTools.filter(t => plusTools.includes(t)).length;
+        
+        const subCategoryParts = [];
+        if (basicEnabled > 0) {
+          subCategoryParts.push(`${basicEnabled}/${basicTools.length} basic`);
+        }
+        if (advancedEnabled > 0) {
+          subCategoryParts.push(`${advancedEnabled}/${advancedTools.length} advanced`);
+        }
+        if (plusEnabled > 0) {
+          subCategoryParts.push(`${plusEnabled}/${plusTools.length} plus`);
+        }
+        
+        if (subCategoryParts.length > 0) {
+          parts.push(`${workspaceSpecificTools.length}/${allWorkspaceTools.length} workspace (${subCategoryParts.join(', ')})`);
+        } else {
+          parts.push(`${workspaceSpecificTools.length}/${allWorkspaceTools.length} workspace tools`);
+        }
+      }
+    }
+    
+    // Human tools summary
+    if (humanCategoryEnabled) {
+      parts.push('All human tools');
+    } else if (humanSpecificTools.length > 0) {
+      if (humanSpecificTools.length === allHumanTools.length) {
+        parts.push('All human tools');
+      } else {
+        parts.push(`${humanSpecificTools.length}/${allHumanTools.length} human tools`);
+      }
+    } else if (!workspaceCategoryEnabled && workspaceSpecificTools.length > 0) {
+      // Workspace tools enabled but human tools disabled
+      parts.push('0/1 human tools');
+    }
+    
+    // Large output tools status
+    if (agentConfigs.enable_large_output_virtual_tools === false) {
+      parts.push('Large output: disabled');
+    } else {
+      parts.push('Large output: enabled');
+    }
+    
+    return parts.length > 0 ? parts.join(' • ') : 'No custom tools';
+  };
+
+  return (
+    <div className="mt-2 border-t border-gray-200 dark:border-gray-700 pt-2">
+      {/* Compact Header - Always Visible */}
+      <div 
+        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700/30 rounded px-2 py-1.5 -mx-2 transition-colors"
+        onClick={handleToggleExpanded}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Settings className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
+            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+              Agent Config
+            </span>
+            <span className="text-xs text-gray-500 dark:text-gray-500 truncate">
+              {getAgentConfigSummary()}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {isExpanded ? (
+              <ChevronUp className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+            )}
+          </div>
+        </div>
+        {/* MCP Config on separate line */}
+        <div className="flex items-center gap-2 mt-1 ml-6">
+          <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+            MCP Config:
+          </span>
+          <span className="text-xs text-gray-500 dark:text-gray-500">
+            {getMCPConfigSummary()}
+          </span>
+        </div>
+        {/* Custom Tools Config on separate line */}
+        <div className="flex items-center gap-2 mt-1 ml-6">
+          <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+            Custom Tools:
+          </span>
+          <span className="text-xs text-gray-500 dark:text-gray-500">
+            {getCustomToolsSummary()}
+          </span>
+        </div>
+      </div>
+
+      {/* Expanded Configuration Panel */}
+      {isExpanded && (
+        <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-700 rounded-lg">
+          <div className="space-y-4">
+
+            {/* Execution Agent Configuration */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                  Execution
+                </div>
+                {/* Code Execution Mode Toggle */}
+                <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.log('[StepEditPanel] Setting use_code_execution_mode to false');
+                            setAgentConfigs((prev) => ({
+                              ...prev,
+                              use_code_execution_mode: false,
+                            }));
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                            agentConfigs.use_code_execution_mode === false || 
+                            (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode)
+                              ? 'agent-mode-selected rounded-l-md rounded-r-none'
+                              : 'agent-mode-unselected rounded-none'
+                          }`}
+                        >
+                          <Sparkles className="w-3 h-3 inline mr-1" />
+                          Simple
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Simple mode - Direct MCP tool access</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.log('[StepEditPanel] Setting use_code_execution_mode to true');
+                            setAgentConfigs((prev) => ({
+                              ...prev,
+                              use_code_execution_mode: true,
+                            }));
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors ${
+                            agentConfigs.use_code_execution_mode === true ||
+                            (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode)
+                              ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                              : 'agent-mode-unselected rounded-none'
+                          }`}
+                        >
+                          <Code2 className="w-3 h-3 inline mr-1" />
+                          Code Exec
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <LLMSelectionDropdown
+                    availableLLMs={availableLLMs}
+                    selectedLLM={llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption()}
+                    onLLMSelect={handleExecutionLLMSelect}
+                    inModal={false}
+                    openDirection="down"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Max Turns:</label>
+                  <select
+                    value={agentConfigs.execution_max_turns || 25}
+                    onChange={(e) => handleMaxTurnsChange('execution', parseInt(e.target.value))}
+                    className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-20"
+                  >
+                    {MAX_TURNS_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-gray-200 dark:border-gray-700"></div>
+
+            {/* Validation Agent Configuration */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                  Validation
+                </div>
+                <label 
+                  className={`flex items-center gap-1.5 ${step.has_loop ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+                  title={step.has_loop ? "Validation cannot be disabled for loop steps - it's required to check loop conditions" : undefined}
+                >
+                  <input
+                    type="checkbox"
+                    checked={agentConfigs.disable_validation || false}
+                    onChange={(e) => {
+                      if (!step.has_loop) {
+                        handleToggleChange('disable_validation', e.target.checked);
+                      }
+                    }}
+                    disabled={step.has_loop}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <span className="text-xs text-gray-600 dark:text-gray-400">
+                    Disable{step.has_loop && ' (Required for loops)'}
+                  </span>
+                </label>
+              </div>
+              {!agentConfigs.disable_validation ? (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <LLMSelectionDropdown
+                      availableLLMs={availableLLMs}
+                      selectedLLM={llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption()}
+                      onLLMSelect={handleValidationLLMSelect}
+                      inModal={false}
+                      openDirection="down"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Max Turns:</label>
+                    <select
+                      value={agentConfigs.validation_max_turns || 25}
+                      onChange={(e) => handleMaxTurnsChange('validation', parseInt(e.target.value))}
+                      className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-20"
+                    >
+                      {MAX_TURNS_OPTIONS.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500 dark:text-gray-500 italic py-1">
+                  Validation disabled - step will auto-approve
+                </div>
+              )}
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-gray-200 dark:border-gray-700"></div>
+
+            {/* Learning Agent Configuration */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                  Learning
+                </div>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={agentConfigs.disable_learning || false}
+                    onChange={(e) => handleToggleChange('disable_learning', e.target.checked)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <span className="text-xs text-gray-600 dark:text-gray-400">Disable</span>
+                </label>
+              </div>
+              {!agentConfigs.disable_learning ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption()}
+                        onLLMSelect={handleLearningLLMSelect}
+                        inModal={false}
+                        openDirection="down"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Max Turns:</label>
+                      <select
+                        value={agentConfigs.learning_max_turns || 25}
+                        onChange={(e) => handleMaxTurnsChange('learning', parseInt(e.target.value))}
+                        className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-20"
+                      >
+                        {MAX_TURNS_OPTIONS.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Detail Level:</label>
+                    <select
+                      value={agentConfigs.learning_detail_level || 'general'}
+                      onChange={(e) => {
+                        const value = e.target.value as 'exact' | 'general' | 'none';
+                        setAgentConfigs((prev): AgentConfigs => ({
+                          ...prev,
+                          learning_detail_level: value,
+                        }));
+                      }}
+                      className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1"
+                    >
+                      <option value="exact">Exact MCP Tools</option>
+                      <option value="general">General Patterns</option>
+                      <option value="none">No Learnings Required</option>
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500 dark:text-gray-500 italic py-1">
+                  Learning disabled for this step
+                </div>
+              )}
+            </div>
+
+            {/* Conditional Branching Configuration */}
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-2">
+                Conditional Branching
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`has-condition-${stepIndex}`}
+                    checked={step.has_condition || false}
+                    disabled={true}
+                    className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500 disabled:opacity-50"
+                  />
+                  <label
+                    htmlFor={`has-condition-${stepIndex}`}
+                    className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer flex-1"
+                  >
+                    Enable Conditional Branching
+                    <span className="text-gray-500 dark:text-gray-500 ml-1">
+                      (Use planning tools to convert step to conditional)
+                    </span>
+                  </label>
+                </div>
+                
+                {step.has_condition && (
+                  <div className="ml-6 space-y-2 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded">
+                    <div className="text-xs font-medium text-purple-700 dark:text-purple-400">
+                      Condition Question:
+                    </div>
+                    <div className="text-xs text-gray-700 dark:text-gray-300">
+                      {step.condition_question || '(Not set)'}
+                    </div>
+                    
+                    {step.condition_context && (
+                      <>
+                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mt-2">
+                          Condition Context:
+                        </div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">
+                          {step.condition_context}
+                        </div>
+                      </>
+                    )}
+                    
+                    {step.if_true_steps && step.if_true_steps.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs font-medium text-green-700 dark:text-green-400">
+                          ✅ If True Branch: {step.if_true_steps.length} step(s)
+                        </div>
+                      </div>
+                    )}
+                    
+                    {step.if_false_steps && step.if_false_steps.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs font-medium text-red-700 dark:text-red-400">
+                          ❌ If False Branch: {step.if_false_steps.length} step(s)
+                        </div>
+                      </div>
+                    )}
+                    
+                    {step.condition_result !== undefined && (
+                      <div className={`mt-2 p-1 rounded text-xs ${step.condition_result ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
+                        <div className="font-medium">
+                          {step.condition_result ? '✅ Decision: TRUE' : '❌ Decision: FALSE'}
+                        </div>
+                        {step.condition_reason && (
+                          <div className="text-gray-600 dark:text-gray-400 mt-1 italic text-xs">
+                            {step.condition_reason}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="text-xs text-gray-500 dark:text-gray-500 mt-2 italic">
+                      Note: Use planning agent tools (convert_step_to_conditional, add_branch_steps, etc.) to manage conditional steps and branches. All planning tools now use step IDs (from the step's id field) instead of titles for identification.
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Loop Configuration (only shown if has_loop is true) */}
+            {step.has_loop && (
+              <>
+                <div className="border-t border-gray-200 dark:border-gray-700"></div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`learning-after-loop-${stepIndex}`}
+                    checked={agentConfigs.learning_after_loop_iteration || false}
+                    onChange={(e) =>
+                      handleToggleChange('learning_after_loop_iteration', e.target.checked)
+                    }
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <label
+                    htmlFor={`learning-after-loop-${stepIndex}`}
+                    className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer"
+                  >
+                    Run Learning After Each Loop Iteration
+                  </label>
+                </div>
+              </>
+            )}
+
+            {/* MCP Servers and Tools Selection (Step Level) */}
+            {presetServers.length > 0 && (
+              <>
+                <div className="border-t border-gray-200 dark:border-gray-700"></div>
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                    MCP Servers & Tools (Step Level)
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-500 italic">
+                    Filter preset's selected servers/tools further for this step
+                  </div>
+                  
+                  {/* NO_SERVERS Option */}
+                  <div className="flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700">
+                    <input
+                      type="checkbox"
+                      id={`no-servers-${stepIndex}`}
+                      checked={hasNoServers}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          // Set NO_SERVERS and clear all other selections
+                          setSelectedServers(["NO_SERVERS"]);
+                          setSelectedTools([]);
+                        } else {
+                          // Remove NO_SERVERS and use preset defaults
+                          setSelectedServers(presetServers);
+                          setSelectedTools(currentPresetTools || []);
+                        }
+                      }}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <label
+                      htmlFor={`no-servers-${stepIndex}`}
+                      className="text-xs text-gray-700 dark:text-gray-300 cursor-pointer flex-1"
+                    >
+                      <span className="font-medium">No MCP Servers</span>
+                      <span className="text-gray-500 dark:text-gray-500 ml-1">
+                        (Pure LLM mode - no tools available)
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* Server/Tool Selection (disabled when NO_SERVERS is selected) */}
+                  {!hasNoServers && (
+                    <ToolSelectionSection
+                      availableServers={presetServers}
+                      selectedServers={actualSelectedServers}
+                      selectedTools={selectedTools}
+                      onServerChange={(servers) => {
+                        // Ensure NO_SERVERS is not included
+                        setSelectedServers(servers.filter(s => s !== "NO_SERVERS"));
+                      }}
+                      onToolChange={setSelectedTools}
+                    />
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Custom Tool Categories and Individual Tools Selection */}
+            <div className="border-t border-gray-200 dark:border-gray-700"></div>
+            <div className="space-y-3">
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                Custom Tools
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-500 italic">
+                Select categories (enables all tools) or individual tools. By default, all tools are enabled.
+              </div>
+              
+              {/* Workspace Tools Category */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer flex-1">
+                    <input
+                      type="checkbox"
+                      checked={(() => {
+                        const allWorkspaceTools = getToolsByCategory('workspace_tools');
+                        const categoryEnabled = isCategoryEnabled('workspace_tools', enabledCustomTools);
+                        
+                        if (categoryEnabled) return true;
+                        
+                        // Check if all workspace tools are enabled individually
+                        const workspaceSpecificTools = enabledCustomTools
+                          .map(entry => parseToolEntry(entry))
+                          .filter(parsed => parsed && parsed.category === 'workspace_tools' && parsed.tool !== '*')
+                          .map(parsed => parsed!.tool);
+                        
+                        // Checked if all tools are enabled (either via category:* or all individual tools)
+                        return workspaceSpecificTools.length === allWorkspaceTools.length;
+                      })()}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setEnabledCustomTools(prev => enableCategory('workspace_tools', prev));
+                        } else {
+                          setEnabledCustomTools(prev => disableCategory('workspace_tools', prev));
+                        }
+                      }}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Workspace Tools</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-500">
+                      {(() => {
+                        const allWorkspaceTools = getToolsByCategory('workspace_tools');
+                        const categoryEnabled = isCategoryEnabled('workspace_tools', enabledCustomTools);
+                        
+                        let enabledCount = 0;
+                        if (categoryEnabled || enabledCustomTools.length === 0) {
+                          enabledCount = allWorkspaceTools.length;
+                        } else {
+                          const workspaceSpecificTools = enabledCustomTools
+                            .map(entry => parseToolEntry(entry))
+                            .filter(parsed => parsed && parsed.category === 'workspace_tools' && parsed.tool !== '*')
+                            .map(parsed => parsed!.tool);
+                          enabledCount = workspaceSpecificTools.length;
+                        }
+                        
+                        return `(${enabledCount}/${allWorkspaceTools.length} tools)`;
+                      })()}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newExpanded = new Set(expandedToolCategories);
+                      if (newExpanded.has('workspace_tools')) {
+                        newExpanded.delete('workspace_tools');
+                      } else {
+                        newExpanded.add('workspace_tools');
+                      }
+                      setExpandedToolCategories(newExpanded);
+                    }}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                  >
+                    {expandedToolCategories.has('workspace_tools') ? 'Hide' : 'Show'} tools
+                  </button>
+                </div>
+                {expandedToolCategories.has('workspace_tools') && (
+                  <div className="ml-6 space-y-3 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
+                    {/* Workspace Tools Sub-categories (FRONTEND ONLY - for easy grouping/toggling) */}
+                    {/* Backend only receives individual tool names in enabled_custom_tools */}
+                    {/* Basic Workspace Tools Sub-category */}
+                    {(() => {
+                      const subCategoryName = 'basic_workspace';
+                      const subCategoryTools = getToolsByWorkspaceSubCategory(subCategoryName);
+                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_tools', subCategoryTools, enabledCustomTools);
+                      const enabledInSubCategory = subCategoryTools.filter(toolName => 
+                        isToolEnabled('workspace_tools', toolName, enabledCustomTools)
+                      );
+                      
+                      return (
+                        <div key={subCategoryName} className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-2 cursor-pointer flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isSubCategoryChecked}
+                                onChange={(e) => {
+                                  setEnabledCustomTools(prev => 
+                                    toggleSubCategory('workspace_tools', subCategoryTools, e.target.checked, prev)
+                                  );
+                                }}
+                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                              />
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Basic Workspace</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-500">
+                                ({enabledInSubCategory.length}/{subCategoryTools.length})
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newExpanded = new Set(expandedWorkspaceSubCategories);
+                                if (newExpanded.has(subCategoryName)) {
+                                  newExpanded.delete(subCategoryName);
+                                } else {
+                                  newExpanded.add(subCategoryName);
+                                }
+                                setExpandedWorkspaceSubCategories(newExpanded);
+                              }}
+                              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                            >
+                              {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'} tools
+                            </button>
+                          </div>
+                          {expandedWorkspaceSubCategories.has(subCategoryName) && (
+                            <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
+                              {subCategoryTools.map((toolName) => {
+                                const toolIsEnabled = isToolEnabled('workspace_tools', toolName, enabledCustomTools);
+                                return (
+                                  <label key={toolName} className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={toolIsEnabled}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setEnabledCustomTools(prev => enableTool('workspace_tools', toolName, prev));
+                                        } else {
+                                          setEnabledCustomTools(prev => disableTool('workspace_tools', toolName, prev));
+                                        }
+                                      }}
+                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    />
+                                    <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    
+                    {/* Advanced Workspace Tools Sub-category */}
+                    {(() => {
+                      const subCategoryName = 'advanced_workspace';
+                      const subCategoryTools = getToolsByWorkspaceSubCategory(subCategoryName);
+                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_tools', subCategoryTools, enabledCustomTools);
+                      const enabledInSubCategory = subCategoryTools.filter(toolName => 
+                        isToolEnabled('workspace_tools', toolName, enabledCustomTools)
+                      );
+                      
+                      return (
+                        <div key={subCategoryName} className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-2 cursor-pointer flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isSubCategoryChecked}
+                                onChange={(e) => {
+                                  setEnabledCustomTools(prev => 
+                                    toggleSubCategory('workspace_tools', subCategoryTools, e.target.checked, prev)
+                                  );
+                                }}
+                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                              />
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Advanced Workspace</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-500">
+                                ({enabledInSubCategory.length}/{subCategoryTools.length})
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newExpanded = new Set(expandedWorkspaceSubCategories);
+                                if (newExpanded.has(subCategoryName)) {
+                                  newExpanded.delete(subCategoryName);
+                                } else {
+                                  newExpanded.add(subCategoryName);
+                                }
+                                setExpandedWorkspaceSubCategories(newExpanded);
+                              }}
+                              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                            >
+                              {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'} tools
+                            </button>
+                          </div>
+                          {expandedWorkspaceSubCategories.has(subCategoryName) && (
+                            <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
+                              {subCategoryTools.map((toolName) => {
+                                const toolIsEnabled = isToolEnabled('workspace_tools', toolName, enabledCustomTools);
+                                return (
+                                  <label key={toolName} className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={toolIsEnabled}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setEnabledCustomTools(prev => enableTool('workspace_tools', toolName, prev));
+                                        } else {
+                                          setEnabledCustomTools(prev => disableTool('workspace_tools', toolName, prev));
+                                        }
+                                      }}
+                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    />
+                                    <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    
+                    {/* Plus Tools Sub-category */}
+                    {(() => {
+                      const subCategoryName = 'plus_tools';
+                      const subCategoryTools = getToolsByWorkspaceSubCategory(subCategoryName);
+                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_tools', subCategoryTools, enabledCustomTools);
+                      const enabledInSubCategory = subCategoryTools.filter(toolName => 
+                        isToolEnabled('workspace_tools', toolName, enabledCustomTools)
+                      );
+                      
+                      return (
+                        <div key={subCategoryName} className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-2 cursor-pointer flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isSubCategoryChecked}
+                                onChange={(e) => {
+                                  setEnabledCustomTools(prev => 
+                                    toggleSubCategory('workspace_tools', subCategoryTools, e.target.checked, prev)
+                                  );
+                                }}
+                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                              />
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Plus Tools</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-500">
+                                ({enabledInSubCategory.length}/{subCategoryTools.length})
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newExpanded = new Set(expandedWorkspaceSubCategories);
+                                if (newExpanded.has(subCategoryName)) {
+                                  newExpanded.delete(subCategoryName);
+                                } else {
+                                  newExpanded.add(subCategoryName);
+                                }
+                                setExpandedWorkspaceSubCategories(newExpanded);
+                              }}
+                              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                            >
+                              {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'} tools
+                            </button>
+                          </div>
+                          {expandedWorkspaceSubCategories.has(subCategoryName) && (
+                            <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
+                              {subCategoryTools.map((toolName) => {
+                                const toolIsEnabled = isToolEnabled('workspace_tools', toolName, enabledCustomTools);
+                                return (
+                                  <label key={toolName} className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={toolIsEnabled}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setEnabledCustomTools(prev => enableTool('workspace_tools', toolName, prev));
+                                        } else {
+                                          setEnabledCustomTools(prev => disableTool('workspace_tools', toolName, prev));
+                                        }
+                                      }}
+                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    />
+                                    <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {/* Human Tools Category */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer flex-1">
+                    <input
+                      type="checkbox"
+                      checked={(() => {
+                        const allHumanTools = getToolsByCategory('human_tools');
+                        const categoryEnabled = isCategoryEnabled('human_tools', enabledCustomTools);
+                        
+                        if (categoryEnabled) return true;
+                        
+                        // Check if all human tools are enabled individually
+                        const humanSpecificTools = enabledCustomTools
+                          .map(entry => parseToolEntry(entry))
+                          .filter(parsed => parsed && parsed.category === 'human_tools' && parsed.tool !== '*')
+                          .map(parsed => parsed!.tool);
+                        
+                        // Checked if all tools are enabled (either via category:* or all individual tools)
+                        return humanSpecificTools.length === allHumanTools.length;
+                      })()}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setEnabledCustomTools(prev => enableCategory('human_tools', prev));
+                        } else {
+                          setEnabledCustomTools(prev => disableCategory('human_tools', prev));
+                        }
+                      }}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Human Tools</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-500">
+                      {(() => {
+                        const allHumanTools = getToolsByCategory('human_tools');
+                        const categoryEnabled = isCategoryEnabled('human_tools', enabledCustomTools);
+                        
+                        let enabledCount = 0;
+                        if (categoryEnabled || enabledCustomTools.length === 0) {
+                          enabledCount = allHumanTools.length;
+                        } else {
+                          const humanSpecificTools = enabledCustomTools
+                            .map(entry => parseToolEntry(entry))
+                            .filter(parsed => parsed && parsed.category === 'human_tools' && parsed.tool !== '*')
+                            .map(parsed => parsed!.tool);
+                          enabledCount = humanSpecificTools.length;
+                        }
+                        
+                        return `(${enabledCount}/${allHumanTools.length} tools)`;
+                      })()}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newExpanded = new Set(expandedToolCategories);
+                      if (newExpanded.has('human_tools')) {
+                        newExpanded.delete('human_tools');
+                      } else {
+                        newExpanded.add('human_tools');
+                      }
+                      setExpandedToolCategories(newExpanded);
+                    }}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                  >
+                    {expandedToolCategories.has('human_tools') ? 'Hide' : 'Show'} tools
+                  </button>
+                </div>
+                {expandedToolCategories.has('human_tools') && (
+                  <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
+                    {HUMAN_TOOLS.map((toolName) => {
+                      const toolIsEnabled = isToolEnabled('human_tools', toolName, enabledCustomTools);
+                      
+                      return (
+                        <label key={toolName} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={toolIsEnabled}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setEnabledCustomTools(prev => enableTool('human_tools', toolName, prev));
+                              } else {
+                                setEnabledCustomTools(prev => disableTool('human_tools', toolName, prev));
+                              }
+                            }}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Large Output Virtual Tools Toggle */}
+            <div className="border-t border-gray-200 dark:border-gray-700"></div>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                Large Output Virtual Tools
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={`large-output-${stepIndex}`}
+                  checked={agentConfigs.enable_large_output_virtual_tools !== false}
+                  onChange={(e) => {
+                    setAgentConfigs((prev) => ({
+                      ...prev,
+                      enable_large_output_virtual_tools: e.target.checked,
+                    }));
+                  }}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label
+                  htmlFor={`large-output-${stepIndex}`}
+                  className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer flex-1"
+                >
+                  Enable Large Output Virtual Tools
+                  <span className="text-gray-500 dark:text-gray-500 ml-1">
+                    (read_large_output, search_large_output, query_large_output)
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="text-xs h-7 px-3"
+              >
+                {isSaving ? 'Saving...' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+

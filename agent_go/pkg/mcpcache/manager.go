@@ -17,7 +17,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpcache/codegen"
 	"mcp-agent/agent_go/pkg/mcpclient"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -43,6 +43,12 @@ type CacheEntry struct {
 	// Cache management
 	IsValid      bool   `json:"is_valid"`
 	ErrorMessage string `json:"error_message,omitempty"`
+
+	// Tool ownership tracking (for duplicate detection)
+	// Maps tool name -> ownership status ("primary" or "duplicate")
+	// When multiple servers provide the same tool, only the "primary" server's entry
+	// should expose that tool. This prevents duplicate tool names in the agent's tool list.
+	ToolOwnership map[string]string `json:"tool_ownership,omitempty"`
 }
 
 // IsExpired checks if the cache entry has expired
@@ -55,6 +61,8 @@ func (ce *CacheEntry) IsExpired() bool {
 }
 
 // UpdateAccessTime updates the last accessed timestamp
+// DEPRECATED: This method is no longer called to avoid race conditions.
+// LastAccessed field is maintained only for historical compatibility.
 func (ce *CacheEntry) UpdateAccessTime() {
 	ce.LastAccessed = time.Now()
 }
@@ -213,8 +221,9 @@ func (cm *CacheManager) Get(cacheKey string) (*CacheEntry, bool) {
 		return nil, false
 	}
 
-	// Update access time
-	entry.UpdateAccessTime()
+	// NOTE: LastAccessed is no longer updated to avoid race conditions.
+	// The field is kept for historical compatibility but is deprecated.
+	// Access time tracking was removed to eliminate data races when reading cache entries.
 
 	cm.logger.Debugf("Cache hit for key: %s", cacheKey)
 	return entry, true
@@ -227,7 +236,9 @@ func (cm *CacheManager) Put(entry *CacheEntry, config mcpclient.MCPServerConfig)
 
 	// Use configuration-aware cache key
 	cacheKey := GenerateUnifiedCacheKey(entry.ServerName, config)
-	entry.UpdateAccessTime()
+
+	// Set LastAccessed only once when storing (no longer updated on reads)
+	entry.LastAccessed = time.Now()
 
 	// Store in memory cache
 	cm.cache[cacheKey] = entry
@@ -324,14 +335,52 @@ func (cm *CacheManager) InvalidateByServer(configPath, serverName string) error 
 }
 
 // GetAllEntries returns all cached entries (for debugging and registry integration)
+// Returns deep copies to prevent race conditions from external mutations
 func (cm *CacheManager) GetAllEntries() map[string]*CacheEntry {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 
-	// Return a copy of the cache map
+	// Return deep copies of cache entries to prevent external mutations
 	result := make(map[string]*CacheEntry)
 	for key, entry := range cm.cache {
-		result[key] = entry
+		// Create a deep copy of the entry
+		entryCopy := *entry // Copy struct fields
+
+		// Deep copy Tools slice
+		if entry.Tools != nil {
+			entryCopy.Tools = make([]llmtypes.Tool, len(entry.Tools))
+			copy(entryCopy.Tools, entry.Tools)
+		}
+
+		// Deep copy Prompts slice
+		if entry.Prompts != nil {
+			entryCopy.Prompts = make([]mcp.Prompt, len(entry.Prompts))
+			copy(entryCopy.Prompts, entry.Prompts)
+		}
+
+		// Deep copy Resources slice
+		if entry.Resources != nil {
+			entryCopy.Resources = make([]mcp.Resource, len(entry.Resources))
+			copy(entryCopy.Resources, entry.Resources)
+		}
+
+		// Deep copy ServerInfo map if it exists
+		if entry.ServerInfo != nil {
+			entryCopy.ServerInfo = make(map[string]interface{})
+			for k, v := range entry.ServerInfo {
+				entryCopy.ServerInfo[k] = v
+			}
+		}
+
+		// Deep copy ToolOwnership map if it exists
+		if entry.ToolOwnership != nil {
+			entryCopy.ToolOwnership = make(map[string]string)
+			for k, v := range entry.ToolOwnership {
+				entryCopy.ToolOwnership[k] = v
+			}
+		}
+
+		result[key] = &entryCopy
 	}
 	return result
 }
@@ -438,6 +487,36 @@ func (cm *CacheManager) loadExistingCache() {
 				if cm.logger != nil {
 					cm.logger.Debugf("Loaded cache entry: %s", fileName)
 				}
+
+				// Ensure Go code is generated for this cache entry if it's missing
+				// This handles cases where cache exists but generated code was deleted
+				if entry.IsValid && len(entry.Tools) > 0 {
+					generatedDir := cm.getGeneratedDir()
+					packageName := codegen.GetPackageName(entry.ServerName)
+					packageDir := filepath.Join(generatedDir, packageName)
+
+					// Check if code already exists
+					if _, err := os.Stat(packageDir); os.IsNotExist(err) {
+						// Code doesn't exist - generate it
+						if cm.logger != nil {
+							cm.logger.Debugf("Code missing for cached server %s, generating...", entry.ServerName)
+						}
+						entryForCodeGen := &codegen.CacheEntryForCodeGen{
+							ServerName: entry.ServerName,
+							Tools:      entry.Tools,
+						}
+						// Use default 5-minute timeout for cache manager (same as agent default)
+						defaultTimeout := 5 * time.Minute
+						if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
+							if cm.logger != nil {
+								cm.logger.Warnf("Failed to generate code for cached server %s: %v", entry.ServerName, err)
+							}
+							// Don't fail cache load if code generation fails
+						} else if cm.logger != nil {
+							cm.logger.Debugf("✅ Generated code for cached server %s", entry.ServerName)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -476,7 +555,9 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 		ServerName: entry.ServerName,
 		Tools:      entry.Tools,
 	}
-	if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger); err != nil {
+	// Use default 5-minute timeout for cache manager (same as agent default)
+	defaultTimeout := 5 * time.Minute
+	if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
 		cm.logger.Warnf("Failed to generate Go code for server %s: %v", entry.ServerName, err)
 		// Don't fail cache save if code generation fails
 	}
@@ -506,8 +587,11 @@ func (cm *CacheManager) loadFromFile(cacheFile string) *CacheEntry {
 	// Check if entry is still valid
 	if entry.IsExpired() {
 		cm.logger.Debugf("Loaded expired cache entry: %s", cacheFile)
-		// Don't return expired entries
-		os.Remove(cacheFile) // Clean up expired file
+		// Don't return expired entries - attempt to clean up expired file
+		if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
+			// Log warning but don't fail - expired entry won't be used anyway
+			cm.logger.Warnf("Failed to remove expired cache file %s: %v", cacheFile, err)
+		}
 		return nil
 	}
 
@@ -516,12 +600,9 @@ func (cm *CacheManager) loadFromFile(cacheFile string) *CacheEntry {
 
 // ReloadFromDisk reloads a specific cache entry from disk and updates the in-memory cache
 func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
 	cacheFile := cm.getCacheFilePath(cacheKey)
 
-	// Check if file exists
+	// Check if file exists (outside lock)
 	if _, err := os.Stat(cacheFile); os.IsNotExist(err) {
 		if cm.logger != nil {
 			cm.logger.Debugf("Cache file does not exist: %s", cacheFile)
@@ -529,7 +610,7 @@ func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
 		return nil
 	}
 
-	// Load the entry from disk
+	// Load the entry from disk (outside lock - this is the expensive I/O operation)
 	entry := cm.loadFromFile(cacheFile)
 	if entry == nil {
 		if cm.logger != nil {
@@ -538,8 +619,10 @@ func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
 		return nil
 	}
 
-	// Update the in-memory cache
+	// Only lock for the memory update (minimal lock time)
+	cm.mu.Lock()
 	cm.cache[cacheKey] = entry
+	cm.mu.Unlock()
 
 	if cm.logger != nil {
 		cm.logger.Debugf("Reloaded cache entry from disk: %s (tools: %d)", cacheKey, len(entry.Tools))

@@ -6,8 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 )
 
@@ -19,7 +20,7 @@ type CacheEntryForCodeGen struct {
 
 // GenerateServerToolsCode generates Go code for MCP server tools
 // Creates one file per tool with snake_case file names
-func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, generatedDir string, logger utils.ExtendedLogger) error {
+func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, generatedDir string, logger utils.ExtendedLogger, timeout time.Duration) error {
 	if entry == nil || len(entry.Tools) == 0 {
 		logger.Debugf("No tools to generate code for server: %s", serverName)
 		return nil
@@ -32,6 +33,18 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 	packageDir := filepath.Join(generatedDir, packageName)
 	if err := os.MkdirAll(packageDir, 0755); err != nil {
 		return fmt.Errorf("failed to create package directory: %w", err)
+	}
+
+	// Generate common API client file once per package
+	apiClientFile := filepath.Join(packageDir, "api_client.go")
+	if _, err := os.Stat(apiClientFile); os.IsNotExist(err) {
+		apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
+		if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+			logger.Warnf("Failed to write API client file: %v", err)
+			// Continue even if API client generation fails
+		} else {
+			logger.Debugf("Generated common API client file: %s", apiClientFile)
+		}
 	}
 
 	generatedCount := 0
@@ -80,15 +93,15 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 
 		var codeBuilder strings.Builder
 
-		// Add package header
-		codeBuilder.WriteString(GeneratePackageHeader(packageName))
+		// Add minimal package header (tool files only need json and fmt)
+		codeBuilder.WriteString(GenerateToolPackageHeader(packageName))
 		codeBuilder.WriteString("\n")
 
 		// No struct generation needed - functions accept map[string]interface{} directly
-		// This simplifies code and works natively with yaegi interpreter
+		// This simplifies code and makes HTTP API calls straightforward
 
-		// Generate function code
-		codeBuilder.WriteString(GenerateFunctionWithParams(toolName, goStruct, actualToolName, toolDescription))
+		// Generate function code - pass original serverName so it uses correct name (with hyphens)
+		codeBuilder.WriteString(GenerateFunctionWithParams(toolName, goStruct, actualToolName, toolDescription, serverName, timeout))
 
 		// Write file
 		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
@@ -114,13 +127,13 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 // CustomToolForCodeGen represents a custom tool for code generation
 type CustomToolForCodeGen struct {
 	Definition llmtypes.Tool
-	Category   string // Tool category (e.g., "workspace", "human", "memory", "custom")
+	Category   string // Tool category (e.g., "workspace", "human", "memory") - REQUIRED, no default
 }
 
 // GenerateCustomToolsCode generates Go code for custom tools
 // Groups tools by category and generates them into category-specific directories (workspace_tools, human_tools, etc.)
 // Creates one file per tool with snake_case file names
-func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, generatedDir string, logger utils.ExtendedLogger) error {
+func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, generatedDir string, logger utils.ExtendedLogger, timeout time.Duration) error {
 	if len(customTools) == 0 {
 		if logger != nil {
 			logger.Debugf("No custom tools to generate code for")
@@ -131,10 +144,17 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 	// Group tools by category
 	toolsByCategory := make(map[string]map[string]CustomToolForCodeGen)
 	for toolName, customTool := range customTools {
-		// Determine category (default to "custom" if not specified)
+		// Determine category - REQUIRED, no default
+		// All tools must have a category
 		category := customTool.Category
 		if category == "" {
-			category = "custom"
+			if logger != nil {
+				logger.Errorf("❌ [DISCOVERY] Tool %s has empty category - category is REQUIRED! Skipping code generation for this tool.", toolName)
+			}
+			// Skip this tool - don't generate code without a category
+			continue
+		} else if logger != nil {
+			logger.Debugf("🔍 [DISCOVERY] Tool %s has category: %s", toolName, category)
 		}
 
 		// Initialize category map if needed
@@ -144,15 +164,20 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 		toolsByCategory[category][toolName] = customTool
 	}
 
+	if logger != nil {
+		logger.Infof("🔍 [DISCOVERY] Grouped %d tools into %d categories", len(customTools), len(toolsByCategory))
+		for category, tools := range toolsByCategory {
+			logger.Infof("🔍 [DISCOVERY]   - Category '%s': %d tools", category, len(tools))
+		}
+	}
+
 	totalGenerated := 0
 
 	// Generate code for each category
 	for category, categoryTools := range toolsByCategory {
 		// Determine package name based on category
+		// All categories get their own directory (workspace_tools, human_tools, etc.)
 		packageName := category + "_tools"
-		if category == "custom" {
-			packageName = "custom_tools" // Keep "custom_tools" for uncategorized tools
-		}
 
 		// Create package directory
 		packageDir := filepath.Join(generatedDir, packageName)
@@ -161,6 +186,20 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 				logger.Warnf("Failed to create package directory %s: %v", packageDir, err)
 			}
 			continue
+		}
+
+		// Generate common API client file once per package
+		apiClientFile := filepath.Join(packageDir, "api_client.go")
+		if _, err := os.Stat(apiClientFile); os.IsNotExist(err) {
+			apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
+			if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+				if logger != nil {
+					logger.Warnf("Failed to write API client file: %v", err)
+				}
+				// Continue even if API client generation fails
+			} else if logger != nil {
+				logger.Debugf("Generated common API client file: %s", apiClientFile)
+			}
 		}
 
 		generatedCount := 0
@@ -208,15 +247,15 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 			var codeBuilder strings.Builder
 
-			// Add package header
-			codeBuilder.WriteString(GeneratePackageHeader(packageName))
+			// Add minimal package header (tool files only need json and fmt)
+			codeBuilder.WriteString(GenerateToolPackageHeader(packageName))
 			codeBuilder.WriteString("\n")
 
 			// No struct generation needed - functions accept map[string]interface{} directly
-			// This simplifies code and works natively with yaegi interpreter
+			// This simplifies code and makes HTTP API calls straightforward
 
-			// Generate function code (using CallCustomTool)
-			codeBuilder.WriteString(GenerateCustomToolFunction(toolName, goStruct, actualToolName, toolDescription))
+			// Generate function code (using HTTP API)
+			codeBuilder.WriteString(GenerateCustomToolFunction(toolName, goStruct, actualToolName, toolDescription, timeout))
 
 			// Write file
 			if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
@@ -252,11 +291,9 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 				oldFilePath := filepath.Join(customToolsDir, fileName)
 
 				// Check if this file exists in any category directory
+				// If a tool has been moved to a category-specific directory, remove it from custom_tools
 				shouldRemove := false
 				for category := range toolsByCategory {
-					if category == "custom" {
-						continue // Don't remove files that belong to custom category
-					}
 					packageName := category + "_tools"
 					categoryDir := filepath.Join(generatedDir, packageName)
 					newFilePath := filepath.Join(categoryDir, fileName)
@@ -289,7 +326,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 // GenerateVirtualToolsCode generates Go code for virtual tools
 // Creates one file per tool with snake_case file names
-func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string, logger utils.ExtendedLogger) error {
+func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string, logger utils.ExtendedLogger, timeout time.Duration) error {
 	if len(virtualTools) == 0 {
 		logger.Debugf("No virtual tools to generate code for")
 		return nil
@@ -299,6 +336,18 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 	packageDir := filepath.Join(generatedDir, "virtual_tools")
 	if err := os.MkdirAll(packageDir, 0755); err != nil {
 		return fmt.Errorf("failed to create virtual_tools directory: %w", err)
+	}
+
+	// Generate common API client file once per package
+	apiClientFile := filepath.Join(packageDir, "api_client.go")
+	if _, err := os.Stat(apiClientFile); os.IsNotExist(err) {
+		apiClientCode := GeneratePackageHeader("virtual_tools") + "\n" + GenerateAPIClient(timeout)
+		if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
+			logger.Warnf("Failed to write API client file: %v", err)
+			// Continue even if API client generation fails
+		} else {
+			logger.Debugf("Generated common API client file: %s", apiClientFile)
+		}
 	}
 
 	generatedCount := 0
@@ -347,15 +396,15 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 
 		var codeBuilder strings.Builder
 
-		// Add package header
-		codeBuilder.WriteString(GeneratePackageHeader("virtual_tools"))
+		// Add minimal package header (tool files only need json and fmt)
+		codeBuilder.WriteString(GenerateToolPackageHeader("virtual_tools"))
 		codeBuilder.WriteString("\n")
 
 		// No struct generation needed - functions accept map[string]interface{} directly
-		// This simplifies code and works natively with yaegi interpreter
+		// This simplifies code and makes HTTP API calls straightforward
 
 		// Generate function code (using CallVirtualTool)
-		codeBuilder.WriteString(GenerateVirtualToolFunction(toolName, goStruct, actualToolName, toolDescription))
+		codeBuilder.WriteString(GenerateVirtualToolFunction(toolName, goStruct, actualToolName, toolDescription, timeout))
 
 		// Write file
 		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {

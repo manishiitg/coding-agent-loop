@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/mcpcache"
@@ -186,8 +186,9 @@ func testCodeGenerationFromRealServer(config *mcpclient.MCPConfig, generatedDir 
 		Tools:      llmTools,
 	}
 
-	// Generate code
-	if err := codegen.GenerateServerToolsCode(entry, testServerName, generatedDir, logger); err != nil {
+	// Generate code with default 5-minute timeout
+	defaultTimeout := 5 * time.Minute
+	if err := codegen.GenerateServerToolsCode(entry, testServerName, generatedDir, logger, defaultTimeout); err != nil {
 		return fmt.Errorf("failed to generate code: %w", err)
 	}
 
@@ -298,8 +299,9 @@ func testCodeGenerationMock(generatedDir string, logger utils.ExtendedLogger) er
 		},
 	}
 
-	// Generate code
-	if err := codegen.GenerateServerToolsCode(entry, "test_server", generatedDir, logger); err != nil {
+	// Generate code with default 5-minute timeout
+	defaultTimeout := 5 * time.Minute
+	if err := codegen.GenerateServerToolsCode(entry, "test_server", generatedDir, logger, defaultTimeout); err != nil {
 		return fmt.Errorf("failed to generate code: %w", err)
 	}
 

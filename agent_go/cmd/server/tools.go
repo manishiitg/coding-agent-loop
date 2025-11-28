@@ -11,7 +11,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
+	"mcp-agent/agent_go/pkg/mcpagent/codeexec"
 	"mcp-agent/agent_go/pkg/mcpcache"
 	"mcp-agent/agent_go/pkg/mcpclient"
 )
@@ -833,4 +834,160 @@ func (api *StreamingAPI) convertMCPResultToString(result *mcp.CallToolResult) st
 	}
 
 	return joined
+}
+
+// --- CUSTOM TOOL EXECUTION API ---
+
+// CustomExecuteRequest represents a request to execute a custom tool
+type CustomExecuteRequest struct {
+	Tool string                 `json:"tool"` // Tool name (e.g., "read_workspace_file")
+	Args map[string]interface{} `json:"args"` // Tool arguments
+}
+
+// CustomExecuteResponse represents the response from a custom tool execution
+type CustomExecuteResponse struct {
+	Success bool   `json:"success"`
+	Result  string `json:"result,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// handleCustomExecute handles the /api/custom/execute endpoint
+// POST /api/custom/execute
+// Body: {"tool": "read_workspace_file", "args": {...}}
+// Response: {"success": true, "result": "..."}
+func (api *StreamingAPI) handleCustomExecute(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Parse request
+	var req CustomExecuteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.logger.Warnf("Failed to decode custom execute request: %v", err)
+		json.NewEncoder(w).Encode(CustomExecuteResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Invalid request body: %v", err),
+		})
+		return
+	}
+
+	api.logger.Infof("🔧 Custom Execute request: tool=%s", req.Tool)
+
+	// Validate request
+	if req.Tool == "" {
+		json.NewEncoder(w).Encode(CustomExecuteResponse{
+			Success: false,
+			Error:   "tool parameter is required",
+		})
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	// Execute custom tool using codeexec registry
+	api.logger.Infof("🚀 Executing custom tool %s with args: %v", req.Tool, req.Args)
+	result, err := codeexec.CallCustomTool(ctx, req.Tool, req.Args)
+	if err != nil {
+		api.logger.Errorf("Custom tool execution failed for %s: %v", req.Tool, err)
+		json.NewEncoder(w).Encode(CustomExecuteResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Custom tool execution failed: %v", err),
+		})
+		return
+	}
+
+	api.logger.Infof("✅ Custom tool %s executed successfully, result length: %d bytes", req.Tool, len(result))
+
+	// Return success response
+	json.NewEncoder(w).Encode(CustomExecuteResponse{
+		Success: true,
+		Result:  result,
+	})
+}
+
+// --- VIRTUAL TOOL EXECUTION API ---
+
+// VirtualExecuteRequest represents a request to execute a virtual tool
+type VirtualExecuteRequest struct {
+	Tool string                 `json:"tool"` // Tool name (e.g., "discover_code_structure")
+	Args map[string]interface{} `json:"args"` // Tool arguments
+}
+
+// VirtualExecuteResponse represents the response from a virtual tool execution
+type VirtualExecuteResponse struct {
+	Success bool   `json:"success"`
+	Result  string `json:"result,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// handleVirtualExecute handles the /api/virtual/execute endpoint
+// POST /api/virtual/execute
+// Body: {"tool": "discover_code_structure", "args": {...}}
+// Response: {"success": true, "result": "..."}
+func (api *StreamingAPI) handleVirtualExecute(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Parse request
+	var req VirtualExecuteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.logger.Warnf("Failed to decode virtual execute request: %v", err)
+		json.NewEncoder(w).Encode(VirtualExecuteResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Invalid request body: %v", err),
+		})
+		return
+	}
+
+	api.logger.Infof("🔧 Virtual Execute request: tool=%s", req.Tool)
+
+	// Validate request
+	if req.Tool == "" {
+		json.NewEncoder(w).Encode(VirtualExecuteResponse{
+			Success: false,
+			Error:   "tool parameter is required",
+		})
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	// Execute virtual tool using codeexec registry
+	api.logger.Infof("🚀 Executing virtual tool %s with args: %v", req.Tool, req.Args)
+	result, err := codeexec.CallVirtualTool(ctx, req.Tool, req.Args)
+	if err != nil {
+		api.logger.Errorf("Virtual tool execution failed for %s: %v", req.Tool, err)
+		json.NewEncoder(w).Encode(VirtualExecuteResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Virtual tool execution failed: %v", err),
+		})
+		return
+	}
+
+	api.logger.Infof("✅ Virtual tool %s executed successfully, result length: %d bytes", req.Tool, len(result))
+
+	// Return success response
+	json.NewEncoder(w).Encode(VirtualExecuteResponse{
+		Success: true,
+		Result:  result,
+	})
 }

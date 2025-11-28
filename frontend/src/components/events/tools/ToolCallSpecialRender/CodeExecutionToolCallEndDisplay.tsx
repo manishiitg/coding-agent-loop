@@ -387,13 +387,21 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
 
   // Handle write_code tool response
   if (toolName === 'write_code') {
-    // Check if result contains an error
-    const isError = resultText.includes('BUILD ERROR') || 
-                    resultText.includes('EXECUTION ERROR') || 
-                    resultText.includes('PLUGIN LOAD ERROR') ||
-                    resultText.includes('FUNCTION SIGNATURE ERROR') ||
-                    resultText.includes('Error:') ||
-                    resultText.toLowerCase().includes('failed')
+    // Check if result contains an error - use more precise pattern matching
+    // Only check for error patterns at the start or in structured error messages
+    const errorPatterns = [
+      /^.*\*\*❌ EXECUTION ERROR\*\*/m,  // Execution error header
+      /^.*BUILD ERROR.*$/m,               // Build error
+      /^.*PLUGIN LOAD ERROR.*$/m,         // Plugin load error
+      /^.*FUNCTION SIGNATURE ERROR.*$/m,  // Function signature error
+      /^go run failed:/m,                 // Go run failure at start
+      /^Error:.*go run failed/m,         // Error: go run failed
+    ]
+    
+    // Check if result starts with error indicators or contains structured error messages
+    const isError = errorPatterns.some(pattern => pattern.test(resultText)) ||
+                    (resultText.trim().startsWith('Error:') && resultText.includes('go run')) ||
+                    (resultText.includes('**❌ EXECUTION ERROR**'))
 
     const bgColor = isError 
       ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'

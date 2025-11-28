@@ -34,7 +34,8 @@ const isMarkdownContent = (content: string): boolean => {
 }
 
 export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> = ({ event }) => {
-  const [showContent, setShowContent] = useState(true) // Always show content by default
+  // Always expanded by default
+  const [showContent, setShowContent] = useState(true)
   
   if (!event.tool_params?.arguments) {
     return null

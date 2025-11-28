@@ -12,7 +12,7 @@ interface PresetQueriesProps {
   setCurrentQuery: (query: string) => void;
   isStreaming: boolean;
   availableServers?: string[];
-  onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow') => void;
+  onPresetSelect?: (servers: string[], agentMode?: 'simple' | 'workflow') => void;
   onPresetFolderSelect?: (folderPath?: string) => void;
   triggerAddPreset?: boolean;
   onAddPresetTriggered?: () => void;
@@ -37,8 +37,7 @@ interface PresetQueriesProps {
     predefinedServerSelections,
     loading,
     error,
-    addPreset,
-    updatePreset,
+    savePreset,
     deletePreset,
     updatePredefinedServerSelection,
     refreshPresets,
@@ -52,15 +51,15 @@ interface PresetQueriesProps {
   const [currentPredefinedPresetId, setCurrentPredefinedPresetId] = useState<string>('');
   const [tempSelectedServers, setTempSelectedServers] = useState<string[]>([]);
 
-  const handlePresetClick = (query: string, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile) => {
+  const handlePresetClick = (query: string, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile) => {
     // Find the preset object to pass to applyPreset
     const preset = [...customPresets, ...predefinedPresets].find(p => p.id === presetQueryId)
     
     if (preset) {
       // Guard against null/undefined selectedModeCategory and provide safe default
       const safeModeCategory = selectedModeCategory && 
-        ['chat', 'deep-research', 'workflow'].includes(selectedModeCategory) 
-        ? selectedModeCategory as 'chat' | 'deep-research' | 'workflow'
+        ['chat', 'workflow'].includes(selectedModeCategory) 
+        ? selectedModeCategory as 'chat' | 'workflow'
         : 'chat' // Safe default for initial setup or invalid values
       
       // Use the global store's applyPreset method for consistency
@@ -117,19 +116,37 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'ReAct' | 'orchestrator' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig) => {
-    if (editingPreset) {
-      await updatePreset(editingPreset.id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig);
-      // Call the callback to refresh workflow presets when a preset is updated
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => {
+    console.log('[code_execution] [PresetQueries] handleSavePreset called with:', {
+      label,
+      editingPreset: editingPreset?.id,
+      useCodeExecutionMode,
+      type: typeof useCodeExecutionMode
+    })
+    
+    try {
+      // Use consolidated savePreset function - pass id if editing, undefined if creating
+      await savePreset(
+        label,
+        query,
+        selectedServers,
+        selectedTools,
+        agentMode,
+        selectedFolder,
+        llmConfig,
+        useCodeExecutionMode,
+        editingPreset?.id // Pass id if editing, undefined if creating
+      );
+      
+      // Call the callback to refresh workflow presets when a preset is saved
       setTimeout(() => {
         onPresetAdded?.();
       }, 100);
-    } else {
-      await addPreset(label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig);
-      // Add a small delay to ensure the preset is fully processed
-      setTimeout(() => {
-        onPresetAdded?.();
-      }, 100);
+      
+      setIsModalOpen(false);
+      setEditingPreset(null);
+    } catch (error) {
+      console.error('[code_execution] [PresetQueries] Failed to save preset:', error);
     }
   };
 
@@ -221,7 +238,7 @@ interface PresetQueriesProps {
                   ? `Selected servers: ${selectedServers.join(', ')}` 
                   : 'Click to select servers'
                 }
-              >
+            >
                 {selectedServers.length > 0 ? '🔧' : '⚙️'}
               </button>
             </div>

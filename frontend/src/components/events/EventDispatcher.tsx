@@ -132,6 +132,8 @@ import {
   IndependentStepsSelectedEventDisplay,
   TodoStepsExtractedEventDisplay
 } from './orchestrator'
+import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
+import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
 
 import {
   WorkflowStartEvent,
@@ -162,8 +164,9 @@ import {
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
-import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
-import type { RequestHumanFeedbackEvent, BlockingHumanFeedbackEvent } from '../../generated/events'
+import { BlockingHumanFeedbackDisplay, type BlockingHumanFeedbackEvent } from './BlockingHumanFeedbackDisplay'
+import type { RequestHumanFeedbackEvent } from '../../generated/events'
+import type { TodoStepsExtractedEvent } from '../../generated/events-bridge'
 
 
 interface EventDispatcherProps {
@@ -171,10 +174,14 @@ interface EventDispatcherProps {
   mode?: 'compact' | 'detailed'
   onApproveWorkflow?: (requestId: string) => void
   onSubmitFeedback?: (requestId: string, feedback: string) => void
+  onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state for approve button
+  isCollapsed?: boolean  // Whether the session is collapsed
+  eventCount?: number  // Number of events in the session (excluding start/end)
+  onToggleCollapse?: () => void  // Callback to toggle collapse state
 }
 
-export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, onSubmitFeedback, isApproving }) => {
+export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, isCollapsed, eventCount, onToggleCollapse }) => {
   
   if (!event.type || !event.data) {
     return (
@@ -267,7 +274,12 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
     case 'orchestrator_error':
       return <OrchestratorErrorEventDisplay event={extractEventData<OrchestratorErrorEvent>(event.data)} />
     case 'orchestrator_agent_start':
-      return <OrchestratorAgentStartEventDisplay event={extractEventData<OrchestratorAgentStartEvent>(event.data)} />
+      return <OrchestratorAgentStartEventDisplay 
+        event={extractEventData<OrchestratorAgentStartEvent>(event.data)} 
+        isCollapsed={isCollapsed}
+        eventCount={eventCount}
+        onToggleCollapse={onToggleCollapse}
+      />
     case 'orchestrator_agent_end':
       return <OrchestratorAgentEndEventDisplay event={extractEventData<OrchestratorAgentEndEvent>(event.data)} />
     case 'orchestrator_agent_error':
@@ -312,6 +324,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
         }} 
         onApprove={onApproveWorkflow || (() => {})}
         onSubmitFeedback={onSubmitFeedback}
+        onFeedbackSubmitted={onFeedbackSubmitted}
         isApproving={isApproving}
       />
 
@@ -375,7 +388,28 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
 
     // Todo Steps Events
     case 'todo_steps_extracted':
-      return <TodoStepsExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+      return <TodoStepsExtractedEventDisplay event={extractEventData<TodoStepsExtractedEvent>(event.data)} />
+
+    // Variables Events
+    case 'variables_extracted':
+      return <VariablesExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+
+    // Step Token Usage Events
+    case 'step_token_usage':
+      return <StepTokenUsageEventDisplay event={extractEventData<{
+        timestamp?: string
+        phase: string
+        step: number
+        step_title?: string
+        prompt_tokens: number
+        completion_tokens: number
+        total_tokens: number
+        cache_tokens: number
+        reasoning_tokens: number
+        llm_call_count: number
+        cache_enabled_call_count: number
+        average_cache_discount: number
+      }>(event.data)} />
 
     // Default case for unknown event types
     default:
@@ -392,10 +426,12 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
   }
 }, (prevProps, nextProps) => {
   // Custom comparison to prevent unnecessary re-renders
-  // Only re-render if event ID, mode, or approving state changes
+  // Only re-render if event ID, mode, approving state, or collapse state changes
   return prevProps.event.id === nextProps.event.id &&
          prevProps.mode === nextProps.mode &&
-         prevProps.isApproving === nextProps.isApproving
+         prevProps.isApproving === nextProps.isApproving &&
+         prevProps.isCollapsed === nextProps.isCollapsed &&
+         prevProps.eventCount === nextProps.eventCount
 })
 
 // Event list component for displaying multiple events
@@ -403,8 +439,9 @@ export const EventList: React.FC<{
   events: PollingEvent[]
   onApproveWorkflow?: (requestId: string) => void
   onSubmitFeedback?: (requestId: string, feedback: string) => void
+  onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state for approve button
-}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, isApproving }) => {
+}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving }) => {
   const { shouldShowEvent, mode } = useEventMode()
   
   // Filter events based on current mode (basic/advanced) - memoized
@@ -417,7 +454,7 @@ export const EventList: React.FC<{
       return shouldShow
     })
     return filtered
-  }, [events, shouldShowEvent, mode])
+  }, [events, shouldShowEvent])
   
   if (events.length === 0) {
     return <div className="text-gray-500 text-center py-4">No events to display</div>
@@ -440,6 +477,7 @@ export const EventList: React.FC<{
     events={filteredEvents} 
     onApproveWorkflow={onApproveWorkflow}
     onSubmitFeedback={onSubmitFeedback}
+    onFeedbackSubmitted={onFeedbackSubmitted}
     isApproving={isApproving}
   />
 }) 

@@ -45,7 +45,7 @@ export default function PresetQueriesSection({
       {selectedModeCategory && selectedModeCategory !== 'chat' && (
         <div className="space-y-2">
           <ActivePresetDisplay
-            modeCategory={selectedModeCategory as 'deep-research' | 'workflow'}
+            modeCategory={selectedModeCategory as 'workflow'}
             showSelector={showPresetSelector}
             onToggle={() => setShowPresetSelector(!showPresetSelector)}
           />

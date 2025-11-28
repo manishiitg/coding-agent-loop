@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"llm-providers/llmtypes"
 	internalLLM "mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -38,7 +38,6 @@ const (
 	PlanReaderAgentType        AgentType = "plan_reader"    // Reads plan markdown and returns structured JSON (read-only)
 
 	// Orchestrator types
-	PlannerOrchestratorAgentType  AgentType = "planner_orchestrator"  // AI-controlled planner orchestrator
 	WorkflowOrchestratorAgentType AgentType = "workflow_orchestrator" // AI-controlled workflow orchestrator
 
 	// 🆕 NEW: Workflow-specific types
@@ -53,6 +52,8 @@ const (
 
 	// 🆕 NEW: Multi-agent TodoPlanner sub-agents
 	VariableExtractionAgentType         AgentType = "variable_extraction"           // Extracts variables from objective
+	TodoPlannerAnonymizationAgentType   AgentType = "todo_planner_anonymization"    // Anonymizes learnings by replacing values with variables
+	TodoPlannerPlanImprovementAgentType AgentType = "todo_planner_plan_improvement" // Analyzes execution and provides plan improvement feedback
 	TodoPlannerPlanningAgentType        AgentType = "todo_planner_planning"         // Creates step-wise plan from objective
 	TodoPlannerExecutionAgentType       AgentType = "todo_planner_execution"        // Executes first step of plan
 	TodoPlannerValidationAgentType      AgentType = "todo_planner_validation"       // Validates execution results
@@ -143,6 +144,8 @@ func NewBaseAgent(
 	maxTurns int,
 	provider string,
 	logger utils.ExtendedLogger,
+	cacheOnly bool,
+	enableLargeOutputVirtualTools *bool, // NEW parameter
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -182,6 +185,15 @@ func NewBaseAgent(
 		mcpagent.WithSmartRouting(true),
 		mcpagent.WithSmartRoutingThresholds(20, 4), // 20 tools, 4 servers threshold for all agents
 	)
+
+	// Add large output virtual tools option if specified
+	// Default to true if nil (backward compatible)
+	largeOutputEnabled := true
+	if enableLargeOutputVirtualTools != nil {
+		largeOutputEnabled = *enableLargeOutputVirtualTools
+	}
+	agentOptions = append(agentOptions, mcpagent.WithLargeOutputVirtualTools(largeOutputEnabled))
+
 	logger.Infof("🎯 Smart routing enabled for %s agent - MaxTools: 20, MaxServers: 4", agentType)
 
 	agent, err := mcpagent.NewAgent(

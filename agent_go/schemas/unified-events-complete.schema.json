@@ -1435,6 +1435,9 @@
         "result": {
           "type": "string"
         },
+        "structured_response": {
+          "type": "object"
+        },
         "success": {
           "type": "boolean"
         },

@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/events"
 	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
@@ -28,7 +28,6 @@ import (
 	unifiedevents "mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
 
 	"mcp-agent/agent_go/pkg/logger"
@@ -169,14 +168,6 @@ type StreamingAPI struct {
 	agentCancelFuncs map[string]context.CancelFunc
 	agentCancelMux   sync.RWMutex
 
-	// Orchestrator sessions: sessionID -> *PlannerOrchestrator (removed legacy)
-	// orchestrators   map[string]*orchtypes.PlannerOrchestrator
-	orchestratorMux sync.RWMutex
-
-	// Orchestrator contexts for cancellation: sessionID -> context.CancelFunc
-	orchestratorContexts   map[string]context.CancelFunc
-	orchestratorContextMux sync.RWMutex
-
 	// Workflow orchestrator sessions: sessionID -> orchestrator.Orchestrator
 
 	// Workflow orchestrator contexts for cancellation: sessionID -> context.CancelFunc
@@ -211,8 +202,8 @@ type StreamingAPI struct {
 	internalLLM       llmtypes.Model
 
 	// Orchestrator objects in memory for guidance injection
-	workflowOrchestrators map[string]orchestrator.Orchestrator
-	plannerOrchestrators  map[string]orchestrator.Orchestrator
+	workflowOrchestrators    map[string]orchestrator.Orchestrator
+	workflowOrchestratorsMux sync.RWMutex
 
 	toolStatus    map[string]ToolStatus
 	enabledTools  map[string][]string // queryID/sessionID -> enabled tool names
@@ -243,8 +234,6 @@ type QueryRequest struct {
 	LLMConfig      *orchestrator.LLMConfig `json:"llm_config,omitempty"`
 	PresetQueryID  string                  `json:"preset_query_id,omitempty"`
 	LLMGuidance    string                  `json:"llm_guidance,omitempty"` // LLM guidance message
-	// Orchestrator execution mode selection
-	OrchestratorExecutionMode orchtypes.ExecutionMode `json:"orchestrator_execution_mode,omitempty"`
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
@@ -489,10 +478,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	api := &StreamingAPI{
-		config:           config,
-		agentCancelFuncs: make(map[string]context.CancelFunc),
-		// orchestrators:                make(map[string]*orchtypes.PlannerOrchestrator), // Removed legacy
-		orchestratorContexts:         make(map[string]context.CancelFunc),
+		config:                       config,
+		agentCancelFuncs:             make(map[string]context.CancelFunc),
 		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
 		workflowObjectives:           make(map[string]string),
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
@@ -517,7 +504,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		activeSessions: make(map[string]*ActiveSessionInfo),
 		// Initialize orchestrator storage
 		workflowOrchestrators: make(map[string]orchestrator.Orchestrator),
-		plannerOrchestrators:  make(map[string]orchestrator.Orchestrator),
 	}
 
 	// Setup routes
@@ -546,6 +532,12 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// MCP execution API (from tools.go)
 	apiRouter.HandleFunc("/mcp/execute", api.handleMCPExecute).Methods("POST", "OPTIONS")
+
+	// Custom tool execution API (from tools.go)
+	apiRouter.HandleFunc("/custom/execute", api.handleCustomExecute).Methods("POST", "OPTIONS")
+
+	// Virtual tool execution API (from tools.go)
+	apiRouter.HandleFunc("/virtual/execute", api.handleVirtualExecute).Methods("POST", "OPTIONS")
 
 	// MCP Registry API routes (from mcp_registry_routes.go)
 	apiRouter.HandleFunc("/mcp-registry/servers", api.handleGetMCPRegistryServers).Methods("GET")
@@ -728,7 +720,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(defaults)
 }
 
-// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, and Anthropic
+// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, Vertex, and Anthropic
 func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req llm.APIKeyValidationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -838,19 +830,29 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		selectedServers = req.Servers
 	}
 
-	// Default to all servers if none specified
-	if len(selectedServers) == 0 {
-		selectedServers = []string{"all"}
+	var serverList string
+	// Check for explicit "NO_SERVERS" request (pure LLM mode, no tools)
+	if len(selectedServers) == 1 && selectedServers[0] == mcpclient.NoServers {
+		// Keep NoServers constant as-is - this will be handled by integration code
+		serverList = mcpclient.NoServers
+		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
+		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
+		log.Printf("[SERVER DEBUG] Server list: %s (pure LLM mode)", serverList)
+	} else {
+		// Default to all servers if none specified
+		if len(selectedServers) == 0 {
+			selectedServers = []string{"all"}
+		}
+
+		// Convert server array to comma-separated string for agent compatibility
+		serverList = strings.Join(selectedServers, ",")
+
+		// Debug logging for server selection
+		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
+		log.Printf("[SERVER DEBUG] Request servers: %v", req.Servers)
+		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
+		log.Printf("[SERVER DEBUG] Server list: %s", serverList)
 	}
-
-	// Convert server array to comma-separated string for agent compatibility
-	serverList := strings.Join(selectedServers, ",")
-
-	// Debug logging for server selection
-	log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
-	log.Printf("[SERVER DEBUG] Request servers: %v", req.Servers)
-	log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
-	log.Printf("[SERVER DEBUG] Server list: %s", serverList)
 
 	// Extract sessionID from header/cookie or fallback to queryID
 	sessionID := r.Header.Get("X-Session-ID")
@@ -989,13 +991,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors, toolCategories := createCustomTools()
 
-		// Load selected tools and code execution mode from preset if available (for workflow agents)
+		// Load selected tools, code execution mode, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
+		var presetLLMConfig *database.PresetLLMConfig
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
 			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
 			if err == nil {
+				// Load selected tools
 				if preset.SelectedTools != "" {
 					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
 						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
@@ -1005,6 +1009,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						} else {
 							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
 						}
+					}
+				}
+				// Load preset LLM config for agent defaults
+				if len(preset.LLMConfig) > 0 {
+					if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
+						log.Printf("[PRESET LLM] Failed to parse preset LLM config: %w", err)
+					} else {
+						log.Printf("[PRESET LLM] Loaded preset LLM config with agent defaults")
 					}
 				}
 				// Load code execution mode from preset
@@ -1051,6 +1063,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			req.LLMConfig,        // llmConfig
 			req.MaxTurns,         // maxTurns
 			toolCategories,       // NEW: toolCategories
+			presetLLMConfig,      // preset LLM config for agent defaults
 		)
 		if err != nil {
 			log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %w", err)
@@ -1072,9 +1085,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[WORKFLOW DEBUG] Context error check: %v", workflowCtx.Err())
 
 		// Store the cancel function for potential cancellation
-		api.orchestratorContextMux.Lock()
-		api.orchestratorContexts[sessionID] = workflowCancel
-		api.orchestratorContextMux.Unlock()
+		api.workflowOrchestratorContextMux.Lock()
+		api.workflowOrchestratorContexts[sessionID] = workflowCancel
+		api.workflowOrchestratorContextMux.Unlock()
 
 		// Return immediate response with query ID and observer ID
 		response := QueryResponse{
@@ -1093,9 +1106,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer func() {
 				// Clean up the cancel function when done
-				api.orchestratorContextMux.Lock()
-				delete(api.orchestratorContexts, sessionID)
-				api.orchestratorContextMux.Unlock()
+				api.workflowOrchestratorContextMux.Lock()
+				delete(api.workflowOrchestratorContexts, sessionID)
+				api.workflowOrchestratorContextMux.Unlock()
 
 				// Note: Observer cleanup is handled by session management
 				// Don't remove observer immediately to allow frontend polling
@@ -1277,385 +1290,51 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		streamCtx, cancel := context.WithTimeout(context.Background(), 60*3*time.Minute)
 		defer cancel()
 
-		// Handle orchestrator mode first to avoid unnecessary agent creation
-		if req.AgentMode == "orchestrator" {
-			log.Printf("[ORCHESTRATOR DEBUG] Orchestrator mode requested for query %s - starting fresh", queryID)
-			log.Printf("[ORCHESTRATOR DEBUG] Cache-only mode: true (always enabled)")
-
-			// Observer ID is now required - should have been set above
-			if observerID == "" {
-				errorMsg := "X-Observer-ID header is required for orchestrator mode. Please register an observer first using /api/observer/register"
-				sendError(errorMsg, true)
-				return
-			}
-
-			// Update chat session for orchestrator (it may already exist from regular flow)
-			if api.chatDB != nil {
-				log.Printf("[ORCHESTRATOR DEBUG] Updating chat session for orchestrator session %s", sessionID)
-
-				// Get existing chat session to preserve preset_query_id
-				existingSession, err := api.chatDB.GetChatSession(streamCtx, sessionID)
-				var presetQueryID string
-				if err != nil {
-
-					log.Printf("[ORCHESTRATOR DEBUG] Could not get existing chat session: %w", err)
-					presetQueryID = "" // No preset if session doesn't exist
-				} else {
-					if existingSession.PresetQueryID != nil {
-						presetQueryID = *existingSession.PresetQueryID
-						log.Printf("[ORCHESTRATOR DEBUG] Found existing preset_query_id: %s", presetQueryID)
-					} else {
-						presetQueryID = ""
-						log.Printf("[ORCHESTRATOR DEBUG] No preset_query_id in existing session")
-					}
-				}
-
-				updateReq := &database.UpdateChatSessionRequest{
-					Title:         req.Query,
-					AgentMode:     "orchestrator",
-					PresetQueryID: presetQueryID,
-				}
-				_, err = api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
-				if err != nil {
-					log.Printf("[ORCHESTRATOR ERROR] Failed to update chat session: %w", err)
-				} else {
-					log.Printf("[ORCHESTRATOR DEBUG] Updated chat session with orchestrator title, mode, and preset_query_id: %s", presetQueryID)
-				}
-			}
-
-			// Create a bridge to connect individual agent events from within orchestrator to the main server event system
-			orchestratorAgentEventBridge := &eventbridge.OrchestratorAgentEventBridge{
-				BaseEventBridge: &eventbridge.BaseEventBridge{
-					EventStore:      api.eventStore,
-					ObserverManager: api.observerManager,
-					ObserverID:      observerID, // Use observerID for polling API
-					SessionID:       sessionID,  // Use sessionID for database storage
-					Logger:          api.logger,
-					ChatDB:          api.chatDB, // Add database reference for event storage
-					BridgeName:      "orchestrator_agent",
-				},
-			}
-
-			// Create selected options for orchestrator execution mode
-			var selectedOptions *orchtypes.PlannerSelectedOptions
-			if req.OrchestratorExecutionMode != "" {
-				// Create selected options with execution mode
-				selectedOptions = &orchtypes.PlannerSelectedOptions{
-					Selections: []orchtypes.PlannerSelectedOption{
-						{
-							OptionID:    req.OrchestratorExecutionMode.String(),
-							OptionLabel: req.OrchestratorExecutionMode.GetLabel(),
-							OptionValue: req.OrchestratorExecutionMode.String(),
-							Group:       "execution_strategy",
-						},
-					},
-				}
-				log.Printf("[ORCHESTRATOR DEBUG] Using execution mode from request: %s", req.OrchestratorExecutionMode.String())
-			} else {
-				// Default to parallel execution if no mode specified
-				defaultMode := orchtypes.ParallelExecution
-				selectedOptions = &orchtypes.PlannerSelectedOptions{
-					Selections: []orchtypes.PlannerSelectedOption{
-						{
-							OptionID:    defaultMode.String(),
-							OptionLabel: defaultMode.GetLabel(),
-							OptionValue: defaultMode.String(),
-							Group:       "execution_strategy",
-						},
-					},
-				}
-				log.Printf("[ORCHESTRATOR DEBUG] Using default execution mode: %s", defaultMode.String())
-			}
-
-			// Create standardized orchestrator instance with full configuration
-
-			// Initialize orchestrator agents
-			// Use server's default temperature if request doesn't provide one
-			temperature := req.Temperature
-			if temperature == 0.0 {
-				temperature = api.config.Temperature
-				log.Printf("[ORCHESTRATOR DEBUG] Using server default temperature: %.2f", temperature)
-			}
-
-			// Convert frontend LLM config to orchestrator format
-			var llmConfig *orchestrator.LLMConfig
-			var orchestratorProvider string
-			var orchestratorModel string
-
-			if req.LLMConfig != nil {
-				llmConfig = &orchestrator.LLMConfig{
-					Provider:       req.LLMConfig.Provider,
-					ModelID:        req.LLMConfig.ModelID,
-					FallbackModels: req.LLMConfig.FallbackModels,
-				}
-
-				// Only set cross-provider fallback if it's not nil
-				if req.LLMConfig.CrossProviderFallback != nil {
-					llmConfig.CrossProviderFallback = &agents.CrossProviderFallback{
-						Provider: req.LLMConfig.CrossProviderFallback.Provider,
-						Models:   req.LLMConfig.CrossProviderFallback.Models,
-					}
-				}
-				// Use LLM config values for orchestrator initialization
-				orchestratorProvider = req.LLMConfig.Provider
-				orchestratorModel = req.LLMConfig.ModelID
-				log.Printf("[ORCHESTRATOR LLM CONFIG DEBUG] Using detailed LLM config - Provider: %s, Model: %s, Fallbacks: %v, CrossProvider: %+v",
-					llmConfig.Provider, llmConfig.ModelID, llmConfig.FallbackModels, llmConfig.CrossProviderFallback)
-			} else {
-				// Fall back to request defaults
-				orchestratorProvider = req.Provider
-				orchestratorModel = req.ModelID
-				log.Printf("[ORCHESTRATOR LLM CONFIG DEBUG] Using basic config - Provider: %s, Model: %s", req.Provider, req.ModelID)
-			}
-
-			// Create custom tools for orchestrator agents (workspace tools + human tools)
-			// Orchestrator agents can be Simple or ReAct agents, tools are registered based on mode
-			// TODO: Memory tools removed from orchestrator - only needed for individual React agents
-			// memoryTools := virtualtools.CreateMemoryTools()
-			// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-			allTools, allExecutors, toolCategories := createCustomTools()
-
-			// Load selected tools and code execution mode from preset if available (for orchestrator agents)
-			var selectedTools []string
-			var useCodeExecutionMode bool
-			if req.PresetQueryID != "" {
-				ctx := context.Background()
-				preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-				if err == nil {
-					if preset.SelectedTools != "" {
-						if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-							log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
-						} else {
-							if len(selectedTools) > 0 {
-								log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
-							} else {
-								log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
-							}
-						}
-					}
-					// Load code execution mode from preset
-					useCodeExecutionMode = preset.UseCodeExecutionMode
-					if useCodeExecutionMode {
-						log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
-					}
-				}
-			}
-
-			// Use selected tools from request if preset didn't provide any
-			if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
-				selectedTools = req.SelectedTools
-				if len(selectedTools) > 0 {
-					log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
-				} else {
-					log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
-				}
-			} else if len(selectedTools) == 0 {
-				log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
-			}
-
-			// Use code execution mode from request if preset didn't provide any
-			if !useCodeExecutionMode && req.UseCodeExecutionMode {
-				useCodeExecutionMode = req.UseCodeExecutionMode
-				log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
-			}
-
-			// Create standardized orchestrator instance with full configuration
-			var err error
-			planOrch, err := orchtypes.NewPlannerOrchestrator(
-				orchestratorProvider,         // provider
-				orchestratorModel,            // model
-				api.mcpConfigPath,            // mcpConfigPath
-				temperature,                  // temperature
-				api.config.AgentMode,         // agentMode
-				api.workspaceRoot,            // workspaceRoot
-				api.logger,                   // logger
-				orchestratorAgentEventBridge, // eventBridge
-				tracer,                       // tracer
-				selectedServers,              // selectedServers
-				selectedOptions,              // selectedOptions
-				selectedTools,                // NEW: selectedTools
-				useCodeExecutionMode,         // NEW: code execution mode
-				allTools,                     // customTools
-				allExecutors,                 // customToolExecutors
-				llmConfig,                    // llmConfig
-				req.MaxTurns,                 // maxTurns
-				toolCategories,               // NEW: toolCategories
-			)
-			if err != nil {
-				log.Printf("[ORCHESTRATOR ERROR] Failed to create orchestrator: %w", err)
-			} else {
-				log.Printf("[ORCHESTRATOR DEBUG] Successfully created standardized orchestrator for session %s", sessionID)
-			}
-
-			log.Printf("[ORCHESTRATOR DEBUG] Custom tools (%d total) passed during construction", len(allTools))
-
-			if err != nil {
-
-				// Emit orchestrator error event for frontend visibility
-				orchestratorErrorEvent := &unifiedevents.OrchestratorErrorEvent{
-					BaseEventData: unifiedevents.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Context:  "orchestrator_initialization",
-					Error:    err.Error(),
-					Duration: time.Since(startTime),
-				}
-
-				// Create unified event wrapper
-				unifiedEvent := &unifiedevents.AgentEvent{
-					Type:      unifiedevents.OrchestratorError,
-					Timestamp: time.Now(),
-					Data:      orchestratorErrorEvent,
-				}
-
-				// Emit through the event store
-				serverErrorEvent := events.Event{
-					ID:        fmt.Sprintf("orchestrator_error_%s_%d", queryID, time.Now().UnixNano()),
-					Type:      string(unifiedevents.OrchestratorError),
-					Timestamp: time.Now(),
-					Data:      unifiedEvent,
-					SessionID: observerID,
-				}
-				api.eventStore.AddEvent(observerID, serverErrorEvent)
-				log.Printf("[SERVER DEBUG] Emitted orchestrator error event for query %s", queryID)
-
-				sendError(fmt.Sprintf("Failed to initialize orchestrator: %w", err), true)
-				return
-			}
-
-			// Store planner orchestrator for guidance injection
-			api.storePlannerOrchestrator(sessionID, planOrch)
-
-			// Create a cancellable context for orchestrator execution using background context
-			// This prevents the orchestrator from being cancelled when the HTTP request ends
-			orchestratorCtx, orchestratorCancel := context.WithCancel(context.Background())
-
-			// Store the cancel function for potential cancellation
-			api.orchestratorContextMux.Lock()
-			api.orchestratorContexts[sessionID] = orchestratorCancel
-			api.orchestratorContextMux.Unlock()
-
-			// Execute orchestrator flow asynchronously to support streaming and cancellation
-			go func() {
-				defer func() {
-					// Clean up the cancel function when done
-					api.orchestratorContextMux.Lock()
-					delete(api.orchestratorContexts, sessionID)
-					api.orchestratorContextMux.Unlock()
-				}()
-
-				log.Printf("[ORCHESTRATOR DEBUG] Starting asynchronous orchestrator execution for query %s", queryID)
-
-				// Extract workspace path from objective
-				workspacePath := extractWorkspacePathFromObjective(req.Query)
-				if workspacePath == "" {
-					log.Printf("[ORCHESTRATOR ERROR] Workspace path not found in objective for query %s", queryID)
-					sendError("Workspace path not found in objective. Please ensure the objective contains a valid workspace path.", true)
-					return
-				}
-
-				// Execute orchestrator flow with conversation history using cancellable context
-				// The orchestrator will automatically continue from restored state if available
-				log.Printf("[ORCHESTRATOR DEBUG] Starting orchestrator execution for query %s with workspace: %s", queryID, workspacePath)
-				result, err := planOrch.Execute(orchestratorCtx, req.Query, workspacePath, nil)
-
-				// Check for orchestrator execution error
-				if err != nil {
-					log.Printf("[ORCHESTRATOR ERROR] Orchestrator execution failed: %w", err)
-
-					// Update chat session status to error
-					if api.chatDB != nil {
-						updateReq := &database.UpdateChatSessionRequest{
-							Status: "error",
-						}
-						_, updateErr := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
-						if updateErr != nil {
-							log.Printf("[ORCHESTRATOR ERROR] Failed to update chat session status to error: %v", updateErr)
-						} else {
-							log.Printf("[ORCHESTRATOR DEBUG] Updated chat session %s to error status", sessionID)
-						}
-					}
-
-					// Update active session status to error
-					api.updateSessionStatus(sessionID, "error")
-
-					// Send error response
-					sendError(fmt.Sprintf("Orchestrator execution failed: %w", err), true)
-					return
-				}
-
-				// Build response from orchestrator result
-				orchestratorResponse := "🎭 **Orchestrator Mode - Multi-Agent Execution**\n\n" +
-					"**Query:** " + req.Query + "\n\n" +
-					"**Result:**\n" + result
-
-				// Log result length for debugging
-				log.Printf("[ORCHESTRATOR DEBUG] Raw orchestrator result length: %d characters", len(result))
-				log.Printf("[ORCHESTRATOR DEBUG] Full response length: %d characters", len(orchestratorResponse))
-
-				// Save orchestrator result to conversation history
-				assistantText := strings.TrimSpace(orchestratorResponse)
-				if assistantText != "" {
-					// Create assistant message for conversation history
-					assistantMessage := llmtypes.MessageContent{
-						Role:  llmtypes.ChatMessageTypeAI,
-						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: assistantText}},
-					}
-
-					// Add user message
-					userMessage := llmtypes.MessageContent{
-						Role:  llmtypes.ChatMessageTypeHuman,
-						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: req.Query}},
-					}
-
-					// Update conversation history
-					api.conversationMux.Lock()
-					if existingHistory, exists := api.conversationHistory[sessionID]; exists {
-						// Append to existing history
-						api.conversationHistory[sessionID] = append(existingHistory, userMessage, assistantMessage)
-					} else {
-						// Create new history
-						api.conversationHistory[sessionID] = []llmtypes.MessageContent{userMessage, assistantMessage}
-					}
-					api.conversationMux.Unlock()
-
-					log.Printf("[ORCHESTRATOR DEBUG] Saved orchestrator result to conversation history for session %s", sessionID)
-				}
-
-				// Update chat session status to completed
-				if api.chatDB != nil {
-					updateReq := &database.UpdateChatSessionRequest{
-						Status: "completed",
-					}
-					_, updateErr := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
-					if updateErr != nil {
-						log.Printf("[ORCHESTRATOR ERROR] Failed to update chat session status to completed: %v", updateErr)
-					} else {
-						log.Printf("[ORCHESTRATOR DEBUG] Updated chat session %s to completed status", sessionID)
-					}
-				}
-
-				// Update active session status to completed
-				log.Printf("[COMPLETION] Updating session %s status to completed", sessionID)
-				api.updateSessionStatus(sessionID, "completed")
-
-				// End trace
-				tracer.EndTrace(traceID, map[string]interface{}{
-					"status": "completed",
-				})
-
-				// Orchestrator completion events are now handled by the orchestrator itself
-				log.Printf("[ORCHESTRATOR DEBUG] Orchestrator execution completed for query %s", queryID)
-
-				log.Printf("[ORCHESTRATOR DEBUG] Asynchronous orchestrator execution completed for query %s", queryID)
-			}()
-
-			return
-		}
-
 		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
+		if req.PresetQueryID != "" {
+			ctx := context.Background()
+			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
+			if err == nil {
+				if preset.SelectedTools != "" {
+					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
+					} else {
+						if len(selectedTools) > 0 {
+							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
+						} else {
+							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
+						}
+					}
+				}
+				// Load code execution mode from preset
+				useCodeExecutionMode = preset.UseCodeExecutionMode
+				if useCodeExecutionMode {
+					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
+				}
+			}
+		}
+
+		// Use selected tools from request if preset didn't provide any
+		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
+			selectedTools = req.SelectedTools
+			if len(selectedTools) > 0 {
+				log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
+			} else {
+				log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
+			}
+		} else if len(selectedTools) == 0 {
+			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
+		}
+
+		// Use code execution mode from request if preset didn't provide any
+		if !useCodeExecutionMode && req.UseCodeExecutionMode {
+			useCodeExecutionMode = req.UseCodeExecutionMode
+			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
+		}
+
+		// Create LLM agent wrapper with trace using streamCtx
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
 			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
@@ -1719,10 +1398,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Detailed LLM configuration from frontend
 			FallbackModels:        fallbackModels,
 			CrossProviderFallback: crossProviderFallback,
-
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed via generated Go code using discover_code_files and write_code
 			UseCodeExecutionMode: useCodeExecutionMode,
+			// Convert API keys from request to wrapper format
+			APIKeys: func() *agent.WrapperAPIKeys {
+				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
+					wrapperKeys := &agent.WrapperAPIKeys{
+						OpenRouter: req.LLMConfig.APIKeys.OpenRouter,
+						OpenAI:     req.LLMConfig.APIKeys.OpenAI,
+						Anthropic:  req.LLMConfig.APIKeys.Anthropic,
+						Vertex:     req.LLMConfig.APIKeys.Vertex,
+					}
+					if req.LLMConfig.APIKeys.Bedrock != nil {
+						wrapperKeys.Bedrock = &agent.WrapperBedrockConfig{
+							Region: req.LLMConfig.APIKeys.Bedrock.Region,
+						}
+					}
+					return wrapperKeys
+				}
+				return nil
+			}(),
 		}
 
 		// Set agent mode based on request
@@ -1749,8 +1445,62 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Register custom tools (workspace and human tools) for regular agents
+		// Add workspace tools to simple agents (chat mode)
+		// This matches how workspace tools are registered in workflow/orchestrator agents
 		// This ensures custom tools are available and code generation is triggered
+		if req.AgentMode == "simple" && llmAgent.GetUnderlyingAgent() != nil {
+			workspaceTools := virtualtools.CreateWorkspaceTools()
+			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+			_, _, toolCategories := createCustomTools() // Get toolCategories map
+
+			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent", len(workspaceTools))
+
+			underlyingAgent := llmAgent.GetUnderlyingAgent()
+			for _, tool := range workspaceTools {
+				toolName := tool.Function.Name
+				if executor, exists := workspaceExecutors[toolName]; exists {
+					// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
+					// This matches the workflow implementation for consistency
+					var params map[string]interface{}
+					if tool.Function.Parameters != nil {
+						paramsBytes, err := json.Marshal(tool.Function.Parameters)
+						if err == nil {
+							json.Unmarshal(paramsBytes, &params)
+						}
+					}
+					if params == nil {
+						log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+						continue
+					}
+
+					// Get tool category from the category map - REQUIRED
+					toolCategory := toolCategories[toolName]
+					if toolCategory == "" {
+						log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
+						sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
+						return
+					}
+
+					// Executor is already the correct type (func(ctx, args) (string, error))
+					// No type assertion needed unlike workflow where executors are map[string]interface{}
+					if err := underlyingAgent.RegisterCustomTool(
+						toolName,
+						tool.Function.Description,
+						params,
+						executor,
+						toolCategory,
+					); err != nil {
+						log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+						sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
+						return
+					}
+					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
+				}
+			}
+			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
+		}
+
+		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			// Create custom tools for regular agents (same as orchestrator/workflow)
 			allTools, allExecutors, toolCategories := createCustomTools()
@@ -1775,20 +1525,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								params = make(map[string]interface{})
 							}
 
-							// Get tool category from the category map (defaults to "custom" if not found)
+							// Get tool category from the category map - REQUIRED
 							toolCategory := toolCategories[toolName]
 							if toolCategory == "" {
-								toolCategory = "custom"
+								log.Printf("[CUSTOM TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
+								// Continue to next tool instead of failing entire request
+								continue
 							}
 
 							// Register the tool - this triggers code generation
-							underlyingAgent.RegisterCustomTool(
+							if err := underlyingAgent.RegisterCustomTool(
 								toolName,
 								tool.Function.Description,
 								params,
 								execFunc,
 								toolCategory,
-							)
+							); err != nil {
+								log.Printf("[CUSTOM TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+								// Continue to next tool instead of failing entire request
+								continue
+							}
 							log.Printf("[CUSTOM TOOLS] Registered custom tool: %s (category: %s)", toolName, toolCategory)
 						}
 					}
@@ -2009,24 +1765,6 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 
 	// Note: No regular agent cleanup needed - fresh agents created per request
 
-	// Handle orchestrator sessions with state preservation
-	// Planner orchestrator is now stateless - no state management needed
-	api.orchestratorMux.RLock()
-	if plannerOrch, exists := api.plannerOrchestrators[sessionID]; exists {
-		// Planner orchestrator is now stateless
-		_ = plannerOrch // Avoid unused variable warning
-	}
-	api.orchestratorMux.RUnlock()
-
-	// Cancel orchestrator context if it exists
-	api.orchestratorContextMux.Lock()
-	if cancelFunc, exists := api.orchestratorContexts[sessionID]; exists {
-		cancelFunc() // Cancel the orchestrator execution
-		delete(api.orchestratorContexts, sessionID)
-		log.Printf("[SESSION DEBUG] Cancelled orchestrator execution for session %s", sessionID)
-	}
-	api.orchestratorContextMux.Unlock()
-
 	// Cancel workflow orchestrator context if it exists
 	api.workflowOrchestratorContextMux.Lock()
 	if cancelFunc, exists := api.workflowOrchestratorContexts[sessionID]; exists {
@@ -2070,7 +1808,6 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 	// Clear orchestrator state (removed - now stateless)
 
 	// Clear orchestrator instance (legacy removed)
-	// Legacy orchestrator cleanup removed - now handled by plannerOrchestrators
 
 	// Clear workflow objective
 	api.workflowObjectiveMux.Lock()
@@ -2438,18 +2175,10 @@ func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 
 // storeWorkflowOrchestrator stores a workflow orchestrator for a session
 func (api *StreamingAPI) storeWorkflowOrchestrator(sessionID string, orchestrator orchestrator.Orchestrator) {
-	api.orchestratorMux.Lock()
-	defer api.orchestratorMux.Unlock()
+	api.workflowOrchestratorsMux.Lock()
+	defer api.workflowOrchestratorsMux.Unlock()
 	api.workflowOrchestrators[sessionID] = orchestrator
 	log.Printf("[ORCHESTRATOR] Stored workflow orchestrator for session %s", sessionID)
-}
-
-// storePlannerOrchestrator stores a planner orchestrator for a session
-func (api *StreamingAPI) storePlannerOrchestrator(sessionID string, orchestrator orchestrator.Orchestrator) {
-	api.orchestratorMux.Lock()
-	defer api.orchestratorMux.Unlock()
-	api.plannerOrchestrators[sessionID] = orchestrator
-	log.Printf("[ORCHESTRATOR] Stored planner orchestrator for session %s", sessionID)
 }
 
 // --- LLM GUIDANCE API HANDLERS ---

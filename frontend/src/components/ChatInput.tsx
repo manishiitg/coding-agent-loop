@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useImperativeHandle, forwardRef, useEffect } from 'react'
-import { Send, Loader2, Zap, Square, Plus } from 'lucide-react'
+import { Send, Loader2, Zap, Square, Plus, Code2, Sparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -97,7 +97,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   const primaryLLM = getCurrentLLMOption()
   
   // Check if a preset is active for the current mode
-  const chatActivePreset = getActivePreset(selectedModeCategory as 'chat' | 'deep-research' | 'workflow')
+  const chatActivePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
   
   // Sync localQuery with preset query when preset is selected in chat mode
   useEffect(() => {
@@ -122,15 +122,9 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   }, [selectedModeCategory, activePresetIds, customPresets, predefinedPresets])
   
   const isRequiredFolderSelected = useMemo(() => {
-    if (agentMode !== 'orchestrator' && agentMode !== 'workflow') return true; // No validation needed for other modes
+    if (agentMode !== 'workflow') return true; // No validation needed for other modes
     
-    if (agentMode === 'orchestrator') {
-      // Deep Search mode requires Tasks/ folder
-      const hasTasksFolder = chatFileContext.some((file: { type: string; path: string }) => 
-        file.type === 'folder' && file.path.startsWith('Tasks/')
-      );
-      return hasTasksFolder;
-    } else if (agentMode === 'workflow') {
+    if (agentMode === 'workflow') {
       // Workflow mode requires Workflow/ folder
       const hasWorkflowFolder = chatFileContext.some((file: { type: string; path: string }) => 
         file.type === 'folder' && file.path.startsWith('Workflow/')
@@ -144,18 +138,16 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   // Helper function for dynamic button text based on agent mode
   const getButtonText = useCallback(() => {
     if (agentMode === 'workflow') return 'Start Workflow'
-    if (agentMode === 'orchestrator') return 'Start Deep Search'
     return 'Start Chat'
   }, [agentMode])
 
   // Helper function for dynamic tooltip text based on agent mode
   const getButtonTooltip = useCallback(() => {
     if (agentMode === 'workflow') return 'Start workflow execution with this preset'
-    if (agentMode === 'orchestrator') return 'Start deep research with this preset'
     return 'Start a new chat with this preset'
   }, [agentMode])
 
-  // Preset folder selection (for Deep Search/workflow modes)
+  // Preset folder selection (for workflow mode)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   
   // File selection dialog state
@@ -184,25 +176,13 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
       if (predefinedPreset) return predefinedPreset
       
       return null
-    } else if (agentMode === 'orchestrator') {
-      const presetId = activePresetIds['deep-research']
-      if (!presetId) return null
-      
-      // Find preset in custom or predefined presets
-      const customPreset = customPresets.find(p => p.id === presetId)
-      if (customPreset) return customPreset
-      
-      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
-      if (predefinedPreset) return predefinedPreset
-      
-      return null
     }
     return null
   }, [agentMode, activePresetIds, customPresets, predefinedPresets])
 
   // Consolidated query selection logic
   const queryToSubmit = useMemo(() => {
-    return (agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset 
+    return agentMode === 'workflow' && activePreset 
       ? activePreset.query 
       : localQuery
   }, [agentMode, activePreset, localQuery])
@@ -284,7 +264,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
       
       if (canSubmit) {
         // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-        if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
+        if (agentMode !== 'workflow' && observerId) {
           setLocalQuery('')
         }
         // Call onSubmit with the query directly - no global state coordination needed!
@@ -314,7 +294,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
     
     if (canSubmit && isRequiredFolderSelected) {
       // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-      if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
+      if (agentMode !== 'workflow' && observerId) {
         setLocalQuery('')
       }
       // Call onSubmit with the query directly - no global state coordination needed!
@@ -454,26 +434,21 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   // Check if workflow mode requires preset selection
   const isWorkflowReady = agentMode !== 'workflow' || (getActivePreset('workflow') && isRequiredFolderSelected)
   
-  // Check if deep research mode requires preset selection
-  const isDeepResearchReady = agentMode !== 'orchestrator' || (getActivePreset('deep-research') && isRequiredFolderSelected)
-  
   // Preset modes require a non-empty preset query; chat modes require non-empty local input
   const hasValidQuery =
-    (agentMode === 'workflow' || agentMode === 'orchestrator')
+    agentMode === 'workflow'
       ? Boolean(activePreset?.query?.trim())
       : Boolean(localQuery?.trim())
   
   const readyForMode =
     agentMode === 'workflow' ? isWorkflowReady :
-    agentMode === 'orchestrator' ? isDeepResearchReady : true
+    true
   const submitButtonDisabled = !hasValidQuery || !observerId || !readyForMode
   
 
   // Memoized placeholder to prevent re-computation
   const placeholder = useMemo(() => {
-    return agentMode === 'orchestrator'
-      ? "Enter your objective for plan creation... I'll create a detailed plan using simple agent!"
-      : agentMode === 'workflow'
+    return agentMode === 'workflow'
       ? "Enter your objective for workflow execution... I'll create a todo-list and execute tasks sequentially!"
       : "Ask me anything... I can use tools to help you!"
   }, [agentMode])
@@ -494,34 +469,12 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
         </div>
       )}
 
-      {/* Validation message for Deep Search mode - no files in context */}
-      {agentMode === 'orchestrator' && !isRequiredFolderSelected && chatFileContext.length === 0 && (
-        <div className="px-4">
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded px-1.5 py-0.5 mb-0">
-            <span className="text-xs text-red-600 dark:text-red-400 font-medium">
-              ⚠️ Deep Search mode requires a Tasks folder to be selected
-            </span>
-          </div>
-        </div>
-      )}
-
       {/* Validation message for Workflow mode - no preset selected */}
       {agentMode === 'workflow' && !getActivePreset('workflow') && (
         <div className="px-4">
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 mb-0">
             <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
               ℹ️ Workflow mode requires a preset to be selected first. Use the mode selector to choose a preset.
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Validation message for Deep Research mode - no preset selected */}
-      {agentMode === 'orchestrator' && !getActivePreset('deep-research') && (
-        <div className="px-4">
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 mb-0">
-            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-              ℹ️ Deep Research mode requires a preset to be selected first. Use the mode selector to choose a preset.
             </span>
           </div>
         </div>
@@ -538,8 +491,8 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
         </div>
       )}
 
-      {/* Hint when no files in context and not Deep Search mode */}
-      {chatFileContext.length === 0 && agentMode !== 'orchestrator' && (
+      {/* Hint when no files in context */}
+      {chatFileContext.length === 0 && (
         <div className="px-4">
           <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-0.5 mb-0">
             <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -549,23 +502,12 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
         </div>
       )}
 
-      {/* Hint when files in context but no Tasks folder for Deep Search */}
-      {agentMode === 'orchestrator' && chatFileContext.length > 0 && !isRequiredFolderSelected && (
-        <div className="px-4">
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-1.5 py-0.5 mb-0">
-            <span className="text-xs text-yellow-600 dark:text-yellow-400">
-              💡 Select a folder from Tasks/ directory to proceed
-            </span>
-          </div>
-        </div>
-      )}
-
       {/* Input Form */}
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
-            {/* Show compact preset info with action buttons for workflow and deep research modes */}
-            {(agentMode === 'workflow' || agentMode === 'orchestrator') && activePreset && !isEditingQuery ? (
+            {/* Show compact preset info with action buttons for workflow mode */}
+            {agentMode === 'workflow' && activePreset && !isEditingQuery ? (
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <Tooltip>
@@ -576,7 +518,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                           {activePreset.label}
                         </span>
                         <span className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
-                          ({agentMode === 'workflow' ? 'Workflow' : 'Deep Research'})
+                          ('Workflow')
                         </span>
                       </div>
                     </TooltipTrigger>
@@ -631,7 +573,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                             onClick={() => {
                               if (canSubmit) {
                                 // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-                                if (agentMode !== 'workflow' && agentMode !== 'orchestrator' && observerId) {
+                                if (agentMode !== 'workflow' && observerId) {
                                   setLocalQuery('')
                                 }
                                 onSubmit(queryToSubmit)
@@ -645,24 +587,6 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                         </TooltipTrigger>
                         <TooltipContent>
                           <p>{getButtonTooltip()}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                    
-                    {/* New Chat button - only show when not streaming */}
-                    {!isStreaming && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={onNewChat}
-                            className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-                          >
-                            New Chat
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Create a new chat session</p>
                         </TooltipContent>
                       </Tooltip>
                     )}
@@ -683,7 +607,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
             )}
             
             {/* Show compact edit controls when editing preset query */}
-            {(agentMode === 'workflow' || agentMode === 'orchestrator') && isEditingQuery && (
+            {agentMode === 'workflow' && isEditingQuery && (
               <div className="flex items-center gap-1 px-2 py-1 bg-gray-50 dark:bg-gray-800 rounded text-xs">
                 <span className="text-gray-600 dark:text-gray-400">Editing:</span>
                 <button
@@ -729,25 +653,46 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                         </TooltipContent>
                       </Tooltip>
                     </div>
-                    {/* Code Execution Mode Checkbox */}
-                    <div className="flex items-center gap-1.5">
-                      <Checkbox
-                        id="code-execution-mode"
-                        checked={useCodeExecutionMode}
-                        onCheckedChange={(checked) => setUseCodeExecutionMode(checked === true)}
-                        disabled={isStreaming}
-                      />
+                    {/* Code Execution Mode Toggle */}
+                    <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <label
-                            htmlFor="code-execution-mode"
-                            className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none"
+                          <button
+                            type="button"
+                            onClick={() => setUseCodeExecutionMode(false)}
+                            disabled={isStreaming}
+                            className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                              !useCodeExecutionMode
+                                ? 'agent-mode-selected rounded-l-md rounded-r-none'
+                                : 'agent-mode-unselected rounded-none'
+                            }`}
                           >
-                            MCP Code Execution
-                          </label>
+                            <Sparkles className="w-3 h-3 inline mr-1" />
+                            Simple
+                          </button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Enable MCP code execution mode: MCP tools accessed via generated Go code</p>
+                          <p>Simple mode - Direct MCP tool access</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => setUseCodeExecutionMode(true)}
+                            disabled={isStreaming}
+                            className={`px-2 py-1 text-xs font-medium transition-colors ${
+                              useCodeExecutionMode
+                                ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                                : 'agent-mode-unselected rounded-none'
+                            }`}
+                          >
+                            <Code2 className="w-3 h-3 inline mr-1" />
+                            Code Exec
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Code Exec mode - MCP tools accessed via generated Go code</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>

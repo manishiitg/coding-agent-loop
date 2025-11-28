@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -22,57 +22,78 @@ type VirtualTool struct {
 func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 	var virtualTools []llmtypes.Tool
 
-	// Add get_prompt tool
-	getPromptTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "get_prompt",
-			Description: "Fetch the full content of a specific prompt by name and server",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"server": map[string]interface{}{
-						"type":        "string",
-						"description": "Server name",
-					},
-					"name": map[string]interface{}{
-						"type":        "string",
-						"description": "Prompt name (e.g., aws-msk, how-it-works)",
-					},
-				},
-				"required": []string{"server", "name"},
-			}),
-		},
+	// Check if MCP servers exist - get_prompt and get_resource require MCP servers
+	hasMCPServers := len(a.Clients) > 0
+	// Also check if NO_SERVERS is explicitly selected (overrides client count)
+	if len(a.selectedServers) > 0 {
+		// If selectedServers contains only "NO_SERVERS", then no MCP servers
+		hasMCPServers = false
+		for _, server := range a.selectedServers {
+			if server != "NO_SERVERS" {
+				hasMCPServers = true
+				break
+			}
+		}
 	}
-	virtualTools = append(virtualTools, getPromptTool)
 
-	// Add get_resource tool
-	getResourceTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "get_resource",
-			Description: "Fetch the content of a specific resource by URI and server. Only use URIs that are listed in the system prompt's 'AVAILABLE RESOURCES' section.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"server": map[string]interface{}{
-						"type":        "string",
-						"description": "Server name",
+	// Only add get_prompt and get_resource if MCP servers exist
+	if hasMCPServers {
+		// Add get_prompt tool
+		getPromptTool := llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "get_prompt",
+				Description: "Fetch the full content of a specific prompt by name and server",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"server": map[string]interface{}{
+							"type":        "string",
+							"description": "Server name",
+						},
+						"name": map[string]interface{}{
+							"type":        "string",
+							"description": "Prompt name (e.g., aws-msk, how-it-works)",
+						},
 					},
-					"uri": map[string]interface{}{
-						"type":        "string",
-						"description": "Resource URI",
+					"required": []string{"server", "name"},
+				}),
+			},
+		}
+		virtualTools = append(virtualTools, getPromptTool)
+
+		// Add get_resource tool
+		getResourceTool := llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "get_resource",
+				Description: "Fetch the content of a specific resource by URI and server. Only use URIs that are listed in the system prompt's 'AVAILABLE RESOURCES' section.",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"server": map[string]interface{}{
+							"type":        "string",
+							"description": "Server name",
+						},
+						"uri": map[string]interface{}{
+							"type":        "string",
+							"description": "Resource URI",
+						},
 					},
-				},
-				"required": []string{"server", "uri"},
-			}),
-		},
+					"required": []string{"server", "uri"},
+				}),
+			},
+		}
+		virtualTools = append(virtualTools, getResourceTool)
 	}
-	virtualTools = append(virtualTools, getResourceTool)
 
 	// Add large output virtual tools if enabled
-	largeOutputTools := a.CreateLargeOutputVirtualTools()
-	virtualTools = append(virtualTools, largeOutputTools...)
+	// In code execution mode, we don't support large output tools (they don't work in subprocess)
+	// We handle large outputs via truncation in write_code instead
+	if !a.UseCodeExecutionMode {
+		largeOutputTools := a.CreateLargeOutputVirtualTools()
+		virtualTools = append(virtualTools, largeOutputTools...)
+	}
 
 	// Add discover_code_files tool (requires both server_name and tool_name - returns actual Go code)
 	// Note: discover_code_structure has been removed - tool structure is now automatically included in system prompt

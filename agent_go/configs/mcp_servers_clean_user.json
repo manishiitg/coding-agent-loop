@@ -21,8 +21,8 @@
       "command": "uvx",
       "args": ["mcp-google-sheets@latest"],
       "env": {
-        "SERVICE_ACCOUNT_PATH": "/Users/mipl/mcp-agent-builder-go/agent_go/service_account.json",
-        "DRIVE_FOLDER_ID": "1KAhwqrp37tqTRTQzX_XwBnOpzOn2FiO3"
+        "SERVICE_ACCOUNT_PATH": "/Users/mipl/ai-work/mcp-agent/agent_go/service-account.json",
+        "DRIVE_FOLDER_ID": "1Am2CJ8x1Ru9JsbZ3Q45otxqLiQyPeWoi"
       }
     },
     "gmail": {
@@ -34,7 +34,7 @@
       "args": [
         "@playwright/mcp@latest",
         "--output-dir",
-        "/Users/mipl/ai-work/mcp-agent/planner-docs/Downloads"
+        "/Users/mipl/ai-work/mcp-agent/workspace-docs/Downloads"
       ]
     },
     "tavily-search": {

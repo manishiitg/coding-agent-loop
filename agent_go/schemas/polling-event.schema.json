@@ -1643,6 +1643,9 @@
         "result": {
           "type": "string"
         },
+        "structured_response": {
+          "type": "object"
+        },
         "success": {
           "type": "boolean"
         },
@@ -2403,6 +2406,9 @@
     },
     "TodoStep": {
       "properties": {
+        "id": {
+          "type": "string"
+        },
         "title": {
           "type": "string"
         },
@@ -2435,22 +2441,6 @@
             "type": "string"
           },
           "type": "array"
-        },
-        "has_loop": {
-          "type": "boolean",
-          "description": "Whether this step needs to loop until condition is met"
-        },
-        "loop_condition": {
-          "type": "string",
-          "description": "Condition that must be met to exit the loop (required when has_loop is true)"
-        },
-        "max_iterations": {
-          "type": "integer",
-          "description": "Maximum number of loop iterations allowed (default: 10)"
-        },
-        "loop_description": {
-          "type": "string",
-          "description": "Human-readable explanation of the loop behavior"
         }
       },
       "additionalProperties": false,

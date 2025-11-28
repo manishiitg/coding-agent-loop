@@ -52,6 +52,7 @@ agent_go/orchestrator
 agent_go/server
 agent_go/fileserver
 agent_go/mcpagent-test
+agent_go/mcp-agent-server
 
 # External example build outputs
 external_example/api/server
@@ -71,7 +72,13 @@ planner-docs/
 
 planner-docs/*
 
+workspace-docs/
+
+workspace-docs/*
+
+
 agent_go/service-account.json
+agent_go/service_account.json
 
 # Gitleaks reports and cache
 gitleaks-report.json

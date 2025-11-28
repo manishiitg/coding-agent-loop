@@ -66,7 +66,7 @@ export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus,
                 className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
               />
               <Button
-                onClick={() => onTestAPIKey(apiKey)}
+                onClick={() => onTestAPIKey(apiKey, config.model_id)}
                 disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
                 size="sm"
                 variant="outline"

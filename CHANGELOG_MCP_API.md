@@ -4,6 +4,8 @@
 
 This document describes the major architectural refactoring of the MCP (Model Context Protocol) code execution system, transitioning from a Yaegi interpreter-based approach to a clean HTTP API architecture.
 
+**Status**: ✅ **COMPLETE** (Migration completed 2025-11-25)
+
 ## Problem Statement
 
 The previous implementation had several limitations:
@@ -14,12 +16,13 @@ The previous implementation had several limitations:
 
 ## Solution: HTTP API Architecture
 
-We refactored the system to use a clean HTTP API for MCP tool execution, enabling:
+We refactored the system to use a clean HTTP API for **all tool types** (MCP, Custom, and Virtual), enabling:
 - **Process Isolation**: User code runs as separate process via `go run`
 - **Language Agnostic**: Can write code in Python, JavaScript, or any language that can make HTTP calls
 - **Simplicity**: No in-process interpreter or complex injection needed
 - **Stability**: Code crashes don't affect the main agent
 - **Debuggability**: Can test API directly with cURL or HTTP clients
+- **Yaegi Removed**: The Yaegi interpreter dependency has been completely removed
 
 ## Architecture Changes
 
@@ -59,9 +62,12 @@ We refactored the system to use a clean HTTP API for MCP tool execution, enablin
 
 ## Implementation Details
 
-### 1. HTTP API Endpoint (`agent_go/cmd/server/tools.go`)
+### 1. HTTP API Endpoints (`agent_go/cmd/server/tools.go`)
 
-**New Endpoint**: `POST /api/mcp/execute`
+Three endpoints handle different tool types:
+
+#### MCP Tools: `POST /api/mcp/execute`
+For executing MCP server tools (e.g., AWS, Google Sheets, etc.)
 
 **Request Format**:
 ```json
@@ -74,64 +80,103 @@ We refactored the system to use a clean HTTP API for MCP tool execution, enablin
 }
 ```
 
-**Response Format**:
+#### Custom Tools: `POST /api/custom/execute`
+For executing custom tools (e.g., workspace tools, human tools)
+
+**Request Format**:
+```json
+{
+  "tool": "read_workspace_file",
+  "args": {
+    "path": "/path/to/file"
+  }
+}
+```
+
+#### Virtual Tools: `POST /api/virtual/execute`
+For executing virtual tools (e.g., discover_code_structure, write_code)
+
+**Request Format**:
+```json
+{
+  "tool": "discover_code_structure",
+  "args": {}
+}
+```
+
+**Response Format** (all endpoints):
 ```json
 {
   "success": true,
-  "result": "Document content here...",
+  "result": "Tool output here...",
   "error": ""
 }
 ```
 
 **Implementation Highlights**:
 - Reuses existing MCP cache system (`mcpcache.GetCachedOrFreshConnection`)
+- Uses codeexec registry for custom/virtual tool execution
 - Thread-safe client management
 - Error handling with detailed messages
+- CORS support for frontend testing
 
 ### 2. Code Generation Updates (`agent_go/pkg/mcpcache/codegen/templates.go`)
 
-Generated tool functions now produce HTTP client code instead of codeexec calls:
+All generated tool functions now produce HTTP client code. Three template functions handle different tool types:
 
-**Before**:
-```go
-func GetDocument(ctx context.Context, params map[string]interface{}) (string, error) {
-    return codeexec.CallMCPTool(ctx, "get_document", params)
-}
-```
-
-**After**:
+#### MCP Server Tools (`GenerateFunctionWithParams`)
 ```go
 func GetDocument(params map[string]interface{}) (string, error) {
     apiURL := os.Getenv("MCP_API_URL")
     if apiURL == "" {
         apiURL = "http://localhost:8000"
     }
-
     reqBody, _ := json.Marshal(map[string]interface{}{
         "server": os.Getenv("MCP_SERVER_NAME"),
         "tool":   "get_document",
         "args":   params,
     })
-
     resp, err := http.Post(apiURL+"/api/mcp/execute", "application/json", bytes.NewBuffer(reqBody))
-    if err != nil {
-        return "", err
-    }
-    defer resp.Body.Close()
-
-    var result struct {
-        Success bool   `json:"success"`
-        Result  string `json:"result"`
-        Error   string `json:"error"`
-    }
-    json.NewDecoder(resp.Body).Decode(&result)
-
-    if !result.Success {
-        return "", fmt.Errorf(result.Error)
-    }
-    return result.Result, nil
+    // ... response handling
 }
 ```
+
+#### Custom Tools (`GenerateCustomToolFunction`)
+```go
+func ReadWorkspaceFile(params map[string]interface{}) (string, error) {
+    apiURL := os.Getenv("MCP_API_URL")
+    if apiURL == "" {
+        apiURL = "http://localhost:8000"
+    }
+    reqBody, _ := json.Marshal(map[string]interface{}{
+        "tool": "read_workspace_file",
+        "args": params,
+    })
+    resp, err := http.Post(apiURL+"/api/custom/execute", "application/json", bytes.NewBuffer(reqBody))
+    // ... response handling
+}
+```
+
+#### Virtual Tools (`GenerateVirtualToolFunction`)
+```go
+func DiscoverCodeStructure(params map[string]interface{}) (string, error) {
+    apiURL := os.Getenv("MCP_API_URL")
+    if apiURL == "" {
+        apiURL = "http://localhost:8000"
+    }
+    reqBody, _ := json.Marshal(map[string]interface{}{
+        "tool": "discover_code_structure",
+        "args": params,
+    })
+    resp, err := http.Post(apiURL+"/api/virtual/execute", "application/json", bytes.NewBuffer(reqBody))
+    // ... response handling
+}
+```
+
+**Key Changes**:
+- Removed `context.Context` parameter (not needed for HTTP calls)
+- Removed `codeexec` import dependency
+- Each tool type routes to its appropriate endpoint
 
 ### 3. Code Execution Handler (`agent_go/pkg/mcpagent/code_execution_tools.go`)
 
@@ -271,21 +316,23 @@ Frontend provides interactive testing:
 ## Files Changed
 
 ### Backend
-- `agent_go/cmd/server/tools.go` (+177 lines) - API endpoint handler
-- `agent_go/cmd/server/server.go` (+1 line) - Route registration
-- `agent_go/pkg/mcpcache/codegen/templates.go` (+57 lines, -2 lines) - HTTP client generation
-- `agent_go/pkg/mcpagent/code_execution_tools.go` (+33 lines, -7 lines) - go run execution
-- `agent_go/pkg/mcpagent/prompt/builder.go` (+145 lines, -75 lines) - Updated documentation
+- `agent_go/cmd/server/tools.go` - Added `handleCustomExecute()` and `handleVirtualExecute()` handlers
+- `agent_go/cmd/server/server.go` - Registered `/api/custom/execute` and `/api/virtual/execute` routes
+- `agent_go/pkg/mcpcache/codegen/templates.go` - Updated all template functions to generate HTTP API calls
+- `agent_go/pkg/mcpagent/code_execution_tools.go` - Removed Yaegi interpreter code (~400 lines removed)
+- `agent_go/go.mod` - Removed `github.com/traefik/yaegi` dependency
+
+### Removed Code (Yaegi-related)
+- `executeGoCodeViaYaegi()` - In-process Go interpreter execution
+- `wrapCodeForYaegi()` - Code wrapping for interpreter
+- `injectGeneratedToolPackages()` - Package injection for interpreter
+- `addCodeexecImport()` - Import manipulation
+- `removeGeneratedToolImports()` - Import cleanup
 
 ### Frontend
-- `frontend/src/components/MCPToolApiTester.tsx` (+267 lines) - New component
-- `frontend/src/components/sidebar/MCPServersSection.tsx` (+18 lines) - Integration
-- `frontend/src/stores/useMCPStore.ts` (+7 lines) - State management
-
-### Total Impact
-- **Lines Added**: 686
-- **Lines Removed**: 82
-- **Net Change**: +604 lines
+- `frontend/src/components/MCPToolApiTester.tsx` - Interactive API testing component
+- `frontend/src/components/sidebar/MCPServersSection.tsx` - Integration
+- `frontend/src/stores/useMCPStore.ts` - State management
 
 ## Testing
 
@@ -370,9 +417,9 @@ Consider adding:
 7. **Batch API**: Execute multiple tools in one request
 
 ### Backward Compatibility
-- Keep Yaegi support as fallback option
-- Allow opt-in to new architecture
-- Gradual migration path
+- **Yaegi has been completely removed** - no fallback to interpreter-based execution
+- The codeexec registry remains for server-side tool execution (used by API handlers)
+- Generated code uses HTTP API exclusively
 
 ## Conclusion
 
@@ -388,12 +435,15 @@ The HTTP API approach provides a solid foundation for future enhancements while 
 ## References
 
 - MCP Specification: https://modelcontextprotocol.io
-- HTTP API Endpoint: `POST /api/mcp/execute`
+- HTTP API Endpoints:
+  - `POST /api/mcp/execute` - MCP server tools
+  - `POST /api/custom/execute` - Custom tools
+  - `POST /api/virtual/execute` - Virtual tools
 - Frontend API Tester: `MCPToolApiTester.tsx`
 - Code Generation: `codegen/templates.go`
 
 ---
 
-**Date**: 2025-01-25
+**Date**: 2025-11-25
 **Author**: MCP Agent Builder Team
-**Version**: 2.0.0
+**Version**: 2.0.0 (Migration Complete)

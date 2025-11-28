@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
@@ -62,17 +62,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(errStr, "status code 429") ||
 			strings.Contains(errStr, "429") ||
 			strings.Contains(errStr, "rate limit") ||
-			strings.Contains(errStr, "throttled") ||
-			// Add server errors (5xx) to trigger fallback
-			strings.Contains(errStr, "502") ||
-			strings.Contains(errStr, "503") ||
-			strings.Contains(errStr, "504") ||
-			strings.Contains(errStr, "500") ||
-			strings.Contains(errStr, "API returned unexpected status code: 5") ||
-			strings.Contains(errStr, "Provider returned error") ||
-			strings.Contains(errStr, "Bad Gateway") ||
-			strings.Contains(errStr, "Service Unavailable") ||
-			strings.Contains(errStr, "Gateway Timeout")
+			strings.Contains(errStr, "throttled")
 
 		// Enhanced debugging for throttling error detection
 		if isThrottling {
@@ -84,11 +74,16 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	}
 
 	// Helper function to check if an error is an empty content error
+	// Note: Excludes MALFORMED_FUNCTION_CALL errors which have their own specific error message
 	isEmptyContentError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
+		// Exclude MALFORMED_FUNCTION_CALL errors - they have their own specific message
+		if strings.Contains(msg, "MALFORMED_FUNCTION_CALL") {
+			return false
+		}
 		isEmptyContent := strings.Contains(msg, "Choice.Content is empty string") ||
 			strings.Contains(msg, "empty content error") ||
 			strings.Contains(msg, "choice.Content is empty") ||
@@ -166,7 +161,29 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "received from peer") ||
 			strings.Contains(msg, "peer error") ||
 			strings.Contains(msg, "internal server error") ||
-			strings.Contains(msg, "service error")
+			strings.Contains(msg, "service error") ||
+			// Add server errors (5xx) to trigger fallback - these should be classified as internal errors, not throttling
+			strings.Contains(msg, "status 500") ||
+			strings.Contains(msg, "status code: 500") ||
+			strings.Contains(msg, "status code 500") ||
+			strings.Contains(msg, "StatusCode: 500") ||
+			strings.Contains(msg, "500") ||
+			strings.Contains(msg, "status 502") ||
+			strings.Contains(msg, "status code: 502") ||
+			strings.Contains(msg, "status code 502") ||
+			strings.Contains(msg, "502") ||
+			strings.Contains(msg, "status 503") ||
+			strings.Contains(msg, "status code: 503") ||
+			strings.Contains(msg, "status code 503") ||
+			strings.Contains(msg, "503") ||
+			strings.Contains(msg, "status 504") ||
+			strings.Contains(msg, "status code: 504") ||
+			strings.Contains(msg, "status code 504") ||
+			strings.Contains(msg, "504") ||
+			strings.Contains(msg, "API returned unexpected status code: 5") ||
+			strings.Contains(msg, "Bad Gateway") ||
+			strings.Contains(msg, "Service Unavailable") ||
+			strings.Contains(msg, "Gateway Timeout")
 
 		// Enhanced debugging for internal error detection
 		if isInternal {
@@ -272,22 +289,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		if err == nil {
 			logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - SUCCESS - Response: %v", attempt+1, resp != nil)
 			usage = extractUsageMetricsWithMessages(resp, messages)
-			// Emit LLM generation success event (replaced span-based tracing)
-			llmAttemptEndEvent := &events.LLMGenerationEndEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Turn:      turn + 1,
-				Content:   resp.Choices[0].Content,
-				ToolCalls: len(resp.Choices[0].ToolCalls),
-				Duration:  time.Since(llmGenerationStartEvent.Timestamp),
-				UsageMetrics: events.UsageMetrics{
-					PromptTokens:     usage.InputTokens,
-					CompletionTokens: usage.OutputTokens,
-					TotalTokens:      usage.TotalTokens,
-				},
-			}
-			a.EmitTypedEvent(ctx, llmAttemptEndEvent)
+			// Note: llm_generation_end event is emitted by EndLLMGeneration() in conversation.go
+			// to avoid duplicate events
 			return resp, nil, usage
 		}
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,8 +107,27 @@ func (c *Client) Connect(ctx context.Context) error {
 // connectOnce performs a single connection attempt
 func (c *Client) connectOnce(ctx context.Context) error {
 	// Prepare environment variables
-	var env []string
+	// Start with the current process environment, then override with config env vars
+	env := os.Environ()
+
+	// Create a map of existing env vars for quick lookup
+	envMap := make(map[string]string)
+	for _, e := range env {
+		if idx := strings.IndexByte(e, '='); idx > 0 {
+			key := e[:idx]
+			value := e[idx+1:]
+			envMap[key] = value
+		}
+	}
+
+	// Override with config env vars
 	for key, value := range c.config.Env {
+		envMap[key] = value
+	}
+
+	// Convert back to []string format
+	env = make([]string, 0, len(envMap))
+	for key, value := range envMap {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
 

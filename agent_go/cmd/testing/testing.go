@@ -12,16 +12,19 @@ var TestingCmd = &cobra.Command{
 	Long: `Testing framework for MCP Agent with comprehensive validation.
 
 Features:
-- LLM provider integration testing (Bedrock, OpenAI, Anthropic, OpenRouter)
+- Agent conversation testing (with all LLM providers)
 - MCP server connection testing
-- Agent conversation testing
 - SSE streaming testing
 - Langfuse trace retrieval
 - Connection pooling validation
 - Context cancellation testing
 
+Note: For comprehensive LLM provider testing (tool calls, structured output, 
+streaming, embeddings, etc.), use the llm-providers test suite:
+  cd llm-providers && ./bin/llm-test --help
+
 Examples:
-  # Test all providers
+  # Test agent with different providers
   orchestrator test agent --simple --provider bedrock
   orchestrator test agent --simple --provider openai  
   orchestrator test agent --simple --provider anthropic
@@ -34,15 +37,12 @@ Examples:
   orchestrator test agent --comprehensive-aws --provider bedrock
   orchestrator test agent --complex --provider openai
   
-  # ReAct comprehensive testing
-  orchestrator test comprehensive-react --provider openrouter
-  orchestrator test comprehensive-react --provider bedrock --verbose
+  # Simple comprehensive testing
+  orchestrator test comprehensive-simple --provider openrouter
+  orchestrator test comprehensive-simple --provider bedrock --verbose
   
   # Max tokens flexibility testing
   orchestrator test max-tokens-flexibility --provider bedrock --verbose
-  
-  # LLM tool calling testing
-  orchestrator test llm-tool-call --provider bedrock --verbose
   
   # Context cancellation testing
   orchestrator test context-cancellation --provider bedrock --log-file logs/context-cancellation.log`,
@@ -91,33 +91,29 @@ func initTestingCommands() {
 	// The logger will be initialized in each test command based on the log-file parameter
 
 	// Add subcommands explicitly to ensure they're registered
+	// Note: LLM provider tests (anthropic, bedrock, openai, vertex, etc.) are now in llm-providers/
+	// Use ./bin/llm-test for comprehensive provider testing
 	TestingCmd.AddCommand(agentCmd)
-	TestingCmd.AddCommand(comprehensiveReactCmd)
+	TestingCmd.AddCommand(comprehensiveSimpleCmd)
 	TestingCmd.AddCommand(langfuseCmd)
-	TestingCmd.AddCommand(bedrockCmd)
-	TestingCmd.AddCommand(vertexCmd)
-	TestingCmd.AddCommand(vertexAnthropicCmd)
-	TestingCmd.AddCommand(anthropicCmd)
-	TestingCmd.AddCommand(openaiCmd)
 	TestingCmd.AddCommand(awsTestCmd)
 	TestingCmd.AddCommand(mcpCacheTestCmd) // MCP Connection Caching Test
 	TestingCmd.AddCommand(exaTestCmd)
 	TestingCmd.AddCommand(sseCmd)
 	// TestingCmd.AddCommand(structuredOutputTestCmd) // Removed - replaced by agentStructuredOutputTestCmd
 	TestingCmd.AddCommand(agentStructuredOutputTestCmd)
-	TestingCmd.AddCommand(TokenUsageTestCmd)
 	TestingCmd.AddCommand(maxTokensFlexibilityCmd)
-	TestingCmd.AddCommand(llmToolCallTestCmd)
-	TestingCmd.AddCommand(openaiToolCallTestCmd)
-	TestingCmd.AddCommand(openaiEmptyParamsTestCmd)
-	TestingCmd.AddCommand(openaiMultiTurnToolTestCmd)
+	TestingCmd.AddCommand(openaiEmptyParamsTestCmd) // Agent/MCP integration test for empty parameter schemas
 	TestingCmd.AddCommand(genaiMultiTurnToolTestCmd)
-	TestingCmd.AddCommand(bedrockMultiTurnToolTestCmd)
+	TestingCmd.AddCommand(genaiMultiToolComplexTestCmd)
 	TestingCmd.AddCommand(debugExternalCmd)
 	TestingCmd.AddCommand(customToolsTestCmd)
 	TestingCmd.AddCommand(streamingTracerCmd)
 	TestingCmd.AddCommand(contextCancellationTestCmd)
 	TestingCmd.AddCommand(bufioScannerBugTestCmd)
+	TestingCmd.AddCommand(codegenTestCmd)
+	TestingCmd.AddCommand(codeExecutionTestCmd)
 	TestingCmd.AddCommand(readImageTestCmd)
 	TestingCmd.AddCommand(readSecureAccessTestCmd)
+	TestingCmd.AddCommand(toolFilterTestCmd) // Unified ToolFilter test
 }

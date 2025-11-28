@@ -7,7 +7,7 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -212,6 +212,21 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 **NO WRITE PERMISSIONS:**
 - This agent does NOT write any files - only returns structured JSON validation results
 - Focus on verifying execution claims using evidence
+
+## 🔧 WORKSPACE TOOLS AVAILABLE
+
+**You have access to workspace tools to verify execution claims:**
+- **read_workspace_file**: Read files to verify execution agent's claims (e.g., check if files were created, verify content matches claims)
+- **list_workspace_files**: List files in directories to verify execution results (e.g., check if expected files exist)
+- **Other workspace tools**: Use any available workspace tools as needed to verify execution results
+
+**When to Use Workspace Tools:**
+- When execution history mentions files being created/modified - verify they actually exist
+- When execution agent claims specific content in files - read files to verify the claims
+- When success criteria requires specific files or outputs - use tools to check if they exist
+- When you need additional evidence beyond what's in the conversation history
+
+**Important**: Use workspace tools proactively to verify execution claims. Don't just trust the conversation history - verify actual file contents and existence when needed.
 
 ## ⚠️ EDGE CASE HANDLING
 

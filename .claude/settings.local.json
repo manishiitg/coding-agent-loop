@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(git grep:*)",
+      "Bash(go test:*)",
+      "Bash(timeout 30 go build:*)",
+      "Bash(done)",
+      "Bash(go run:*)",
+      "Bash(go vet:*)",
+      "Bash(gofmt:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

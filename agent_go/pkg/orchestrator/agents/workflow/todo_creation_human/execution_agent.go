@@ -7,10 +7,11 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
+	"mcp-agent/agent_go/pkg/mcpagent/prompt"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 )
 
@@ -22,10 +23,10 @@ type HumanControlledTodoPlannerExecutionTemplate struct {
 	StepContextDependencies string
 	StepContextOutput       string
 	WorkspacePath           string
-	LearningsPath           string // Learnings folder path for reading learning files and Python scripts
+	LearningsPath           string // Learnings folder path for reading learning files and scripts/code
+	IsCodeExecutionMode     string // "true" or "false" - indicates if code execution mode is enabled
 	ValidationFeedback      string
 	PreviousIterationOutput string // Previous loop iteration execution output (for loop steps)
-	LearningAgentOutput     string // Combined success/failure patterns and learning insights
 	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
 	HasLoop                 string // "true" or "false" as string
@@ -76,11 +77,20 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 	learningsPath := templateVars["LearningsPath"]
 	hasLoop := templateVars["HasLoop"] == "true"
 	stepContextOutput := templateVars["StepContextOutput"]
+	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
 
 	// Get current date and time
 	now := time.Now()
 	currentDate := now.Format("2006-01-02")
 	currentTime := now.Format("15:04:05")
+
+	// Get code execution instructions (reuse from builder.go)
+	codeExecutionInstructions := ""
+	if isCodeExecutionMode {
+		// Get the reusable instructions - keep {{TOOL_STRUCTURE}} placeholder
+		// agent.go will automatically replace it with actual tool structure when SetSystemPrompt is called
+		codeExecutionInstructions = prompt.GetCodeExecutionInstructions()
+	}
 
 	// Define the system prompt template
 	templateStr := `# Execution Agent
@@ -92,6 +102,19 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 ## 🤖 AGENT IDENTITY
 - **Role**: Execution Agent
 - **Responsibility**: Execute a single step from the plan using MCP tools
+{{if .IsCodeExecutionMode}}
+## ⚡ CODE EXECUTION MODE ACTIVE
+
+**You are operating in CODE EXECUTION MODE** - instead of making direct MCP tool calls, you will write and execute Go code.
+
+{{.CodeExecutionInstructions}}
+
+### **Learning from Code Patterns:**
+- Look for Go code examples in {{.LearningsPath}}/code/ folder (.go files)
+- These contain working code patterns that successfully executed similar steps
+- Adapt these patterns to match your current step requirements
+- Reference best code examples ranked by effectiveness
+{{end}}
 - **Mode**: Single step execution
 
 ## 📁 FILE PERMISSIONS
@@ -131,13 +154,23 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
    - **If step description differs from learnings, FOLLOW THE STEP DESCRIPTION**
    - Identify what tools/scripts might be needed based on the current step requirements
 
-2. **SECOND - Auto-Discover Learning Files and Scripts** (GUIDANCE - NOT STRICT RULES):
-   - **After understanding current step**, discover relevant learning files and scripts:
+2. **SECOND - Auto-Discover Learning Files and Code Patterns** (GUIDANCE - NOT STRICT RULES):
+   - **After understanding current step**, discover relevant learning files and code patterns:
      1. **List all learning files**: Use list_workspace_files to discover all files in {{.LearningsPath}}/ (max_depth: 1)
      2. **Match files by name similarity**: 
         - Look for files whose names contain keywords from the step title/description
         - Files typically named: *{keyword}_learning.md, general_learnings.md, or similar patterns
         - Match based on step title words, not exact matches (e.g., "Deploy Application" matches "Deploy_application_learning.md", "deployment_learning.md", etc.)
+{{if .IsCodeExecutionMode}}
+     3. **List all Go code patterns**: Use list_workspace_files to discover all Go code files in {{.LearningsPath}}/code/ (max_depth: 1)
+     4. **Match code patterns by name similarity**:
+        - Look for Go files whose names contain keywords from the step title/description
+        - Files typically named: *{keyword}_code.go, *{keyword}_code_v1.go, etc.
+        - Match based on step title words (e.g., "Deploy Application" matches "Deploy_application_code.go", "deployment_code.go", etc.)
+        - These contain working Go code patterns ranked by effectiveness
+     5. **Read discovered files**: Read ALL relevant learning files and Go code patterns using read_workspace_file tool
+     6. **Dynamic discovery**: If you encounter problems during execution, list and read additional learning files/code patterns that might be relevant based on the problem context
+{{else}}
      3. **List all scripts**: Use list_workspace_files to discover all Python scripts in {{.LearningsPath}}/scripts/ (max_depth: 1)
      4. **Match scripts by name similarity**:
         - Look for scripts whose names contain keywords from the step title/description
@@ -145,9 +178,9 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
         - Match based on step title words (e.g., "Deploy Application" matches "Deploy_application_script.py", "deployment_script.py", etc.)
      5. **Read discovered files**: Read ALL relevant learning files and scripts using read_workspace_file tool
      6. **Dynamic discovery**: If you encounter problems during execution, list and read additional learning files/scripts that might be relevant based on the problem context
+{{end}}
    - **PURPOSE**: These files contain patterns from previous executions - use them as GUIDANCE, not strict rules
    - **Discovery strategy**: Use name-based matching (keywords, partial matches) rather than exact matches - be flexible in finding relevant files
-   - **Optional - Learning Agent Output**: If Learning Agent Output section contains "Source: learnings/{filename} - " patterns, prioritize reading those specific files first, then continue with auto-discovery
 
 3. **Read Context**: Check context dependencies for files from previous steps (read from {{.WorkspacePath}} folder)
 
@@ -156,14 +189,37 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
    - **Use learnings as starting point**, but adapt them to match current step requirements:
      - Adapt success patterns from learnings to match current step description
      - Avoid failure patterns mentioned in learnings (still relevant)
+{{if .IsCodeExecutionMode}}
+     - **Modify Go code patterns** from learnings to match current step requirements (don't use exact copies if step description differs)
+     - Adapt Go code examples from learnings to match current step needs (modify imports, function calls, logic as needed)
+     - Reference best code patterns ranked by effectiveness from learning files
+{{else}}
      - **Modify tool calls and arguments** from learnings to match current step requirements (don't use exact copies if step description differs)
      - Adapt Python scripts from learnings to match current step needs (modify as needed)
+{{end}}
    - **If step description is similar to learnings**: You can follow learnings more closely
    - **If step description differs significantly**: Prioritize step description, use learnings only as general guidance
 
-5. **Use MCP Tools**: Select appropriate tools to accomplish the CURRENT step objective (as described in step description), using learnings as guidance
+5. **Execute the Step**:
+{{if .IsCodeExecutionMode}}
+   - **Use Virtual Tools**: Use discover_code_files to see available Go packages and functions
+   - **Write Go Code**: Use write_code to write and execute Go code that:
+     - Imports generated tool packages (e.g., aws_tools, workspace_tools)
+     - Calls tool functions with proper types and arguments
+     - Uses workspace_tools for all file operations
+     - Implements the logic needed to accomplish the step
+   - **Reference Code Patterns**: Use Go code examples from {{.LearningsPath}}/code/ as guidance, but adapt them to match current step requirements
+{{else}}
+   - **Use MCP Tools**: Select appropriate tools to accomplish the CURRENT step objective (as described in step description), using learnings as guidance
+{{end}}
 
-6. **Adapt Discovered Scripts**: Adapt Python scripts from {{.LearningsPath}}/scripts/ to match current step requirements - modify them as needed rather than using exact copies
+6. **Adapt Discovered Code/Scripts**:
+{{if .IsCodeExecutionMode}}
+   - Adapt Go code patterns from {{.LearningsPath}}/code/ to match current step requirements - modify them as needed rather than using exact copies
+   - Use best code patterns ranked by effectiveness as starting points
+{{else}}
+   - Adapt Python scripts from {{.LearningsPath}}/scripts/ to match current step requirements - modify them as needed rather than using exact copies
+{{end}}
 
 7. **Verify Completion**: Check if success criteria (from CURRENT step description) is met
 
@@ -192,12 +248,14 @@ Return results in your response. The validation agent will document and verify y
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, map[string]interface{}{
-		"WorkspacePath":     workspacePath,
-		"LearningsPath":     learningsPath,
-		"HasLoop":           hasLoop,
-		"StepContextOutput": stepContextOutput,
-		"CurrentDate":       currentDate,
-		"CurrentTime":       currentTime,
+		"WorkspacePath":             workspacePath,
+		"LearningsPath":             learningsPath,
+		"IsCodeExecutionMode":       isCodeExecutionMode,
+		"CodeExecutionInstructions": codeExecutionInstructions,
+		"HasLoop":                   hasLoop,
+		"StepContextOutput":         stepContextOutput,
+		"CurrentDate":               currentDate,
+		"CurrentTime":               currentTime,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution system prompt template: %v", err)
@@ -217,9 +275,9 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
 		LearningsPath:           templateVars["LearningsPath"],
+		IsCodeExecutionMode:     templateVars["IsCodeExecutionMode"],
 		ValidationFeedback:      templateVars["ValidationFeedback"],
 		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
-		LearningAgentOutput:     templateVars["LearningAgentOutput"],
 		VariableNames:           templateVars["VariableNames"],
 		VariableValues:          templateVars["VariableValues"],
 		HasLoop:                 templateVars["HasLoop"],
@@ -232,7 +290,7 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 	// Define the user message template
 	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
 
-**⚠️ CRITICAL FIRST STEP**: Before executing, you MUST auto-discover and read ALL relevant learning files and scripts from {{.LearningsPath}}/ folder. See EXECUTION GUIDELINES section in system prompt for detailed instructions.
+**⚠️ CRITICAL FIRST STEP**: Before executing, you MUST auto-discover and read ALL relevant learning files{{if eq .IsCodeExecutionMode "true"}} and Go code patterns{{else}} and scripts{{end}} from {{.LearningsPath}}/ folder. See EXECUTION GUIDELINES section in system prompt for detailed instructions.
 
 **CURRENT STEP**: {{.StepTitle}}
 **STEP DESCRIPTION**: {{.StepDescription}}
@@ -280,14 +338,6 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 - Continue executing until the condition is satisfied
 {{end}}
 
-{{if .LearningAgentOutput}}
-## 🧠 LEARNING AGENT OUTPUT
-
-**Learning Agent Analysis**: {{.LearningAgentOutput}}
-
-**Note**: This section contains learning insights from previous executions. Use this as additional context, but you should still auto-discover and read learning files directly from the learnings/ folder as described in the execution guidelines.
-{{end}}
-
 {{if .PreviousIterationOutput}}
 ## 🔄 PREVIOUS LOOP ITERATION EXECUTION OUTPUT
 
@@ -325,9 +375,16 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 
 **Your Task**: 
 1. **FIRST**: Understand the CURRENT step description, success criteria, and requirements (this is your PRIMARY source of truth)
-2. **SECOND**: Auto-discover and read relevant learning files and scripts from {{.LearningsPath}}/ folder (see EXECUTION GUIDELINES in system prompt) - use these as GUIDANCE, not strict rules
+2. **SECOND**: Auto-discover and read relevant learning files{{if eq .IsCodeExecutionMode "true"}} and Go code patterns{{else}} and scripts{{end}} from {{.LearningsPath}}/ folder (see EXECUTION GUIDELINES in system prompt) - use these as GUIDANCE, not strict rules
 3. **THIRD**: Read context dependencies from previous steps (if any)
-4. **FOURTH**: Execute this specific step using the available MCP tools:
+4. **FOURTH**: Execute this specific step:
+   {{if eq .IsCodeExecutionMode "true"}}
+   - **Use Virtual Tools**: First use discover_code_files to see available Go packages and functions
+   - **Write Go Code**: Use write_code to write and execute Go code that accomplishes the step
+   - **Reference Code Patterns**: Use Go code examples from learnings as guidance, but adapt them to match current step requirements
+   {{else}}
+   - **Use MCP Tools**: Select appropriate tools to accomplish the step
+   {{end}}
    - **PRIORITY**: Follow the CURRENT step description above
    - **GUIDANCE**: Use learnings to inform your approach, but adapt them to match current step requirements
    - **IF STEP DESCRIPTION DIFFERS FROM LEARNINGS**: Follow the step description, adapt learnings as needed

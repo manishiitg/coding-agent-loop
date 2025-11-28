@@ -49,17 +49,17 @@ export const HumanVerificationDisplay: React.FC<HumanVerificationDisplayProps> =
             {title}
           </h3>
           {description && (
-            <p className="text-xs text-indigo-700 dark:text-indigo-300 mb-3">
-              {description}
-            </p>
+            <div className="text-xs text-indigo-700 dark:text-indigo-300 mb-3">
+              <MarkdownRenderer content={description} className="text-xs" />
+            </div>
           )}
           
           {event.data.objective && (
             <div className="mb-3">
               <h4 className="text-xs font-medium text-indigo-900 dark:text-indigo-100 mb-1">Objective:</h4>
-              <p className="text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-800 p-2 rounded">
-                {event.data.objective}
-              </p>
+              <div className="text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-800 p-2 rounded">
+                <MarkdownRenderer content={event.data.objective} className="text-xs" />
+              </div>
             </div>
           )}
 

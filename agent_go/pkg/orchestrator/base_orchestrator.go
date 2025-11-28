@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
@@ -16,7 +17,7 @@ import (
 	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // Orchestrator defines the common interface for all orchestrators
@@ -34,6 +35,21 @@ type LLMConfig struct {
 	ModelID               string                        `json:"model_id"`
 	FallbackModels        []string                      `json:"fallback_models"`
 	CrossProviderFallback *agents.CrossProviderFallback `json:"cross_provider_fallback,omitempty"`
+	APIKeys               *APIKeys                      `json:"api_keys,omitempty"`
+}
+
+// APIKeys represents API keys for different providers
+type APIKeys struct {
+	OpenRouter *string     `json:"openrouter,omitempty"`
+	OpenAI     *string     `json:"openai,omitempty"`
+	Anthropic  *string     `json:"anthropic,omitempty"`
+	Vertex     *string     `json:"vertex,omitempty"`
+	Bedrock    *BedrockKey `json:"bedrock,omitempty"`
+}
+
+// BedrockKey represents Bedrock configuration
+type BedrockKey struct {
+	Region string `json:"region"`
 }
 
 // OrchestratorType represents the type of orchestrator
@@ -43,6 +59,18 @@ const (
 	OrchestratorTypePlanner  OrchestratorType = "planner"
 	OrchestratorTypeWorkflow OrchestratorType = "workflow"
 )
+
+// StepTokenUsage represents accumulated token usage for a workflow step
+type StepTokenUsage struct {
+	PromptTokens          int
+	CompletionTokens      int
+	TotalTokens           int
+	CacheTokens           int
+	ReasoningTokens       int
+	LLMCallCount          int
+	CacheEnabledCallCount int
+	CacheDiscountSum      float64 // Sum of cache discounts for averaging
+}
 
 // BaseOrchestrator provides unified base functionality for all orchestrators
 type BaseOrchestrator struct {
@@ -55,21 +83,23 @@ type BaseOrchestrator struct {
 	// Workspace tools for file operations
 	WorkspaceTools         []llmtypes.Tool
 	WorkspaceToolExecutors map[string]interface{}
+	ToolCategories         map[string]string // Tool name to category mapping
 
 	// Orchestrator type and configuration
 	orchestratorType OrchestratorType
 	startTime        time.Time
 
 	// Common configuration shared between orchestrators
-	provider        string
-	model           string
-	mcpConfigPath   string
-	temperature     float64
-	agentMode       string
-	selectedServers []string
-	selectedTools   []string   // Selected tools in "server:tool" format
-	llmConfig       *LLMConfig // LLM configuration
-	maxTurns        int        // Maximum turns for the orchestrator
+	provider             string
+	model                string
+	mcpConfigPath        string
+	temperature          float64
+	agentMode            string
+	selectedServers      []string
+	selectedTools        []string   // Selected tools in "server:tool" format
+	useCodeExecutionMode bool       // MCP code execution mode
+	llmConfig            *LLMConfig // LLM configuration
+	maxTurns             int        // Maximum turns for the orchestrator
 
 	// Optional simple state (for workflow orchestrators)
 	objective     string
@@ -78,6 +108,10 @@ type BaseOrchestrator struct {
 	// Folder guard paths for fine-grained access control
 	folderGuardReadPaths  []string
 	folderGuardWritePaths []string
+
+	// Step token tracking
+	stepTokenAccumulator map[string]*StepTokenUsage // key format: "phase:step"
+	stepTokenMutex       sync.RWMutex
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -92,33 +126,54 @@ func NewBaseOrchestrator(
 	agentMode string,
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
+	useCodeExecutionMode bool, // NEW parameter
 	llmConfig *LLMConfig,
 	maxTurns int,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
+	toolCategories map[string]string, // NEW: tool category map
 ) (*BaseOrchestrator, error) {
 
 	// Create context-aware event bridge that wraps the main event bridge
 	contextAwareBridge := NewContextAwareEventBridge(eventBridge, logger)
 
-	return &BaseOrchestrator{
+	// Create orchestrator instance
+	orchestrator := &BaseOrchestrator{
 		contextAwareBridge:     contextAwareBridge,
 		logger:                 logger,
 		WorkspaceTools:         customTools,
 		WorkspaceToolExecutors: customToolExecutors,
+		ToolCategories:         toolCategories, // NEW: store category map
 		orchestratorType:       orchestratorType,
 		startTime:              time.Now(),
 		// Common configuration
-		provider:        provider,
-		model:           model,
-		mcpConfigPath:   mcpConfigPath,
-		temperature:     temperature,
-		agentMode:       agentMode,
-		selectedServers: selectedServers,
-		selectedTools:   selectedTools, // NEW field
-		llmConfig:       llmConfig,
-		maxTurns:        maxTurns,
-	}, nil
+		provider:             provider,
+		model:                model,
+		mcpConfigPath:        mcpConfigPath,
+		temperature:          temperature,
+		agentMode:            agentMode,
+		selectedServers:      selectedServers,
+		selectedTools:        selectedTools,        // NEW field
+		useCodeExecutionMode: useCodeExecutionMode, // NEW field
+		llmConfig:            llmConfig,
+		maxTurns:             maxTurns,
+		// Initialize step token tracking
+		stepTokenAccumulator: make(map[string]*StepTokenUsage),
+	}
+
+	// Set token accumulator on bridge for step token tracking
+	contextAwareBridge.SetTokenAccumulator(orchestrator)
+
+	return orchestrator, nil
+}
+
+// getMapKeys returns all keys from a map as a slice (helper for logging)
+func getMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // GetLogger returns the orchestrator's logger
@@ -251,6 +306,11 @@ func (bo *BaseOrchestrator) SetWorkspacePathForFolderGuard(readPaths []string, w
 	}
 }
 
+// GetFolderGuardPaths returns the current folder guard read and write paths
+func (bo *BaseOrchestrator) GetFolderGuardPaths() (readPaths []string, writePaths []string) {
+	return bo.folderGuardReadPaths, bo.folderGuardWritePaths
+}
+
 // GetContextAwareBridge returns the context-aware event bridge
 func (bo *BaseOrchestrator) GetContextAwareBridge() mcpagent.AgentEventListener {
 	return bo.contextAwareBridge
@@ -289,6 +349,11 @@ func (bo *BaseOrchestrator) GetSelectedServers() []string {
 // GetSelectedTools returns the selected tools
 func (bo *BaseOrchestrator) GetSelectedTools() []string {
 	return bo.selectedTools
+}
+
+// GetUseCodeExecutionMode returns the code execution mode setting
+func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
+	return bo.useCodeExecutionMode
 }
 
 // GetLLMConfig returns the LLM configuration
@@ -719,9 +784,9 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.MCPConfigPath = bo.GetMCPConfigPath()
 	config.MaxTurns = maxTurns
 	config.ToolChoice = "auto"
-	config.CacheOnly = false // Allow fresh connections when cache is not available
 	config.ServerNames = bo.GetSelectedServers()
-	config.SelectedTools = bo.GetSelectedTools() // NEW field
+	config.SelectedTools = bo.GetSelectedTools()               // NEW field
+	config.UseCodeExecutionMode = bo.GetUseCodeExecutionMode() // NEW field
 	config.Mode = agents.AgentMode(bo.GetAgentMode())
 	config.OutputFormat = outputFormat
 	config.MaxRetries = 3
@@ -732,6 +797,20 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	if llmConfig != nil {
 		config.FallbackModels = llmConfig.FallbackModels
 		config.CrossProviderFallback = llmConfig.CrossProviderFallback
+		// Convert API keys from orchestrator format to agent format
+		if llmConfig.APIKeys != nil {
+			config.APIKeys = &agents.AgentAPIKeys{
+				OpenRouter: llmConfig.APIKeys.OpenRouter,
+				OpenAI:     llmConfig.APIKeys.OpenAI,
+				Anthropic:  llmConfig.APIKeys.Anthropic,
+				Vertex:     llmConfig.APIKeys.Vertex,
+			}
+			if llmConfig.APIKeys.Bedrock != nil {
+				config.APIKeys.Bedrock = &agents.BedrockAgentConfig{
+					Region: llmConfig.APIKeys.Bedrock.Region,
+				}
+			}
+		}
 	}
 
 	return config
@@ -794,6 +873,23 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+		if bo.ToolCategories != nil {
+			bo.GetLogger().Infof("🔍 [DISCOVERY] ToolCategories map has %d entries", len(bo.ToolCategories))
+			// Log ALL entries for debugging (not just first 10)
+			for toolName, category := range bo.ToolCategories {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s -> %s", toolName, category)
+			}
+		} else {
+			bo.GetLogger().Warnf("🔍 [DISCOVERY] ToolCategories map is nil - all tools will default to 'custom' category")
+		}
+
+		// Also log all tool names being registered for comparison
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Tools being registered (count: %d):", len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - Tool name: %s", tool.Function.Name)
+			}
+		}
 
 		for _, tool := range customTools {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -802,7 +898,10 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
 					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
 					}
 				}
 				if params == nil {
@@ -812,19 +911,76 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
-					)
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
 				}
 			}
 		}
 
+		// Log summary of category assignments
+		categorySummary := make(map[string]int)
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				category := "custom"
+				if bo.ToolCategories != nil {
+					if cat, exists := bo.ToolCategories[toolName]; exists {
+						category = cat
+					}
+				}
+				categorySummary[category]++
+			}
+		}
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Category assignment summary:")
+		for category, count := range categorySummary {
+			bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s: %d tools", category, count)
+		}
+
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	return agent, nil
@@ -891,6 +1047,23 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+		if bo.ToolCategories != nil {
+			bo.GetLogger().Infof("🔍 [DISCOVERY] ToolCategories map has %d entries", len(bo.ToolCategories))
+			// Log ALL entries for debugging (not just first 10)
+			for toolName, category := range bo.ToolCategories {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s -> %s", toolName, category)
+			}
+		} else {
+			bo.GetLogger().Warnf("🔍 [DISCOVERY] ToolCategories map is nil - all tools will default to 'custom' category")
+		}
+
+		// Also log all tool names being registered for comparison
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Tools being registered (count: %d):", len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - Tool name: %s", tool.Function.Name)
+			}
+		}
 
 		for _, tool := range customTools {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -899,7 +1072,10 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
 					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
 					}
 				}
 				if params == nil {
@@ -909,19 +1085,202 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
-					)
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
 				}
 			}
 		}
 
+		// Log summary of category assignments
+		categorySummary := make(map[string]int)
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				category := "custom"
+				if bo.ToolCategories != nil {
+					if cat, exists := bo.ToolCategories[toolName]; exists {
+						category = cat
+					}
+				}
+				categorySummary[category]++
+			}
+		}
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Category assignment summary:")
+		for category, count := range categorySummary {
+			bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s: %d tools", category, count)
+		}
+
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
+	}
+
+	return agent, nil
+}
+
+// CreateAndSetupStandardAgentWithConfig creates and sets up an agent with a pre-created configuration
+// This allows agents to have full control over config (custom LLM, servers, EnableLargeOutputVirtualTools, etc.)
+// while still using the standard setup logic (initialization, event bridge connection, tool registration)
+func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
+	ctx context.Context,
+	config *agents.OrchestratorAgentConfig,
+	phase string,
+	step, iteration int,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	customTools []llmtypes.Tool,
+	customToolExecutors map[string]interface{},
+	overwriteSystemPrompt bool,
+) (agents.OrchestratorAgent, error) {
+	// Apply overwriteSystemPrompt parameter to config so callers can override default system prompt behavior
+	config.OverwriteSystemPrompt = &overwriteSystemPrompt
+
+	// Create agent using provided factory function with pre-created config
+	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
+
+	// Initialize and setup agent (inlined from setupAgent)
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize %s: %w", config.AgentName, err)
+	}
+
+	// Validate essentials and connect event bridge
+	eventBridge := bo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("context-aware event bridge is nil for %s", config.AgentName)
+	}
+
+	bo.GetLogger().Infof("🔍 Checking agent structure for %s", config.AgentName)
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, fmt.Errorf("base agent is nil for %s", config.AgentName)
+	}
+
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, fmt.Errorf("MCP agent is nil for %s", config.AgentName)
+	}
+
+	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
+	baseAgentName := baseAgent.GetName()
+	if cab, ok := eventBridge.(interface {
+		SetOrchestratorContext(phase string, step, iteration int, agentName string)
+	}); ok {
+		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		mcpAgent.AddEventListener(eventBridge)
+		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+	} else {
+		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", config.AgentName)
+	}
+
+	// Register custom tools
+	if customTools != nil && customToolExecutors != nil {
+		// Wrap executors with folder guard if workspacePath is set
+		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
+
+		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), config.AgentName, baseAgent.GetMode())
+
+		for _, tool := range customTools {
+			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
+				// Convert Parameters to map[string]interface{}
+				var params map[string]interface{}
+				if tool.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					if err == nil {
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
+					}
+				}
+				if params == nil {
+					bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					continue
+				}
+
+				// Type assert executor to function type
+				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
+						tool.Function.Name,
+						tool.Function.Description,
+						params,
+						toolExecutor,
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
+				} else {
+					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+				}
+			}
+		}
+
+		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", config.AgentName, baseAgent.GetMode())
 	}
 
 	return agent, nil
@@ -999,6 +1358,23 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
+		if bo.ToolCategories != nil {
+			bo.GetLogger().Infof("🔍 [DISCOVERY] ToolCategories map has %d entries", len(bo.ToolCategories))
+			// Log ALL entries for debugging (not just first 10)
+			for toolName, category := range bo.ToolCategories {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s -> %s", toolName, category)
+			}
+		} else {
+			bo.GetLogger().Warnf("🔍 [DISCOVERY] ToolCategories map is nil - all tools will default to 'custom' category")
+		}
+
+		// Also log all tool names being registered for comparison
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Tools being registered (count: %d):", len(customTools))
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				bo.GetLogger().Infof("🔍 [DISCOVERY]   - Tool name: %s", tool.Function.Name)
+			}
+		}
 
 		for _, tool := range customTools {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -1007,7 +1383,10 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
 					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+						if err := json.Unmarshal(paramsBytes, &params); err != nil {
+							bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+							params = nil
+						}
 					}
 				}
 				if params == nil {
@@ -1017,19 +1396,76 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 
 				// Type assert executor to function type
 				if toolExecutor, ok := executor.(func(ctx context.Context, args map[string]interface{}) (string, error)); ok {
-					mcpAgent.RegisterCustomTool(
+					// Get tool category from stored map - REQUIRED, no default
+					// All tools must have a category from ToolCategories map
+					var toolCategory string
+					if bo.ToolCategories != nil {
+						if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
+							toolCategory = cat
+							bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						} else {
+							// Tool not found in map - throw error
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
+							bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+							return nil, fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
+						}
+					} else {
+						bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						return nil, fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
+					}
+
+					// Validate category is not empty
+					if toolCategory == "" {
+						return nil, fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
+					}
+
+					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
 						params,
 						toolExecutor,
-					)
+						toolCategory,
+					); err != nil {
+						return nil, fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				} else {
 					bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
 				}
 			}
 		}
 
+		// Log summary of category assignments
+		categorySummary := make(map[string]int)
+		for _, tool := range customTools {
+			if tool.Function != nil {
+				toolName := tool.Function.Name
+				category := "custom"
+				if bo.ToolCategories != nil {
+					if cat, exists := bo.ToolCategories[toolName]; exists {
+						category = cat
+					}
+				}
+				categorySummary[category]++
+			}
+		}
+		bo.GetLogger().Infof("🔍 [DISCOVERY] Category assignment summary:")
+		for category, count := range categorySummary {
+			bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s: %d tools", category, count)
+		}
+
 		bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+
+		// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
+		// This ensures workspace and human tools are available in code execution mode
+		if bo.GetUseCodeExecutionMode() {
+			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+				bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				// Don't fail agent creation if registry update fails, but log the warning
+			} else {
+				bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
+			}
+		}
 	}
 
 	// Processors are now stored in BaseOrchestratorAgent, agent can use them directly
@@ -1041,7 +1477,6 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 // setupAgent removed: logic is now inlined in CreateAndSetupStandardAgent
 
 // ReadWorkspaceFile reads a file from the workspace and returns its content
-// Emits tool call events for proper observability
 func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath string) (string, error) {
 	bo.GetLogger().Infof("📖 Reading workspace file: %s", filePath)
 
@@ -1050,77 +1485,20 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 		"filepath": filePath,
 	}
 
-	// Convert args to JSON string for event
-	argsJSON, _ := json.Marshal(readArgs)
-
-	// Emit tool call start event
-	toolCallStartEvent := &events.ToolCallStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:     0, // Orchestrator-level call
-		ToolName: "read_workspace_file",
-		ToolParams: events.ToolParams{
-			Arguments: string(argsJSON),
-		},
-		ServerName: "workspace", // Internal workspace tool
-	}
-
-	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
-
 	// Get the tool executor
 	readExecutorInterface, exists := bo.WorkspaceToolExecutors["read_workspace_file"]
 	if !exists {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      "read_workspace_file tool executor not found",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("read_workspace_file tool executor not found")
 	}
 
 	readExecutor, ok := readExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      "read_workspace_file tool executor has wrong type",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("read_workspace_file tool executor has wrong type")
 	}
 
 	// Execute the tool call using existing workspace tool logic
-	startTime := time.Now()
 	readResult, err := readExecutor(ctx, readArgs)
-	duration := time.Since(startTime)
-
 	if err != nil {
-		// Emit tool call error event for read failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      fmt.Sprintf("Failed to read file: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
 	}
 
@@ -1131,18 +1509,6 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	}
 
 	if err := json.Unmarshal([]byte(readResult), &fileData); err != nil {
-		// Emit tool call error event for parsing failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      fmt.Sprintf("Failed to parse workspace response: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("failed to parse workspace response: %w", err)
 	}
 
@@ -1150,45 +1516,8 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	fileContent := fileData.Content
 
 	if fileContent == "" {
-		// Emit tool call error event for missing content
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "read_workspace_file",
-			Error:      "No content found in workspace response",
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return "", fmt.Errorf("no content found in workspace response")
 	}
-
-	// Emit successful tool call end event with file content as JSON
-	// Frontend expects JSON format with "content" and "filepath" fields
-	resultData := map[string]interface{}{
-		"content":  fileContent,
-		"filepath": filePath,
-	}
-	resultJSON, err := json.Marshal(resultData)
-	if err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to marshal file result to JSON: %w", err)
-		// Fallback to plain text if JSON marshaling fails
-		resultJSON = []byte(fileContent)
-	}
-
-	toolCallEndEvent := &events.ToolCallEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       0,
-		ToolName:   "read_workspace_file",
-		Result:     string(resultJSON),
-		Duration:   duration,
-		ServerName: "workspace",
-	}
-	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
 	bo.GetLogger().Infof("✅ Successfully read file: %s (%d characters)", filePath, len(fileContent))
 	return fileContent, nil
@@ -1440,7 +1769,6 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 }
 
 // WriteWorkspaceFile writes content to a file in the workspace using MCP tools
-// Emits tool call events for proper observability
 func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath string, content string) error {
 	bo.GetLogger().Infof("📝 Writing workspace file: %s (%d characters)", filePath, len(content))
 
@@ -1450,99 +1778,28 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 		"content":  content,
 	}
 
-	// Convert args to JSON string for event
-	argsJSON, _ := json.Marshal(writeArgs)
-
-	// Emit tool call start event
-	toolCallStartEvent := &events.ToolCallStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:     0, // Orchestrator-level call
-		ToolName: "update_workspace_file",
-		ToolParams: events.ToolParams{
-			Arguments: string(argsJSON),
-		},
-		ServerName: "workspace", // Internal workspace tool
-	}
-
-	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
-
 	// Get the tool executor
 	writeExecutorInterface, exists := bo.WorkspaceToolExecutors["update_workspace_file"]
 	if !exists {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "update_workspace_file",
-			Error:      "update_workspace_file tool executor not found",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("update_workspace_file tool executor not found")
 	}
 
 	writeExecutor, ok := writeExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "update_workspace_file",
-			Error:      "update_workspace_file tool executor has wrong type",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("update_workspace_file tool executor has wrong type")
 	}
 
 	// Execute the tool call using existing workspace tool logic
-	startTime := time.Now()
 	_, err := writeExecutor(ctx, writeArgs)
-	duration := time.Since(startTime)
-
 	if err != nil {
-		// Emit tool call error event for write failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "update_workspace_file",
-			Error:      fmt.Sprintf("Failed to write file: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("failed to write file %s: %w", filePath, err)
 	}
-
-	// Emit successful tool call end event
-	toolCallEndEvent := &events.ToolCallEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       0,
-		ToolName:   "update_workspace_file",
-		Result:     fmt.Sprintf("Successfully wrote file (%d characters)", len(content)),
-		Duration:   duration,
-		ServerName: "workspace",
-	}
-	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
 	bo.GetLogger().Infof("✅ Successfully wrote file: %s (%d characters)", filePath, len(content))
 	return nil
 }
 
 // DeleteWorkspaceFile deletes a file from the workspace using MCP tools
-// Emits tool call events for proper observability
 func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath string) error {
 	bo.GetLogger().Infof("🗑️ Deleting workspace file: %s", filePath)
 
@@ -1551,108 +1808,22 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		"filepath": filePath,
 	}
 
-	// Convert args to JSON string for event
-	argsJSON, _ := json.Marshal(deleteArgs)
-
-	// Emit tool call start event
-	toolCallStartEvent := &events.ToolCallStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:     0, // Orchestrator-level call
-		ToolName: "delete_workspace_file",
-		ToolParams: events.ToolParams{
-			Arguments: string(argsJSON),
-		},
-		ServerName: "workspace", // Internal workspace tool
-	}
-
-	bo.emitEvent(ctx, events.ToolCallStart, toolCallStartEvent)
-
 	// Get the tool executor
 	deleteExecutorInterface, exists := bo.WorkspaceToolExecutors["delete_workspace_file"]
 	if !exists {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "delete_workspace_file",
-			Error:      "delete_workspace_file tool executor not found",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("delete_workspace_file tool executor not found")
 	}
 
 	deleteExecutor, ok := deleteExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		// Emit tool call error event
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "delete_workspace_file",
-			Error:      "delete_workspace_file tool executor has wrong type",
-			ServerName: "workspace",
-			Duration:   0,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("delete_workspace_file tool executor has wrong type")
 	}
 
 	// Execute the tool call using existing workspace tool logic
-	startTime := time.Now()
-	result, err := deleteExecutor(ctx, deleteArgs)
-	duration := time.Since(startTime)
-
+	_, err := deleteExecutor(ctx, deleteArgs)
 	if err != nil {
-		// Emit tool call error event for delete failure
-		toolCallErrorEvent := &events.ToolCallErrorEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			Turn:       0,
-			ToolName:   "delete_workspace_file",
-			Error:      fmt.Sprintf("Failed to delete file: %w", err),
-			ServerName: "workspace",
-			Duration:   duration,
-		}
-		bo.emitEvent(ctx, events.ToolCallError, toolCallErrorEvent)
 		return fmt.Errorf("failed to delete file %s: %w", filePath, err)
 	}
-
-	// Use the result from the executor (which should be JSON)
-	// If result is empty or invalid, construct JSON from filePath
-	resultStr := result
-	if resultStr == "" {
-		// Fallback: construct JSON result
-		resultMap := map[string]interface{}{
-			"filepath": filePath,
-			"deleted":  true,
-		}
-		if jsonBytes, err := json.Marshal(resultMap); err == nil {
-			resultStr = string(jsonBytes)
-		} else {
-			resultStr = fmt.Sprintf(`{"filepath":"%s","deleted":true}`, filePath)
-		}
-	}
-
-	// Emit successful tool call end event
-	toolCallEndEvent := &events.ToolCallEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Turn:       0,
-		ToolName:   "delete_workspace_file",
-		Result:     resultStr,
-		Duration:   duration,
-		ServerName: "workspace",
-	}
-	bo.emitEvent(ctx, events.ToolCallEnd, toolCallEndEvent)
 
 	bo.GetLogger().Infof("✅ Successfully deleted file: %s", filePath)
 	return nil
@@ -1788,6 +1959,178 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 	return nil
 }
 
+// ListWorkspaceDirectories lists all directories in a given path
+// Returns a slice of directory names (not full paths)
+func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPath string) ([]string, error) {
+	bo.GetLogger().Infof("📁 Listing directories in: %s", dirPath)
+
+	// Use list_workspace_files to enumerate directories
+	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
+	if !exists {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor not found, returning empty list")
+		return []string{}, nil
+	}
+
+	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor has wrong type, returning empty list")
+		return []string{}, nil
+	}
+
+	// Call list_workspace_files with max_depth: 1 to only get immediate children
+	listArgs := map[string]interface{}{
+		"folder":    dirPath,
+		"max_depth": 1, // Only list immediate children (directories)
+	}
+
+	bo.GetLogger().Infof("🔍 DEBUG ListWorkspaceDirectories: Calling list_workspace_files with folder=%s, max_depth=1", dirPath)
+	fileListJSON, err := listExecutor(ctx, listArgs)
+	bo.GetLogger().Infof("🔍 DEBUG ListWorkspaceDirectories: list_workspace_files returned, error=%v, response_length=%d", err, len(fileListJSON))
+	if err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err)
+		return []string{}, nil // Don't fail - directory may be empty or not exist
+	}
+
+	// Parse the JSON response to extract file paths
+	var filesList []map[string]interface{}
+	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err)
+		// Try alternative format - might be a single object with a "files" array
+		var altFormat map[string]interface{}
+		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil {
+			if filesArray, ok := altFormat["files"].([]interface{}); ok {
+				for _, fileInterface := range filesArray {
+					if fileMap, ok := fileInterface.(map[string]interface{}); ok {
+						filesList = append(filesList, fileMap)
+					}
+				}
+			}
+		}
+		if len(filesList) == 0 {
+			bo.GetLogger().Infof("ℹ️ No files found in %s directory (may be empty)", dirPath)
+			return []string{}, nil
+		}
+	}
+
+	// Extract only directories (folders) from the list
+	var directoryNames []string
+	for _, fileInfo := range filesList {
+		filepath, ok := fileInfo["filepath"].(string)
+		if !ok || filepath == "" {
+			continue
+		}
+
+		// Check if it's a directory
+		isDirectory, ok := fileInfo["is_directory"].(bool)
+		if !ok || !isDirectory {
+			continue
+		}
+
+		// Skip the directory itself (if filepath equals dirPath)
+		if filepath == dirPath {
+			continue
+		}
+
+		// Extract directory name (last part of path)
+		// filepath will be like "workspace/runs/initial" or "runs/initial"
+		// We want just "initial"
+		dirName := filepath
+		if strings.Contains(dirName, "/") {
+			parts := strings.Split(dirName, "/")
+			dirName = parts[len(parts)-1]
+		}
+
+		// Skip if it's empty
+		if dirName != "" {
+			directoryNames = append(directoryNames, dirName)
+		}
+	}
+
+	bo.GetLogger().Infof("📁 Found %d directories: %v", len(directoryNames), directoryNames)
+	return directoryNames, nil
+}
+
+// ListWorkspaceFiles lists all files and directories in a given path
+// Returns a slice of file/directory names (not full paths)
+func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath string) ([]string, error) {
+	bo.GetLogger().Infof("📁 Listing files and directories in: %s", dirPath)
+
+	// Use list_workspace_files to enumerate files and directories
+	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
+	if !exists {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor not found, returning empty list")
+		return []string{}, nil
+	}
+
+	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		bo.GetLogger().Warnf("⚠️ list_workspace_files executor has wrong type, returning empty list")
+		return []string{}, nil
+	}
+
+	// Call list_workspace_files with max_depth: 1 to only get immediate children
+	listArgs := map[string]interface{}{
+		"folder":    dirPath,
+		"max_depth": 1, // Only list immediate children
+	}
+
+	fileListJSON, err := listExecutor(ctx, listArgs)
+	if err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err)
+		return []string{}, nil // Don't fail - directory may be empty or not exist
+	}
+
+	// Parse the JSON response to extract file paths
+	var filesList []map[string]interface{}
+	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err)
+		// Try alternative format - might be a single object with a "files" array
+		var altFormat map[string]interface{}
+		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil {
+			if filesArray, ok := altFormat["files"].([]interface{}); ok {
+				for _, fileInterface := range filesArray {
+					if fileMap, ok := fileInterface.(map[string]interface{}); ok {
+						filesList = append(filesList, fileMap)
+					}
+				}
+			}
+		}
+		if len(filesList) == 0 {
+			bo.GetLogger().Infof("ℹ️ No files found in %s directory (may be empty)", dirPath)
+			return []string{}, nil
+		}
+	}
+
+	// Extract file and directory names (last part of path)
+	var names []string
+	for _, fileInfo := range filesList {
+		filepath, ok := fileInfo["filepath"].(string)
+		if !ok || filepath == "" {
+			continue
+		}
+
+		// Skip the directory itself (if filepath equals dirPath)
+		if filepath == dirPath {
+			continue
+		}
+
+		// Extract name (last part of path)
+		name := filepath
+		if strings.Contains(name, "/") {
+			parts := strings.Split(name, "/")
+			name = parts[len(parts)-1]
+		}
+
+		// Skip if it's empty
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+
+	bo.GetLogger().Infof("📁 Found %d files/directories: %v", len(names), names)
+	return names, nil
+}
+
 // getToolNamesByCategory returns a set of tool names for a given category
 // This uses the actual tool creation functions as the source of truth
 func getToolNamesByCategory(category string) map[string]bool {
@@ -1817,40 +2160,95 @@ func getToolNamesByCategory(category string) map[string]bool {
 	return toolNames
 }
 
-// FilterCustomToolsByCategory filters custom tools and executors based on enabled categories and/or specific tools
-// Category identification uses the actual tool creation functions as the source of truth
-//   - "workspace_tools": all tools from CreateWorkspaceToolExecutors()
-//   - "human_tools": all tools from CreateHumanToolExecutors()
+// ConvertOldFormatToNewFormat converts old format (categories + tools) to new unified format
+// Old: enabledCategories=["workspace_tools"], enabledTools=["read_workspace_file"]
+// New: ["workspace_tools:*", "workspace_tools:read_workspace_file"]
 //
-// Filtering logic:
-//   - If enabledTools is specified, use only those specific tools (overrides categories)
-//   - Else if enabledCategories is specified, use all tools from those categories
-//   - Else return all tools (backward compatible - default behavior)
+// If enabledTools already contains entries with ":" (new format), returns them as-is
+func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []string) []string {
+	// Check if enabledTools is already in new format (contains ":")
+	if len(enabledTools) > 0 {
+		firstEntry := enabledTools[0]
+		if strings.Contains(firstEntry, ":") {
+			// Already in new format, return as-is (ignore enabledCategories)
+			return enabledTools
+		}
+	}
+
+	// Old format - convert it
+	result := make([]string, 0)
+
+	// Convert categories to "category:*" format
+	for _, category := range enabledCategories {
+		result = append(result, category+":*")
+	}
+
+	// Convert specific tools - need to determine category for each tool
+	allCategoryTools := make(map[string]string) // toolName -> category
+	for _, category := range []string{"workspace_tools", "human_tools"} {
+		categoryToolNames := getToolNamesByCategory(category)
+		for toolName := range categoryToolNames {
+			allCategoryTools[toolName] = category
+		}
+	}
+
+	// Add specific tools with their category prefix
+	for _, toolName := range enabledTools {
+		if category, exists := allCategoryTools[toolName]; exists {
+			result = append(result, category+":"+toolName)
+		} else {
+			// Unknown tool, add without category (will be skipped in parsing)
+			result = append(result, "unknown:"+toolName)
+		}
+	}
+
+	return result
+}
+
+// FilterCustomToolsByCategory filters custom tools and executors based on enabled tools
+// Format: single array with entries like "category:tool" or "category:*"
+//   - "workspace_tools:*" → all tools from CreateWorkspaceToolExecutors()
+//   - "workspace_tools:read_workspace_file" → specific tool
+//   - "human_tools:*" → all tools from CreateHumanToolExecutors()
+//   - "human_tools:human_feedback" → specific tool
+//
+// Category identification uses the actual tool creation functions as the source of truth
+// If enabledTools is empty, return all tools (backward compatible - default behavior)
 func FilterCustomToolsByCategory(
 	allTools []llmtypes.Tool,
 	allExecutors map[string]interface{},
-	enabledCategories []string,
-	enabledTools []string, // NEW: specific tool names to enable
+	enabledTools []string, // format: "category:tool" or "category:*"
 ) ([]llmtypes.Tool, map[string]interface{}) {
 	// Build a set of enabled tool names
 	enabledToolNames := make(map[string]bool)
 
-	// Priority: specific tools override categories
-	if len(enabledTools) > 0 {
-		// Use specific tools only (overrides categories)
-		for _, toolName := range enabledTools {
-			enabledToolNames[toolName] = true
+	// Parse enabled tools array
+	for _, entry := range enabledTools {
+		// Format: "category:tool" or "category:*"
+		// Use SplitN to handle tool names that might contain colons (split only on first colon)
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) != 2 {
+			// Invalid format, skip
+			continue
 		}
-	} else if len(enabledCategories) > 0 {
-		// Use all tools from enabled categories
-		for _, category := range enabledCategories {
+
+		category := parts[0]
+		toolSpec := parts[1]
+
+		if toolSpec == "*" {
+			// Enable all tools from this category
 			categoryToolNames := getToolNamesByCategory(category)
 			for toolName := range categoryToolNames {
 				enabledToolNames[toolName] = true
 			}
+		} else {
+			// Enable specific tool
+			enabledToolNames[toolSpec] = true
 		}
-	} else {
-		// No filtering specified - return all tools (backward compatible)
+	}
+
+	// If nothing is specified, return all tools (backward compatible)
+	if len(enabledTools) == 0 {
 		return allTools, allExecutors
 	}
 
@@ -1872,4 +2270,89 @@ func FilterCustomToolsByCategory(
 	}
 
 	return filteredTools, filteredExecutors
+}
+
+// AccumulateStepTokens accumulates token usage for a specific step
+func (bo *BaseOrchestrator) AccumulateStepTokens(phase string, step int, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int, llmCallCount int, cacheDiscount float64) {
+	bo.stepTokenMutex.Lock()
+	defer bo.stepTokenMutex.Unlock()
+
+	key := fmt.Sprintf("%s:%d", phase, step)
+	usage, exists := bo.stepTokenAccumulator[key]
+	if !exists {
+		usage = &StepTokenUsage{}
+		bo.stepTokenAccumulator[key] = usage
+	}
+
+	usage.PromptTokens += promptTokens
+	usage.CompletionTokens += completionTokens
+	usage.TotalTokens += totalTokens
+	usage.CacheTokens += cacheTokens
+	usage.ReasoningTokens += reasoningTokens
+	usage.LLMCallCount += llmCallCount
+	if cacheTokens > 0 {
+		usage.CacheEnabledCallCount++
+	}
+	usage.CacheDiscountSum += cacheDiscount
+}
+
+// GetStepTokenUsage retrieves accumulated token usage for a specific step
+func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int) *StepTokenUsage {
+	bo.stepTokenMutex.RLock()
+	defer bo.stepTokenMutex.RUnlock()
+
+	key := fmt.Sprintf("%s:%d", phase, step)
+	usage, exists := bo.stepTokenAccumulator[key]
+	if !exists {
+		return &StepTokenUsage{} // Return zero values if step not found
+	}
+
+	// Return a copy to avoid race conditions
+	return &StepTokenUsage{
+		PromptTokens:          usage.PromptTokens,
+		CompletionTokens:      usage.CompletionTokens,
+		TotalTokens:           usage.TotalTokens,
+		CacheTokens:           usage.CacheTokens,
+		ReasoningTokens:       usage.ReasoningTokens,
+		LLMCallCount:          usage.LLMCallCount,
+		CacheEnabledCallCount: usage.CacheEnabledCallCount,
+		CacheDiscountSum:      usage.CacheDiscountSum,
+	}
+}
+
+// EmitStepTokenUsage emits a step token usage summary event and optionally clears the accumulated data
+func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string, step int, stepTitle string, clearAfterEmit bool) {
+	bo.stepTokenMutex.Lock()
+	defer bo.stepTokenMutex.Unlock()
+
+	key := fmt.Sprintf("%s:%d", phase, step)
+	usage, exists := bo.stepTokenAccumulator[key]
+	if !exists {
+		bo.GetLogger().Warnf("⚠️ No token usage data found for step %s:%d", phase, step)
+		return
+	}
+
+	// Create and emit step token usage event
+	stepTokenEvent := events.NewStepTokenUsageEvent(
+		phase,
+		step,
+		stepTitle,
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		usage.TotalTokens,
+		usage.CacheTokens,
+		usage.ReasoningTokens,
+		usage.LLMCallCount,
+		usage.CacheEnabledCallCount,
+	)
+
+	bo.emitEvent(ctx, events.StepTokenUsage, stepTokenEvent)
+
+	bo.GetLogger().Infof("📊 Emitted step token usage for %s:%d - Total: %d tokens (Prompt: %d, Completion: %d, Cache: %d, Reasoning: %d, Calls: %d)",
+		phase, step, usage.TotalTokens, usage.PromptTokens, usage.CompletionTokens, usage.CacheTokens, usage.ReasoningTokens, usage.LLMCallCount)
+
+	// Clear accumulated data if requested
+	if clearAfterEmit {
+		delete(bo.stepTokenAccumulator, key)
+	}
 }

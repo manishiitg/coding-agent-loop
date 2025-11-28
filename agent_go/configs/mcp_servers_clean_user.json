@@ -34,7 +34,7 @@
       "args": [
         "@playwright/mcp@latest",
         "--output-dir",
-        "/Users/mipl/ai-work/mcp-agent/planner-docs/Downloads"
+        "/Users/mipl/ai-work/mcp-agent/workspace-docs/Downloads"
       ]
     },
     "tavily-search": {

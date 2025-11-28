@@ -49,8 +49,11 @@ export OBSERVABILITY_ENABLED="true"
 # Set agent mode to simple for better reliability
 export DEEP_SEARCH_AGENT_MODE="simple"
 
-# Set tool execution timeout to 2 minutes
-export TOOL_EXECUTION_TIMEOUT="2m"
+# Enable split execution learning feature (separates learning reading from execution)
+export SPLIT_EXECUTION_LEARNING="true"
+
+# Set tool execution timeout to 10 minutes
+export TOOL_EXECUTION_TIMEOUT="10m"
 
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"
@@ -112,6 +115,7 @@ echo "🚀 MCP Agent Server Session Started: $(date)" | tee "$LOG_FILE"
 echo "=========================================" | tee -a "$LOG_FILE"
 echo "Configuration:" | tee -a "$LOG_FILE"
 echo "- Agent Mode: $DEEP_SEARCH_AGENT_MODE" | tee -a "$LOG_FILE"
+echo "- Split Execution Learning: $SPLIT_EXECUTION_LEARNING" | tee -a "$LOG_FILE"
 echo "- Tool Execution Timeout: $TOOL_EXECUTION_TIMEOUT" | tee -a "$LOG_FILE"
 echo "- MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)" | tee -a "$LOG_FILE"
 echo "- Agent Provider: $AGENT_PROVIDER" | tee -a "$LOG_FILE"
@@ -135,6 +139,7 @@ echo "" | tee -a "$LOG_FILE"
 echo "🚀 Starting MCP Agent Server with enhanced logging..."
 echo "📝 Log file: $LOG_FILE"
 echo "🧠 Agent Mode: $DEEP_SEARCH_AGENT_MODE"
+echo "🔀 Split Execution Learning: $SPLIT_EXECUTION_LEARNING"
 echo "⏱️  Tool Timeout: $TOOL_EXECUTION_TIMEOUT"
 echo "💾 MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)"
 echo "🤖 Agent Provider: $AGENT_PROVIDER/$AGENT_MODEL"
@@ -148,6 +153,8 @@ echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console
 # Using 'tee' to capture output to file while also displaying on console
+# Code execution uses 'go run' with HTTP API calls - no binary build needed
+echo "🚀 Starting server with 'go run'..."
 go run main.go server \
     --log-level debug \
     --debug \

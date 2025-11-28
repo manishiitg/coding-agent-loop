@@ -7,25 +7,6 @@ func GetWorkflowMemoryRequirements() string {
 	return `
 ## 📁 WORKSPACE MEMORY MANAGEMENT
 
-### **Workspace Boundaries**
-- **Workspace Root**: {{.WorkspacePath}}/ (provided in template variables)
-- **STRICT BOUNDARY**: ONLY work within {{.WorkspacePath}}/ - never access other folders
-- **Security**: Never touch .env files, root configs, secrets, or system files outside workspace
-- **Isolation**: Do not access other workspace folders unless explicitly specified
-
-### **Memory Integration Requirements**
-- **Read Operations**: Check existing files in {{.WorkspacePath}}/ for context and previous work
-- **Write Operations**: Store results in appropriate subdirectories within {{.WorkspacePath}}/
-- **Update Operations**: Modify existing files to track progress and maintain state
-- **Archive Operations**: Move completed work to archive subdirectories to maintain clean workspace
-
-### **File Organization Principles**
-- **Descriptive Names**: Use clear, descriptive file names that indicate purpose
-- **Timestamps**: Include timestamps (YYYY-MM-DD format) for time-based organization
-- **Subdirectories**: Organize related files in subdirectories for better structure
-- **Consistent Structure**: Maintain consistent naming and organization patterns
-- **Documentation**: Include README or index files to explain directory structure
-
 ### **🔍 File Discovery & Search**
 **Use these tools to efficiently find files:**
 

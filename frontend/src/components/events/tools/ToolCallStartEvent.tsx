@@ -1,6 +1,6 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../generated/events'
-import { WorkspaceToolCallDisplay, HumanFeedbackToolCallDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallDisplay, HumanFeedbackToolCallDisplay, CodeExecutionToolCallDisplay } from './ToolCallSpecialRender'
 
 interface ToolCallStartEventProps {
   event: ToolCallStartEvent
@@ -33,6 +33,11 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     return toolName === 'human_feedback'
   }
 
+  // Check if this is a code execution tool
+  const isCodeExecutionTool = (toolName: string): boolean => {
+    return toolName === 'discover_code_structure' || toolName === 'discover_code_files' || toolName === 'write_code'
+  }
+
   // If it's a workspace tool, use the specialized component
   if (event.tool_name && isWorkspaceTool(event.tool_name)) {
     return <WorkspaceToolCallDisplay event={event} />
@@ -41,6 +46,11 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
   // If it's a human feedback tool, use the specialized component
   if (event.tool_name && isHumanFeedbackTool(event.tool_name)) {
     return <HumanFeedbackToolCallDisplay event={event} />
+  }
+
+  // If it's a code execution tool, use the specialized component
+  if (event.tool_name && isCodeExecutionTool(event.tool_name)) {
+    return <CodeExecutionToolCallDisplay event={event} />
   }
 
   // Simple JSON formatting function for regular tools

@@ -2,12 +2,16 @@ package todo_creation_human
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"sync"
 	"text/template"
+	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/mcpagent"
@@ -27,6 +31,9 @@ type VariablesManifest struct {
 	Variables      []Variable `json:"variables"` // List of variables
 	ExtractionDate string     `json:"extraction_date"`
 }
+
+// variablesFileMutex ensures thread-safe access to variables.json
+var variablesFileMutex sync.Mutex
 
 // VariableExtractionAgent extracts variables from objective
 type VariableExtractionAgent struct {
@@ -262,8 +269,6 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 6. **Write JSON to**: {{.WorkspacePath}}/variables/variables.json ONLY
 7. **DO NOT** search the entire workspace or create files elsewhere
 8. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
-
-` + GetTodoCreationHumanMemoryRequirements() + `
 `
 
 	// Parse and execute the template
@@ -278,6 +283,351 @@ func (vea *VariableExtractionAgent) variableExtractionInputProcessor(templateVar
 	}
 
 	return result.String()
+}
+
+// readVariablesFromFile reads variables.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
+func readVariablesFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*VariablesManifest, error) {
+	variablesPath := filepath.Join(workspacePath, "variables", "variables.json")
+
+	variablesFileMutex.Lock()
+	defer variablesFileMutex.Unlock()
+
+	content, err := readFile(ctx, variablesPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read variables.json: %w", err)
+	}
+
+	var manifest VariablesManifest
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
+	}
+
+	return &manifest, nil
+}
+
+// writeVariablesToFile writes VariablesManifest to variables.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
+func writeVariablesToFile(ctx context.Context, workspacePath string, manifest *VariablesManifest, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
+	variablesPath := filepath.Join(workspacePath, "variables", "variables.json")
+
+	variablesFileMutex.Lock()
+	defer variablesFileMutex.Unlock()
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal variables: %w", err)
+	}
+
+	if err := writeFile(ctx, variablesPath, string(data)); err != nil {
+		return fmt.Errorf("failed to write variables.json: %w", err)
+	}
+
+	return nil
+}
+
+// getUpdateVariableSchema returns the JSON schema for update_variable tool
+func getUpdateVariableSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"existing_variable_name": {
+				"type": "string",
+				"description": "Name of existing variable to update/delete (required for update/delete actions)"
+			},
+			"name": {
+				"type": "string",
+				"description": "Variable name in UPPER_SNAKE_CASE (required for add, optional for update)"
+			},
+			"value": {
+				"type": "string",
+				"description": "Variable value (optional)"
+			},
+			"description": {
+				"type": "string",
+				"description": "Variable description (optional)"
+			},
+			"action": {
+				"type": "string",
+				"enum": ["update", "add", "delete"],
+				"description": "Action to perform: update existing, add new, or delete"
+			}
+		},
+		"required": ["action"]
+	}`
+}
+
+// getUpdateObjectiveSchema returns the JSON schema for update_objective tool
+func getUpdateObjectiveSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"objective": {
+				"type": "string",
+				"description": "Updated templated objective with {{VARIABLE}} placeholders"
+			}
+		},
+		"required": ["objective"]
+	}`
+}
+
+// createUpdateVariableExecutor creates an executor function for update_variable tool
+func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Extract action
+		actionRaw, ok := args["action"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid action argument")
+		}
+		action := actionRaw
+
+		// Read current variables
+		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read variables: %w", err)
+		}
+
+		switch action {
+		case "add":
+			// Extract new variable fields
+			nameRaw, ok := args["name"].(string)
+			if !ok || nameRaw == "" {
+				return "", fmt.Errorf("name is required for add action")
+			}
+			name := nameRaw
+
+			valueRaw, _ := args["value"].(string)
+			value := valueRaw
+
+			descriptionRaw, _ := args["description"].(string)
+			description := descriptionRaw
+
+			// Check if variable already exists
+			for _, v := range manifest.Variables {
+				if v.Name == name {
+					return "", fmt.Errorf("variable %s already exists", name)
+				}
+			}
+
+			// Add new variable
+			newVar := Variable{
+				Name:        name,
+				Value:       value,
+				Description: description,
+			}
+			manifest.Variables = append(manifest.Variables, newVar)
+			logger.Infof("✅ Added new variable: %s", name)
+
+		case "update":
+			// Extract existing variable name
+			existingNameRaw, ok := args["existing_variable_name"].(string)
+			if !ok || existingNameRaw == "" {
+				return "", fmt.Errorf("existing_variable_name is required for update action")
+			}
+			existingName := existingNameRaw
+
+			// Find the variable to update
+			found := false
+			for i := range manifest.Variables {
+				if manifest.Variables[i].Name == existingName {
+					found = true
+					// Update fields if provided
+					if nameRaw, ok := args["name"].(string); ok && nameRaw != "" {
+						// Check if new name conflicts with existing variable
+						if nameRaw != existingName {
+							for _, v := range manifest.Variables {
+								if v.Name == nameRaw {
+									return "", fmt.Errorf("variable %s already exists, cannot rename to it", nameRaw)
+								}
+							}
+						}
+						manifest.Variables[i].Name = nameRaw
+					}
+					if valueRaw, ok := args["value"].(string); ok {
+						manifest.Variables[i].Value = valueRaw
+					}
+					if descriptionRaw, ok := args["description"].(string); ok {
+						manifest.Variables[i].Description = descriptionRaw
+					}
+					logger.Infof("✅ Updated variable: %s", existingName)
+					break
+				}
+			}
+			if !found {
+				return "", fmt.Errorf("variable %s not found", existingName)
+			}
+
+		case "delete":
+			// Extract existing variable name
+			existingNameRaw, ok := args["existing_variable_name"].(string)
+			if !ok || existingNameRaw == "" {
+				return "", fmt.Errorf("existing_variable_name is required for delete action")
+			}
+			existingName := existingNameRaw
+
+			// Find and remove the variable
+			found := false
+			filtered := make([]Variable, 0, len(manifest.Variables))
+			for _, v := range manifest.Variables {
+				if v.Name == existingName {
+					found = true
+				} else {
+					filtered = append(filtered, v)
+				}
+			}
+			if !found {
+				return "", fmt.Errorf("variable %s not found", existingName)
+			}
+			manifest.Variables = filtered
+			logger.Infof("✅ Deleted variable: %s", existingName)
+
+		default:
+			return "", fmt.Errorf("invalid action: %s (must be 'add', 'update', or 'delete')", action)
+		}
+
+		// Preserve extraction_date
+		if manifest.ExtractionDate == "" {
+			manifest.ExtractionDate = time.Now().Format(time.RFC3339)
+		}
+
+		// Write updated variables
+		if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write variables: %w", err)
+		}
+
+		return fmt.Sprintf("Successfully performed %s action on variables", action), nil
+	}
+}
+
+// createUpdateObjectiveExecutor creates an executor function for update_objective tool
+func createUpdateObjectiveExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Extract objective
+		objectiveRaw, ok := args["objective"].(string)
+		if !ok || objectiveRaw == "" {
+			return "", fmt.Errorf("invalid objective argument")
+		}
+		objective := objectiveRaw
+
+		// Read current variables
+		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read variables: %w", err)
+		}
+
+		// Update objective
+		manifest.Objective = objective
+
+		// Preserve extraction_date
+		if manifest.ExtractionDate == "" {
+			manifest.ExtractionDate = time.Now().Format(time.RFC3339)
+		}
+
+		// Write updated variables
+		if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write variables: %w", err)
+		}
+
+		logger.Infof("✅ Updated objective in variables.json")
+		return "Successfully updated objective", nil
+	}
+}
+
+// ExecuteStructuredUpdate executes the variable extraction agent in UPDATE mode using 2 custom tools that directly update variables.json
+// readFile and writeFile are BaseOrchestrator's ReadWorkspaceFile and WriteWorkspaceFile methods
+func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) (*VariablesManifest, []llmtypes.MessageContent, error) {
+	// Get workspace path from template vars
+	workspacePath := templateVars["WorkspacePath"]
+	if workspacePath == "" {
+		return nil, nil, fmt.Errorf("WorkspacePath not found in template vars")
+	}
+
+	// Get the underlying MCP agent
+	baseAgent := vea.BaseOrchestratorAgent.BaseAgent()
+	if baseAgent == nil {
+		return nil, nil, fmt.Errorf("base agent is not initialized")
+	}
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, nil, fmt.Errorf("MCP agent is not initialized")
+	}
+
+	// Parse schemas and register the 2 custom tools
+	updateVariableSchema := getUpdateVariableSchema()
+	updateVariableParams, err := parseSchemaForToolParameters(updateVariableSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse update_variable schema: %w", err)
+	}
+
+	updateObjectiveSchema := getUpdateObjectiveSchema()
+	updateObjectiveParams, err := parseSchemaForToolParameters(updateObjectiveSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse update_objective schema: %w", err)
+	}
+
+	// Get logger from MCP agent (it has a Logger field)
+	logger := mcpAgent.Logger
+
+	// Note: human_feedback tool is already registered via WorkspaceTools (which includes human tools)
+	// No need to register it manually here
+
+	// Register workflow-specific variable tools with "workflow" category
+	if err := mcpAgent.RegisterCustomTool(
+		"update_variable",
+		"Update, add, or delete variables in variables.json. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update. The variables.json file is updated immediately when this tool is called.",
+		updateVariableParams,
+		createUpdateVariableExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		logger.Errorf("❌ Failed to register update_variable tool: %v", err)
+		return nil, nil, fmt.Errorf("failed to register update_variable tool: %w", err)
+	}
+
+	if err := mcpAgent.RegisterCustomTool(
+		"update_objective",
+		"Update the templated objective in variables.json. Provide the updated objective with {{VARIABLE}} placeholders. The variables.json file is updated immediately when this tool is called.",
+		updateObjectiveParams,
+		createUpdateObjectiveExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		logger.Errorf("❌ Failed to register update_objective tool: %v", err)
+		return nil, nil, fmt.Errorf("failed to register update_objective tool: %w", err)
+	}
+
+	// Generate system prompt for update mode
+	systemPrompt := variableExtractionSystemPromptProcessorForUpdate(templateVars)
+
+	// Execute the agent with normal Execute (not StructuredOutputViaTool)
+	_, updatedHistory, err := baseAgent.Execute(ctx, userMessage, conversationHistory, systemPrompt, false)
+	if err != nil {
+		return nil, updatedHistory, fmt.Errorf("agent execution failed: %w", err)
+	}
+
+	// Check if any of our custom tools were called
+	toolCalls := extractToolCallsFromMessages(updatedHistory)
+	variableUpdateToolCalled := false
+	for _, toolName := range toolCalls {
+		if toolName == "update_variable" || toolName == "update_objective" {
+			variableUpdateToolCalled = true
+		}
+	}
+
+	// Read the current variables.json (whether tools were called or not)
+	// In UPDATE mode, conversational responses are normal - not an error
+	// If tools were called, variables.json was updated. If not, we return the current variables unchanged.
+	currentVariables, err := readVariablesFromFile(ctx, workspacePath, readFile)
+	if err != nil {
+		return nil, updatedHistory, fmt.Errorf("failed to read variables: %w", err)
+	}
+
+	if !variableUpdateToolCalled {
+		// No tools called - this is a normal conversational response, not an error
+		// Return the current variables (unchanged) so conversation can continue
+		logger.Infof("📝 Variable extraction agent in UPDATE mode: Conversational response (no variable changes). Returning current variables.")
+		return currentVariables, updatedHistory, nil
+	}
+
+	// Tools were called - variables.json was updated
+	logger.Infof("✅ Variables updated via tools (%d variables)", len(currentVariables.Variables))
+	return currentVariables, updatedHistory, nil
 }
 
 // variableExtractionSystemPromptProcessor generates the system prompt for variable extraction
@@ -350,8 +700,6 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 6. **DO NOT** search the entire workspace or create files - use structured output tool instead
 7. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
 
-` + GetTodoCreationHumanMemoryRequirements() + `
-
 ## 📤 OUTPUT REQUIREMENTS
 
 **CRITICAL**: 
@@ -417,65 +765,76 @@ func variableExtractionSystemPromptProcessor(templateVars map[string]string) str
 
 // variableExtractionSystemPromptProcessorForUpdate generates system prompt for updating existing variables
 func variableExtractionSystemPromptProcessorForUpdate(templateVars map[string]string) string {
+	// Get current date and time
+	now := time.Now()
+	currentDate := now.Format("2006-01-02")
+	currentTime := now.Format("15:04:05")
+
 	templateData := struct {
 		Objective             string
 		WorkspacePath         string
 		ExistingVariablesJSON string
+		CurrentDate           string
+		CurrentTime           string
 	}{
 		Objective:             templateVars["Objective"],
 		WorkspacePath:         templateVars["WorkspacePath"],
 		ExistingVariablesJSON: templateVars["ExistingVariablesJSON"],
+		CurrentDate:           currentDate,
+		CurrentTime:           currentTime,
 	}
 
-	templateStr := `## 🤖 AGENT IDENTITY
+	templateStr := `## 📅 **CURRENT SESSION INFORMATION**
+**Date**: {{.CurrentDate}}
+**Time**: {{.CurrentTime}}
+
+## 🤖 AGENT IDENTITY
 - **Role**: Variable Extraction Agent (Update Mode)
-- **Responsibility**: Update existing variables based on human feedback while preserving unchanged variables
-- **Output Format**: Structured JSON via submit_variable_extraction_response tool (not markdown, not files)
-- **Mode**: UPDATE EXISTING VARIABLES - Make intelligent updates based on human feedback
+- **Task**: Update existing variables based on human feedback
+- **Tools**: Use human_feedback tool to confirm changes, then use update_variable and update_objective tools to modify variables.json. These tools update variables.json immediately when called.
 
-## 🎯 PRIMARY TASK - UPDATE EXISTING VARIABLES
+## 🎯 OBJECTIVE
 
-**YOUR INPUT - THE OBJECTIVE TO ANALYZE:**
-{{.Objective}}
+**PRIMARY OBJECTIVE**: {{.Objective}}
 
 **WORKSPACE**: {{.WorkspacePath}}
 
 ## 📄 EXISTING VARIABLES
 
-**CRITICAL**: The current variables are provided below. These variables already exist and are being used. Your task is to update them appropriately based on human feedback. Use your judgment to determine what changes are needed to address the feedback effectively.
+Update these variables based on human feedback. Use judgment to determine what changes address the feedback.
 
-**EXISTING VARIABLES**:
 {{.ExistingVariablesJSON}}
 
 ## 🎯 UPDATE GUIDELINES
 
-**Mode**: UPDATE existing variables (not CREATE). The variables already exist. Make intelligent updates based on human feedback.
+**Principles**:
+- Interpret feedback and make logical changes (minor = targeted, substantial = comprehensive)
+- Update related parts to maintain consistency
+- Preserve variable placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) exactly as-is in objective
+- Keep same detail level in all variables
 
-**Key Principles**:
-- **Feedback-Driven**: Interpret feedback and make changes that logically address concerns. Adjust scope based on feedback (minor = targeted, substantial = comprehensive)
-- **Preserve Unchanged**: Keep variables that are not mentioned in feedback exactly as they are
-- **Logical Coherence**: If you update one variable, ensure related variables remain consistent
-- **Preserve Variable Names**: Keep variable names ({{"{{"}}VARIABLE_NAME{{"}}"}}) consistent unless feedback explicitly requests name changes
-- **Use Judgment**: Make changes that make sense. Don't hesitate to make substantial changes if feedback suggests fundamental issues, or targeted adjustments for minor feedback
+**Available Tools**:
+- **human_feedback**: **REQUIRED BEFORE MAKING ANY VARIABLE CHANGES**. Use this tool to ask the user for confirmation before modifying variables. Provide a clear message describing the proposed changes (what variables will be updated/added/deleted and why). Wait for user approval before proceeding with variable modification tools. Generate a unique UUID for the unique_id parameter.
+- **update_variable**: Update, add, or delete variables. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update. The variables.json file is updated immediately when this tool is called.
+- **update_objective**: Update the templated objective. Provide the updated objective with {{"{{"}}VARIABLE{{"}}"}} placeholders. The variables.json file is updated immediately when this tool is called.
 
-## 📋 WHAT TO UPDATE
+**CRITICAL WORKFLOW - HUMAN CONFIRMATION REQUIRED**:
+1. **ALWAYS use human_feedback tool FIRST** before making any variable changes (update/add/delete variables or update objective)
+2. In the human_feedback message, clearly describe:
+   - What changes you plan to make (which variables to update/add/delete, or objective changes)
+   - Why these changes address the user's feedback
+   - The impact of these changes
+3. The human_feedback tool will automatically return the user's response. **After receiving the response**:
+   - If user approved: Immediately proceed with update_variable or update_objective tools in the same conversation turn
+   - If user asked questions or needs clarification: Respond conversationally without calling variable update tools
+   - If user rejected or requested changes: Adjust your approach and either ask again with human_feedback or respond conversationally
+4. You can call multiple variable modification tools in the same turn after getting approval
 
-**Based on Human Feedback:**
-1. **Add New Variables**: If feedback mentions new values that should be extracted, add them as new variables
-2. **Modify Existing Variables**: If feedback mentions changes to existing variables (values, descriptions, names), update them accordingly
-3. **Remove Variables**: If feedback explicitly requests removal of variables, remove them
-4. **Preserve Unchanged**: Keep all variables not mentioned in feedback exactly as they are
-
-**Extract These Types of Values (if mentioned in feedback):**
-- URLs (https://github.com/user/repo), account IDs (123456789), ports (3306)
-- Credentials (passwords, API keys), resource names (mydb-prod, s3-bucket)
-- Environment values (us-east-1, production), hosts/endpoints
-- Specific identifiers, paths, configurations
-
-**DO NOT Extract:**
-- Generic terms (repository, database, account - these are descriptive)
-- Action words (deploy, configure, setup)
-- Technology names (Spring Boot, React, PostgreSQL)
+**Guidelines**:
+- You can call multiple variable modification tools in one turn after getting approval
+- Tools update variables.json immediately - no merging needed
+- Unchanged variables are preserved automatically
+- A variable cannot be both updated and deleted
 
 ## 🔑 CRITICAL RULES
 
@@ -484,18 +843,20 @@ func variableExtractionSystemPromptProcessorForUpdate(templateVars map[string]st
 3. **Variable Name Consistency**: Preserve existing variable names unless feedback explicitly requests changes
 4. **Use descriptive variable names** - UPPER_SNAKE_CASE, descriptive (or user-provided names)
 5. **Provide clear descriptions** - what does this variable represent?
-6. **DO NOT** search the entire workspace or create files - use structured output tool instead
-7. **DO NOT** rephrase, summarize, or modify the objective text - only replace values with placeholders
-
-` + GetTodoCreationHumanMemoryRequirements() + `
 
 ## 📤 OUTPUT REQUIREMENTS
 
-**CRITICAL**: 
-- Call submit_variable_extraction_response tool with updated structured JSON data when update is complete
-- Do NOT read/write files, include markdown formatting, or output JSON in text - just call the tool with structured data
-- The tool expects a JSON object with: objective (string), variables (array), extraction_date (ISO 8601 string)
-- Include ALL variables in the output (both updated and unchanged ones)
+**Workflow for variable changes**:
+1. **First**: Use human_feedback tool to describe proposed changes and get user confirmation
+2. **After human_feedback returns**: The tool automatically provides the user's response. Based on that response:
+   - **If approved**: Immediately call update_variable or update_objective tools in the same conversation turn
+   - **If questions/clarification needed**: Respond conversationally without calling variable update tools
+   - **If rejected**: Adjust your approach and either ask again with human_feedback or respond conversationally
+3. You can call multiple variable modification tools in the same turn after getting approval
+
+**Respond conversationally when**: User asks questions, seeks clarification, or provides feedback that doesn't require variable changes. In this case, don't call any tools - just respond with text.
+
+**IMPORTANT**: Never call update_variable or update_objective without first getting user confirmation via human_feedback tool. After human_feedback returns, you will automatically continue in the same turn and can make the variable changes.
 `
 
 	// Parse and execute the template

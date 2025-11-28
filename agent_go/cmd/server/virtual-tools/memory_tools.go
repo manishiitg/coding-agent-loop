@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/llmtypes"
+	"llm-providers/llmtypes"
 )
 
 // MemoryAPIResponse represents the response structure from the memory API
@@ -128,6 +128,11 @@ func CreateMemoryTools() []llmtypes.Tool {
 	memoryTools = append(memoryTools, deleteMemoryTool)
 
 	return memoryTools
+}
+
+// GetToolCategory returns the category name for memory tools
+func GetMemoryToolCategory() string {
+	return "memory"
 }
 
 // CreateMemoryToolExecutors creates the execution functions for memory tools

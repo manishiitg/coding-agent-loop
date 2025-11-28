@@ -9,9 +9,15 @@ import (
 	"sync"
 )
 
+// StepTokenAccumulator defines the interface for accumulating step token usage
+type StepTokenAccumulator interface {
+	AccumulateStepTokens(phase string, step int, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int, llmCallCount int, cacheDiscount float64)
+}
+
 // ContextAwareEventBridge wraps an existing AgentEventListener and adds orchestrator context
 type ContextAwareEventBridge struct {
 	underlyingBridge mcpagent.AgentEventListener
+	tokenAccumulator StepTokenAccumulator // Interface for step token tracking
 	currentPhase     string
 	currentStep      int
 	currentIteration int
@@ -31,6 +37,13 @@ func NewContextAwareEventBridge(underlyingBridge mcpagent.AgentEventListener, lo
 		underlyingBridge: underlyingBridge,
 		logger:           logger,
 	}
+}
+
+// SetTokenAccumulator sets the token accumulator for step token tracking
+func (c *ContextAwareEventBridge) SetTokenAccumulator(accumulator StepTokenAccumulator) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tokenAccumulator = accumulator
 }
 
 // SetOrchestratorContext sets the current orchestrator context
@@ -106,6 +119,47 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			}
 		} else {
 			c.logger.Warnf("⚠️ ContextAwareBridge: Event data %T does not have GetBaseEventData method", event.Data)
+		}
+	}
+
+	// Intercept token_usage events and accumulate per step
+	if event.Type == events.TokenUsage && currentPhase != "" {
+		if tokenEvent, ok := event.Data.(*events.TokenUsageEvent); ok {
+			c.mu.RLock()
+			accumulator := c.tokenAccumulator
+			c.mu.RUnlock()
+
+			if accumulator != nil {
+				// Extract cache discount from token event
+				cacheDiscount := 0.0
+				if tokenEvent.CacheDiscount > 0 {
+					cacheDiscount = tokenEvent.CacheDiscount
+				}
+
+				// Extract cache tokens from generation info if available
+				cacheTokens := 0
+				if tokenEvent.GenerationInfo != nil {
+					if ct, ok := tokenEvent.GenerationInfo["cumulative_cache_tokens"].(int); ok {
+						cacheTokens = ct
+					} else if ct, ok := tokenEvent.GenerationInfo["cumulative_cache_tokens"].(float64); ok {
+						cacheTokens = int(ct)
+					}
+				}
+
+				// Accumulate tokens for this step
+				accumulator.AccumulateStepTokens(
+					currentPhase,
+					currentStep,
+					tokenEvent.PromptTokens,
+					tokenEvent.CompletionTokens,
+					tokenEvent.TotalTokens,
+					cacheTokens,
+					tokenEvent.ReasoningTokens,
+					1, // Each token_usage event represents one LLM call
+					cacheDiscount,
+				)
+				c.logger.Debugf("📊 Accumulated tokens for step %s:%d - Total: %d", currentPhase, currentStep, tokenEvent.TotalTokens)
+			}
 		}
 	}
 

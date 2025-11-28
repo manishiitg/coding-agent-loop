@@ -88,19 +88,19 @@ services:
       retries: 3
       start_period: 40s
 
-  # Planner File Management API
-  planner-api:
+  # Workspace File Management API
+  workspace-api:
     build:
-      context: ./planner
+      context: ./workspace
       dockerfile: Dockerfile
     ports:
       - "8081:8080"
     env_file:
-      - ./planner/.env
+      - ./workspace/.env
     environment:
       # Server Configuration
       - PORT=8080
-      - DOCS_DIR=/app/planner-docs
+      - DOCS_DIR=/app/workspace-docs
       
       # Qdrant Configuration
       - QDRANT_URL=http://qdrant:6333
@@ -115,8 +115,8 @@ services:
       # MCP Cache Configuration
       - MCP_CACHE_TTL_MINUTES=${MCP_CACHE_TTL_MINUTES:-10080}
     volumes:
-      - ./planner-docs:/app/planner-docs
-      - planner_data:/app/data
+      - ./workspace-docs:/app/workspace-docs
+      - workspace_data:/app/data
     depends_on:
       - qdrant
     restart: unless-stopped
@@ -152,9 +152,9 @@ services:
       - NODE_ENV=development
       - VITE_API_BASE_URL=http://localhost:8000
       - VITE_MEMORY_API_URL=http://localhost:8055
-      - VITE_PLANNER_API_URL=http://localhost:8081
+      - VITE_WORKSPACE_API_URL=http://localhost:8081
     depends_on:
-      planner-api:
+      workspace-api:
         condition: service_healthy
     restart: unless-stopped
 
@@ -166,6 +166,6 @@ volumes:
   memory_logs:
   memory_models:
   agent_logs:
-  planner-docs:
-  planner_data:
+  workspace-docs:
+  workspace_data:
   qdrant_data:

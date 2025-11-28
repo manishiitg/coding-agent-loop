@@ -23,6 +23,7 @@ interface MCPState extends StoreActions {
   showMCPDetails: boolean
   showRegistryModal: boolean
   showConfigEditor: boolean
+  showApiTester: { serverName: string; toolName: string; toolDetail?: any } | null
   
   // Loading states
   isLoadingTools: boolean
@@ -46,6 +47,7 @@ interface MCPState extends StoreActions {
   setShowMCPDetails: (show: boolean) => void
   setShowRegistryModal: (show: boolean) => void
   setShowConfigEditor: (show: boolean) => void
+  setShowApiTester: (value: { serverName: string; toolName: string; toolDetail?: any } | null) => void
   
   // Helper methods
   getAvailableServers: () => string[]
@@ -70,6 +72,7 @@ export const useMCPStore = create<MCPState>()(
         showMCPDetails: false,
         showRegistryModal: false,
         showConfigEditor: false,
+        showApiTester: null,
         isLoadingTools: true,
         toolsError: null,
 
@@ -186,6 +189,10 @@ export const useMCPStore = create<MCPState>()(
 
         setShowConfigEditor: (show) => {
           set({ showConfigEditor: show })
+        },
+
+        setShowApiTester: (value) => {
+          set({ showApiTester: value })
         },
 
         // Helper methods

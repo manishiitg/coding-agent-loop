@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent/agent_go/internal/llm"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
 )
 
 // comprehensiveSimpleCmd represents the comprehensive Simple agent test command
@@ -376,4 +376,3 @@ func calculateSuccessRate(metrics map[string]interface{}) float64 {
 
 	return (float64(successful) / float64(total)) * 100.0
 }
-

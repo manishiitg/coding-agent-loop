@@ -7,7 +7,7 @@ import (
 	"sort"
 	"sync"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 
 	"github.com/mark3labs/mcp-go/client"
 )
@@ -17,7 +17,7 @@ type StdioManager struct {
 	command   string
 	args      []string
 	env       []string
-	logger    utils.ExtendedLogger
+	logger    logger.ExtendedLogger
 	pool      *StdioConnectionPool
 	serverKey string
 }
@@ -29,7 +29,7 @@ var (
 )
 
 // NewStdioManager creates a new stdio manager with our ExtendedLogger interface
-func NewStdioManager(command string, args []string, env []string, logger utils.ExtendedLogger) *StdioManager {
+func NewStdioManager(command string, args []string, env []string, logger logger.ExtendedLogger) *StdioManager {
 	logger.Infof("🔧 [STDIO DEBUG] Creating StdioManager with command: %s, args: %v", command, args)
 
 	// Initialize global pool if not already done

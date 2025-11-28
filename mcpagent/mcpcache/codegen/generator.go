@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 )
 
 // CacheEntryForCodeGen represents a cache entry for code generation (to avoid import cycle)
@@ -19,7 +19,7 @@ type CacheEntryForCodeGen struct {
 }
 
 // parseToolSchema extracts and parses the JSON schema from a tool's parameters
-func parseToolSchema(toolName string, params interface{}, logger utils.ExtendedLogger) (map[string]interface{}, *GoStruct, error) {
+func parseToolSchema(toolName string, params interface{}, logger logger.ExtendedLogger) (map[string]interface{}, *GoStruct, error) {
 	var schema map[string]interface{}
 	if params != nil {
 		paramsBytes, err := json.Marshal(params)
@@ -46,7 +46,7 @@ func parseToolSchema(toolName string, params interface{}, logger utils.ExtendedL
 
 // GenerateServerToolsCode generates Go code for MCP server tools
 // Creates one file per tool with snake_case file names
-func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, generatedDir string, logger utils.ExtendedLogger, timeout time.Duration) error {
+func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, generatedDir string, logger logger.ExtendedLogger, timeout time.Duration) error {
 	if entry == nil || len(entry.Tools) == 0 {
 		logger.Debugf("No tools to generate code for server: %s", serverName)
 		return nil
@@ -143,7 +143,7 @@ type CustomToolForCodeGen struct {
 // GenerateCustomToolsCode generates Go code for custom tools
 // Groups tools by category and generates them into category-specific directories (workspace_tools, human_tools, etc.)
 // Creates one file per tool with snake_case file names
-func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, generatedDir string, logger utils.ExtendedLogger, timeout time.Duration) error {
+func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, generatedDir string, logger logger.ExtendedLogger, timeout time.Duration) error {
 	if len(customTools) == 0 {
 		if logger != nil {
 			logger.Debugf("No custom tools to generate code for")
@@ -322,7 +322,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 // GenerateVirtualToolsCode generates Go code for virtual tools
 // Creates one file per tool with snake_case file names
-func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string, logger utils.ExtendedLogger, timeout time.Duration) error {
+func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string, logger logger.ExtendedLogger, timeout time.Duration) error {
 	if len(virtualTools) == 0 {
 		logger.Debugf("No virtual tools to generate code for")
 		return nil
@@ -408,7 +408,7 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 }
 
 // GenerateIndexFile generates an index.go file that re-exports all tools
-func GenerateIndexFile(generatedDir string, logger utils.ExtendedLogger) error {
+func GenerateIndexFile(generatedDir string, logger logger.ExtendedLogger) error {
 	// Scan for all *_tools directories
 	entries, err := os.ReadDir(generatedDir)
 	if err != nil {

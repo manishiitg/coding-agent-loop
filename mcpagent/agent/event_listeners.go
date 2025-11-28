@@ -2,7 +2,7 @@ package mcpagent
 
 import (
 	"context"
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/events"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/util"

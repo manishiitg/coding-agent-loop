@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 
 	"github.com/joho/godotenv"
 )
@@ -72,7 +72,7 @@ type LangfuseTracer struct {
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
 
-	logger utils.ExtendedLogger
+	logger logger.ExtendedLogger
 }
 
 // Shared state across all instances (similar to Python class-level variables)
@@ -161,7 +161,7 @@ type langfuseIngestionPayload struct {
 }
 
 // newLangfuseTracerWithLogger creates a new Langfuse tracer with an injected logger
-func newLangfuseTracerWithLogger(logger utils.ExtendedLogger) (Tracer, error) {
+func newLangfuseTracerWithLogger(logger logger.ExtendedLogger) (Tracer, error) {
 	sharedMutex.Lock()
 	defer sharedMutex.Unlock()
 
@@ -187,12 +187,12 @@ func NewLangfuseTracer() (Tracer, error) {
 }
 
 // NewLangfuseTracerWithLogger creates a new Langfuse tracer with an injected logger
-func NewLangfuseTracerWithLogger(logger utils.ExtendedLogger) (Tracer, error) {
+func NewLangfuseTracerWithLogger(logger logger.ExtendedLogger) (Tracer, error) {
 	return newLangfuseTracerWithLogger(logger)
 }
 
 // initializeSharedLangfuseClientWithLogger initializes the shared Langfuse client with an injected logger
-func initializeSharedLangfuseClientWithLogger(logger utils.ExtendedLogger) error {
+func initializeSharedLangfuseClientWithLogger(logger logger.ExtendedLogger) error {
 	// Auto-load .env file if present (similar to Python dotenv)
 	if _, err := os.Stat(".env"); err == nil {
 		if err := godotenv.Load(); err != nil {

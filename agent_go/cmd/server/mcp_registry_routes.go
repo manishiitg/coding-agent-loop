@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/mcpcache"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/mcpcache"
+	"mcpagent/mcpclient"
 
 	"github.com/gorilla/mux"
 	"github.com/mark3labs/mcp-go/mcp"

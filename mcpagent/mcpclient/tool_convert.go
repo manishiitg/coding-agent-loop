@@ -9,7 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 )
 
 // mapToParameters converts a map[string]interface{} to a *llmtypes.Parameters struct.
@@ -315,7 +315,7 @@ type ToolDetail struct {
 }
 
 // ToolResultAsString converts a tool result to a string representation
-func ToolResultAsString(result *mcp.CallToolResult, logger utils.ExtendedLogger) string {
+func ToolResultAsString(result *mcp.CallToolResult, logger logger.ExtendedLogger) string {
 	if result == nil {
 		return "Tool execution completed but no result returned"
 	}

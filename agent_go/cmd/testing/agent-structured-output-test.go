@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	"mcpagent/llm"
+	"mcpagent/agent"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

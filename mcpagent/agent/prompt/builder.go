@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -254,7 +254,7 @@ You can also make direct HTTP calls to the MCP API:
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger utils.ExtendedLogger) string {
+func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger logger.ExtendedLogger) string {
 	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
 	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
 	var promptsSection string
@@ -369,7 +369,7 @@ Large tool outputs (>1000 chars) are automatically saved to files. Use virtual t
 }
 
 // buildPromptsSectionWithPreviews builds the prompts section with previews
-func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger utils.ExtendedLogger) string {
+func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger logger.ExtendedLogger) string {
 	// Count total prompts across all servers
 	totalPrompts := 0
 	for _, serverPrompts := range prompts {

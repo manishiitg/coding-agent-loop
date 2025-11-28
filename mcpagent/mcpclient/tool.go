@@ -7,11 +7,11 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/logger"
 )
 
 // PrintTools displays tools in a detailed, human-readable format
-func PrintTools(tools []mcp.Tool, logger utils.ExtendedLogger) {
+func PrintTools(tools []mcp.Tool, logger logger.ExtendedLogger) {
 	logger.Infof("Available tools - count: %d", len(tools))
 	for i, tool := range tools {
 		logger.Infof("Tool %d: %s - %s", i+1, tool.Name, tool.Description)
@@ -51,7 +51,7 @@ func PrintTools(tools []mcp.Tool, logger utils.ExtendedLogger) {
 }
 
 // PrintResources displays resources in a detailed, human-readable format
-func PrintResources(resources []mcp.Resource, logger utils.ExtendedLogger) {
+func PrintResources(resources []mcp.Resource, logger logger.ExtendedLogger) {
 	logger.Infof("Available resources - count: %d", len(resources))
 	for i, resource := range resources {
 		logger.Infof("Resource %d: %s (%s) - %s", i+1, resource.Name, resource.URI, resource.Description)
@@ -59,7 +59,7 @@ func PrintResources(resources []mcp.Resource, logger utils.ExtendedLogger) {
 }
 
 // PrintPrompts displays prompts in a detailed, human-readable format
-func PrintPrompts(prompts []mcp.Prompt, logger utils.ExtendedLogger) {
+func PrintPrompts(prompts []mcp.Prompt, logger logger.ExtendedLogger) {
 	logger.Infof("Available prompts - count: %d", len(prompts))
 	for i, prompt := range prompts {
 		logger.Infof("Prompt %d: %s - %s", i+1, prompt.Name, prompt.Description)
@@ -73,7 +73,7 @@ func PrintPrompts(prompts []mcp.Prompt, logger utils.ExtendedLogger) {
 }
 
 // PrintToolResult displays a tool result in a human-readable format
-func PrintToolResult(result *mcp.CallToolResult, logger utils.ExtendedLogger) {
+func PrintToolResult(result *mcp.CallToolResult, logger logger.ExtendedLogger) {
 	if result == nil {
 		logger.Infof("Tool execution completed but no result returned")
 		return
@@ -106,7 +106,7 @@ func PrintToolResult(result *mcp.CallToolResult, logger utils.ExtendedLogger) {
 }
 
 // PrintResourceResult displays a resource result in a human-readable format
-func PrintResourceResult(result *mcp.ReadResourceResult, logger utils.ExtendedLogger) {
+func PrintResourceResult(result *mcp.ReadResourceResult, logger logger.ExtendedLogger) {
 	if result == nil {
 		logger.Infof("Resource read completed but no result returned")
 		return
@@ -120,7 +120,7 @@ func PrintResourceResult(result *mcp.ReadResourceResult, logger utils.ExtendedLo
 }
 
 // PrintPromptResult displays a prompt result in a human-readable format
-func PrintPromptResult(result *mcp.GetPromptResult, logger utils.ExtendedLogger) {
+func PrintPromptResult(result *mcp.GetPromptResult, logger logger.ExtendedLogger) {
 	if result == nil {
 		logger.Infof("Prompt retrieval completed but no result returned")
 		return

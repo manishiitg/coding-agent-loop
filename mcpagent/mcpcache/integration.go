@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/observability"
+	"mcpagent/logger"
+	"mcpagent/mcpclient"
 
 	"llm-providers/llmtypes"
 
@@ -189,7 +189,7 @@ func GetCachedOrFreshConnection(
 	llm llmtypes.Model,
 	serverName, configPath string,
 	tracers []observability.Tracer,
-	logger utils.ExtendedLogger,
+	logger logger.ExtendedLogger,
 ) (*CachedConnectionResult, error) {
 
 	// Track cache operation start time
@@ -555,7 +555,7 @@ func processCachedData(
 	servers []string,
 	configPath string,
 	tracers []observability.Tracer,
-	logger utils.ExtendedLogger,
+	logger logger.ExtendedLogger,
 ) (*CachedConnectionResult, error) {
 
 	result := &CachedConnectionResult{
@@ -696,7 +696,7 @@ func performFreshConnection(
 	llm llmtypes.Model,
 	serverName, configPath string,
 	tracers []observability.Tracer,
-	logger utils.ExtendedLogger,
+	logger logger.ExtendedLogger,
 ) (*CachedConnectionResult, error) {
 
 	// This would call the original NewAgentConnection function
@@ -726,7 +726,7 @@ func performOriginalConnectionLogic(
 	llm llmtypes.Model,
 	serverName, configPath, traceID string,
 	tracers []observability.Tracer,
-	logger utils.ExtendedLogger,
+	logger logger.ExtendedLogger,
 ) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Load merged MCP server configuration (base + user)
@@ -958,7 +958,7 @@ func cacheFreshConnectionData(
 	servers []string,
 	result *CachedConnectionResult,
 	tracers []observability.Tracer,
-	logger utils.ExtendedLogger,
+	logger logger.ExtendedLogger,
 ) {
 	for _, srvName := range servers {
 		serverConfig, exists := config.MCPServers[srvName]
@@ -1033,31 +1033,31 @@ func extractServerTools(allTools []llmtypes.Tool, toolToServer map[string]string
 }
 
 // InvalidateServerCache invalidates cache entries for a specific server
-func InvalidateServerCache(configPath, serverName string, logger utils.ExtendedLogger) error {
+func InvalidateServerCache(configPath, serverName string, logger logger.ExtendedLogger) error {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.InvalidateByServer(configPath, serverName)
 }
 
 // ClearAllCache clears all cache entries
-func ClearAllCache(logger utils.ExtendedLogger) error {
+func ClearAllCache(logger logger.ExtendedLogger) error {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.Clear()
 }
 
 // GetCacheStats returns cache statistics
-func GetCacheStats(logger utils.ExtendedLogger) map[string]interface{} {
+func GetCacheStats(logger logger.ExtendedLogger) map[string]interface{} {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.GetStats()
 }
 
 // CleanupExpiredEntries removes expired cache entries
-func CleanupExpiredEntries(logger utils.ExtendedLogger) error {
+func CleanupExpiredEntries(logger logger.ExtendedLogger) error {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.Cleanup()
 }
 
 // ValidateCacheHealth validates the health of cached connections and emits events
-func ValidateCacheHealth(tracers []observability.Tracer, logger utils.ExtendedLogger) {
+func ValidateCacheHealth(tracers []observability.Tracer, logger logger.ExtendedLogger) {
 	cacheManager := GetCacheManager(logger)
 	stats := cacheManager.GetStats()
 
@@ -1077,7 +1077,7 @@ func ValidateCacheHealth(tracers []observability.Tracer, logger utils.ExtendedLo
 }
 
 // ValidateServerCache validates cache for a specific server and emits events
-func ValidateServerCache(serverName, configPath string, tracers []observability.Tracer, logger utils.ExtendedLogger) bool {
+func ValidateServerCache(serverName, configPath string, tracers []observability.Tracer, logger logger.ExtendedLogger) bool {
 	cacheManager := GetCacheManager(logger)
 
 	// Get merged server config to generate cache key
@@ -1118,7 +1118,7 @@ func ValidateServerCache(serverName, configPath string, tracers []observability.
 }
 
 // GetCacheStatus returns detailed cache status for monitoring
-func GetCacheStatus(configPath string, tracers []observability.Tracer, logger utils.ExtendedLogger) map[string]interface{} {
+func GetCacheStatus(configPath string, tracers []observability.Tracer, logger logger.ExtendedLogger) map[string]interface{} {
 	cacheManager := GetCacheManager(logger)
 	stats := cacheManager.GetStats()
 

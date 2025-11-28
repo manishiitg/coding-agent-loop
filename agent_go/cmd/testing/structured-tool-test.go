@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
+	"mcpagent/observability"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

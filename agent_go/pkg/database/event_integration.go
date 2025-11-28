@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/events"
 )
 
 // EventDatabaseObserver implements the EventObserver interface to store events in the database

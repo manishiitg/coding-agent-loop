@@ -8,11 +8,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
+	"mcpagent/llm"
+	"mcpagent/observability"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/external"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	"mcpagent/agent"
 )
 
 // debugExternalCmd represents the debug-external command

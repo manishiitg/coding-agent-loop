@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
 	"mcp-agent/agent_go/pkg/logger"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
+	"mcpagent/events"
+	"mcpagent/observability"
 
 	"sync"
 )

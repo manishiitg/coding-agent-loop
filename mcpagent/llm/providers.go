@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/internal/utils"
+	"mcpagent/observability"
+	"mcpagent/logger"
 
 	llmproviders "llm-providers"
 	"llm-providers/interfaces"
@@ -34,7 +34,7 @@ type Config struct {
 	FallbackModels []string
 	MaxRetries     int
 	// Logger for structured logging
-	Logger utils.ExtendedLogger
+	Logger logger.ExtendedLogger
 	// Context for LLM initialization (optional, uses background with timeout if not provided)
 	Context context.Context
 	// API keys for providers (optional, falls back to environment variables if not provided)
@@ -55,13 +55,13 @@ type BedrockConfig struct {
 	Region string
 }
 
-// LoggerAdapter adapts utils.ExtendedLogger to interfaces.Logger
+// LoggerAdapter adapts logger.ExtendedLogger to interfaces.Logger
 type LoggerAdapter struct {
-	logger utils.ExtendedLogger
+	logger logger.ExtendedLogger
 }
 
 // NewLoggerAdapter creates a new logger adapter
-func NewLoggerAdapter(logger utils.ExtendedLogger) *LoggerAdapter {
+func NewLoggerAdapter(logger logger.ExtendedLogger) *LoggerAdapter {
 	return &LoggerAdapter{logger: logger}
 }
 
@@ -158,7 +158,7 @@ func InitializeLLM(config Config) (llmtypes.Model, error) {
 
 // wrapProviderAwareLLM wraps the llm-providers Model to maintain backward compatibility
 // Since both packages now use the same llmtypes, no conversion is needed
-func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger) *ProviderAwareLLM {
+func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,
@@ -177,12 +177,12 @@ type ProviderAwareLLM struct {
 	modelID  string
 	tracers  []observability.Tracer
 	traceID  observability.TraceID
-	logger   utils.ExtendedLogger
+	logger   logger.ExtendedLogger
 }
 
 // NewProviderAwareLLM creates a new provider-aware LLM wrapper
 // This maintains backward compatibility with existing agent_go code
-func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger utils.ExtendedLogger) *ProviderAwareLLM {
+func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
+	"mcpagent/llm"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/external"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/mcpclient"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

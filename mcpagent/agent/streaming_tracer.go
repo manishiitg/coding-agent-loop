@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/observability"
+	"mcpagent/events"
 )
 
 // StreamingTracer extends the basic tracer with streaming capabilities

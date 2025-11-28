@@ -77,6 +77,13 @@ function extractFilepathFromStruct(code: string, startIndex: number): string | n
 
 /**
  * Parses Go code to find workspace tool calls and extract file paths
+ * 
+ * Matches backend-generated code patterns:
+ * 1. Direct inline: workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{Filepath: "path"})
+ * 2. Variable assignment: params := workspace_tools.ReadWorkspaceFileParams{Filepath: "path"}; workspace_tools.ReadWorkspaceFile(params)
+ * 3. Package alias: wt.UpdateWorkspaceFile(wt.UpdateWorkspaceFileParams{Filepath: "path"})
+ * 
+ * Struct field names: Filepath (capital F, case-insensitive matching)
  */
 export function parseWorkspaceToolCalls(code: string): WorkspaceToolCall[] {
   if (!code || typeof code !== 'string') {
@@ -85,7 +92,8 @@ export function parseWorkspaceToolCalls(code: string): WorkspaceToolCall[] {
 
   const results: WorkspaceToolCall[] = []
   
-  // Pattern to match workspace_tools.FunctionName(...)
+  // Pattern to match workspace_tools.FunctionName(...) or wt.FunctionName(...)
+  // Matches: workspace_tools.ReadWorkspaceFile(, workspace_tools.UpdateWorkspaceFile(, etc.
   // Handles various whitespace and formatting
   // Also handles cases where package is aliased (e.g., wt "workspace_tools")
   const functionCallPattern = /(?:workspace_tools|wt)\.(\w+)\s*\(/g
@@ -115,7 +123,7 @@ export function parseWorkspaceToolCalls(code: string): WorkspaceToolCall[] {
 
   // Also check for indirect calls via variables
   // Pattern: result := workspace_tools.ReadWorkspaceFile(params)
-  // This handles cases where the function call is on a new line
+  // This handles cases where the function call uses a variable instead of inline struct
   const indirectPattern = /(?:workspace_tools|wt)\.(\w+)\s*\(\s*(\w+)\s*\)/g
   let indirectMatch: RegExpExecArray | null
   while ((indirectMatch = indirectPattern.exec(code)) !== null) {
@@ -126,7 +134,9 @@ export function parseWorkspaceToolCalls(code: string): WorkspaceToolCall[] {
     if (toolInfo) {
       // Find where the params variable is defined
       // Handle both workspace_tools and aliased package names
-      // Use a more robust pattern that handles nested braces
+      // Pattern matches: params := workspace_tools.ReadWorkspaceFileParams{...}
+      // or: params = workspace_tools.UpdateWorkspaceFileParams{...}
+      // Uses 's' flag to allow . to match newlines
       const paramsPattern = new RegExp(`${paramsVarName}\\s*[:=]\\s*(?:workspace_tools|wt)\\.\\w+Params\\s*{`, 's')
       const paramsMatch = code.match(paramsPattern)
       
@@ -147,6 +157,7 @@ export function parseWorkspaceToolCalls(code: string): WorkspaceToolCall[] {
         
         const structContent = code.substring(startIndex, endIndex)
         
+        // Look for Filepath field (case-insensitive, handles various quote types)
         const filepathMatch = structContent.match(/Filepath\s*:\s*["'`]([^"'`]+)["'`]/i)
         if (filepathMatch && filepathMatch[1]) {
           // Avoid duplicates

@@ -10,10 +10,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
+	"mcpagent/mcpclient"
 )
 
 var toolFilterTestCmd = &cobra.Command{
@@ -223,10 +223,10 @@ func testNameNormalization(logger utils.ExtendedLogger) error {
 func testNoFiltering(logger utils.ExtendedLogger) error {
 	// Create ToolFilter with no filters
 	tf := mcpagent.NewToolFilter(
-		[]string{},  // no selectedTools
-		[]string{},  // no selectedServers
-		nil,         // no clients
-		[]string{},  // no custom categories
+		[]string{}, // no selectedTools
+		[]string{}, // no selectedServers
+		nil,        // no clients
+		[]string{}, // no custom categories
 		logger,
 	)
 
@@ -238,9 +238,9 @@ func testNoFiltering(logger utils.ExtendedLogger) error {
 
 	// All tools should be included
 	testCases := []struct {
-		pkg      string
-		tool     string
-		isCustom bool
+		pkg       string
+		tool      string
+		isCustom  bool
 		isVirtual bool
 	}{
 		{"aws", "GetDocument", false, false},
@@ -270,9 +270,9 @@ func testSelectedToolsFiltering(logger utils.ExtendedLogger) error {
 
 	tf := mcpagent.NewToolFilter(
 		selectedTools,
-		[]string{},  // no selectedServers
-		nil,         // no clients
-		[]string{},  // no custom categories
+		[]string{}, // no selectedServers
+		nil,        // no clients
+		[]string{}, // no custom categories
 		logger,
 	)
 
@@ -304,9 +304,9 @@ func testSelectedToolsFiltering(logger utils.ExtendedLogger) error {
 		pkg  string
 		tool string
 	}{
-		{"aws", "DeleteDocument"},           // aws has specific tools, this one not selected
+		{"aws", "DeleteDocument"},              // aws has specific tools, this one not selected
 		{"google_sheets", "DeleteSpreadsheet"}, // google_sheets has specific tools, this one not selected
-		{"other_server", "SomeTool"},        // server not in selectedTools at all
+		{"other_server", "SomeTool"},           // server not in selectedTools at all
 	}
 
 	for _, tc := range excludedTests {
@@ -326,7 +326,7 @@ func testSelectedServersFiltering(logger utils.ExtendedLogger) error {
 	selectedServers := []string{"aws", "google_sheets"}
 
 	tf := mcpagent.NewToolFilter(
-		[]string{},      // no selectedTools (means "all tools" for selected servers)
+		[]string{}, // no selectedTools (means "all tools" for selected servers)
 		selectedServers,
 		nil,
 		[]string{},
@@ -497,8 +497,8 @@ func testVirtualToolsAlwaysIncluded(logger utils.ExtendedLogger) error {
 func testMixedCaseToolNames(logger utils.ExtendedLogger) error {
 	// Create ToolFilter with snake_case in selectedTools
 	selectedTools := []string{
-		"workspace_tools:read_workspace_file",  // snake_case
-		"aws:GetDocument",                       // PascalCase
+		"workspace_tools:read_workspace_file", // snake_case
+		"aws:GetDocument",                     // PascalCase
 	}
 
 	tf := mcpagent.NewToolFilter(
@@ -598,11 +598,11 @@ func testSelectedServersWithSelectedToolsConflict(logger utils.ExtendedLogger) e
 	// ALL google-sheets tools should be included because it's in selectedServers
 	// Even tools NOT in selectedTools should be included
 	googleSheetsTools := []string{
-		"GetSheetData",        // in selectedTools
-		"CreateSpreadsheet",   // in selectedTools
-		"DeleteSpreadsheet",   // NOT in selectedTools - but should still be included!
-		"AddRows",             // NOT in selectedTools - but should still be included!
-		"BatchUpdateCells",    // NOT in selectedTools - but should still be included!
+		"GetSheetData",      // in selectedTools
+		"CreateSpreadsheet", // in selectedTools
+		"DeleteSpreadsheet", // NOT in selectedTools - but should still be included!
+		"AddRows",           // NOT in selectedTools - but should still be included!
+		"BatchUpdateCells",  // NOT in selectedTools - but should still be included!
 	}
 
 	for _, tool := range googleSheetsTools {
@@ -636,13 +636,13 @@ func testSelectedServersWithSelectedToolsConflict(logger utils.ExtendedLogger) e
 
 // ToolFilterTestCase defines a test case for table-driven testing
 type ToolFilterTestCase struct {
-	Name           string
+	Name            string
 	PackageOrServer string
-	ToolName       string
-	IsCustomTool   bool
-	IsVirtualTool  bool
-	Expected       bool
-	Reason         string
+	ToolName        string
+	IsCustomTool    bool
+	IsVirtualTool   bool
+	Expected        bool
+	Reason          string
 }
 
 // testComprehensiveFilterScenarios runs comprehensive table-driven tests
@@ -659,9 +659,9 @@ func testComprehensiveFilterScenarios(logger utils.ExtendedLogger) error {
 	logger.Infof("\n  Scenario 1: selectedServers + selectedTools for same server")
 	{
 		selectedTools := []string{
-			"google-sheets:GetSheetData",     // Specific tool from google-sheets
+			"google-sheets:GetSheetData", // Specific tool from google-sheets
 			"google-sheets:CreateSpreadsheet",
-			"aws:GetDocument",                // Specific tool from different server
+			"aws:GetDocument", // Specific tool from different server
 		}
 		selectedServers := []string{"google-sheets"} // ALL tools from google-sheets
 
@@ -780,8 +780,8 @@ func testComprehensiveFilterScenarios(logger utils.ExtendedLogger) error {
 	logger.Infof("\n  Scenario 5: Wildcard pattern")
 	{
 		selectedTools := []string{
-			"google-sheets:*",        // ALL tools from google-sheets
-			"aws:GetDocument",        // Only specific tool from aws
+			"google-sheets:*", // ALL tools from google-sheets
+			"aws:GetDocument", // Only specific tool from aws
 		}
 
 		tf := mcpagent.NewToolFilter(selectedTools, []string{}, mockClients, []string{}, logger)
@@ -817,7 +817,7 @@ func testDiscoverySimulation(logger utils.ExtendedLogger) error {
 
 	selectedServers := []string{"google-sheets"}
 	selectedTools := []string{
-		"google-sheets:GetSheetData",     // Some specific tools
+		"google-sheets:GetSheetData", // Some specific tools
 		"workspace_tools:ReadWorkspaceFile",
 	}
 
@@ -825,13 +825,13 @@ func testDiscoverySimulation(logger utils.ExtendedLogger) error {
 
 	// Simulate what discovery does for each directory type
 	type DiscoveryCase struct {
-		DirName       string // Directory name in generated/
-		ServerName    string // After trimming _tools
-		IsCategory    bool
-		IsVirtual     bool
-		ToolName      string
-		PackageUsed   string // What discovery should pass to ShouldIncludeTool
-		Expected      bool
+		DirName     string // Directory name in generated/
+		ServerName  string // After trimming _tools
+		IsCategory  bool
+		IsVirtual   bool
+		ToolName    string
+		PackageUsed string // What discovery should pass to ShouldIncludeTool
+		Expected    bool
 	}
 
 	cases := []DiscoveryCase{

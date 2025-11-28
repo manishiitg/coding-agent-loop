@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/logger"
+	"mcpagent/mcpclient"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -31,7 +31,7 @@ type ToolRegistry struct {
 	virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 	toolToServer map[string]string
 	mu           sync.RWMutex
-	logger       utils.ExtendedLogger
+	logger       logger.ExtendedLogger
 }
 
 var (
@@ -40,14 +40,14 @@ var (
 )
 
 // InitRegistry initializes the global tool registry from an agent
-func InitRegistry(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger utils.ExtendedLogger) {
+func InitRegistry(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger logger.ExtendedLogger) {
 	InitRegistryWithVirtualTools(mcpClients, customTools, nil, toolToServer, logger)
 }
 
 // InitRegistryWithVirtualTools initializes or updates the global tool registry with virtual tools support
 // If the registry already exists, it merges new tools/clients into the existing registry
 // This allows multiple agents with different servers to coexist
-func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger utils.ExtendedLogger) {
+func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger logger.ExtendedLogger) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 

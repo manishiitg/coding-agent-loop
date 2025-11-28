@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/logger"
+	"mcpagent/events"
+	"mcpagent/mcpclient"
 
 	"llm-providers/llmtypes"
 
@@ -27,7 +27,7 @@ import (
 // BrokenPipeHandler handles broken pipe errors by recreating connections and retrying operations
 type BrokenPipeHandler struct {
 	agent  *Agent
-	logger utils.ExtendedLogger
+	logger logger.ExtendedLogger
 }
 
 // NewBrokenPipeHandler creates a new broken pipe handler
@@ -175,7 +175,7 @@ func (h *BrokenPipeHandler) emitRetryFailureEvent(ctx context.Context, toolCall 
 // ErrorRecoveryHandler provides a unified interface for different error recovery strategies
 type ErrorRecoveryHandler struct {
 	brokenPipeHandler *BrokenPipeHandler
-	logger            utils.ExtendedLogger
+	logger            logger.ExtendedLogger
 }
 
 // NewErrorRecoveryHandler creates a new error recovery handler

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/events"
 	"mcp-agent/agent_go/pkg/logger"
 
 	"github.com/sirupsen/logrus"

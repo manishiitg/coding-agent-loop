@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcpagent/events"
+	"mcpagent/mcpclient"
 )
 
 // EnhancedPlanWithMetadata stores enhanced plan with caching metadata

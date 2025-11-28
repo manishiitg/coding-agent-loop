@@ -3,8 +3,8 @@ package mcpagent
 import (
 	"strings"
 
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/logger"
+	"mcpagent/mcpclient"
 )
 
 // ToolFilter centralizes all tool filtering logic to ensure consistency
@@ -14,7 +14,7 @@ type ToolFilter struct {
 	selectedServers      []string        // server names for "all tools" mode
 	customToolCategories map[string]bool // known custom tool categories (e.g., "workspace", "human")
 	mcpServerNames       map[string]bool // known MCP server names from Clients
-	logger               utils.ExtendedLogger
+	logger               logger.ExtendedLogger
 
 	// Pre-computed lookup maps for efficient filtering
 	normalizedToolSet        map[string]bool // normalized "package:tool" -> true
@@ -38,7 +38,7 @@ func NewToolFilter(
 	selectedServers []string,
 	clients map[string]mcpclient.ClientInterface,
 	customCategories []string,
-	logger utils.ExtendedLogger,
+	logger logger.ExtendedLogger,
 ) *ToolFilter {
 	tf := &ToolFilter{
 		selectedTools:            selectedTools,

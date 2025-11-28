@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
+	"mcpagent/events"
+	"mcpagent/llm"
+	"mcpagent/observability"
 )
 
 // NonStructuredResponseError represents a case where the agent returned a text response

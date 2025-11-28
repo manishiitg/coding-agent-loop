@@ -15,8 +15,7 @@ import (
 	"time"
 
 	"llm-providers/llmtypes"
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
-	"mcp-agent/agent_go/pkg/mcpcache/codegen"
+	"mcpagent/mcpcache/codegen"
 )
 
 // NOTE: shouldIncludeServerInDiscovery has been replaced by ToolFilter.ShouldIncludeServer()
@@ -321,8 +320,8 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			// Category directories are created by GenerateCustomToolsCode based on tool categories
 			// Dynamically determine which info struct to use based on the category name
 			// Check registered tools to see what categories exist, or use virtual tools functions as fallback
-			workspaceCategory := virtualtools.GetWorkspaceToolCategory()
-			humanCategory := virtualtools.GetHumanToolCategory()
+			workspaceCategory := "workspace"
+			humanCategory := "human"
 
 			// Also check registered tools for any additional categories
 			allCategories := a.GetCustomToolCategories()
@@ -898,7 +897,7 @@ func (a *Agent) generateWorkspaceToolsWithFolderGuards(workspaceToolsDir string)
 	}
 
 	// Generate workspace tool functions with validation
-	workspaceTools := virtualtools.CreateWorkspaceTools()
+	workspaceTools := CreateWorkspaceTools()
 	for _, tool := range workspaceTools {
 		if tool.Function == nil {
 			continue

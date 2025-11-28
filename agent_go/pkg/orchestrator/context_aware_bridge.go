@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
+	"mcpagent/events"
 	"sync"
 )
 

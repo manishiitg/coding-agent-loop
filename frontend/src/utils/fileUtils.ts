@@ -17,16 +17,57 @@ export const processHierarchicalFiles = (files: PlannerFile[]): PlannerFile[] =>
 /**
  * Recursively searches for a file in the file tree
  * @param fileList - Array of files to search through
- * @param targetPath - Path of the file to find
+ * @param targetPath - Path of the file to find (can be full path or relative filename)
  * @returns true if file exists, false otherwise
  */
 export const findFileInTree = (fileList: PlannerFile[], targetPath: string): boolean => {
+  // Normalize target path for comparison
+  const normalizedTarget = targetPath.trim()
+  const isRelativeFilename = !normalizedTarget.includes('/')
+  
   for (const file of fileList) {
-    // Check both filepath (adjusted for display) and originalFilepath (original path)
-    // This ensures workspace tool events can find files even when paths are adjusted in workflow mode
-    if (file.filepath === targetPath || file.originalFilepath === targetPath) {
+    // Check exact match first (both filepath and originalFilepath)
+    if (file.filepath === normalizedTarget || 
+        ('originalFilepath' in file && file.originalFilepath === normalizedTarget)) {
       return true
     }
+    
+    // If target is a relative filename (no slashes), check if any file ends with it
+    // This handles cases like "step_9_clear_sheets_status.json" matching
+    // "Workflow/ICICI BANK PARSING/step_9_clear_sheets_status.json"
+    if (isRelativeFilename) {
+      const filepathParts = file.filepath.split('/')
+      const filename = filepathParts[filepathParts.length - 1]
+      
+      if (filename === normalizedTarget) {
+        return true
+      }
+      
+      // Also check originalFilepath if available
+      if ('originalFilepath' in file && file.originalFilepath) {
+        const originalParts = file.originalFilepath.split('/')
+        const originalFilename = originalParts[originalParts.length - 1]
+        if (originalFilename === normalizedTarget) {
+          return true
+        }
+      }
+    } else {
+      // For full paths, also check if targetPath is a suffix of the file path
+      // This handles cases where targetPath might be a relative path from workflow root
+      if (file.filepath.endsWith('/' + normalizedTarget) || 
+          file.filepath.endsWith(normalizedTarget)) {
+        return true
+      }
+      
+      if ('originalFilepath' in file && file.originalFilepath) {
+        if (file.originalFilepath.endsWith('/' + normalizedTarget) || 
+            file.originalFilepath.endsWith(normalizedTarget)) {
+          return true
+        }
+      }
+    }
+    
+    // Recurse into children
     if (file.children && file.children.length > 0) {
       if (findFileInTree(file.children, targetPath)) {
         return true

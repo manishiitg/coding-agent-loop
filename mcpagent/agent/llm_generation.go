@@ -3,9 +3,9 @@ package mcpagent
 import (
 	"context"
 	"fmt"
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/llm"
+	"mcpagent/observability"
+	"mcpagent/events"
 	"strings"
 	"time"
 

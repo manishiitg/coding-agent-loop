@@ -3,7 +3,7 @@ package testing
 import (
 	"os"
 
-	"mcp-agent/agent_go/internal/observability"
+	"mcpagent/observability"
 	"mcp-agent/agent_go/internal/utils"
 )
 

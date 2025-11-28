@@ -16,11 +16,14 @@ require (
 	github.com/spf13/viper v1.20.1
 	golang.org/x/image v0.32.0
 	llm-providers v0.0.0
+	mcpagent v0.0.0
 )
 
 replace llm-providers => ../llm-providers
 
 replace workspace => ../workspace
+
+replace mcpagent => ../mcpagent
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

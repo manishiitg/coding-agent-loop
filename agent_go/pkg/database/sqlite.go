@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/events"
 
 	_ "github.com/mattn/go-sqlite3"
 )

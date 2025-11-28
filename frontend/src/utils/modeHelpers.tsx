@@ -1,4 +1,4 @@
-import { MessageCircle, Search, Workflow, Settings } from 'lucide-react'
+import { MessageCircle, Workflow, Settings } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 
 /**

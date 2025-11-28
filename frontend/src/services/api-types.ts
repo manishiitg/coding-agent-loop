@@ -470,6 +470,8 @@ export interface PresetLLMConfig {
   variable_extraction_llm?: AgentLLMConfig // Default for variable extraction agent
   anonymization_llm?: AgentLLMConfig    // Default for anonymization agent
   plan_improvement_llm?: AgentLLMConfig // Default for plan improvement agent
+  plan_tool_optimization_llm?: AgentLLMConfig // Default for plan tool optimization agent
+  plan_learnings_alignment_llm?: AgentLLMConfig // Default for plan learnings alignment agent
 }
 
 // Preset Query API types

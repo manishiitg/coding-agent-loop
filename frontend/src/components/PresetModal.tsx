@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Info, Sparkles, Code2 } from 'lucide-react';
+import { Folder, Plus, X, Settings, Sparkles, Code2 } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
@@ -51,6 +51,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [variableExtractionLLM, setVariableExtractionLLM] = useState<AgentLLMConfig | null>(null);
   const [anonymizationLLM, setAnonymizationLLM] = useState<AgentLLMConfig | null>(null);
   const [planImprovementLLM, setPlanImprovementLLM] = useState<AgentLLMConfig | null>(null);
+  const [planToolOptimizationLLM, setPlanToolOptimizationLLM] = useState<AgentLLMConfig | null>(null);
+  const [planLearningsAlignmentLLM, setPlanLearningsAlignmentLLM] = useState<AgentLLMConfig | null>(null);
 
   // Store subscriptions - using selectors for stable references
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -107,6 +109,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setVariableExtractionLLM(presetLLM.variable_extraction_llm || null);
       setAnonymizationLLM(presetLLM.anonymization_llm || null);
       setPlanImprovementLLM(presetLLM.plan_improvement_llm || null);
+      setPlanToolOptimizationLLM(presetLLM.plan_tool_optimization_llm || null);
+      setPlanLearningsAlignmentLLM(presetLLM.plan_learnings_alignment_llm || null);
     } else {
       setLabel('');
       setQuery('');
@@ -131,6 +135,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setVariableExtractionLLM(null);
       setAnonymizationLLM(null);
       setPlanImprovementLLM(null);
+      setPlanToolOptimizationLLM(null);
+      setPlanLearningsAlignmentLLM(null);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
@@ -181,7 +187,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       
       // Build LLM config with agent-specific defaults for workflow mode
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
-      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || planningLLM || variableExtractionLLM || anonymizationLLM || planImprovementLLM)) {
+      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || planningLLM || variableExtractionLLM || anonymizationLLM || planImprovementLLM || planToolOptimizationLLM || planLearningsAlignmentLLM)) {
         // For workflow mode, include agent-specific configs
         finalLLMConfig = {
           ...(llmConfig || {}),
@@ -192,6 +198,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           variable_extraction_llm: variableExtractionLLM || undefined,
           anonymization_llm: anonymizationLLM || undefined,
           plan_improvement_llm: planImprovementLLM || undefined,
+          plan_tool_optimization_llm: planToolOptimizationLLM || undefined,
+          plan_learnings_alignment_llm: planLearningsAlignmentLLM || undefined,
         };
       }
       console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
@@ -231,7 +239,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, planningLLM, variableExtractionLLM, anonymizationLLM, planImprovementLLM, useCodeExecutionMode, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, planningLLM, variableExtractionLLM, anonymizationLLM, planImprovementLLM, planToolOptimizationLLM, planLearningsAlignmentLLM, useCodeExecutionMode, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -535,6 +543,50 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           />
                           <div className="text-xs text-gray-500 mt-1">
                             Default model for plan improvement agent (used for analyzing execution and providing feedback)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Plan Tool Optimization Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={planToolOptimizationLLM ? availableLLMs.find(llm =>
+                              llm.provider === planToolOptimizationLLM.provider && llm.model === planToolOptimizationLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setPlanToolOptimizationLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for plan tool optimization agent (used for optimizing tool selections based on learnings)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Plan Learnings Alignment Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={planLearningsAlignmentLLM ? availableLLMs.find(llm =>
+                              llm.provider === planLearningsAlignmentLLM.provider && llm.model === planLearningsAlignmentLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setPlanLearningsAlignmentLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for plan learnings alignment agent (used for checking alignment between plan and learnings)
                           </div>
                         </div>
                         <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">

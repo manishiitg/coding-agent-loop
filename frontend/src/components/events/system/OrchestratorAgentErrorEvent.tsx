@@ -26,6 +26,11 @@ export const OrchestratorAgentErrorEventDisplay: React.FC<OrchestratorAgentError
     if (t === 'organizer') return 'Organizer Agent'
     return 'Agent'
   }
+  
+  // Type assertion for extended properties
+  const extendedEvent = event as OrchestratorAgentErrorEvent & {
+    execution_mode?: string
+  }
 
   return (
     <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
@@ -38,7 +43,7 @@ export const OrchestratorAgentErrorEventDisplay: React.FC<OrchestratorAgentError
               {getLabel()} Error: {event.agent_name}{' '}
               <span className="text-xs font-normal text-yellow-600 dark:text-yellow-400">
                 | Duration: {formatDuration(event.duration)}
-                {event.execution_mode && ` | Mode: ${event.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}
+                {extendedEvent.execution_mode && ` | Mode: ${extendedEvent.execution_mode === 'parallel_execution' ? 'Parallel' : 'Sequential'}`}
                 {event.step_index !== undefined && ` | Step: ${event.step_index + 1}`}
                 {event.iteration !== undefined && ` | Iteration: ${event.iteration + 1}`}
               </span>

@@ -35,12 +35,15 @@ h) should we conditional llm, manually to change flow? like during scrapping. if
 the prompts we have, have variable issue which we get to know later when we run. 
 
 
+1. the mcp code execution
+2. variable looping agent or variable injection agent
+3. step deciding agent
+4. chain builder?
+6. have a different knowledge tools and a different directly fully for knowledge/ which will index data
 i) prompt tempaltes, need to check variables on compile time
 
 j) refractor todo human create code structure
 
 k) move agent/mcp etc outside output agent_go and also fix logging in this process
-
-review base_agent.go types.. many are not relevent now 
 
 human review tool doesn't work with code exec

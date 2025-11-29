@@ -121,6 +121,7 @@ type PresetLLMConfig struct {
 	PlanImprovementLLM        *AgentLLMConfig `json:"plan_improvement_llm,omitempty"`         // Default for plan improvement agent
 	PlanToolOptimizationLLM   *AgentLLMConfig `json:"plan_tool_optimization_llm,omitempty"`   // Default for plan tool optimization agent
 	PlanLearningsAlignmentLLM *AgentLLMConfig `json:"plan_learnings_alignment_llm,omitempty"` // Default for plan learnings alignment agent
+	LearningConsolidationLLM  *AgentLLMConfig `json:"learning_consolidation_llm,omitempty"`  // Default for learning consolidation agent
 }
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
@@ -234,6 +235,7 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 		{config.PlanImprovementLLM, "plan_improvement_llm"},
 		{config.PlanToolOptimizationLLM, "plan_tool_optimization_llm"},
 		{config.PlanLearningsAlignmentLLM, "plan_learnings_alignment_llm"},
+		{config.LearningConsolidationLLM, "learning_consolidation_llm"},
 	}
 
 	// Validate each non-nil AgentLLMConfig

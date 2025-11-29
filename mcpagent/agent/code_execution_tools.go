@@ -429,6 +429,28 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 		return "", fmt.Errorf("code parameter is required and must be a non-empty string")
 	}
 
+	// Extract optional CLI arguments
+	var cliArgs []string
+	if argsParam, exists := args["args"]; exists && argsParam != nil {
+		// Handle array of strings
+		if argsArray, ok := argsParam.([]interface{}); ok {
+			for _, arg := range argsArray {
+				if argStr, ok := arg.(string); ok {
+					cliArgs = append(cliArgs, argStr)
+				} else {
+					// Convert non-string args to strings
+					cliArgs = append(cliArgs, fmt.Sprintf("%v", arg))
+				}
+			}
+		} else if argsArray, ok := argsParam.([]string); ok {
+			// Direct string array (less common but handle it)
+			cliArgs = argsArray
+		}
+		if a.Logger != nil && len(cliArgs) > 0 {
+			a.Logger.Infof("📝 CLI arguments provided: %v", cliArgs)
+		}
+	}
+
 	// Generate unique timestamp for this code execution
 	timestamp := time.Now().UnixNano()
 	filename := fmt.Sprintf("code_%d.go", timestamp)
@@ -488,17 +510,21 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	}
 
 	// Set up Go workspace to import generated packages from their original location
+	// This is CRITICAL - if workspace setup fails, code execution will fail with "package not found" errors
 	if len(importedPackages) > 0 {
 		if err := a.setupGoWorkspace(workspaceDir, importedPackages); err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("⚠️ Failed to set up Go workspace: %v", err)
+				a.Logger.Errorf("❌ Failed to set up Go workspace: %v", err)
+				a.Logger.Errorf("❌ This will cause 'package not found' errors during code execution")
 			}
-			// Don't fail - maybe the imports are standard library or external
+			// Return error immediately - workspace setup is required for generated packages
+			errorMsg := fmt.Sprintf("**❌ WORKSPACE SETUP FAILED**\n\nFailed to set up Go workspace (required for generated packages): %v\n\nThis error occurs when the workspace cannot be configured to find generated tool packages.\nPlease check that:\n- Generated packages exist in the generated/ directory\n- Package directories have go.mod files\n- File permissions allow creating go.work file", err)
+			return errorMsg, nil
 		}
 	}
 
 	// Execute the Go code in-process and capture output
-	output, err := a.executeGoCode(ctx, workspaceDir, filePath, code)
+	output, err := a.executeGoCode(ctx, workspaceDir, filePath, code, cliArgs)
 	if err != nil {
 		// Log the full error details for debugging
 		if a.Logger != nil {
@@ -548,17 +574,26 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 // executeGoCode executes Go code using `go run` command
 // This runs the code as a separate process with full Go language support
 // Code can make HTTP calls to MCP API for tool execution
-func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string) (string, error) {
+// cliArgs are optional command-line arguments passed to the program (accessible via os.Args)
+func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string, cliArgs []string) (string, error) {
 	if a.Logger != nil {
-		a.Logger.Infof("🔧 Executing Go code using 'go run' command: %s", filePath)
+		if len(cliArgs) > 0 {
+			a.Logger.Infof("🔧 Executing Go code using 'go run' command: %s with args: %v", filePath, cliArgs)
+		} else {
+			a.Logger.Infof("🔧 Executing Go code using 'go run' command: %s", filePath)
+		}
 	}
 
 	// Extract just the filename since cmd.Dir is set to workspaceDir
 	// This prevents path doubling (e.g., tool_output_folder/tool_output_folder/file.go)
 	filename := filepath.Base(filePath)
 
+	// Build command arguments: go run filename.go [args...]
+	cmdArgs := []string{"run", filename}
+	cmdArgs = append(cmdArgs, cliArgs...)
+
 	// Create command to run the Go code
-	cmd := exec.CommandContext(ctx, "go", "run", filename)
+	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
 	cmd.Dir = workspaceDir
 
 	// Set environment variables for code to use
@@ -844,22 +879,13 @@ func (a *Agent) getAgentGeneratedDir() string {
 
 // ensureAgentWorkspaceToolsGenerated generates workspace_tools package for this agent
 // with folder guard validation built into the generated functions
+// Always regenerates to ensure it matches current templates
 func (a *Agent) ensureAgentWorkspaceToolsGenerated(agentDir string) error {
 	workspaceToolsDir := filepath.Join(agentDir, "workspace_tools")
 
-	// Check if already generated (check for api_client.go as indicator)
-	apiClientFile := filepath.Join(workspaceToolsDir, "api_client.go")
-	if _, err := os.Stat(apiClientFile); err == nil {
-		// Already generated, skip
-		if a.Logger != nil {
-			a.Logger.Debugf("🔧 Workspace tools already generated for agent %s", string(a.TraceID))
-		}
-		return nil
-	}
-
-	// Generate workspace_tools with folder guard validation
+	// Always regenerate to ensure it matches current templates
 	if a.Logger != nil {
-		a.Logger.Infof("🔧 Generating workspace_tools for agent %s with folder guards", string(a.TraceID))
+		a.Logger.Infof("🔧 Generating/updating workspace_tools for agent %s with folder guards", string(a.TraceID))
 	}
 
 	return a.generateWorkspaceToolsWithFolderGuards(workspaceToolsDir)
@@ -1087,11 +1113,14 @@ func (a *Agent) generateWorkspaceToolFunction(funcName string, tool llmtypes.Too
 	}
 	code.WriteString("//\n")
 	code.WriteString("// Usage: Import package and call with typed struct\n")
-	code.WriteString(fmt.Sprintf("// Example: output, err := %s(%s{...})\n", funcName, goStruct.Name))
+	code.WriteString("//       Panics on API errors - check output string for tool execution errors\n")
+	code.WriteString(fmt.Sprintf("// Example: output := %s(%s{...})\n", funcName, goStruct.Name))
+	code.WriteString("//          // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+	code.WriteString("//          // Handle tool execution error if detected\n")
 	code.WriteString("//\n")
 
-	// Function signature with typed struct
-	code.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, goStruct.Name))
+	// Function signature with typed struct - returns only string (no error)
+	code.WriteString(fmt.Sprintf("func %s(params %s) string {\n", funcName, goStruct.Name))
 
 	// Add path validation for path-related parameters BEFORE converting to map
 	pathParams := a.getPathParameters(toolName)
@@ -1124,20 +1153,20 @@ func (a *Agent) generateWorkspaceToolFunction(funcName string, tool llmtypes.Too
 			code.WriteString(fmt.Sprintf("\tif params.%s != \"\" {\n", fieldName))
 			code.WriteString(fmt.Sprintf("\t\tif err := validatePath(params.%s, %v); err != nil {\n", fieldName, isWrite))
 		}
-		code.WriteString("\t\t\treturn \"\", err\n")
+		code.WriteString("\t\t\tpanic(fmt.Sprintf(\"path validation failed: %%v\", err))\n")
 		code.WriteString("\t\t}\n")
 		code.WriteString("\t}\n")
 	}
 
-	// Convert struct to map for API call (same pattern as other tools)
+	// Convert struct to map for API call (panic on errors, same pattern as other tools)
 	code.WriteString("\t// Convert params struct to map for API call\n")
 	code.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	code.WriteString("\tif err != nil {\n")
-	code.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to marshal parameters: %w\", err)\n")
+	code.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
 	code.WriteString("\t}\n")
 	code.WriteString("\tvar paramsMap map[string]interface{}\n")
 	code.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	code.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to unmarshal parameters: %w\", err)\n")
+	code.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
 	code.WriteString("\t}\n\n")
 
 	// Build request payload and call custom API (workspace_tools are custom tools, not MCP tools)
@@ -1251,14 +1280,15 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		processedDirs[packageDir] = true
 
 		// Create go.mod for the package if it doesn't exist
+		// This is REQUIRED for the package to be included in go.work
 		pkgGoModPath := filepath.Join(packageDir, "go.mod")
 		if _, err := os.Stat(pkgGoModPath); os.IsNotExist(err) {
 			pkgGoModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
 			if err := os.WriteFile(pkgGoModPath, []byte(pkgGoModContent), 0644); err != nil {
 				if a.Logger != nil {
-					a.Logger.Warnf("⚠️ Failed to create go.mod for package %s: %v", packageName, err)
+					a.Logger.Errorf("❌ Failed to create go.mod for package %s: %v", packageName, err)
 				}
-				continue
+				return fmt.Errorf("failed to create go.mod for package %s (required for workspace): %w", packageName, err)
 			}
 			if a.Logger != nil {
 				a.Logger.Debugf("✅ Created go.mod for package %s", packageName)

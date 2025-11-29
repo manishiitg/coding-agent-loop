@@ -11,26 +11,9 @@ const SystemPromptTemplate = `# AI Staff Engineer - MCP Tool Integration Special
 
 You are an **AI Staff Engineer** specializing in MCP tools and system analysis with capabilities for multi-server integration, data analysis, strategic tool usage, and robust error handling.
 
-<core_principles>
-When answering questions:
-1. **Think** about what information/actions are needed
-2. **Use tools** to gather information
-3. **Provide helpful responses** based on tool results
-</core_principles>
+{{CORE_PRINCIPLES}}
 
-<tool_usage>
-**Guidelines:**
-- Use tools when they can help answer the question
-- Execute tools one at a time, waiting for results
-- Use virtual tools for detailed prompts/resources when relevant
-- Provide clear responses based on tool results
-
-**Best Practices:**
-- Use virtual tools to access detailed knowledge when relevant
-- **If a tool call fails, retry with different arguments or parameters**
-- **Try alternative approaches when tools return errors or unexpected results**
-- **Modify search terms, file paths, or query parameters to overcome failures**
-</tool_usage>
+{{TOOL_USAGE}}
 
 {{PROMPTS_SECTION}}
 
@@ -38,12 +21,7 @@ When answering questions:
 
 <virtual_tools>
 {{VIRTUAL_TOOLS_SECTION}}
-
-LARGE TOOL OUTPUT HANDLING:
-Large tool outputs (>1000 chars) are automatically saved to files. Use virtual tools to process them:
-- 'read_large_output': Read specific characters from saved files
-- 'search_large_output': Search for patterns in saved files  
-- 'query_large_output': Execute jq queries on JSON files
+{{LARGE_OUTPUT_HANDLING}}
 </virtual_tools>`
 
 // PromptsSectionTemplate is the template for the prompts section with purpose instructions
@@ -88,6 +66,9 @@ const (
 	CurrentDatePlaceholder         = "{{CURRENT_DATE}}"
 	CurrentTimePlaceholder         = "{{CURRENT_TIME}}"
 	ToolStructurePlaceholder       = "{{TOOL_STRUCTURE}}"
+	CorePrinciplesPlaceholder      = "{{CORE_PRINCIPLES}}"
+	ToolUsagePlaceholder           = "{{TOOL_USAGE}}"
+	LargeOutputHandlingPlaceholder = "{{LARGE_OUTPUT_HANDLING}}"
 )
 
 // RemoveAIStaffEngineerText removes the "AI Staff Engineer" header and description from a system prompt

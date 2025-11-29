@@ -87,6 +87,12 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
 			},
 			{
+				ID:          "learning-consolidation",
+				Title:       "Learning Consolidation",
+				Description: "Analyze and consolidate learning files across both learnings/ and learning_code_exec/ folders. Identifies duplicate patterns, similar patterns, and outdated patterns. Consolidates redundant learnings to optimize learning structure for better future execution efficiency.",
+				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
+			},
+			{
 				ID:          "plan-tool-optimization",
 				Title:       "Plan Tool Optimization",
 				Description: "Analyze plan.json and learnings folder to optimize tool selections in step_config.json. Compares configured tools vs actually used tools and updates step_config.json to include only tools that were used.",
@@ -146,6 +152,7 @@ type WorkflowOrchestrator struct {
 	presetPlanImprovementLLM        *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
 	presetPlanToolOptimizationLLM   *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
 	presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig // Default for plan learnings alignment agent
+	presetLearningConsolidationLLM  *todo_creation_human.AgentLLMConfig // Default for learning consolidation agent
 }
 
 // Human verification types
@@ -228,7 +235,7 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM, presetLearningConsolidationLLM *todo_creation_human.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
@@ -339,6 +346,18 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
+		if presetLLMConfig.LearningConsolidationLLM != nil && presetLLMConfig.LearningConsolidationLLM.Provider != "" && presetLLMConfig.LearningConsolidationLLM.ModelID != "" {
+			presetLearningConsolidationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.LearningConsolidationLLM.Provider,
+				ModelID:  presetLLMConfig.LearningConsolidationLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for learning consolidation
+			presetLearningConsolidationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
 	}
 
 	// Create workflow orchestrator instance
@@ -353,6 +372,7 @@ func NewWorkflowOrchestrator(
 		presetPlanImprovementLLM:        presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM:   presetPlanToolOptimizationLLM,
 		presetPlanLearningsAlignmentLLM: presetPlanLearningsAlignmentLLM,
+		presetLearningConsolidationLLM:  presetLearningConsolidationLLM,
 	}
 
 	return wo, nil
@@ -397,6 +417,11 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	if workflowStatus == "plan-learnings-alignment" {
 		wo.GetLogger().Infof("🔍 Routing to plan-learnings alignment phase (workflowStatus: %s)", workflowStatus)
 		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
+	}
+
+	if workflowStatus == "learning-consolidation" {
+		wo.GetLogger().Infof("🔍 Routing to learning consolidation phase (workflowStatus: %s)", workflowStatus)
+		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "plan-tool-optimization" {
@@ -484,6 +509,8 @@ func (wo *WorkflowOrchestrator) runAnonymization(ctx context.Context, objective 
 	// Create anonymization manager directly (independent from controller)
 	anonymizationManager := todo_creation_human.NewAnonymizationManager(
 		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
 		wo.presetAnonymizationLLM,
 	)
 
@@ -538,6 +565,28 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 	}
 
 	wo.GetLogger().Infof("✅ Plan-learnings alignment check completed successfully")
+	return result, nil
+}
+
+// runLearningConsolidation runs only the learning consolidation phase
+func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Infof("🔍 Starting Learning Consolidation Phase")
+
+	// Create learning consolidation manager directly (independent from controller)
+	consolidationManager := todo_creation_human.NewLearningConsolidationManager(
+		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+		wo.presetLearningConsolidationLLM,
+	)
+
+	// Run only consolidation
+	result, err := consolidationManager.ConsolidateLearningsOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("learning consolidation failed: %w", err)
+	}
+
+	wo.GetLogger().Infof("✅ Learning consolidation completed successfully")
 	return result, nil
 }
 
@@ -717,6 +766,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"anonymize-learnings",                  // Anonymize learnings phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-learnings-alignment",             // Plan-learnings alignment phase
+					"learning-consolidation",               // Learning consolidation phase
 					"plan-tool-optimization",               // Plan tool optimization phase
 				}
 				valid := false

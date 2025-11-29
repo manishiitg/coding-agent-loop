@@ -24,6 +24,7 @@ type HumanControlledTodoPlannerValidationTemplate struct {
 	WorkspacePath           string
 	ExecutionHistory        string
 	LoopCondition           string // For loop steps: condition to check
+	IsCodeExecutionMode     string // "true" or "false" - indicates if code execution mode was used
 }
 
 // ValidationFeedback represents combined issues and recommendations from validation
@@ -73,6 +74,8 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Con
 func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*ValidationResponse, []llmtypes.MessageContent, error) {
 	// Check if LoopCondition is provided (non-empty)
 	hasLoopCondition := templateVars["LoopCondition"] != "" && strings.TrimSpace(templateVars["LoopCondition"]) != ""
+	// Check if code execution mode was used
+	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
 
 	// Build base schema
 	baseSchema := `{
@@ -137,7 +140,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 	}
 
 	// Generate system prompt and user message separately
-	systemPrompt := hctpva.validationSystemPromptProcessor(templateVars, hasLoopCondition)
+	systemPrompt := hctpva.validationSystemPromptProcessor(templateVars, hasLoopCondition, isCodeExecutionMode)
 	userMessage := hctpva.validationUserMessageProcessor(templateVars)
 
 	// Create a simple input processor that returns the user message
@@ -170,24 +173,26 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 }
 
 // validationSystemPromptProcessor generates the system prompt for validation agent
-func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptProcessor(templateVars map[string]string, hasLoopCondition bool) string {
+func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptProcessor(templateVars map[string]string, hasLoopCondition bool, isCodeExecutionMode bool) string {
 	// Get current date and time
 	now := time.Now()
 	currentDate := now.Format("2006-01-02")
 	currentTime := now.Format("15:04:05")
 
-	// Create template data with loop condition flag
+	// Create template data with loop condition flag and code execution mode
 	type SystemPromptTemplate struct {
-		WorkspacePath    string
-		HasLoopCondition bool
-		CurrentDate      string
-		CurrentTime      string
+		WorkspacePath       string
+		HasLoopCondition    bool
+		IsCodeExecutionMode bool
+		CurrentDate         string
+		CurrentTime         string
 	}
 	templateData := SystemPromptTemplate{
-		WorkspacePath:    templateVars["WorkspacePath"],
-		HasLoopCondition: hasLoopCondition,
-		CurrentDate:      currentDate,
-		CurrentTime:      currentTime,
+		WorkspacePath:       templateVars["WorkspacePath"],
+		HasLoopCondition:    hasLoopCondition,
+		IsCodeExecutionMode: isCodeExecutionMode,
+		CurrentDate:         currentDate,
+		CurrentTime:         currentTime,
 	}
 
 	// Define the system prompt template
@@ -225,6 +230,9 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 - When execution agent claims specific content in files - read files to verify the claims
 - When success criteria requires specific files or outputs - use tools to check if they exist
 - When you need additional evidence beyond what's in the conversation history
+{{if .IsCodeExecutionMode}}
+- **MANDATORY FOR CODE EXECUTION MODE**: ALWAYS verify code claims with workspace tools (see CODE EXECUTION MODE VALIDATION section below for details)
+{{end}}
 
 **Important**: Use workspace tools proactively to verify execution claims. Don't just trust the conversation history - verify actual file contents and existence when needed.
 
@@ -247,11 +255,95 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 
 **CRITICAL VALIDATION PRINCIPLE**: Be STRICT and CONSERVATIVE. Only mark as successful if there is CLEAR, CONCRETE EVIDENCE that ALL parts of the success criteria were met. If there is ANY doubt, uncertainty, or missing evidence, mark as FAILED.
 
+{{if .IsCodeExecutionMode}}
+## ⚡ CODE EXECUTION MODE VALIDATION (CRITICAL - ANTI-HALLUCINATION)
+
+**⚠️ CRITICAL WARNING**: The execution agent used CODE EXECUTION MODE. LLMs can easily write Go code that prints fake success messages without actually doing the work. You MUST verify that the code actually accomplished the task, not just that it ran successfully.
+
+**MANDATORY VALIDATION STEPS FOR CODE EXECUTION MODE:**
+
+1. **Code Inspection (Verify Intent)**:
+   - **Extract Go code** from ` + "`write_code`" + ` tool calls in the execution history
+   - **Analyze code structure** to verify it actually calls generated tool functions (e.g., ` + "`aws_tools.GetDocument()`" + `, ` + "`workspace_tools.ReadWorkspaceFile()`" + `)
+   - **Detect suspicious patterns**:
+     - ❌ Code that only prints without calling tools (e.g., ` + "`fmt.Println(\"Success! Created 10 files\")`" + ` without actual file operations)
+     - ❌ Hardcoded return values (e.g., ` + "`return \"10 databases found\"`" + ` without actual API calls)
+     - ❌ Simulated data generation (e.g., ` + "`results := []string{\"db1\", \"db2\"}`" + ` without actual queries)
+     - ❌ Missing actual tool function calls (code compiles but doesn't do real work)
+   - **Verify tool imports**: Check that code imports generated tool packages (e.g., ` + "`aws_tools`" + `, ` + "`workspace_tools`" + `) and actually uses them
+   - **If code doesn't call tools**: Mark as FAILED - code must actually invoke tool functions, not just print success
+
+2. **Reality Verification (Verify Actual Results)** - **MANDATORY**:
+   - **Cross-check code claims with workspace state**:
+     - If code claims to create files → **MUST verify files exist** using ` + "`read_workspace_file`" + ` or ` + "`list_workspace_files`" + `
+     - If code claims to read data → **MUST verify data matches** by reading the actual files
+     - If code claims to modify state → **MUST verify changes occurred** by checking before/after state
+     - If code claims API results → **MUST verify** by checking if results match expected format and are realistic
+   - **Use workspace tools proactively**: Don't trust code output alone - verify actual workspace state
+   - **If claims don't match reality**: Mark as FAILED - code output is hallucinated
+
+3. **Tool Call Verification (Verify Execution)**:
+   - **Verify tool functions were invoked**: Check that generated tool functions (e.g., ` + "`aws_tools.GetDocument()`" + `, ` + "`workspace_tools.WriteWorkspaceFile()`" + `) are actually called in the code
+   - **Check tool call patterns**: Verify tool calls match what success criteria requires
+   - **Verify tool responses are used**: Check that code processes tool responses, not just ignores them
+   - **If no tool calls found**: Mark as FAILED - code must actually call tools, not simulate results
+
+4. **Output Analysis (Detect Hallucinations)**:
+   - **Detect suspicious output patterns**:
+     - Hardcoded success messages (e.g., "Task completed successfully" without evidence)
+     - Simulated data that doesn't match expected format (e.g., fake IDs, fake URLs)
+     - Outputs that don't match code logic (e.g., code prints results but doesn't call tools)
+     - Claims without corresponding tool calls in code
+   - **Verify output matches code logic**: If code only prints, output should reflect that - not claim actual work was done
+   - **If output is suspicious**: Use workspace tools to verify claims
+
+5. **Code Execution Results Analysis**:
+   - **Check execution output** (stdout/stderr from ` + "`write_code`" + ` tool):
+     - Look for Go compilation errors (` + "`compile error`" + `, ` + "`syntax error`" + `, ` + "`undefined`" + `)
+     - Look for runtime errors (` + "`panic:`" + `, ` + "`runtime error`" + `, ` + "`nil pointer`" + `)
+     - Look for timeouts (` + "`timeout`" + `, ` + "`killed`" + `, ` + "`context deadline exceeded`" + `)
+     - Check exit codes (non-zero = failure)
+   - **Verify execution succeeded**: Code must compile and run without errors
+   - **If execution failed**: Mark as FAILED regardless of output
+
+6. **Workspace Tool Verification (MANDATORY CHECKS)**:
+   - **ALWAYS verify file operations**: If code claims to create/modify files, use workspace tools to verify:
+     - ` + "`list_workspace_files`" + ` to check if files exist
+     - ` + "`read_workspace_file`" + ` to verify file contents match claims
+   - **ALWAYS verify data claims**: If code claims specific data/results, verify by reading actual files
+   - **ALWAYS cross-reference**: Don't trust code output alone - verify with workspace tools
+   - **If verification fails**: Mark as FAILED - code output is hallucinated
+
+**CODE EXECUTION MODE RED FLAGS (Mark as FAILED):**
+- Code only prints success messages without calling tools
+- Code has hardcoded return values without actual API calls
+- Code execution output claims success but workspace state doesn't match
+- Code doesn't import or call generated tool functions
+- File claims don't match actual workspace state (files don't exist or content differs)
+- Code output contains simulated/fake data
+- Tool function calls are missing from code
+- Code compiles but doesn't actually do the work
+
+**CODE EXECUTION MODE VALIDATION CHECKLIST:**
+- [ ] Code actually calls generated tool functions (not just prints)
+- [ ] Code execution succeeded (no compilation/runtime errors)
+- [ ] Code output matches actual workspace state (verified with workspace tools)
+- [ ] Files claimed to be created actually exist (verified)
+- [ ] File contents match code claims (verified)
+- [ ] Data/results are realistic and match expected format
+- [ ] No hardcoded/fake outputs detected
+- [ ] Tool function calls match success criteria requirements
+{{end}}
+
 **Detailed Validation Steps:**
 
 1. **Analyze Conversation History Structure**:
    - Review ALL messages in the execution conversation history
+   {{if .IsCodeExecutionMode}}
+   - **For CODE EXECUTION MODE**: Follow the CODE EXECUTION MODE VALIDATION section above (extract Go code, analyze structure, verify tool calls)
+   {{else}}
    - Identify ALL tool calls made by the execution agent
+   {{end}}
    - Check ALL tool responses for success/failure indicators
    - Look for error messages, exceptions, or failure indicators in tool responses
    - Verify the conversation shows a complete execution flow (not just partial attempts)
@@ -259,27 +351,43 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 2. **Verify Each Part of Success Criteria**:
    - Break down the success criteria into individual requirements
    - For EACH requirement, find SPECIFIC evidence in the conversation history:
+     {{if .IsCodeExecutionMode}}
+     - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (code execution results + workspace state verification)
+     {{else}}
      - Tool calls that accomplished the requirement
      - Tool responses that show the requirement was met
+     {{end}}
      - Specific outputs, results, or confirmations
    - If ANY requirement lacks clear evidence, mark as FAILED
 
 3. **Check for Errors and Failures**:
+   {{if .IsCodeExecutionMode}}
+   - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (compilation errors, runtime errors, timeouts, exit codes)
+   {{else}}
    - Look for tool call failures (error responses, exceptions, timeouts)
    - Check for error messages in tool responses
+   {{end}}
    - Identify incomplete tool calls (calls without responses)
    - Look for execution agent statements indicating problems, failures, or inability to complete
    - Check for any "failed", "error", "exception", "timeout", "not found" indicators
 
 4. **Analyze Tool Usage and Results**:
+   {{if .IsCodeExecutionMode}}
+   - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (verify tool calls, verify workspace state)
+   {{else}}
    - Verify tools were used appropriately for the task
    - Check tool responses contain expected data/results
    - Verify tool outputs match what success criteria requires
+   {{end}}
    - Look for tool responses that indicate partial completion or missing data
 
 5. **Assess Evidence Quality**:
    - Evidence must be CONCRETE and SPECIFIC (not vague or inferred)
+   {{if .IsCodeExecutionMode}}
+   - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (code execution results + workspace state verification - MANDATORY)
+   {{else}}
    - Evidence must come from ACTUAL tool responses (not just agent claims)
+   {{end}}
    - Evidence must directly support the success criteria requirements
    - If evidence is missing, ambiguous, or insufficient, mark as FAILED
 
@@ -294,13 +402,24 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
   - Insufficient or ambiguous evidence
 
 **RED FLAGS (Mark as FAILED if you see):**
+{{if .IsCodeExecutionMode}}
+- **CODE EXECUTION MODE SPECIFIC**:
+  - Code only prints success without calling tools
+  - Code has hardcoded/fake return values
+  - Code execution output doesn't match workspace reality (verified with workspace tools)
+  - Code doesn't import or call generated tool functions
+  - File claims don't match actual workspace state
+  - Go compilation or runtime errors
+  - Code output is suspicious (simulated data, fake results)
+{{else}}
 - Any tool call failures, errors, or exceptions in tool responses
+{{end}}
 - Execution agent mentions failures, being stuck, or inability to complete
 - Missing tool responses (tool calls without corresponding responses)
 - Tool responses contain error messages, "not found", "failed", "timeout", etc.
-- Success criteria requires specific outcomes that are not clearly demonstrated in tool responses
+- Success criteria requires specific outcomes that are not clearly demonstrated{{if .IsCodeExecutionMode}} in code execution results AND workspace state verification{{else}} in tool responses{{end}}
 - Execution conversation shows incomplete or partial completion
-- Agent claims success but tool responses don't support the claims
+- Agent claims success but{{if .IsCodeExecutionMode}} code output/workspace state doesn't support the claims{{else}} tool responses don't support the claims{{end}}
 
 ## 🔄 LOOP CONDITION CHECK MODE (When Applicable)
 
@@ -411,6 +530,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationUserMessagePr
 		WorkspacePath:           templateVars["WorkspacePath"],
 		ExecutionHistory:        templateVars["ExecutionHistory"],
 		LoopCondition:           templateVars["LoopCondition"],
+		IsCodeExecutionMode:     templateVars["IsCodeExecutionMode"],
 	}
 
 	// Define the user message template
@@ -431,13 +551,11 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationUserMessagePr
 
 ## 📝 **EXECUTION CONVERSATION HISTORY TO VALIDATE**
 
-**IMPORTANT**: The conversation history below contains the ACTUAL execution flow. Analyze it carefully:
+**IMPORTANT**: The conversation history below contains the ACTUAL execution flow. Analyze it carefully using the validation process in the system prompt.
 
-- **Tool Calls**: Look for all tool calls made by the execution agent
-- **Tool Responses**: Check each tool response for success/failure indicators
-- **Errors**: Identify any error messages, exceptions, or failures
-- **Evidence**: Find specific evidence for each part of the success criteria
-- **Completeness**: Verify the execution was complete (not partial or interrupted)
+{{if eq .IsCodeExecutionMode "true"}}
+**⚠️ CODE EXECUTION MODE DETECTED**: Follow the CODE EXECUTION MODE VALIDATION section in the system prompt for detailed anti-hallucination validation steps.
+{{end}}
 
 {{.ExecutionHistory}}
 
@@ -466,16 +584,22 @@ Validate if the step "{{.StepTitle}}" was completed successfully by checking if 
 
 **CRITICAL INSTRUCTIONS:**
 1. **Be STRICT**: Only mark as successful if there is CLEAR, CONCRETE evidence that ALL parts of the success criteria were met
-2. **Check for Errors**: Look for ANY tool call failures, errors, or incomplete actions in the execution history
-3. **Verify Each Part**: Verify that EACH part of the success criteria has corresponding evidence in the execution history
+2. **Check for Errors**: Look for ANY{{if eq .IsCodeExecutionMode "true"}} code execution errors{{else}} tool call failures, errors, or incomplete actions{{end}} in the execution history
+3. **Verify Each Part**: Verify that EACH part of the success criteria has corresponding evidence{{if eq .IsCodeExecutionMode "true"}} (follow CODE EXECUTION MODE VALIDATION section in system prompt){{end}}
 4. **If in Doubt, FAIL**: If there is ANY uncertainty or missing evidence, mark as FAILED
 5. **Look for Failure Indicators**: Check if the execution agent mentioned failures, being stuck, or inability to complete the task
+{{if eq .IsCodeExecutionMode "true"}}
+6. **CODE EXECUTION MODE**: Follow the CODE EXECUTION MODE VALIDATION section in the system prompt for mandatory anti-hallucination validation steps
+{{end}}
 
 **Validation Checklist:**
-- [ ] All parts of success criteria have clear evidence in execution history
-- [ ] No tool call failures or errors in execution
+- [ ] All parts of success criteria have clear evidence{{if eq .IsCodeExecutionMode "true"}} (code execution + workspace state verification){{end}}
+- [ ] No{{if eq .IsCodeExecutionMode "true"}} code execution errors{{else}} tool call failures or errors{{end}} in execution
 - [ ] Execution agent did not report any failures or problems
 - [ ] Success criteria outcomes are clearly demonstrated
+{{if eq .IsCodeExecutionMode "true"}}
+- [ ] CODE EXECUTION MODE checklist completed (see system prompt CODE EXECUTION MODE VALIDATION CHECKLIST)
+{{end}}
 
 Follow the validation process in the system prompt. Analyze the execution conversation history CAREFULLY and call the 'submit_validation_result' tool with your validation results.
 {{end}}`

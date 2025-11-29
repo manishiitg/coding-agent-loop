@@ -1872,6 +1872,67 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				templateVars["PreviousIterationOutput"] = ""
 			}
 
+			// Check if SPLIT_EXECUTION_LEARNING feature flag is enabled
+			splitExecutionLearning := os.Getenv("SPLIT_EXECUTION_LEARNING") == "true"
+
+			// Resolve variables in step title before using in agent name (needed for both paths)
+			resolvedTitle := ResolveVariables(step.Title, hcpo.variableValues)
+			sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
+
+			// Run learning reading agent ONCE per main loop iteration (before retry loop)
+			// This ensures learning is only discovered once, even if validation fails and we retry
+			var formattedLearningHistory string
+			if splitExecutionLearning {
+				hcpo.GetLogger().Infof("🔀 SPLIT_EXECUTION_LEARNING enabled - running learning reading agent once (before retry loop)")
+
+				// Step 1: Create and execute Learning Reading Agent (ONCE per main loop iteration)
+				// Include mode in agent name: "code-exec" or "simple"
+				modeLabel := "simple"
+				if isCodeExecutionMode {
+					modeLabel = "code-exec"
+				}
+				learningAgentName := fmt.Sprintf("%s-learning-%s-%s", stepPath, modeLabel, sanitizedTitle)
+				// Add loop iteration to agent name if in loop mode
+				if step.HasLoop && loopIterationCount > 0 {
+					learningAgentName = fmt.Sprintf("%s-loop-%d", learningAgentName, loopIterationCount)
+				}
+
+				// Pass the already-computed isCodeExecutionMode to ensure consistency with execution agent
+				// Also pass executionWorkspacePath for reading context dependencies in code execution mode
+				var learningAgent agents.OrchestratorAgent
+				learningAgent, err = hcpo.createLearningReadingAgent(ctx, "learning_reading", stepIndex+1, iteration, learningAgentName, step.AgentConfigs, isCodeExecutionMode, executionWorkspacePath)
+				if err != nil {
+					return "", updatedContextFiles, fmt.Errorf("failed to create learning reading agent for step %d: %w", stepIndex+1, err)
+				}
+
+				// Prepare template vars for learning reading agent
+				// Use the same isCodeExecutionMode value that was computed for execution agent (already in templateVars)
+				// Include context dependencies and workspace path for code execution mode
+				learningTemplateVars := map[string]string{
+					"StepTitle":               templateVars["StepTitle"],
+					"StepDescription":         templateVars["StepDescription"],
+					"LearningsPath":           templateVars["LearningsPath"],
+					"IsCodeExecutionMode":     templateVars["IsCodeExecutionMode"],     // Use same value as execution agent
+					"StepContextDependencies": templateVars["StepContextDependencies"], // Context files from previous steps
+					"WorkspacePath":           templateVars["WorkspacePath"],           // Workspace path for reading context files
+				}
+
+				// Execute learning reading agent ONCE (not in retry loop)
+				var learningConversationHistory []llmtypes.MessageContent
+				_, learningConversationHistory, err = learningAgent.Execute(ctx, learningTemplateVars, []llmtypes.MessageContent{})
+				if err != nil {
+					hcpo.GetLogger().Errorf("❌ Step %d learning reading failed: %v - will proceed without learning history", stepIndex+1, err)
+					// Continue without learning history - execution agent can still work without it
+					formattedLearningHistory = ""
+				} else {
+					hcpo.GetLogger().Infof("✅ Step %d learning reading completed successfully (will reuse for all retry attempts)", stepIndex+1)
+
+					// Format learning conversation history for execution-only agent
+					formattedLearningHistory = hcpo.formatLearningHistoryForExecution(learningConversationHistory)
+				}
+			}
+
+			// Retry loop: Execute with validation feedback, reusing the same learning history
 			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
 				hcpo.GetLogger().Infof("🔄 Executing step %d/%d (attempt %d/%d): %s", stepIndex+1, totalSteps, retryAttempt, maxRetryAttempts, step.Title)
 
@@ -1891,69 +1952,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					templateVars["ValidationFeedback"] = "" // No validation feedback for first attempt/first iteration
 				}
 
-				// Check if SPLIT_EXECUTION_LEARNING feature flag is enabled
-				splitExecutionLearning := os.Getenv("SPLIT_EXECUTION_LEARNING") == "true"
-
-				// Resolve variables in step title before using in agent name (needed for both paths)
-				resolvedTitle := ResolveVariables(step.Title, hcpo.variableValues)
-				sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
-
 				if splitExecutionLearning {
-					hcpo.GetLogger().Infof("🔀 SPLIT_EXECUTION_LEARNING enabled - using two-agent flow (learning reading + execution-only)")
-
-					// Step 1: Create and execute Learning Reading Agent
-					// Include mode in agent name: "code-exec" or "simple"
-					modeLabel := "simple"
-					if isCodeExecutionMode {
-						modeLabel = "code-exec"
-					}
-					learningAgentName := fmt.Sprintf("%s-learning-%s-%s", stepPath, modeLabel, sanitizedTitle)
-					// Add loop iteration to agent name if in loop mode
-					if step.HasLoop && loopIterationCount > 0 {
-						learningAgentName = fmt.Sprintf("%s-loop-%d", learningAgentName, loopIterationCount)
-					}
-
-					// Pass the already-computed isCodeExecutionMode to ensure consistency with execution agent
-					var learningAgent agents.OrchestratorAgent
-					learningAgent, err = hcpo.createLearningReadingAgent(ctx, "learning_reading", stepIndex+1, iteration, learningAgentName, step.AgentConfigs, isCodeExecutionMode)
-					if err != nil {
-						return "", updatedContextFiles, fmt.Errorf("failed to create learning reading agent for step %d: %w", stepIndex+1, err)
-					}
-
-					// Prepare template vars for learning reading agent (only needs step info and learnings path)
-					// Use the same isCodeExecutionMode value that was computed for execution agent (already in templateVars)
-					learningTemplateVars := map[string]string{
-						"StepTitle":           templateVars["StepTitle"],
-						"StepDescription":     templateVars["StepDescription"],
-						"LearningsPath":       templateVars["LearningsPath"],
-						"IsCodeExecutionMode": templateVars["IsCodeExecutionMode"], // Use same value as execution agent
-					}
-
-					// Execute learning reading agent
-					var learningConversationHistory []llmtypes.MessageContent
-					_, learningConversationHistory, err = learningAgent.Execute(ctx, learningTemplateVars, []llmtypes.MessageContent{})
-					if err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Step %d learning reading failed (attempt %d): %v", stepIndex+1, retryAttempt, err)
-						if retryAttempt >= maxRetryAttempts {
-							hcpo.GetLogger().Errorf("❌ Step %d learning reading failed after %d attempts, exiting retry loop", stepIndex+1, maxRetryAttempts)
-							break // Exit retry loop - will proceed to human feedback
-						}
-						continue // Retry on next attempt
-					}
-
-					hcpo.GetLogger().Infof("✅ Step %d learning reading completed successfully (attempt %d)", stepIndex+1, retryAttempt)
-
-					// Format learning conversation history for execution-only agent
-					formattedLearningHistory := hcpo.formatLearningHistoryForExecution(learningConversationHistory)
-
-					// Step 2: Create and execute Execution-Only Agent with learning history
+					// Step 2: Create and execute Execution-Only Agent with learning history (reused from above)
 					executionAgentName := fmt.Sprintf("%s-execution-%s", stepPath, sanitizedTitle)
 					// Add loop iteration to agent name if in loop mode
 					if step.HasLoop && loopIterationCount > 0 {
 						executionAgentName = fmt.Sprintf("%s-loop-%d", executionAgentName, loopIterationCount)
 					}
 
-					// Add learning history to template vars for execution-only agent
+					// Add learning history to template vars for execution-only agent (reused for all retry attempts)
 					templateVars["LearningHistory"] = formattedLearningHistory
 
 					var executionAgent agents.OrchestratorAgent
@@ -1962,7 +1969,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 					}
 
-					// Execute execution-only agent with learning history
+					// Execute execution-only agent with learning history (reused from learning reading above)
 					executionResult, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
 				} else {
 					// Normal flow: Single execution agent (discovers learnings + executes)
@@ -3092,7 +3099,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatLearningHistoryForExec
 
 // createLearningReadingAgent creates a learning reading agent for discovering and reading learning files
 // codeExecutionMode: The code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, codeExecutionMode bool) (agents.OrchestratorAgent, error) {
+// executionWorkspacePath: The execution workspace path where context dependency files are located (for code execution mode)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, codeExecutionMode bool, executionWorkspacePath string) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from learnings (read-only), no writes
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use the provided code execution mode (already computed with step-level priority) to ensure consistency
@@ -3106,8 +3114,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 		learningsPath = fmt.Sprintf("%s/learnings", baseWorkspacePath)
 	}
 
-	// Only specify learnings in readPaths - no write paths (read-only agent)
+	// Build read paths: learnings path + execution workspace path (for context dependencies in code execution mode)
 	readPaths := []string{learningsPath}
+	if isCodeExecutionMode && executionWorkspacePath != "" {
+		// Add execution workspace path for reading context dependency files
+		readPaths = append(readPaths, executionWorkspacePath)
+		hcpo.GetLogger().Infof("🔧 Learning reading agent: Added execution workspace path for context dependencies: %s", executionWorkspacePath)
+	}
 	writePaths := []string{} // No write permissions for learning reading agent
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Infof("🔒 Setting folder guard for learning reading agent - Read paths: %v, Write paths: %v (read-only)", readPaths, writePaths)
@@ -3535,7 +3548,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 
 // createValidationAgent creates a validation agent for the current iteration
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from execution (read-only) and validation (via writePaths), writes only to validation
+	// Set folder guard paths: allow reads from execution (read-only), no write permissions
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -3545,13 +3558,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	validationPath := fmt.Sprintf("%s/validation", runWorkspacePath)
 
-	// Only specify execution in readPaths - validation is automatically readable since it's in writePaths
+	// Validation agent only reads - no write permissions needed
 	readPaths := []string{executionPath}
-	writePaths := []string{validationPath}
+	writePaths := []string{} // No write permissions - validation agent only reads and returns structured JSON
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for validation agent - Read paths: %v, Write paths: %v (validation automatically readable via writePaths)", readPaths, writePaths)
+	hcpo.GetLogger().Infof("🔒 Setting folder guard for validation agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths)
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()

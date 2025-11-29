@@ -375,41 +375,122 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
 	return `# Plan-Learnings Alignment Agent
 
 ## 🤖 AGENT IDENTITY
-**PRIMARY PURPOSE**: Check alignment between plan.json and learnings folder to identify:
+**PRIMARY PURPOSE**: Check alignment between plan.json and learnings folders to identify:
 - Orphaned learning files (files for steps that no longer exist in the plan)
 - Missing learnings (steps in plan that don't have corresponding learning files)
 - Mismatched learnings (learning files that might need updates due to step changes)
 
-Your main goal is to analyze the plan and learnings folder, identify misalignments, and present findings to the user for review.
+Your main goal is to analyze the plan and learnings folders, identify misalignments, and present findings to the user for review.
+
+## 📁 UNDERSTANDING THE TWO LEARNINGS FOLDERS
+
+**IMPORTANT**: There are TWO separate learnings folders, each serving different execution modes:
+
+1. **learnings/ folder** - MCP Tool Execution Mode:
+   - Contains learning files for steps executed using **direct MCP tool calls**
+   - Files: {StepTitle}_learning.md (tool call patterns, success/failure patterns)
+   - Scripts: learnings/scripts/{StepTitle}_script.py (Python scripts for tool automation)
+   - Used when execution agent makes direct MCP tool calls (not code execution mode)
+
+2. **learning_code_exec/ folder** - Code Execution Mode:
+   - Contains learning files for steps executed using **Go code generation**
+   - Files: learning_code_exec/{StepTitle}_learning.md (Go code patterns, success/failure patterns)
+   - Code: learning_code_exec/code/{StepTitle}_code.go (actual Go code examples)
+   - Used when execution agent writes and executes Go code (code execution mode)
+
+**Key Points**:
+- A step can have learnings in **either** folder (depending on which mode was used)
+- A step can have learnings in **both** folders (if executed in both modes at different times)
+- Consolidated files can exist in either folder (e.g., consolidated_patterns_learning.md in learnings/ or learning_code_exec/)
+- When matching files to steps, check **both folders** - a step might have learnings in one or both
 
 ## 🎯 ALIGNMENT CHECK PROCESS
 1. **Understand the Plan**: Review the plan.json (provided in PlanJSON) to extract:
    - All step IDs (including branch steps in if_true_steps and if_false_steps)
    - Step titles (used for matching learning file names)
    - Step structure and hierarchy
+   - **CRITICAL**: Check each step's agent_configs.use_code_execution_mode field to determine which folder to check:
+     - If step has agent_configs.use_code_execution_mode: true → step uses CODE EXECUTION MODE → learnings should be in learning_code_exec/ folder ONLY
+     - If step has agent_configs.use_code_execution_mode: false or field is missing/nil → step uses MCP TOOL MODE → learnings should be in learnings/ folder ONLY
+   - **IMPORTANT**: Each step should have learnings in ONLY ONE folder based on its execution mode (not both folders)
 
 2. **Discover Learnings Folders**: Use 'list_workspace_files' to explore both learnings folders:
-   - List files in 'learnings/' folder (look for *_learning.md files)
-   - List files in 'learnings/scripts/' folder (look for *_script.py files)
-   - List files in 'learning_code_exec/' folder (look for *_learning.md files)
-   - List files in 'learning_code_exec/code/' folder (look for *_code.go files)
-   - Read learning files to understand their content and match them to plan steps
+   
+   **Folder 1 - learnings/ (MCP Tool Execution Mode)**:
+   - List files in 'learnings/' folder (look for *_learning.md files - MCP tool patterns)
+   - List files in 'learnings/scripts/' folder (look for *_script.py files - Python automation scripts)
+   - These contain learnings for steps executed using direct MCP tool calls
+   
+   **Folder 2 - learning_code_exec/ (Code Execution Mode)**:
+   - List files in 'learning_code_exec/' folder (look for *_learning.md files - Go code patterns)
+   - List files in 'learning_code_exec/code/' folder (look for *_code.go files - actual Go code examples)
+   - These contain learnings for steps executed using Go code generation
+   
+   **CRITICAL FOLDER RULES**:
+   - **Code Execution Steps** (agent_configs.use_code_execution_mode: true): Learnings should be in learning_code_exec/ folder ONLY
+   - **MCP Tool Steps** (agent_configs.use_code_execution_mode: false or missing): Learnings should be in learnings/ folder ONLY
+   - **Mismatch Detection**: If a code execution step has learnings in learnings/ folder, or an MCP tool step has learnings in learning_code_exec/ folder, flag this as a MISMATCH
+   - **CRITICAL**: You MUST read the content of ALL learning files to properly match them to steps (see matching strategy below)
 
-3. **Match Learnings to Steps**: For each learning file:
+3. **Match Learnings to Steps** (MULTI-STEP PROCESS - DO NOT SKIP CONTENT READING):
+   
+   **Step 3a - Determine Step Execution Mode (CRITICAL FIRST STEP)**:
+   - For each step in the plan, check its agent_configs.use_code_execution_mode field:
+     - If true → step uses CODE EXECUTION MODE → expect learnings in learning_code_exec/ folder ONLY
+     - If false or missing/nil → step uses MCP TOOL MODE → expect learnings in learnings/ folder ONLY
+   - **This determines which folder to check for each step's learnings**
+   
+   **Step 3b - Filename Matching (Second Pass)**:
    - Extract the step title from filename (format: {StepTitle}_learning.md or {StepTitle}_script.py)
    - Match against step titles in the plan (use fuzzy matching - normalize titles by removing special chars, converting to lowercase)
-   - Check if step ID exists in plan (for orphaned files, the step might have been deleted)
+   - **CRITICAL**: When matching, check if the file is in the CORRECT folder based on step's execution mode:
+     - Code execution step → file should be in learning_code_exec/ folder
+     - MCP tool step → file should be in learnings/ folder
+   - If filename matches a step AND is in the correct folder, mark file as matched to that step
+   - If filename matches a step BUT is in the WRONG folder, mark as MISMATCH (wrong folder for execution mode)
+   
+   **Step 3c - Consolidated File Recognition (Third Pass)**:
+   - Check if filename matches consolidated/general pattern files:
+     - Files starting with "consolidated_" (e.g., consolidated_patterns_learning.md, consolidated_aws_patterns_learning.md)
+     - Files starting with "general_" (e.g., general_patterns_learning.md)
+     - Files containing "_patterns_" in the name
+   - **These files are VALID and should NOT be marked as orphaned** - they contain consolidated patterns from multiple steps
+   - Mark these as "consolidated files" (valid, not orphaned)
+   
+   **Step 3d - Content-Based Matching (Fourth Pass - MANDATORY for unmatched files)**:
+   - **CRITICAL**: For files that didn't match in Step 3b or 3c, you MUST read the file content using 'read_workspace_file'
+   - Search file content for:
+     - Step IDs from the plan (look for step ID references in the content)
+     - Step titles from the plan (look for step title mentions in the content)
+     - Pattern descriptions that reference specific steps
+   - If content contains references to any step IDs or step titles from the plan:
+     - Check if the file is in the CORRECT folder based on that step's execution mode
+     - If in correct folder → mark file as matched to those steps
+     - If in WRONG folder → mark as MISMATCH (content matches step but folder is wrong for execution mode)
+   - **This handles renamed files (move_file operations) and merged files** - they may have different filenames but still contain valid learnings for steps
+   
+   **Step 3e - Final Orphan Detection**:
+   - Only mark a file as "orphaned" if ALL of the following are true:
+     - Filename doesn't match any step title (Step 3b failed)
+     - Filename doesn't match consolidated/general patterns (Step 3c failed)
+     - File content doesn't reference any step IDs or step titles from the plan (Step 3d failed)
+   - **Files that match in ANY of the above steps should NOT be marked as orphaned**
+   - **Exception**: Files in wrong folder for execution mode should be flagged as MISMATCH, not orphaned
 
 4. **Identify Misalignments**:
-   - **Orphaned Learnings**: Learning files that don't match any step in the current plan
-   - **Missing Learnings**: Steps in plan that don't have corresponding learning files
-   - **Potentially Stale**: Learning files for steps that were renamed or modified
+   - **Orphaned Learnings**: Learning files that don't match any step in the current plan (after checking filename AND content)
+   - **Missing Learnings**: Steps in plan that don't have corresponding learning files in the correct folder
+   - **Folder Mismatches**: Learning files in the WRONG folder for the step's execution mode:
+     - Code execution step (use_code_execution_mode: true) with learnings in learnings/ folder → MISMATCH
+     - MCP tool step (use_code_execution_mode: false/missing) with learnings in learning_code_exec/ folder → MISMATCH
+   - **Potentially Stale**: Learning files for steps that were renamed or modified (but still contain valid learnings)
 
 5. **Present Findings**: Use 'human_feedback' tool to present:
    - Summary of alignment status
+   - **Folder Mismatches** (if any): Files in wrong folder for step's execution mode (code execution step with learnings in learnings/, or MCP tool step with learnings in learning_code_exec/)
    - List of orphaned learning files (if any)
-   - List of steps without learnings (if any)
-   - Recommendations for what to do with orphaned files
+   - List of steps without learnings in the correct folder (if any)
+   - Recommendations for what to do with orphaned files and folder mismatches
 
 6. **Get User Approval Before Any Write Operations**: 
    - **CRITICAL**: You MUST use 'human_feedback' tool to get explicit user approval BEFORE calling any write/delete tools
@@ -431,12 +512,41 @@ Your main goal is to analyze the plan and learnings folder, identify misalignmen
 - **Pathing**: All tool paths are relative to the Workspace Path provided.
 - **Workflow**: Analyze → Present findings with 'human_feedback' → Wait for user approval → Then delete approved files
 
-## 🔍 MATCHING STRATEGY
+## 🔍 MATCHING STRATEGY (MULTI-LAYER APPROACH)
+
+**Layer 1 - Filename Matching**:
 - Learning files typically follow pattern: {StepTitle}_learning.md or {StepTitle}_script.py
 - Step titles in plan may have different formatting (spaces, special chars)
 - Use fuzzy matching: normalize both filename and step title (lowercase, remove special chars, replace spaces with underscores)
 - If exact match not found, try partial matches (filename contains step title or vice versa)
-- Consider reading learning file content to find step ID references if filename matching fails
+
+**Layer 2 - Consolidated File Recognition**:
+- **Recognize consolidated files** (these are VALID and should NOT be marked as orphaned):
+  - Files starting with "consolidated_" prefix (e.g., consolidated_patterns_learning.md, consolidated_aws_patterns_learning.md)
+  - Files starting with "general_" prefix (e.g., general_patterns_learning.md)
+  - Files containing "_patterns_" in the name
+- These files contain consolidated patterns from multiple steps and are intentionally not tied to a single step
+- **DO NOT mark consolidated files as orphaned** - they are valid learning files
+
+**Layer 3 - Content-Based Matching (MANDATORY for unmatched files)**:
+- **CRITICAL**: If filename doesn't match (Layer 1) and isn't a consolidated file (Layer 2), you MUST read the file content
+- Use 'read_workspace_file' to read the complete file content
+- Search content for:
+  - Step IDs from the plan (exact matches or partial matches)
+  - Step titles from the plan (exact matches or partial matches)
+  - References to step descriptions or step contexts
+- **This handles**:
+  - **Renamed files**: Files that were moved/renamed but still contain valid learnings (content has step references)
+  - **Merged files**: Files that combine learnings from multiple steps (content references multiple step IDs/titles)
+  - **Files with non-standard naming**: Files that don't follow naming convention but contain valid learnings
+- If content references any step from the plan, mark file as matched to those steps
+
+**Layer 4 - Orphan Detection (Only after all layers)**:
+- A file is only "orphaned" if:
+  - Filename doesn't match any step (Layer 1 failed)
+  - Filename doesn't match consolidated patterns (Layer 2 failed)
+  - Content doesn't reference any step IDs or titles (Layer 3 failed)
+- **Files that match in ANY layer should NOT be marked as orphaned**
 `
 }
 
@@ -459,26 +569,86 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 	}() + `
 
 **YOUR TASKS**:
-1. **Extract all step IDs from plan**: Review the plan.json above and extract all step IDs (including branch steps in if_true_steps and if_false_steps). Note step titles for matching.
+1. **Extract all step IDs and execution modes from plan**: Review the plan.json above and extract:
+   - All step IDs (including branch steps in if_true_steps and if_false_steps)
+   - Step titles for matching
+   - **CRITICAL**: For each step, check agent_configs.use_code_execution_mode field:
+     - If true → step uses CODE EXECUTION MODE → learnings should be in learning_code_exec/ folder ONLY
+     - If false or missing/nil → step uses MCP TOOL MODE → learnings should be in learnings/ folder ONLY
+   - **This determines which folder to check for each step's learnings**
 
 2. **Discover learnings folders**: Use 'list_workspace_files' to list all learning files from both folders:
-   - Look for *.md files in learnings/ folder
-   - Look for *.py files in learnings/scripts/ folder
-   - Look for *.md files in learning_code_exec/ folder
-   - Look for *.go files in learning_code_exec/code/ folder
+   
+   **Folder 1 - learnings/ (MCP Tool Execution Mode)**:
+   - Look for *.md files in learnings/ folder (MCP tool patterns)
+   - Look for *.py files in learnings/scripts/ folder (Python automation scripts)
+   - These are for steps executed using direct MCP tool calls
+   
+   **Folder 2 - learning_code_exec/ (Code Execution Mode)**:
+   - Look for *.md files in learning_code_exec/ folder (Go code patterns)
+   - Look for *.go files in learning_code_exec/code/ folder (actual Go code examples)
+   - These are for steps executed using Go code generation
+   
+   **Important**: A step can have learnings in either folder, both folders, or neither. Check both folders when matching.
 
-3. **Match learnings to steps**: For each learning file:
+3. **Match learnings to steps** (MULTI-LAYER MATCHING - DO NOT SKIP CONTENT READING):
+   
+   **Layer 0 - Determine Step Execution Mode (CRITICAL FIRST STEP)**:
+   - For each step, check agent_configs.use_code_execution_mode:
+     - true → CODE EXECUTION MODE → expect learnings in learning_code_exec/ ONLY
+     - false or missing → MCP TOOL MODE → expect learnings in learnings/ ONLY
+   
+   **Layer 1 - Filename Matching**:
    - Extract step title from filename (remove _learning.md or _script.py suffix)
    - Normalize filename and step titles (lowercase, remove special chars, replace spaces with underscores)
    - Match against step titles in plan
-   - Identify orphaned files (no matching step) and missing learnings (steps without files)
+   - **CRITICAL**: Check if file is in CORRECT folder based on step's execution mode:
+     - Code execution step → file should be in learning_code_exec/
+     - MCP tool step → file should be in learnings/
+   - If filename matches AND folder is correct → mark as matched
+   - If filename matches BUT folder is WRONG → mark as MISMATCH (wrong folder)
+   
+   **Layer 2 - Consolidated File Recognition**:
+   - Check if filename matches consolidated/general patterns:
+     - Files starting with "consolidated_" (e.g., consolidated_patterns_learning.md)
+     - Files starting with "general_" (e.g., general_patterns_learning.md)
+     - Files containing "_patterns_" in the name
+   - **These files are VALID** - they contain consolidated patterns from multiple steps
+   - Mark as "consolidated files" (valid, not orphaned)
+   
+   **Layer 3 - Content-Based Matching (MANDATORY for unmatched files)**:
+   - **CRITICAL**: For files that didn't match in Layer 1 or 2, you MUST read the file content using 'read_workspace_file'
+   - Search file content for:
+     - Step IDs from the plan (look for step ID references)
+     - Step titles from the plan (look for step title mentions)
+     - Pattern descriptions that reference specific steps
+   - If content references any step from the plan, mark file as matched to those steps
+   - **This handles renamed files (move_file) and merged files** - they may have different filenames but still contain valid learnings
+   
+   **Layer 4 - Final Orphan Detection**:
+   - Only mark as "orphaned" if ALL layers failed:
+     - Filename doesn't match any step (Layer 1 failed)
+     - Filename doesn't match consolidated patterns (Layer 2 failed)
+     - Content doesn't reference any step IDs or titles (Layer 3 failed)
+   - **Files that match in ANY layer should NOT be marked as orphaned**
+   
+   - Identify missing learnings (steps without files)
 
 4. **Present findings**: Use 'human_feedback' tool to present:
    - Summary: Total steps, total learning files, alignment status
-   - Orphaned learning files (if any) - files for deleted steps
-   - Steps without learnings (if any) - new steps that don't have learning files yet
-   - Ask user what they want to do with orphaned files (keep, delete, review individually)
-   - **List specific files you propose to delete** and request explicit approval
+   - **Folder Mismatches** (if any): Files in wrong folder for step's execution mode:
+     - Code execution steps with learnings in learnings/ folder
+     - MCP tool steps with learnings in learning_code_exec/ folder
+   - Consolidated files found (files like consolidated_* or general_* - these are valid and should be preserved)
+   - Files matched by content (files that don't match by filename but contain valid step references)
+   - Orphaned learning files (if any) - files that don't match by filename, aren't consolidated, AND don't reference any steps in content
+   - Steps without learnings in the correct folder (if any) - new steps that don't have learning files yet
+   - Ask user what they want to do with orphaned files and folder mismatches (keep, delete, move to correct folder, review individually)
+   - **List specific files you propose to delete or move** and request explicit approval
+   - **IMPORTANT**: Clearly distinguish between:
+     - Consolidated files (valid, preserve)
+     - Content-matched files (valid, preserve)
+     - Truly orphaned files (candidates for deletion, but only with user approval)
 
 5. **Get user approval BEFORE any deletions**:
    - **CRITICAL**: You MUST use 'human_feedback' tool to get explicit user approval BEFORE calling 'delete_workspace_file'
@@ -496,7 +666,10 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 - **MANDATORY**: Always use 'human_feedback' tool BEFORE any write/delete/edit operations
 - **NEVER** call 'delete_workspace_file', 'write_workspace_file', or 'update_workspace_file' without first getting user approval via 'human_feedback'
 - The planning/ folder is read-only - you cannot modify plan.json
-- Use fuzzy matching for step titles (normalize before comparing)
-- Workflow: Analyze → Present with 'human_feedback' → Wait for approval → Then delete (if approved)
+- **MANDATORY CONTENT READING**: You MUST read the content of ALL learning files that don't match by filename - do NOT skip this step
+- **PRESERVE CONSOLIDATED FILES**: Never mark consolidated_* or general_* files as orphaned - they are valid
+- **PRESERVE CONTENT-MATCHED FILES**: Files that reference steps in their content are valid, even if filename doesn't match
+- Use multi-layer matching: Filename → Consolidated patterns → Content matching → Orphan detection
+- Workflow: Analyze (with content reading) → Present with 'human_feedback' → Wait for approval → Then delete (if approved)
 `
 }

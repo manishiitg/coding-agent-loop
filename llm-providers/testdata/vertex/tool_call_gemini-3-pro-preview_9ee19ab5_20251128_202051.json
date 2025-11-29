@@ -1,0 +1,159 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-3-pro-preview",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:20:51.770423+05:30",
+  "request_hash": "9ee19ab5aa7b1b7b2a04e322d77b453684c7058a7d14030e7b163c0b7bf43e7b",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "What's the weather in San Francisco?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-3-pro-preview",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "location": "San Francisco"
+                  },
+                  "name": "get_weather"
+                },
+                "thoughtSignature": "EuQDCuEDAXLI2nxPWNS5a7S+NHY1n86gQunuODx0pVOtyEZ9jditEYbnw2l+6auGar7X0zBFA3OQcblcrm+ULJpnA5HdjjHwzQhW8+V54woh+JDZEt2iXZPCXhgTc9a/a82POjcSvLJl5ZSCfAajQ3CZx391yEBrStdPdxE/bJ8hUDk0CVhkWMWfxRfCFQNA1CLlI8EJDEemb44zzh+soHrl+li6QZTktRUQHO6UY2kPJGFu/APNls5mRx1vz6O9o7e95/cKH0SLSvXmuvRsTvNy9zEqcgsx9zCrdyAWXkU2WozYb5E63/LeMtaLlKgggadxuXRBfqge2yW88UKRD8xlID+jYDRdKWp4W34rOasTOFsvD7TJlfZlFI3bLlhJw3U9bCmeOsR9M5+QtZexCm5KPH9hc2HYOTwD1fD9InXomZa7Dte/MZcCKBrg2WnU6/tfkO7NXpPUTmjMsNDpdK7N6YKjUyHaSOSIgkhyTKUk9BhpP2fQkh2hwXiGgfp8TdRQGGmSu7uK0+QsWfy1ftf4yIRjV9sZBEgdawl0xiz9Oa82Bkcb5h1Xdoz7sU9XwVEnX6Uu3tmK61uuoy+6MbUvRZS/Rnnt7fECI6WcplzPcmruudkPyXIH9f+VQeAW5OEIO57bxw=="
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "y7Ypab7zI72og8UPupHrkQM",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:50:51 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2708"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 17,
+        "promptTokenCount": 111,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 111
+          }
+        ],
+        "thoughtsTokenCount": 81,
+        "totalTokenCount": 209
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {}
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "y7Ypab7zI72og8UPupHrkQM",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:50:51 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2708"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 17,
+        "promptTokenCount": 111,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 111
+          }
+        ],
+        "thoughtsTokenCount": 81,
+        "totalTokenCount": 209
+      }
+    }
+  ],
+  "chunk_count": 2
+}

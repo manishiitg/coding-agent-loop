@@ -1,0 +1,87 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-4.1",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:53:16.484262+05:30",
+  "request_hash": "cc2583f7db86a5c74fe9a21cecacdcdb8072f66c229d3a291ed643483f6baaf8",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "What's the weather in San Francisco?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-4.1",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "custom": {
+                "input": "",
+                "name": ""
+              },
+              "function": {
+                "arguments": "{\"location\":\"San Francisco\"}",
+                "name": "get_weather"
+              },
+              "id": "call_zE3RnusY5pjjNrfwdbVFYoj8",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1764343395,
+    "id": "chatcmpl-CgubTTaMebLzrX01DcFW2VtwNsRTT",
+    "model": "gpt-4.1-2025-04-14",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "fp_09249d7c7b",
+    "usage": {
+      "completion_tokens": 15,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 81,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 96
+    }
+  },
+  "chunk_count": 1
+}

@@ -1,0 +1,94 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-flash",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:33:46.78137+05:30",
+  "request_hash": "0cfeb496ac39afcb8a4815817479f31272e9bb4e98855473a9ba5216dca94a48",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Check the server status"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-flash",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_server_status"
+                },
+                "thoughtSignature": "CiQBcsjafL5xCtHlgG/muAZXTcnjw3dcHzyjn/DP65WN3NlaPzQKYwFyyNp8r5gWg6oUH6FsrvCs7MwBBrvDM5d65tkHSqlwXoBLMo1dwBxaLfMkxw8vNSTtnWbT6xm44D4SKyV3k3CpJiyxHce8s/KAEYOSh7d2LxzFUuZI51ftUodbtrEPmCThLwqFAQFyyNp8v736tN0+ReYOVmSgjXO3GlUzN450s5lrDQpqxpmfzTOWCwM6I+XIT8EGwAgbs7RLCNljGJloTkABm0Em/Oa30B9Yi0nYgBwizmqk1KKc5r/NiUtMz5WKEAkdBNWb0jEwE/o9GdGi4Ilc5Kz4ydGXamNYPXwEktg9vsaL9IP9rZg="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "0rkpaYWkF-64juMPk7zj4As",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:46 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=1167"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 12,
+        "promptTokenCount": 33,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 33
+          }
+        ],
+        "thoughtsTokenCount": 43,
+        "totalTokenCount": 88
+      }
+    }
+  ],
+  "chunk_count": 1
+}

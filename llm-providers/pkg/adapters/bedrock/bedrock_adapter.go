@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"llm-providers/interfaces"
+	"llm-providers/internal/recorder"
 	"llm-providers/llmtypes"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -146,28 +147,33 @@ func (b *BedrockAdapter) GenerateContent(ctx context.Context, messages []llmtype
 		b.logInputDetailsConverse(modelID, messages, converseInput, opts)
 	}
 
-	// Check if streaming is requested
-	if opts.StreamChan != nil {
-		return b.generateContentStreaming(ctx, modelID, converseInput, opts)
-	}
-
-	// Call AWS Bedrock Converse API (non-streaming)
-	result, err := b.client.Converse(ctx, converseInput)
-
-	if err != nil {
-		// Log error with input and response details
-		if b.logger != nil {
-			b.logErrorDetailsConverse(modelID, messages, converseInput, opts, err, result)
-		}
-		return nil, fmt.Errorf("bedrock converse: %w", err)
-	}
-
-	// Convert response from Converse format to llmtypes format
-	return convertConverseResponse(result), nil
+	// Always use streaming internally - for non-streaming requests, StreamChan is nil
+	// and we accumulate internally without sending chunks to the channel
+	return b.generateContentStreaming(ctx, modelID, converseInput, opts, messages)
 }
 
 // generateContentStreaming handles streaming responses from Bedrock ConverseStream API
-func (b *BedrockAdapter) generateContentStreaming(ctx context.Context, modelID string, converseInput *bedrockruntime.ConverseInput, opts *llmtypes.CallOptions) (*llmtypes.ContentResponse, error) {
+func (b *BedrockAdapter) generateContentStreaming(ctx context.Context, modelID string, converseInput *bedrockruntime.ConverseInput, opts *llmtypes.CallOptions, messages []llmtypes.MessageContent) (*llmtypes.ContentResponse, error) {
+	// Check for recorder in context (only if recording/replay might be enabled)
+	rec, _ := recorder.FromContext(ctx)
+	var recordedEvents []map[string]interface{}
+
+	// Handle replay mode (only build requestInfo if needed)
+	if rec != nil && rec.IsReplayEnabled() {
+		if b.logger != nil {
+			b.logger.Infof("▶️  [RECORDER] Replaying recorded Bedrock events")
+		}
+		requestInfo := buildRequestInfo(messages, modelID, opts)
+		events, err := rec.LoadBedrockEvents(requestInfo)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load recorded events: %w", err)
+		}
+		recordedEvents = events
+
+		// Process recorded events as if they came from a live stream
+		return b.processRecordedEvents(ctx, recordedEvents, opts, modelID)
+	}
+
 	// Convert ConverseInput to ConverseStreamInput
 	streamInput := &bedrockruntime.ConverseStreamInput{
 		ModelId:         converseInput.ModelId,
@@ -209,8 +215,21 @@ func (b *BedrockAdapter) generateContentStreaming(ctx context.Context, modelID s
 	// Track content block index to tool use ID mapping
 	contentBlockIndexToToolUseID := make(map[int32]string)
 
+	// Collect events for recording
+	var recordedEventChunks []interface{}
+
 	// Process streaming events from channel
 	for event := range stream.Events() {
+		// Record event if recording is enabled
+		if rec != nil && rec.IsRecordingEnabled() {
+			eventJSON, err := json.Marshal(event)
+			if err == nil {
+				var eventMap map[string]interface{}
+				if json.Unmarshal(eventJSON, &eventMap) == nil {
+					recordedEventChunks = append(recordedEventChunks, eventMap)
+				}
+			}
+		}
 		// Handle different event types
 		switch eventVariant := event.(type) {
 		case *types.ConverseStreamOutputMemberContentBlockDelta:
@@ -484,6 +503,20 @@ func (b *BedrockAdapter) generateContentStreaming(ctx context.Context, modelID s
 	}
 
 	resp.Choices = append(resp.Choices, choice)
+
+	// Record events if recording is enabled (only build requestInfo if needed)
+	if rec != nil && rec.IsRecordingEnabled() && len(recordedEventChunks) > 0 {
+		requestInfo := buildRequestInfo(messages, modelID, opts)
+		filePath, err := rec.RecordBedrockEvents(recordedEventChunks, requestInfo)
+		if err != nil {
+			if b.logger != nil {
+				b.logger.Errorf("Failed to save recorded events: %v", err)
+			}
+		} else if b.logger != nil {
+			b.logger.Infof("📹 [RECORDER] Saved %d events to %s", len(recordedEventChunks), filePath)
+		}
+	}
+
 	return resp, nil
 }
 
@@ -653,6 +686,226 @@ func (b *BedrockAdapter) GenerateEmbeddings(ctx context.Context, input interface
 }
 
 // convertMessagesToConverse converts llmtypes messages to Converse API format
+// processRecordedEvents processes recorded events as if they came from a live stream
+func (b *BedrockAdapter) processRecordedEvents(ctx context.Context, recordedEvents []map[string]interface{}, opts *llmtypes.CallOptions, modelID string) (*llmtypes.ContentResponse, error) {
+	// Accumulate response data (same as live streaming)
+	var accumulatedContent strings.Builder
+	var accumulatedToolCalls []llmtypes.ToolCall
+	var stopReason string
+	var usage *types.TokenUsage
+
+	// Track tool calls by ID (Bedrock streams tool calls incrementally)
+	toolCallMap := make(map[string]*llmtypes.ToolCall)
+	completedToolCallIDs := make(map[string]bool)
+
+	// Track content block index to tool use ID mapping
+	contentBlockIndexToToolUseID := make(map[int32]string)
+
+	// Process each recorded event directly from map structure
+	for _, eventMap := range recordedEvents {
+		// Events are stored as {"Value": {...}} where Value contains the event data
+		valueMap, ok := eventMap["Value"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Process events directly from the map structure (similar to Vertex approach)
+		// Check for ContentBlockDelta (has ContentBlockIndex and Delta)
+		if contentBlockIndex, hasIndex := valueMap["ContentBlockIndex"]; hasIndex {
+			if deltaMap, hasDelta := valueMap["Delta"].(map[string]interface{}); hasDelta {
+				// This is a ContentBlockDelta event
+				// Check if it's text content
+				if textValue, hasText := deltaMap["Value"].(string); hasText && textValue != "" {
+					accumulatedContent.WriteString(textValue)
+					if opts.StreamChan != nil {
+						select {
+						case opts.StreamChan <- llmtypes.StreamChunk{
+							Type:    llmtypes.StreamChunkTypeContent,
+							Content: textValue,
+						}:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					}
+				} else if deltaValue, hasDeltaValue := deltaMap["Value"].(map[string]interface{}); hasDeltaValue {
+					// Tool use delta - Input is nested under Value
+					if toolUseInput, hasToolUse := deltaValue["Input"].(string); hasToolUse {
+						index := int32(contentBlockIndex.(float64))
+						toolUseID, exists := contentBlockIndexToToolUseID[index]
+						if !exists {
+							continue
+						}
+
+						if toolCallMap[toolUseID] == nil {
+							toolCallMap[toolUseID] = &llmtypes.ToolCall{
+								ID:   toolUseID,
+								Type: "function",
+								FunctionCall: &llmtypes.FunctionCall{
+									Name:      "",
+									Arguments: "{}",
+								},
+							}
+						}
+
+						if toolUseInput != "" {
+							currentArgs := toolCallMap[toolUseID].FunctionCall.Arguments
+							if currentArgs == "{}" {
+								toolCallMap[toolUseID].FunctionCall.Arguments = toolUseInput
+							} else {
+								toolCallMap[toolUseID].FunctionCall.Arguments = currentArgs + toolUseInput
+							}
+						}
+					}
+				}
+			} else if startMap, hasStart := valueMap["Start"].(map[string]interface{}); hasStart {
+				// This is a ContentBlockStart event
+				// Start can be ToolUse, which has a nested Value structure
+				if startValue, hasValue := startMap["Value"].(map[string]interface{}); hasValue {
+					// ToolUse start event
+					if toolUseID, hasID := startValue["ToolUseId"].(string); hasID {
+						toolName := ""
+						if name, ok := startValue["Name"].(string); ok {
+							toolName = name
+						}
+						index := int32(contentBlockIndex.(float64))
+
+						contentBlockIndexToToolUseID[index] = toolUseID
+						toolCallMap[toolUseID] = &llmtypes.ToolCall{
+							ID:   toolUseID,
+							Type: "function",
+							FunctionCall: &llmtypes.FunctionCall{
+								Name:      toolName,
+								Arguments: "{}",
+							},
+						}
+					}
+				}
+			} else {
+				// This is a ContentBlockStop event
+				index := int32(contentBlockIndex.(float64))
+				toolUseID, exists := contentBlockIndexToToolUseID[index]
+				if !exists {
+					continue
+				}
+
+				if !completedToolCallIDs[toolUseID] && toolCallMap[toolUseID] != nil {
+					completedToolCallIDs[toolUseID] = true
+					toolCall := toolCallMap[toolUseID]
+
+					if toolCall.FunctionCall != nil && toolCall.FunctionCall.Arguments != "" {
+						originalArgs := toolCall.FunctionCall.Arguments
+						sanitizedArgs := validateAndSanitizeJSON(originalArgs)
+						toolCall.FunctionCall.Arguments = sanitizedArgs
+					}
+
+					if opts.StreamChan != nil {
+						toolCallCopy := *toolCall
+						select {
+						case opts.StreamChan <- llmtypes.StreamChunk{
+							Type:     llmtypes.StreamChunkTypeToolCall,
+							ToolCall: &toolCallCopy,
+						}:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					}
+				}
+			}
+		} else if stopReason, hasStopReason := valueMap["StopReason"].(string); hasStopReason {
+			// This is a MessageStop event
+			stopReason = stopReason
+		} else if usageMap, hasUsage := valueMap["Usage"].(map[string]interface{}); hasUsage {
+			// This is a Metadata event - reconstruct TokenUsage
+			usageJSON, _ := json.Marshal(usageMap)
+			var tokenUsage types.TokenUsage
+			if json.Unmarshal(usageJSON, &tokenUsage) == nil {
+				usage = &tokenUsage
+			}
+		}
+		continue // Skip the switch statement below since we processed directly
+	}
+
+	// Convert accumulated tool calls to slice
+	for _, toolCall := range toolCallMap {
+		accumulatedToolCalls = append(accumulatedToolCalls, *toolCall)
+		if !completedToolCallIDs[toolCall.ID] && opts.StreamChan != nil {
+			toolCallCopy := *toolCall
+			select {
+			case opts.StreamChan <- llmtypes.StreamChunk{
+				Type:     llmtypes.StreamChunkTypeToolCall,
+				ToolCall: &toolCallCopy,
+			}:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+
+	// Build final response
+	resp := &llmtypes.ContentResponse{
+		Choices: []*llmtypes.ContentChoice{},
+	}
+
+	choice := &llmtypes.ContentChoice{
+		Content:    accumulatedContent.String(),
+		StopReason: stopReason,
+		ToolCalls:  accumulatedToolCalls,
+	}
+
+	// Extract token usage
+	if usage != nil {
+		genInfo := &llmtypes.GenerationInfo{}
+		inputTokens := int(aws.ToInt32(usage.InputTokens))
+		outputTokens := int(aws.ToInt32(usage.OutputTokens))
+		totalTokens := int(aws.ToInt32(usage.TotalTokens))
+
+		genInfo.InputTokens = &inputTokens
+		genInfo.OutputTokens = &outputTokens
+		genInfo.TotalTokens = &totalTokens
+		genInfo.PromptTokens = &inputTokens
+		genInfo.CompletionTokens = &outputTokens
+		choice.GenerationInfo = genInfo
+	}
+
+	resp.Choices = append(resp.Choices, choice)
+	return resp, nil
+}
+
+// buildRequestInfo creates a RequestInfo from messages and options for recording/matching
+func buildRequestInfo(messages []llmtypes.MessageContent, modelID string, opts *llmtypes.CallOptions) recorder.RequestInfo {
+	// Convert messages to RequestInfo format
+	messageInfos := make([]recorder.MessageInfo, 0, len(messages))
+	for _, msg := range messages {
+		// Convert parts to interface{} for JSON serialization
+		parts := make([]interface{}, 0, len(msg.Parts))
+		for _, part := range msg.Parts {
+			// Marshal and unmarshal to get clean JSON representation
+			partJSON, _ := json.Marshal(part)
+			var partInterface interface{}
+			json.Unmarshal(partJSON, &partInterface)
+			parts = append(parts, partInterface)
+		}
+		messageInfos = append(messageInfos, recorder.MessageInfo{
+			Role:  string(msg.Role),
+			Parts: parts,
+		})
+	}
+
+	// Build options info
+	optionsInfo := recorder.OptionsInfo{
+		Temperature: opts.Temperature,
+		MaxTokens:   opts.MaxTokens,
+		JSONMode:    opts.JSONMode,
+		ToolsCount:  len(opts.Tools),
+	}
+
+	return recorder.RequestInfo{
+		Messages: messageInfos,
+		ModelID:  modelID,
+		Options:  optionsInfo,
+	}
+}
+
 func convertMessagesToConverse(langMessages []llmtypes.MessageContent) []types.Message {
 	converseMessages := make([]types.Message, 0, len(langMessages))
 

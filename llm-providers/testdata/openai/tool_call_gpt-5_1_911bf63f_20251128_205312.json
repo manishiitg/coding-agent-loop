@@ -1,0 +1,99 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-5.1",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:53:12.490684+05:30",
+  "request_hash": "911bf63f7e9721a358d829d2a0dc74575cb3b8dbd955d2af702cde58b0ef5a08",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Get the weather in New York and also get the current time in UTC. Do both tasks."
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-5.1",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "custom": {
+                "input": "",
+                "name": ""
+              },
+              "function": {
+                "arguments": "{\"location\": \"New York\"}",
+                "name": "get_weather"
+              },
+              "id": "call_sIhdPlElUcU51V7t39RdGDmB",
+              "type": "function"
+            },
+            {
+              "custom": {
+                "input": "",
+                "name": ""
+              },
+              "function": {
+                "arguments": "{\"timezone\": \"UTC\"}",
+                "name": "get_current_time"
+              },
+              "id": "call_ZJlr10MqMexWr2okpmsEqvh7",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1764343391,
+    "id": "chatcmpl-CgubPtKmvxuQ5m0ahAtb8X2deNIzb",
+    "model": "gpt-5.1-2025-11-13",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "",
+    "usage": {
+      "completion_tokens": 55,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 188,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 243
+    }
+  },
+  "chunk_count": 1
+}

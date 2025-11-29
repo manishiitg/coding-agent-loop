@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"llm-providers/interfaces"
+	"llm-providers/internal/recorder"
 	"llm-providers/llmtypes"
 	"llm-providers/pkg/utils"
 
@@ -629,8 +630,20 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 		}
 	}()
 
-	// Call Google GenAI streaming API
-	stream := g.client.Models.GenerateContentStream(ctx, modelID, genaiContents, config)
+	// Check for recorder in context
+	rec, found := recorder.FromContext(ctx)
+	if g.logger != nil {
+		if found && rec != nil {
+			if rec.IsRecordingEnabled() {
+				g.logger.Infof("📹 [RECORDER] Recording enabled in adapter")
+			} else if rec.IsReplayEnabled() {
+				g.logger.Infof("▶️  [RECORDER] Replay enabled in adapter")
+			}
+		} else {
+			g.logger.Debugf("📹 [RECORDER] No recorder found in context")
+		}
+	}
+	var recordedChunks []interface{}
 
 	// Accumulate response data
 	var accumulatedContent strings.Builder
@@ -638,100 +651,199 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 	var usage *genai.GenerateContentResponseUsageMetadata
 	var sharedThoughtSignature string // For parallel tool calls, share thought signature across all
 
-	// Process streaming responses
-	for response, err := range stream {
+	// Handle replay mode - create iterator from recorded chunks
+	if rec != nil && rec.IsReplayEnabled() {
+		// Build request info for matching
+		requestInfo := buildRequestInfo(messages, modelID, opts)
+		chunks, err := rec.LoadVertexChunks(requestInfo)
 		if err != nil {
-			if g.logger != nil {
-				g.logErrorDetails(requestID, modelID, messages, config, opts, err, nil)
+			return nil, fmt.Errorf("failed to load recorded chunks: %w", err)
+		}
+
+		if g.logger != nil {
+			g.logger.Infof("▶️  [RECORDER] Replaying %d recorded chunks", len(chunks))
+		}
+
+		// Convert loaded chunks to genai responses and iterate
+		for _, chunk := range chunks {
+			// Convert map to genai.GenerateContentResponse
+			chunkJSON, _ := json.Marshal(chunk)
+			var response genai.GenerateContentResponse
+			if err := json.Unmarshal(chunkJSON, &response); err != nil {
+				continue
 			}
-			return nil, fmt.Errorf("genai streaming error: %w", err)
-		}
 
-		// Extract usage metadata if available
-		if response.UsageMetadata != nil {
-			usage = response.UsageMetadata
-		}
+			// Process this replayed chunk
+			if response.UsageMetadata != nil {
+				usage = response.UsageMetadata
+			}
 
-		// Process candidates
-		for _, candidate := range response.Candidates {
-			// First pass: Extract thought signature from any part (for parallel calls)
-			if candidate.Content != nil {
-				for _, part := range candidate.Content.Parts {
-					if part.FunctionCall != nil {
-						thoughtSig := extractThoughtSignature(part, g.logger)
-						if thoughtSig != "" && sharedThoughtSignature == "" {
-							sharedThoughtSignature = thoughtSig
-							if g.logger != nil {
-								g.logger.Infof("✅ [VERTEX] Found thought signature in streaming part (function call: %s), will share with all parallel tool calls", part.FunctionCall.Name)
+			// Process candidates (same logic as below)
+			for _, candidate := range response.Candidates {
+				if candidate.Content != nil {
+					for _, part := range candidate.Content.Parts {
+						if part.Text != "" {
+							accumulatedContent.WriteString(part.Text)
+							if opts.StreamChan != nil {
+								select {
+								case opts.StreamChan <- llmtypes.StreamChunk{
+									Type:    llmtypes.StreamChunkTypeContent,
+									Content: part.Text,
+								}:
+								case <-ctx.Done():
+									return nil, ctx.Err()
+								}
 							}
 						}
-					} else if part.Text == "" {
-						// Check empty text parts too
-						thoughtSig := extractThoughtSignature(part, g.logger)
-						if thoughtSig != "" && sharedThoughtSignature == "" {
-							sharedThoughtSignature = thoughtSig
-							if g.logger != nil {
-								g.logger.Infof("✅ [VERTEX] Found thought signature in streaming empty text part, will share with all parallel tool calls")
+						if part.FunctionCall != nil {
+							thoughtSignature := extractThoughtSignature(part, g.logger)
+							if thoughtSignature == "" && sharedThoughtSignature != "" {
+								thoughtSignature = sharedThoughtSignature
+							}
+							toolCallID := generateToolCallID()
+							argsJSON := convertArgumentsToString(part.FunctionCall.Args)
+							toolCall := llmtypes.ToolCall{
+								ID:               toolCallID,
+								Type:             "function",
+								ThoughtSignature: thoughtSignature,
+								FunctionCall: &llmtypes.FunctionCall{
+									Name:      part.FunctionCall.Name,
+									Arguments: argsJSON,
+								},
+							}
+							accumulatedToolCalls = append(accumulatedToolCalls, toolCall)
+							if opts.StreamChan != nil {
+								toolCallCopy := toolCall
+								select {
+								case opts.StreamChan <- llmtypes.StreamChunk{
+									Type:     llmtypes.StreamChunkTypeToolCall,
+									ToolCall: &toolCallCopy,
+								}:
+								case <-ctx.Done():
+									return nil, ctx.Err()
+								}
 							}
 						}
 					}
 				}
 			}
+		}
+	} else {
+		// Normal mode: Call Google GenAI streaming API and process responses
+		stream := g.client.Models.GenerateContentStream(ctx, modelID, genaiContents, config)
 
-			// Second pass: Extract content and tool calls
-			if candidate.Content != nil {
-				for _, part := range candidate.Content.Parts {
-					// Extract text content and stream immediately
-					if part.Text != "" {
-						accumulatedContent.WriteString(part.Text)
-						if opts.StreamChan != nil {
-							select {
-							case opts.StreamChan <- llmtypes.StreamChunk{
-								Type:    llmtypes.StreamChunkTypeContent,
-								Content: part.Text,
-							}:
-							case <-ctx.Done():
-								return nil, ctx.Err()
+		// Process streaming responses
+		for response, err := range stream {
+			if err != nil {
+				if g.logger != nil {
+					g.logErrorDetails(requestID, modelID, messages, config, opts, err, nil)
+				}
+				return nil, fmt.Errorf("genai streaming error: %w", err)
+			}
+
+			// Record chunk if recording is enabled
+			if rec != nil && rec.IsRecordingEnabled() {
+				// Marshal response to JSON for recording
+				chunkJSON, err := json.Marshal(response)
+				if err == nil {
+					var chunkMap map[string]interface{}
+					if json.Unmarshal(chunkJSON, &chunkMap) == nil {
+						recordedChunks = append(recordedChunks, chunkMap)
+						if g.logger != nil {
+							g.logger.Debugf("📹 [RECORDER] Captured chunk %d", len(recordedChunks))
+						}
+					}
+				} else if g.logger != nil {
+					g.logger.Debugf("📹 [RECORDER] Failed to marshal chunk: %v", err)
+				}
+			}
+
+			// Extract usage metadata if available
+			if response.UsageMetadata != nil {
+				usage = response.UsageMetadata
+			}
+
+			// Process candidates
+			for _, candidate := range response.Candidates {
+				// First pass: Extract thought signature from any part (for parallel calls)
+				if candidate.Content != nil {
+					for _, part := range candidate.Content.Parts {
+						if part.FunctionCall != nil {
+							thoughtSig := extractThoughtSignature(part, g.logger)
+							if thoughtSig != "" && sharedThoughtSignature == "" {
+								sharedThoughtSignature = thoughtSig
+								if g.logger != nil {
+									g.logger.Infof("✅ [VERTEX] Found thought signature in streaming part (function call: %s), will share with all parallel tool calls", part.FunctionCall.Name)
+								}
+							}
+						} else if part.Text == "" {
+							// Check empty text parts too
+							thoughtSig := extractThoughtSignature(part, g.logger)
+							if thoughtSig != "" && sharedThoughtSignature == "" {
+								sharedThoughtSignature = thoughtSig
+								if g.logger != nil {
+									g.logger.Infof("✅ [VERTEX] Found thought signature in streaming empty text part, will share with all parallel tool calls")
+								}
 							}
 						}
 					}
+				}
 
-					// Extract function calls (tool calls)
-					if part.FunctionCall != nil {
-						// Extract thought signature from this specific part first
-						thoughtSignature := extractThoughtSignature(part, g.logger)
-						// If not found in this part, use the shared one (for parallel calls)
-						if thoughtSignature == "" && sharedThoughtSignature != "" {
-							thoughtSignature = sharedThoughtSignature
-							if g.logger != nil {
-								g.logger.Debugf("🔍 [VERTEX] Using shared thought signature for streaming tool call %s (from another part)", part.FunctionCall.Name)
+				// Second pass: Extract content and tool calls
+				if candidate.Content != nil {
+					for _, part := range candidate.Content.Parts {
+						// Extract text content and stream immediately
+						if part.Text != "" {
+							accumulatedContent.WriteString(part.Text)
+							if opts.StreamChan != nil {
+								select {
+								case opts.StreamChan <- llmtypes.StreamChunk{
+									Type:    llmtypes.StreamChunkTypeContent,
+									Content: part.Text,
+								}:
+								case <-ctx.Done():
+									return nil, ctx.Err()
+								}
 							}
 						}
 
-						// Generate tool call ID
-						toolCallID := generateToolCallID()
-						argsJSON := convertArgumentsToString(part.FunctionCall.Args)
-						toolCall := llmtypes.ToolCall{
-							ID:               toolCallID,
-							Type:             "function",
-							ThoughtSignature: thoughtSignature,
-							FunctionCall: &llmtypes.FunctionCall{
-								Name:      part.FunctionCall.Name,
-								Arguments: argsJSON,
-							},
-						}
-						accumulatedToolCalls = append(accumulatedToolCalls, toolCall)
+						// Extract function calls (tool calls)
+						if part.FunctionCall != nil {
+							// Extract thought signature from this specific part first
+							thoughtSignature := extractThoughtSignature(part, g.logger)
+							// If not found in this part, use the shared one (for parallel calls)
+							if thoughtSignature == "" && sharedThoughtSignature != "" {
+								thoughtSignature = sharedThoughtSignature
+								if g.logger != nil {
+									g.logger.Debugf("🔍 [VERTEX] Using shared thought signature for streaming tool call %s (from another part)", part.FunctionCall.Name)
+								}
+							}
 
-						// Stream tool call when complete
-						if opts.StreamChan != nil {
-							toolCallCopy := toolCall
-							select {
-							case opts.StreamChan <- llmtypes.StreamChunk{
-								Type:     llmtypes.StreamChunkTypeToolCall,
-								ToolCall: &toolCallCopy,
-							}:
-							case <-ctx.Done():
-								return nil, ctx.Err()
+							// Generate tool call ID
+							toolCallID := generateToolCallID()
+							argsJSON := convertArgumentsToString(part.FunctionCall.Args)
+							toolCall := llmtypes.ToolCall{
+								ID:               toolCallID,
+								Type:             "function",
+								ThoughtSignature: thoughtSignature,
+								FunctionCall: &llmtypes.FunctionCall{
+									Name:      part.FunctionCall.Name,
+									Arguments: argsJSON,
+								},
+							}
+							accumulatedToolCalls = append(accumulatedToolCalls, toolCall)
+
+							// Stream tool call when complete
+							if opts.StreamChan != nil {
+								toolCallCopy := toolCall
+								select {
+								case opts.StreamChan <- llmtypes.StreamChunk{
+									Type:     llmtypes.StreamChunkTypeToolCall,
+									ToolCall: &toolCallCopy,
+								}:
+								case <-ctx.Done():
+									return nil, ctx.Err()
+								}
 							}
 						}
 					}
@@ -751,9 +863,58 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 	// Extract token usage if available
 	choice.GenerationInfo = utils.ExtractGenerationInfoFromVertexUsage(usage)
 
+	// Save recorded chunks if recording was enabled
+	if rec != nil && rec.IsRecordingEnabled() && len(recordedChunks) > 0 {
+		// Build request info for matching
+		requestInfo := buildRequestInfo(messages, modelID, opts)
+		filePath, err := rec.RecordVertexChunks(recordedChunks, requestInfo)
+		if err != nil {
+			if g.logger != nil {
+				g.logger.Errorf("Failed to save recorded chunks: %v", err)
+			}
+		} else if g.logger != nil {
+			g.logger.Infof("📹 [RECORDER] Saved %d chunks to %s", len(recordedChunks), filePath)
+		}
+	}
+
 	return &llmtypes.ContentResponse{
 		Choices: []*llmtypes.ContentChoice{choice},
 	}, nil
+}
+
+// buildRequestInfo creates a RequestInfo from messages and options for recording/matching
+func buildRequestInfo(messages []llmtypes.MessageContent, modelID string, opts *llmtypes.CallOptions) recorder.RequestInfo {
+	// Convert messages to RequestInfo format
+	messageInfos := make([]recorder.MessageInfo, 0, len(messages))
+	for _, msg := range messages {
+		// Convert parts to interface{} for JSON serialization
+		parts := make([]interface{}, 0, len(msg.Parts))
+		for _, part := range msg.Parts {
+			// Marshal and unmarshal to get clean JSON representation
+			partJSON, _ := json.Marshal(part)
+			var partInterface interface{}
+			json.Unmarshal(partJSON, &partInterface)
+			parts = append(parts, partInterface)
+		}
+		messageInfos = append(messageInfos, recorder.MessageInfo{
+			Role:  string(msg.Role),
+			Parts: parts,
+		})
+	}
+
+	// Build options info
+	optionsInfo := recorder.OptionsInfo{
+		Temperature: opts.Temperature,
+		MaxTokens:   opts.MaxTokens,
+		JSONMode:    opts.JSONMode,
+		ToolsCount:  len(opts.Tools),
+	}
+
+	return recorder.RequestInfo{
+		Messages: messageInfos,
+		ModelID:  modelID,
+		Options:  optionsInfo,
+	}
 }
 
 // convertRole converts llmtypes message role to genai role

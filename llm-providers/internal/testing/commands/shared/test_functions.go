@@ -261,9 +261,13 @@ func validateRequiredToolArguments(tool llmtypes.Tool, toolCall llmtypes.ToolCal
 
 // RunPlainTextTest runs a basic plain text generation test
 func RunPlainTextTest(llm llmtypes.Model, modelID string) {
+	RunPlainTextTestWithContext(context.Background(), llm, modelID)
+}
+
+// RunPlainTextTestWithContext runs a basic plain text generation test with a specific context
+func RunPlainTextTestWithContext(ctx context.Context, llm llmtypes.Model, modelID string) {
 	log.Printf("🚀 Testing %s (plain text generation)", modelID)
 
-	ctx := context.Background()
 	messages := []llmtypes.MessageContent{
 		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Hello! Can you introduce yourself?"),
 	}
@@ -316,7 +320,10 @@ func RunPlainTextTest(llm llmtypes.Model, modelID string) {
 
 // RunToolCallTest runs standardized tool calling tests (4 tests)
 func RunToolCallTest(llm llmtypes.Model, modelID string) {
-	ctx := context.Background()
+	RunToolCallTestWithContext(context.Background(), llm, modelID)
+}
+
+func RunToolCallTestWithContext(ctx context.Context, llm llmtypes.Model, modelID string) {
 
 	// Define test tools
 	readFileTool := llmtypes.Tool{
@@ -404,14 +411,64 @@ func RunToolCallTest(llm llmtypes.Model, modelID string) {
 		return
 	}
 
-	if len(resp1.Choices) == 0 || len(resp1.Choices[0].ToolCalls) == 0 {
+	// ASSERTION: Response must have choices
+	if len(resp1.Choices) == 0 {
+		log.Printf("❌ Test 1 failed - no choices in response")
+		return
+	}
+
+	// ASSERTION: Tool calls must be present
+	if len(resp1.Choices[0].ToolCalls) == 0 {
 		log.Printf("❌ Test 1 failed - no tool calls detected")
 		return
 	}
 
 	toolCall1 := resp1.Choices[0].ToolCalls[0]
 
-	// CRITICAL: Validate required arguments are present
+	// ASSERTION: Tool call must have function call
+	if toolCall1.FunctionCall == nil {
+		log.Printf("❌ Test 1 failed - tool call missing function call")
+		return
+	}
+
+	// ASSERTION: Tool call name must be correct
+	if toolCall1.FunctionCall.Name != "read_file" {
+		log.Printf("❌ Test 1 failed - expected tool 'read_file', got '%s'", toolCall1.FunctionCall.Name)
+		return
+	}
+
+	// ASSERTION: Tool call must have arguments
+	if toolCall1.FunctionCall.Arguments == "" {
+		log.Printf("❌ Test 1 failed - tool call missing arguments")
+		return
+	}
+
+	// ASSERTION: Arguments must be valid JSON
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(toolCall1.FunctionCall.Arguments), &args); err != nil {
+		log.Printf("❌ Test 1 failed - tool call arguments are not valid JSON: %v", err)
+		return
+	}
+
+	// ASSERTION: Required 'path' parameter must be present
+	if _, ok := args["path"]; !ok {
+		log.Printf("❌ Test 1 failed - tool call arguments missing required 'path' parameter")
+		return
+	}
+
+	// ASSERTION: 'path' parameter must have correct value
+	if pathVal, ok := args["path"].(string); !ok || pathVal != "go.mod" {
+		log.Printf("❌ Test 1 failed - tool call 'path' parameter incorrect: expected 'go.mod', got '%v'", args["path"])
+		return
+	}
+
+	// ASSERTION: Tool call must have a non-empty ID
+	if toolCall1.ID == "" {
+		log.Printf("❌ Test 1 failed - tool call missing ID")
+		return
+	}
+
+	// CRITICAL: Validate required arguments are present (using existing validation)
 	if err := validateRequiredToolArguments(readFileTool, toolCall1, modelID); err != nil {
 		log.Printf("❌ Test 1 failed - tool call missing required arguments: %v", err)
 		log.Printf("      Model: %s", modelID)
@@ -443,19 +500,66 @@ func RunToolCallTest(llm llmtypes.Model, modelID string) {
 		return
 	}
 
-	if len(resp2.Choices) == 0 || len(resp2.Choices[0].ToolCalls) == 0 {
+	// ASSERTION: Response must have choices
+	if len(resp2.Choices) == 0 {
+		log.Printf("❌ Test 2 failed - no choices in response")
+		return
+	}
+
+	// ASSERTION: Tool calls must be present
+	if len(resp2.Choices[0].ToolCalls) == 0 {
 		log.Printf("❌ Test 2 failed - no tool calls detected")
 		return
 	}
 
 	toolCall2 := resp2.Choices[0].ToolCalls[0]
 
+	// ASSERTION: Tool call must have function call
+	if toolCall2.FunctionCall == nil {
+		log.Printf("❌ Test 2 failed - tool call missing function call")
+		return
+	}
+
+	// ASSERTION: Tool call name must be one of the available tools
+	if toolCall2.FunctionCall.Name != "read_file" && toolCall2.FunctionCall.Name != "get_weather" {
+		log.Printf("❌ Test 2 failed - unexpected tool name '%s', expected 'read_file' or 'get_weather'", toolCall2.FunctionCall.Name)
+		return
+	}
+
+	// ASSERTION: Tool call must have arguments
+	if toolCall2.FunctionCall.Arguments == "" {
+		log.Printf("❌ Test 2 failed - tool call missing arguments")
+		return
+	}
+
+	// ASSERTION: Arguments must be valid JSON
+	var args2 map[string]interface{}
+	if err := json.Unmarshal([]byte(toolCall2.FunctionCall.Arguments), &args2); err != nil {
+		log.Printf("❌ Test 2 failed - tool call arguments are not valid JSON: %v", err)
+		return
+	}
+
 	// CRITICAL: Validate required arguments are present (check against correct tool)
 	var toolToValidate llmtypes.Tool
 	if toolCall2.FunctionCall.Name == "read_file" {
 		toolToValidate = readFileTool
+		// ASSERTION: 'read_file' must have 'path' parameter
+		if _, ok := args2["path"]; !ok {
+			log.Printf("❌ Test 2 failed - 'read_file' tool call missing required 'path' parameter")
+			return
+		}
 	} else if toolCall2.FunctionCall.Name == "get_weather" {
 		toolToValidate = weatherTool
+		// ASSERTION: 'get_weather' must have 'location' parameter
+		if _, ok := args2["location"]; !ok {
+			log.Printf("❌ Test 2 failed - 'get_weather' tool call missing required 'location' parameter")
+			return
+		}
+		// ASSERTION: 'location' parameter should not be empty
+		if locationVal, ok := args2["location"].(string); ok && locationVal == "" {
+			log.Printf("❌ Test 2 failed - 'get_weather' tool call 'location' parameter is empty")
+			return
+		}
 	}
 	if toolToValidate.Function != nil {
 		if err := validateRequiredToolArguments(toolToValidate, toolCall2, modelID); err != nil {
@@ -463,6 +567,12 @@ func RunToolCallTest(llm llmtypes.Model, modelID string) {
 			log.Printf("      Model: %s", modelID)
 			return
 		}
+	}
+
+	// ASSERTION: Tool call must have a non-empty ID
+	if toolCall2.ID == "" {
+		log.Printf("❌ Test 2 failed - tool call missing ID")
+		return
 	}
 
 	log.Printf("✅ Test 2 passed in %s", duration2)
@@ -490,6 +600,7 @@ func RunToolCallTest(llm llmtypes.Model, modelID string) {
 		return
 	}
 
+	// ASSERTION: Response must have choices
 	if len(resp3.Choices) == 0 {
 		log.Printf("❌ Test 3 failed - no response choices")
 		return
@@ -501,22 +612,67 @@ func RunToolCallTest(llm llmtypes.Model, modelID string) {
 		parallelToolCallsCount = len(choice3.ToolCalls)
 	}
 
+	// ASSERTION: Must have at least 2 parallel tool calls
+	if parallelToolCallsCount < 2 {
+		log.Printf("❌ Test 3 failed - expected at least 2 parallel tool calls, got %d", parallelToolCallsCount)
+		return
+	}
+
 	if parallelToolCallsCount >= 2 {
-		// CRITICAL: Validate required arguments for all parallel tool calls
+		// ASSERTION: Validate all parallel tool calls
 		for i, tc := range choice3.ToolCalls {
-			if tc.FunctionCall != nil {
-				var toolToValidate llmtypes.Tool
-				if tc.FunctionCall.Name == "get_weather" {
-					toolToValidate = weatherTool
-				} else if tc.FunctionCall.Name == "get_current_time" {
-					toolToValidate = getTimeTool
+			// ASSERTION: Each tool call must have function call
+			if tc.FunctionCall == nil {
+				log.Printf("❌ Test 3 failed - parallel tool call %d missing function call", i+1)
+				return
+			}
+
+			// ASSERTION: Tool call name must be valid
+			if tc.FunctionCall.Name != "get_weather" && tc.FunctionCall.Name != "get_current_time" {
+				log.Printf("❌ Test 3 failed - parallel tool call %d has unexpected name '%s'", i+1, tc.FunctionCall.Name)
+				return
+			}
+
+			// ASSERTION: Tool call must have a non-empty ID
+			if tc.ID == "" {
+				log.Printf("❌ Test 3 failed - parallel tool call %d missing ID", i+1)
+				return
+			}
+
+			// ASSERTION: Tool call must have arguments
+			if tc.FunctionCall.Arguments == "" {
+				log.Printf("❌ Test 3 failed - parallel tool call %d missing arguments", i+1)
+				return
+			}
+
+			// ASSERTION: Arguments must be valid JSON
+			var args3 map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args3); err != nil {
+				log.Printf("❌ Test 3 failed - parallel tool call %d arguments are not valid JSON: %v", i+1, err)
+				return
+			}
+
+			var toolToValidate llmtypes.Tool
+			if tc.FunctionCall.Name == "get_weather" {
+				toolToValidate = weatherTool
+				// ASSERTION: 'get_weather' must have 'location' parameter
+				if _, ok := args3["location"]; !ok {
+					log.Printf("❌ Test 3 failed - parallel tool call %d ('get_weather') missing required 'location' parameter", i+1)
+					return
 				}
-				if toolToValidate.Function != nil {
-					if err := validateRequiredToolArguments(toolToValidate, tc, modelID); err != nil {
-						log.Printf("❌ Test 3 failed - parallel tool call %d missing required arguments: %v", i+1, err)
-						log.Printf("      Model: %s", modelID)
-						return
-					}
+			} else if tc.FunctionCall.Name == "get_current_time" {
+				toolToValidate = getTimeTool
+				// ASSERTION: 'get_current_time' must have 'timezone' parameter
+				if _, ok := args3["timezone"]; !ok {
+					log.Printf("❌ Test 3 failed - parallel tool call %d ('get_current_time') missing required 'timezone' parameter", i+1)
+					return
+				}
+			}
+			if toolToValidate.Function != nil {
+				if err := validateRequiredToolArguments(toolToValidate, tc, modelID); err != nil {
+					log.Printf("❌ Test 3 failed - parallel tool call %d missing required arguments: %v", i+1, err)
+					log.Printf("      Model: %s", modelID)
+					return
 				}
 			}
 		}
@@ -531,19 +687,25 @@ func RunToolCallTest(llm llmtypes.Model, modelID string) {
 			}
 		}
 
-		// Verify unique IDs
+		// ASSERTION: Verify unique IDs
 		idMap := make(map[string]bool)
-		allUnique := true
 		for _, id := range toolCallIDs {
 			if idMap[id] {
-				allUnique = false
-				log.Printf("   ⚠️ Duplicate tool call ID detected: %s", id)
-				break
+				log.Printf("❌ Test 3 failed - duplicate tool call ID detected: %s", id)
+				return
 			}
 			idMap[id] = true
 		}
 
-		if allUnique {
+		// ASSERTION: All IDs must be non-empty
+		for i, id := range toolCallIDs {
+			if id == "" {
+				log.Printf("❌ Test 3 failed - tool call %d has empty ID", i+1)
+				return
+			}
+		}
+
+		if true {
 			log.Printf("   ✅ All %d tool call IDs are unique", parallelToolCallsCount)
 		} else {
 			log.Printf("   ⚠️ Some tool call IDs are duplicates")

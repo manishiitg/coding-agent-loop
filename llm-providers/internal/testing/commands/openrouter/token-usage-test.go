@@ -1,6 +1,7 @@
 package openrouter
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -104,7 +105,7 @@ func testOpenRouterTokenUsage(messages []llmtypes.MessageContent, mainTraceID in
 	}
 
 	fmt.Printf("🔧 Created OpenRouter LLM using providers.go\n")
-	sharedutils.TestLLMTokenUsage(openrouterLLM, messages, openrouterTokenTestPrompt)
+	sharedutils.TestLLMTokenUsage(context.Background(), openrouterLLM, messages, openrouterTokenTestPrompt)
 
 	// Test 2: OpenRouter for complex reasoning query
 	fmt.Printf("\n🧪 TEST: OpenRouter (Complex Reasoning Query)\n")
@@ -119,10 +120,10 @@ func testOpenRouterTokenUsage(messages []llmtypes.MessageContent, mainTraceID in
 		},
 	}
 
-	sharedutils.TestLLMTokenUsage(openrouterLLM, complexMessages, complexPrompt)
+	sharedutils.TestLLMTokenUsage(context.Background(), openrouterLLM, complexMessages, complexPrompt)
 
 	// Test cached tokens with multi-turn conversation
 	fmt.Printf("\n🧪 TEST: OpenRouter (Multi-Turn Conversation with Cache)\n")
 	fmt.Printf("========================================================\n")
-	sharedutils.TestLLMTokenUsageWithCache(openrouterLLM)
+	sharedutils.TestLLMTokenUsageWithCache(context.Background(), openrouterLLM)
 }

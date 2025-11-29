@@ -87,6 +87,7 @@ type MessageContent struct {
 // ContentResponse represents the response from an LLM
 type ContentResponse struct {
 	Choices []*ContentChoice
+	Usage   *Usage `json:"usage,omitempty"` // Token usage information (LLM-agnostic)
 }
 
 // ContentChoice represents a single choice in the response
@@ -101,9 +102,12 @@ type ContentChoice struct {
 
 // Usage represents token usage information
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
+	InputTokens     int
+	OutputTokens    int
+	TotalTokens     int
+	ReasoningTokens *int `json:"reasoning_tokens,omitempty"` // Reasoning tokens (OpenAI gpt-5.1, etc.)
+	ThoughtsTokens  *int `json:"thoughts_tokens,omitempty"`  // Thoughts tokens (Gemini 3 Pro, etc.)
+	CacheTokens     *int `json:"cache_tokens,omitempty"`     // Cache tokens (sum of all cache-related tokens from various providers)
 }
 
 // GenerationInfo contains token usage and generation metadata from LLM providers.
@@ -134,6 +138,121 @@ type GenerationInfo struct {
 
 	// Additional fields for extensibility (provider-specific)
 	Additional map[string]interface{} `json:"-"`
+}
+
+// ExtractUsageFromGenerationInfo extracts token usage from GenerationInfo in an LLM-agnostic way.
+// It handles different field naming conventions used by various providers (OpenAI, Anthropic, Bedrock, etc.)
+// and returns a unified Usage struct. Returns nil if no token information is available.
+func ExtractUsageFromGenerationInfo(genInfo *GenerationInfo) *Usage {
+	if genInfo == nil {
+		return nil
+	}
+
+	usage := &Usage{}
+
+	// Extract input tokens (check multiple naming conventions in priority order)
+	if genInfo.InputTokens != nil {
+		usage.InputTokens = *genInfo.InputTokens
+	} else if genInfo.InputTokensCap != nil {
+		usage.InputTokens = *genInfo.InputTokensCap
+	} else if genInfo.PromptTokens != nil {
+		usage.InputTokens = *genInfo.PromptTokens
+	} else if genInfo.PromptTokensCap != nil {
+		usage.InputTokens = *genInfo.PromptTokensCap
+	}
+
+	// Extract output tokens (check multiple naming conventions in priority order)
+	if genInfo.OutputTokens != nil {
+		usage.OutputTokens = *genInfo.OutputTokens
+	} else if genInfo.OutputTokensCap != nil {
+		usage.OutputTokens = *genInfo.OutputTokensCap
+	} else if genInfo.CompletionTokens != nil {
+		usage.OutputTokens = *genInfo.CompletionTokens
+	} else if genInfo.CompletionTokensCap != nil {
+		usage.OutputTokens = *genInfo.CompletionTokensCap
+	}
+
+	// Extract total tokens (check multiple naming conventions in priority order)
+	if genInfo.TotalTokens != nil {
+		usage.TotalTokens = *genInfo.TotalTokens
+	} else if genInfo.TotalTokensCap != nil {
+		usage.TotalTokens = *genInfo.TotalTokensCap
+	}
+
+	// Extract reasoning tokens (OpenAI gpt-5.1 and similar models)
+	if genInfo.ReasoningTokens != nil {
+		usage.ReasoningTokens = genInfo.ReasoningTokens
+	}
+
+	// Extract thoughts tokens (Gemini 3 Pro and similar models)
+	if genInfo.ThoughtsTokens != nil {
+		usage.ThoughtsTokens = genInfo.ThoughtsTokens
+	}
+
+	// Extract cache tokens (from multiple sources and providers)
+	cacheTokens := 0
+
+	// 1. Check CachedContentTokens (OpenAI, Gemini, OpenRouter)
+	if genInfo.CachedContentTokens != nil {
+		cacheTokens += *genInfo.CachedContentTokens
+	}
+
+	// 2. Check Anthropic cache tokens from Additional map
+	if genInfo.Additional != nil {
+		// CacheReadInputTokens (tokens read from cache)
+		if cacheRead, ok := genInfo.Additional["CacheReadInputTokens"]; ok {
+			if cacheReadInt, ok := cacheRead.(int); ok {
+				cacheTokens += cacheReadInt
+			} else if cacheReadFloat, ok := cacheRead.(float64); ok {
+				cacheTokens += int(cacheReadFloat)
+			}
+		}
+		// Also check lowercase variant
+		if cacheRead, ok := genInfo.Additional["cache_read_input_tokens"]; ok {
+			if cacheReadInt, ok := cacheRead.(int); ok {
+				cacheTokens += cacheReadInt
+			} else if cacheReadFloat, ok := cacheRead.(float64); ok {
+				cacheTokens += int(cacheReadFloat)
+			}
+		}
+
+		// CacheCreationInputTokens (tokens used to create cache)
+		if cacheCreate, ok := genInfo.Additional["CacheCreationInputTokens"]; ok {
+			if cacheCreateInt, ok := cacheCreate.(int); ok {
+				cacheTokens += cacheCreateInt
+			} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
+				cacheTokens += int(cacheCreateFloat)
+			}
+		}
+		// Also check lowercase variant
+		if cacheCreate, ok := genInfo.Additional["cache_creation_input_tokens"]; ok {
+			if cacheCreateInt, ok := cacheCreate.(int); ok {
+				cacheTokens += cacheCreateInt
+			} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
+				cacheTokens += int(cacheCreateFloat)
+			}
+		}
+	}
+
+	// Set cache tokens if any were found
+	if cacheTokens > 0 {
+		usage.CacheTokens = &cacheTokens
+	}
+
+	// Calculate total tokens if not provided by the provider
+	// Note: TotalTokens from provider may already include reasoning/thoughts tokens
+	if usage.TotalTokens == 0 && usage.InputTokens > 0 && usage.OutputTokens > 0 {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		// If we have reasoning/thoughts tokens, they're typically already included in TotalTokens
+		// from the provider, so we don't add them again here
+	}
+
+	// Return nil if no token information was found
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+		return nil
+	}
+
+	return usage
 }
 
 // PropertySchema represents a single property in a JSON schema
@@ -219,15 +338,18 @@ type JSONSchemaConfig struct {
 
 // CallOptions holds all call options for LLM generation
 type CallOptions struct {
-	Model       string
-	Temperature float64
-	MaxTokens   int
-	JSONMode    bool
-	JSONSchema  *JSONSchemaConfig // JSON Schema for structured outputs
-	Tools       []Tool
-	ToolChoice  *ToolChoice
-	StreamChan  chan<- StreamChunk // Channel for streaming chunks (content and tool calls)
-	Metadata    *Metadata          `json:"metadata,omitempty"` // Provider-specific metadata
+	Model           string
+	Temperature     float64
+	MaxTokens       int
+	JSONMode        bool
+	JSONSchema      *JSONSchemaConfig // JSON Schema for structured outputs
+	Tools           []Tool
+	ToolChoice      *ToolChoice
+	StreamChan      chan<- StreamChunk // Channel for streaming chunks (content and tool calls)
+	Metadata        *Metadata          `json:"metadata,omitempty"` // Provider-specific metadata
+	ReasoningEffort string             // Reasoning effort level: "minimal", "low", "medium", "high" (for gpt-5.1 and similar models)
+	Verbosity       string             // Response verbosity level: "low", "medium", "high" (for reasoning models)
+	ThinkingLevel   string             // Thinking level: "low", "high" (for Gemini 3 Pro)
 }
 
 // CallOption is a function type for setting call options

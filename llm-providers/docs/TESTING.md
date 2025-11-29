@@ -15,7 +15,7 @@ This approach provides:
 - ✅ **Real response validation** using actual LLM outputs
 - ✅ **Easy test maintenance** with automatic discovery
 - ✅ **Zero production overhead** - recording system has no performance impact when disabled
-- ✅ **Multi-provider support** - Works with Vertex (Gemini), OpenAI, and Bedrock
+- ✅ **Multi-provider support** - Works with Anthropic, Bedrock, OpenAI, OpenRouter, and Vertex (Gemini)
 
 ---
 
@@ -40,7 +40,8 @@ This approach provides:
 
 4. **Test Suite** (`internal/testing/commands/shared/test_suite.go`)
    - Automatically discovers all recorded tests
-   - Runs all tests in replay mode
+   - Uses a flexible test registry system for extensibility
+   - Runs all registered tests in replay mode
    - Provides comprehensive reporting
 
 ### Request-Response Matching
@@ -79,6 +80,21 @@ To record a test (capture real LLM responses):
 # Bedrock - Record a tool call test
 ./bin/llm-test llm-tool-call --model global.anthropic.claude-sonnet-4-5-20250929-v1:0 --record
 
+# Anthropic - Record a tool call events test
+./bin/llm-test anthropic-tool-call-events --model claude-3-5-sonnet-20241022 --record
+
+# Bedrock - Record a tool call events test
+./bin/llm-test bedrock-tool-call-events --model global.anthropic.claude-sonnet-4-5-20250929-v1:0 --record
+
+# OpenAI - Record a tool call events test
+./bin/llm-test openai-tool-call-events --model gpt-4o-mini --record
+
+# OpenRouter - Record a tool call events test
+./bin/llm-test openrouter-tool-call-events --model moonshotai/kimi-k2 --record
+
+# Vertex - Record a tool call events test
+./bin/llm-test vertex-tool-call-events --model gemini-2.5-flash --record
+
 # Custom test directory
 ./bin/llm-test vertex-tool-call --model gemini-2.5-pro --record --test-dir my-testdata
 ```
@@ -116,6 +132,21 @@ To replay a recorded test (use recorded responses):
 # Bedrock - Replay a tool call test
 ./bin/llm-test llm-tool-call --model global.anthropic.claude-sonnet-4-5-20250929-v1:0 --replay
 
+# Anthropic - Replay a tool call events test
+./bin/llm-test anthropic-tool-call-events --model claude-3-5-sonnet-20241022 --replay
+
+# Bedrock - Replay a tool call events test
+./bin/llm-test bedrock-tool-call-events --model global.anthropic.claude-sonnet-4-5-20250929-v1:0 --replay
+
+# OpenAI - Replay a tool call events test
+./bin/llm-test openai-tool-call-events --model gpt-4o-mini --replay
+
+# OpenRouter - Replay a tool call events test
+./bin/llm-test openrouter-tool-call-events --model moonshotai/kimi-k2 --replay
+
+# Vertex - Replay a tool call events test
+./bin/llm-test vertex-tool-call-events --model gemini-2.5-flash --replay
+
 # Custom test directory
 ./bin/llm-test vertex-tool-call --model gemini-2.5-pro --replay --test-dir my-testdata
 ```
@@ -143,15 +174,27 @@ To run all recorded tests automatically:
 ```
 
 **What happens:**
-1. Scans `testdata/` directory for all recorded test files
-2. Groups tests by test type and model
-3. Runs each test in replay mode
-4. Provides comprehensive summary report
+1. Initializes the test registry with all available test types
+2. Scans `testdata/` directory for all recorded test files
+3. Groups tests by test type and model
+4. Runs each test in replay mode using the registered test runners
+5. Provides comprehensive summary report
+
+**Supported Test Types (automatically registered via test registry):**
+- `plain_text` - Basic text generation tests
+- `tool_call` - Tool calling tests
+- `tool_call_events` - Tool call event tests (all providers: Anthropic, Bedrock, OpenAI, OpenRouter, Vertex)
+- `token_usage` - Basic token usage tests
+- `token_usage_cache` - Token usage with cache tests
+- `simple_reasoning` - Reasoning token tests (gpt-5.1)
+
+All test types are registered in the `initTestRegistry()` function and automatically discovered by the test suite.
 
 **Example Output:**
 ```
-🚀 Test Suite: Running 5 recorded test scenarios
+🚀 Test Suite: Running 9 recorded test scenarios
 📁 Test directory: testdata
+📋 Registered test types: [plain_text simple_reasoning token_usage token_usage_cache tool_call tool_call_events]
 
 📊 TEST SUITE SUMMARY
 ======================================================================
@@ -169,11 +212,24 @@ To run all recorded tests automatically:
       ✅ gemini-2.5-pro (2.618541ms)
       ✅ gemini-3-pro-preview (2.886625ms)
 
+  TOOL_CALL_EVENTS:
+    ✅ Passed: 1
+      ✅ gpt-4o-mini (180.959µs)
+
+  TOKEN_USAGE:
+    ✅ Passed: 2
+      ✅ gpt-4.1-mini (1.234567ms)
+      ✅ gpt-5.1 (1.456789ms)
+
+  SIMPLE_REASONING:
+    ✅ Passed: 1
+      ✅ gpt-5.1 (2.123456ms)
+
 📈 Overall Statistics:
-   Total tests: 5
-   ✅ Passed: 5
-   Total duration: 9.487582ms
-   Average duration: 1.897516ms
+   Total tests: 9
+   ✅ Passed: 9
+   Total duration: 12.868541ms
+   Average duration: 1.429838ms
    Success rate: 100.0%
 
 🎉 All tests passed!
@@ -182,6 +238,8 @@ To run all recorded tests automatically:
 ---
 
 ## Test Types
+
+The test suite supports the following test types (all automatically discovered):
 
 ### Plain Text Tests
 
@@ -225,6 +283,56 @@ Tests function calling capabilities:
 - Arguments are valid JSON
 - Required parameters are present with correct values
 - Parallel tool calls are handled correctly
+
+### Tool Call Events Tests
+
+Tests tool call event emission for all providers:
+
+```bash
+# Anthropic
+./bin/llm-test anthropic-tool-call-events --model claude-3-5-sonnet-20241022 --record
+
+# Bedrock
+./bin/llm-test bedrock-tool-call-events --model global.anthropic.claude-sonnet-4-5-20250929-v1:0 --record
+
+# OpenAI
+./bin/llm-test openai-tool-call-events --model gpt-4o-mini --record
+
+# OpenRouter
+./bin/llm-test openrouter-tool-call-events --model moonshotai/kimi-k2 --record
+
+# Vertex (Gemini)
+./bin/llm-test vertex-tool-call-events --model gemini-2.5-flash --record
+```
+
+**Validates:**
+- Tool call events are emitted correctly
+- Event count matches tool call count
+- Event structure matches expected format (ID, name, arguments)
+- Events are properly captured by TestEventEmitter
+
+### Token Usage Tests
+
+Tests token usage extraction and reporting:
+
+```bash
+# Basic token usage
+./bin/llm-test token-usage --provider openai --record
+
+# OpenAI-specific token usage tests
+./bin/llm-test openai-token-usage --record
+```
+
+**Test Types:**
+- `token_usage` - Basic token usage validation
+- `token_usage_cache` - Token usage with caching (OpenRouter)
+- `simple_reasoning` - Reasoning token tests (gpt-5.1 with reasoning_effort/verbosity)
+
+**Validates:**
+- Token usage is extracted correctly
+- Input/output/total tokens are available
+- Reasoning tokens are captured (for reasoning models)
+- Cache tokens are tracked (for OpenRouter)
 
 ---
 
@@ -387,22 +495,56 @@ Add your command to `cmd/llm-test/main.go`:
 rootCmd.AddCommand(vertexcmd.MyNewTestCmd)
 ```
 
-### Step 4: Update Test Suite (Optional)
+### Step 4: Register Test in Test Suite (Required)
 
-If you want your test to be included in the test suite, add it to the `runTest` function in `test_suite.go`:
+To include your test in the test suite, register it in the `initTestRegistry()` function in `test_suite.go`:
 
 ```go
-switch testName {
-case "plain_text":
-    RunPlainTextTestWithContext(ctx, llmInstance, modelID)
-case "tool_call":
-    RunToolCallTestWithContext(ctx, llmInstance, modelID)
-case "my_new_test":  // Add your test here
-    RunMyNewTestWithContext(ctx, llmInstance, modelID)
-default:
-    return false, fmt.Sprintf("Unknown test type: %s", testName)
-}
+// In initTestRegistry() function
+registerTest("my_new_test", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+    RunMyNewTestWithContext(ctx, llm, modelID)
+    return true, ""
+})
 ```
+
+**Example: Tool Call Events Test Registration**
+
+The `tool_call_events` test is registered with provider-specific LLM initialization:
+
+```go
+registerTest("tool_call_events", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+    // Create test event emitter to capture events
+    testEmitter := NewTestEventEmitter()
+    // Re-initialize LLM with event emitter based on provider
+    var err error
+    if provider == "openai" {
+        llm, err = llmproviders.InitializeLLM(llmproviders.Config{
+            Provider:     llmproviders.ProviderOpenAI,
+            ModelID:      modelID,
+            Temperature:  0.7,
+            Logger:       logger,
+            EventEmitter: testEmitter,
+            Context:      ctx,
+        })
+    } else if provider == "bedrock" {
+        // ... similar for other providers
+    }
+    if err != nil {
+        return false, fmt.Sprintf("Failed to re-initialize LLM: %v", err)
+    }
+    RunToolCallEventTestWithContext(ctx, llm, modelID, testEmitter)
+    return true, ""
+})
+```
+
+**Benefits of the Registry System:**
+- ✅ **Automatic Discovery** - Test suite automatically finds all registered tests
+- ✅ **Easy to Extend** - Just add a `registerTest()` call
+- ✅ **No Switch Statements** - Clean, maintainable code
+- ✅ **Type Safety** - Function signature ensures consistency
+- ✅ **Provider Support** - Can handle provider-specific initialization logic
+
+The test suite will automatically discover and run any recorded test files matching your test name.
 
 ### Step 5: Record and Test
 
@@ -485,6 +627,8 @@ The recording system is **production-safe** with zero performance impact when di
 - Use `--verbose` for debugging
 - Monitor success rates
 - Add new tests as features are added
+- All registered tests are automatically discovered and run
+- Register new test types in `initTestRegistry()` to include them in the suite
 
 ---
 
@@ -518,6 +662,14 @@ The recording system is **production-safe** with zero performance impact when di
 2. Verify JSON files are valid
 3. Check file naming matches expected pattern
 4. Ensure `provider`, `test_name`, `model_id` fields are set
+5. Verify the test type is registered in `initTestRegistry()` (check output for "Registered test types")
+
+**Problem:** Test suite shows "Unknown test type" error
+
+**Solutions:**
+1. Check if the test name matches a registered test type
+2. Register the test type in `initTestRegistry()` function
+3. Verify the `TestName` in your test command matches the registered name
 
 ### Recording Not Working
 
@@ -685,10 +837,18 @@ The recording/replay testing system provides:
 - ✅ **Cost-effective** - Record once, replay many times
 - ✅ **Deterministic** - Consistent results across runs
 - ✅ **Comprehensive** - Full response validation
-- ✅ **Automatic** - Test suite discovers all tests
-- ✅ **Maintainable** - Easy to add new tests
-- ✅ **Multi-provider** - Supports Vertex (Gemini), OpenAI, and Bedrock
+- ✅ **Automatic** - Test suite discovers all tests via flexible registry system
+- ✅ **Maintainable** - Easy to add new tests (just register them)
+- ✅ **Extensible** - Registry-based architecture for easy expansion
+- ✅ **Multi-provider** - Supports Anthropic, Bedrock, OpenAI, OpenRouter, and Vertex (Gemini)
 - ✅ **Production-safe** - Zero performance overhead when disabled (<2ns per request)
+- ✅ **Complete Coverage** - Supports plain text, tool calls, events, and token usage tests
+
+**Test Registry System:**
+- All test types are registered in `initTestRegistry()`
+- New tests are automatically discovered when registered
+- No need to modify switch statements or core test logic
+- Type-safe function signatures ensure consistency
 
 Use this system to build a robust test suite for your LLM provider implementations!
 

@@ -1,0 +1,153 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-3-pro-preview",
+  "test_name": "gemini3_thinking",
+  "recorded_at": "2025-11-29T13:24:04.664102+05:30",
+  "request_hash": "c20fc7c086181703efe6eb5edcf1434da4a6d80ab2871fd235edeea83aab879c",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hi"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-3-pro-preview",
+    "options": {}
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Hello! How can I help you today?"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "nKYqaY7-GZWDg8UPw4vAmAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:54:04 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=5992"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 9,
+        "promptTokenCount": 2,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 2
+          }
+        ],
+        "thoughtsTokenCount": 489,
+        "totalTokenCount": 500
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "thoughtSignature": "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"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "nKYqaY7-GZWDg8UPw4vAmAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:54:04 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=5992"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 9,
+        "promptTokenCount": 2,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 2
+          }
+        ],
+        "thoughtsTokenCount": 489,
+        "totalTokenCount": 500
+      }
+    }
+  ],
+  "chunk_count": 2
+}

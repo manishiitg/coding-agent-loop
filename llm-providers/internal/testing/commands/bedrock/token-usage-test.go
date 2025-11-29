@@ -1,6 +1,7 @@
 package bedrock
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -102,7 +103,7 @@ func testBedrockTokenUsage(messages []llmtypes.MessageContent, mainTraceID inter
 		fmt.Printf("⏭️  Skipping Bedrock Claude Sonnet test\n")
 	} else {
 		fmt.Printf("🔧 Created Bedrock Claude Sonnet LLM using providers.go\n")
-		sharedutils.TestLLMTokenUsage(bedrockLLM, messages, bedrockTokenTestPrompt)
+		sharedutils.TestLLMTokenUsage(context.Background(), bedrockLLM, messages, bedrockTokenTestPrompt)
 	}
 
 	// Test 2: Bedrock Claude Sonnet for complex reasoning query
@@ -127,7 +128,7 @@ func testBedrockTokenUsage(messages []llmtypes.MessageContent, mainTraceID inter
 		},
 	}
 
-	sharedutils.TestLLMTokenUsage(bedrockLLM, complexMessages, complexPrompt)
+	sharedutils.TestLLMTokenUsage(context.Background(), bedrockLLM, complexMessages, complexPrompt)
 
 	// Test 3: Multi-turn conversation with cache
 	fmt.Printf("\n🧪 TEST: Bedrock (Multi-Turn Conversation with Cache)\n")
@@ -142,5 +143,5 @@ func testBedrockTokenUsage(messages []llmtypes.MessageContent, mainTraceID inter
 		}
 	}
 
-	sharedutils.TestLLMTokenUsageWithCache(bedrockLLM)
+	sharedutils.TestLLMTokenUsageWithCache(context.Background(), bedrockLLM)
 }

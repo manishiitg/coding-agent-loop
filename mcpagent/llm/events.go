@@ -19,6 +19,7 @@ const (
 	EventTypeLLMGenerationStart       = "llm_generation_start"
 	EventTypeLLMGenerationSuccess     = "llm_generation_success"
 	EventTypeLLMGenerationError       = "llm_generation_error"
+	EventTypeLLMToolCallDetected      = "llm_tool_call_detected"
 )
 
 // LLM Operation Types - Constants for operation names
@@ -215,6 +216,31 @@ func (e *LLMGenerationErrorEvent) GetTimestamp() time.Time { return e.Timestamp 
 // GetTraceID returns the trace ID
 func (e *LLMGenerationErrorEvent) GetTraceID() string { return e.TraceID }
 
+// LLMToolCallDetectedEvent represents a tool call detected in LLM response
+type LLMToolCallDetectedEvent struct {
+	ModelID    string      `json:"model_id"`
+	Provider   string      `json:"provider"`
+	Operation  string      `json:"operation"`
+	ToolCallID string      `json:"tool_call_id"`
+	ToolName   string      `json:"tool_name"`
+	Arguments  string      `json:"arguments"`
+	Timestamp  time.Time   `json:"timestamp"`
+	TraceID    string      `json:"trace_id"`
+	Metadata   LLMMetadata `json:"metadata,omitempty"`
+}
+
+// GetModelID returns the model ID
+func (e *LLMToolCallDetectedEvent) GetModelID() string { return e.ModelID }
+
+// GetProvider returns the provider name
+func (e *LLMToolCallDetectedEvent) GetProvider() string { return e.Provider }
+
+// GetTimestamp returns the event timestamp
+func (e *LLMToolCallDetectedEvent) GetTimestamp() time.Time { return e.Timestamp }
+
+// GetTraceID returns the trace ID
+func (e *LLMToolCallDetectedEvent) GetTraceID() string { return e.TraceID }
+
 // emitLLMInitializationStart emits a typed start event for LLM initialization
 func emitLLMInitializationStart(tracers []observability.Tracer, provider string, modelID string, temperature float64, traceID observability.TraceID, metadata LLMMetadata) {
 	if len(tracers) == 0 {
@@ -364,6 +390,32 @@ func emitLLMGenerationError(tracers []observability.Tracer, provider string, mod
 	}
 }
 
+// emitLLMToolCallDetected emits a typed event for tool call detection
+func emitLLMToolCallDetected(tracers []observability.Tracer, provider string, modelID string, toolCallID string, toolName string, arguments string, traceID observability.TraceID, metadata LLMMetadata) {
+	if len(tracers) == 0 {
+		return
+	}
+
+	event := &LLMToolCallDetectedEvent{
+		ModelID:    modelID,
+		Provider:   provider,
+		Operation:  OperationLLMToolCalling,
+		ToolCallID: toolCallID,
+		ToolName:   toolName,
+		Arguments:  arguments,
+		Timestamp:  time.Now(),
+		TraceID:    string(traceID),
+		Metadata:   metadata,
+	}
+
+	for _, tracer := range tracers {
+		if err := tracer.EmitLLMEvent(event); err != nil {
+			// Log error but continue with other tracers
+			continue
+		}
+	}
+}
+
 // extractTokenUsageFromGenerationInfo extracts token usage from GenerationInfo
 func extractTokenUsageFromGenerationInfo(generationInfo *llmtypes.GenerationInfo) observability.UsageMetrics {
 	usage := observability.UsageMetrics{Unit: "TOKENS"}
@@ -409,29 +461,101 @@ func extractTokenUsageFromGenerationInfo(generationInfo *llmtypes.GenerationInfo
 	return usage
 }
 
-// ExtractTokenUsageWithCacheInfo extracts token usage with OpenRouter cache information
-func ExtractTokenUsageWithCacheInfo(generationInfo *llmtypes.GenerationInfo) (observability.UsageMetrics, float64, int, map[string]interface{}) {
-	usage := extractTokenUsageFromGenerationInfo(generationInfo)
-
+// ExtractTokenUsageWithCacheInfo extracts token usage with cache information from ContentResponse.
+// It prioritizes the unified Usage field, falling back to GenerationInfo if needed.
+// Returns: (usageMetrics, cacheDiscount, reasoningTokens, thoughtsTokens, cacheTokens, generationInfoMap)
+func ExtractTokenUsageWithCacheInfo(resp *llmtypes.ContentResponse) (observability.UsageMetrics, float64, int, int, int, map[string]interface{}) {
+	var usage observability.UsageMetrics
 	var cacheDiscount float64
 	var reasoningTokens int
+	var thoughtsTokens int
+	var cacheTokens int
+	var infoCopy map[string]interface{}
 
-	if generationInfo != nil {
-		// Extract OpenRouter cache discount
-		if generationInfo.CacheDiscount != nil {
-			cacheDiscount = *generationInfo.CacheDiscount
+	// Priority 1: Use unified Usage field (if available)
+	if resp != nil && resp.Usage != nil {
+		usage = observability.UsageMetrics{
+			Unit:         "TOKENS",
+			InputTokens:  resp.Usage.InputTokens,
+			OutputTokens: resp.Usage.OutputTokens,
+			TotalTokens:  resp.Usage.TotalTokens,
 		}
 
-		// Extract reasoning tokens (for models like o3)
-		if generationInfo.ReasoningTokens != nil {
-			reasoningTokens = *generationInfo.ReasoningTokens
+		// Extract reasoning tokens from unified Usage
+		if resp.Usage.ReasoningTokens != nil {
+			reasoningTokens = *resp.Usage.ReasoningTokens
+		}
+
+		// Extract thoughts tokens from unified Usage
+		if resp.Usage.ThoughtsTokens != nil {
+			thoughtsTokens = *resp.Usage.ThoughtsTokens
+		}
+
+		// Extract cache tokens from unified Usage
+		if resp.Usage.CacheTokens != nil {
+			cacheTokens = *resp.Usage.CacheTokens
+		}
+
+		// Still need to get cache discount from GenerationInfo (not in Usage)
+		if len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+			genInfo := resp.Choices[0].GenerationInfo
+			if genInfo.CacheDiscount != nil {
+				cacheDiscount = *genInfo.CacheDiscount
+			}
 		}
 	}
 
-	// Create a copy of generationInfo for logging (convert to map for backward compatibility)
-	infoCopy := make(map[string]interface{})
-	if generationInfo != nil {
-		// Convert typed fields to map for backward compatibility
+	// Priority 2: Fall back to GenerationInfo (for backward compatibility)
+	if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		generationInfo := resp.Choices[0].GenerationInfo
+
+		// If we didn't get usage from unified field, extract from GenerationInfo
+		if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+			usage = extractTokenUsageFromGenerationInfo(generationInfo)
+		}
+
+		// Extract cache discount (if not already set)
+		if cacheDiscount == 0 && generationInfo.CacheDiscount != nil {
+			cacheDiscount = *generationInfo.CacheDiscount
+		}
+
+		// Extract reasoning tokens (if not already set from Usage)
+		if reasoningTokens == 0 && generationInfo.ReasoningTokens != nil {
+			reasoningTokens = *generationInfo.ReasoningTokens
+		}
+
+		// Extract thoughts tokens (if not already set from Usage)
+		if thoughtsTokens == 0 && generationInfo.ThoughtsTokens != nil {
+			thoughtsTokens = *generationInfo.ThoughtsTokens
+		}
+
+		// Extract cache tokens from GenerationInfo (if not already set from Usage)
+		if cacheTokens == 0 {
+			// Use the same logic as extractCacheTokens
+			if generationInfo.CachedContentTokens != nil {
+				cacheTokens = *generationInfo.CachedContentTokens
+			}
+			// Also check Additional map for Anthropic cache tokens
+			if generationInfo.Additional != nil {
+				if cacheRead, ok := generationInfo.Additional["CacheReadInputTokens"]; ok {
+					if cacheReadInt, ok := cacheRead.(int); ok {
+						cacheTokens += cacheReadInt
+					} else if cacheReadFloat, ok := cacheRead.(float64); ok {
+						cacheTokens += int(cacheReadFloat)
+					}
+				}
+				if cacheCreate, ok := generationInfo.Additional["CacheCreationInputTokens"]; ok {
+					if cacheCreateInt, ok := cacheCreate.(int); ok {
+						cacheTokens += cacheCreateInt
+					} else if cacheCreateFloat, ok := cacheCreate.(float64); ok {
+						cacheTokens += int(cacheCreateFloat)
+					}
+				}
+			}
+		}
+
+		// Create a copy of generationInfo for logging (convert to map for backward compatibility)
+		infoCopy = make(map[string]interface{})
 		if generationInfo.InputTokens != nil {
 			infoCopy["input_tokens"] = *generationInfo.InputTokens
 		}
@@ -447,13 +571,19 @@ func ExtractTokenUsageWithCacheInfo(generationInfo *llmtypes.GenerationInfo) (ob
 		if generationInfo.ReasoningTokens != nil {
 			infoCopy["ReasoningTokens"] = *generationInfo.ReasoningTokens
 		}
+		if generationInfo.ThoughtsTokens != nil {
+			infoCopy["ThoughtsTokens"] = *generationInfo.ThoughtsTokens
+		}
+		if generationInfo.CachedContentTokens != nil {
+			infoCopy["CachedContentTokens"] = *generationInfo.CachedContentTokens
+		}
 		// Add any additional fields from the Additional map
 		for k, v := range generationInfo.Additional {
 			infoCopy[k] = v
 		}
 	}
 
-	return usage, cacheDiscount, reasoningTokens, infoCopy
+	return usage, cacheDiscount, reasoningTokens, thoughtsTokens, cacheTokens, infoCopy
 }
 
 // EventEmitterAdapter implements llm-providers EventEmitter interface
@@ -511,4 +641,10 @@ func (e *EventEmitterAdapter) EmitLLMGenerationSuccess(provider string, modelID 
 func (e *EventEmitterAdapter) EmitLLMGenerationError(provider string, modelID string, operation string, messages int, temperature float64, messageContent string, err error, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
 	internalMetadata := convertMetadata(metadata)
 	emitLLMGenerationError(e.tracers, provider, modelID, operation, messages, temperature, messageContent, err, observability.TraceID(traceID), internalMetadata)
+}
+
+// EmitToolCallDetected implements llm-providers EventEmitter interface
+func (e *EventEmitterAdapter) EmitToolCallDetected(provider string, modelID string, toolCallID string, toolName string, arguments string, traceID interfaces.TraceID, metadata llmproviders.LLMMetadata) {
+	internalMetadata := convertMetadata(metadata)
+	emitLLMToolCallDetected(e.tracers, provider, modelID, toolCallID, toolName, arguments, observability.TraceID(traceID), internalMetadata)
 }

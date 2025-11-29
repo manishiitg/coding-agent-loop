@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -104,12 +105,12 @@ func testAnthropicTokenUsage(messages []llmtypes.MessageContent, mainTraceID int
 	}
 
 	fmt.Printf("🔧 Created Anthropic Claude LLM using providers.go (Anthropic SDK)\n")
-	sharedutils.TestLLMTokenUsage(anthropicLLM, messages, anthropicTokenTestPrompt)
+	sharedutils.TestLLMTokenUsage(context.Background(), anthropicLLM, messages, anthropicTokenTestPrompt)
 
 	// Test cached tokens with multi-turn conversation
 	fmt.Printf("\n🧪 TEST: Anthropic (Multi-Turn Conversation with Cache)\n")
 	fmt.Printf("======================================================\n")
-	sharedutils.TestLLMTokenUsageWithCache(anthropicLLM)
+	sharedutils.TestLLMTokenUsageWithCache(context.Background(), anthropicLLM)
 
 	// Test: Anthropic direct API for tool calling with token usage
 	fmt.Printf("\n🧪 TEST: Anthropic Direct API (Tool Calling with Token Usage)\n")
@@ -142,5 +143,5 @@ func testAnthropicTokenUsage(messages []llmtypes.MessageContent, mainTraceID int
 	}
 
 	fmt.Printf("🔧 Testing Anthropic with tool calling to verify token usage extraction...\n")
-	sharedutils.TestLLMTokenUsageWithTools(anthropicLLM, toolMessages, []llmtypes.Tool{weatherTool})
+	sharedutils.TestLLMTokenUsageWithTools(context.Background(), anthropicLLM, toolMessages, []llmtypes.Tool{weatherTool})
 }

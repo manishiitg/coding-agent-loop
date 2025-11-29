@@ -561,6 +561,26 @@ func (g *GoogleGenAIAdapter) GenerateContent(ctx context.Context, messages []llm
 		}
 	}
 
+	// Handle thinking level for Gemini 3 Pro
+	if opts.ThinkingLevel != "" {
+		if g.logger != nil {
+			g.logger.Debugf("Setting thinking_level to: %s", opts.ThinkingLevel)
+		}
+		// Check if model is Gemini 3 Pro
+		if strings.Contains(modelID, "gemini-3") {
+			if g.logger != nil {
+				g.logger.Infof("🔍 [GEMINI] Setting thinking level to %s for model %s", opts.ThinkingLevel, modelID)
+			}
+			// Set thinking level via ThinkingConfig
+			thinkingLevel := genai.ThinkingLevel(opts.ThinkingLevel)
+			config.ThinkingConfig = &genai.ThinkingConfig{
+				ThinkingLevel: thinkingLevel,
+			}
+		} else if g.logger != nil {
+			g.logger.Debugf("⚠️  [GEMINI] Thinking level specified but model %s is not Gemini 3 Pro, ignoring", modelID)
+		}
+	}
+
 	// Convert tools if provided
 	if len(opts.Tools) > 0 {
 		if g.logger != nil {
@@ -877,8 +897,11 @@ func (g *GoogleGenAIAdapter) generateContentStreaming(ctx context.Context, model
 		}
 	}
 
+	// Extract usage from GenerationInfo
+	usageExtracted := llmtypes.ExtractUsageFromGenerationInfo(choice.GenerationInfo)
 	return &llmtypes.ContentResponse{
 		Choices: []*llmtypes.ContentChoice{choice},
+		Usage:   usageExtracted,
 	}, nil
 }
 
@@ -1195,6 +1218,7 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 		}
 		return &llmtypes.ContentResponse{
 			Choices: []*llmtypes.ContentChoice{},
+			Usage:   nil,
 		}
 	}
 
@@ -1464,8 +1488,15 @@ func convertResponse(result *genai.GenerateContentResponse, logger interfaces.Lo
 		}
 	}
 
+	// Extract usage from first choice's GenerationInfo
+	var usage *llmtypes.Usage
+	if len(choices) > 0 && choices[0].GenerationInfo != nil {
+		usage = llmtypes.ExtractUsageFromGenerationInfo(choices[0].GenerationInfo)
+	}
+
 	return &llmtypes.ContentResponse{
 		Choices: choices,
+		Usage:   usage,
 	}
 }
 

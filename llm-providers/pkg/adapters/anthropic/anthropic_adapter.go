@@ -599,6 +599,7 @@ func convertResponse(result *anthropic.Message) *llmtypes.ContentResponse {
 	if result == nil {
 		return &llmtypes.ContentResponse{
 			Choices: []*llmtypes.ContentChoice{},
+			Usage:   nil,
 		}
 	}
 
@@ -700,8 +701,11 @@ func convertResponse(result *anthropic.Message) *llmtypes.ContentResponse {
 
 	choices = append(choices, choice)
 
+	// Extract usage from GenerationInfo
+	usage := llmtypes.ExtractUsageFromGenerationInfo(genInfo)
 	return &llmtypes.ContentResponse{
 		Choices: choices,
+		Usage:   usage,
 	}
 }
 

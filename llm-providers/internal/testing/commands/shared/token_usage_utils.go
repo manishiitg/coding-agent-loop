@@ -8,16 +8,49 @@ import (
 	"llm-providers/llmtypes"
 )
 
+// ValidateReasoningTokensInUsage validates that ReasoningTokens are present in the unified Usage field
+func ValidateReasoningTokensInUsage(usage *llmtypes.Usage, expectedModel string) bool {
+	if usage == nil {
+		fmt.Printf("❌ VALIDATION FAILED: Usage field is nil\n")
+		return false
+	}
+
+	if usage.ReasoningTokens == nil {
+		fmt.Printf("❌ VALIDATION FAILED: ReasoningTokens not found in unified Usage field\n")
+		fmt.Printf("   Expected ReasoningTokens to be present for %s with reasoning_effort=high\n", expectedModel)
+		return false
+	}
+
+	fmt.Printf("✅ VALIDATION PASSED: ReasoningTokens found in unified Usage field: %d\n", *usage.ReasoningTokens)
+	return true
+}
+
+// ValidateThoughtsTokensInUsage validates that ThoughtsTokens are present in the unified Usage field
+func ValidateThoughtsTokensInUsage(usage *llmtypes.Usage, expectedModel string) bool {
+	if usage == nil {
+		fmt.Printf("❌ VALIDATION FAILED: Usage field is nil\n")
+		return false
+	}
+
+	if usage.ThoughtsTokens == nil {
+		fmt.Printf("❌ VALIDATION FAILED: ThoughtsTokens not found in unified Usage field\n")
+		fmt.Printf("   Expected ThoughtsTokens to be present for %s with thinking_level=high\n", expectedModel)
+		return false
+	}
+
+	fmt.Printf("✅ VALIDATION PASSED: ThoughtsTokens found in unified Usage field: %d\n", *usage.ThoughtsTokens)
+	return true
+}
+
 // TestLLMTokenUsage tests basic token usage extraction from an LLM response
-func TestLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent, prompt string) {
-	ctx := context.Background()
+func TestLLMTokenUsage(ctx context.Context, llm llmtypes.Model, messages []llmtypes.MessageContent, prompt string, options ...llmtypes.CallOption) {
 	startTime := time.Now()
 
 	fmt.Printf("⏱️  Starting LLM call...\n")
 	fmt.Printf("📝 Sending message: %s\n", prompt)
 
-	// Make the LLM call
-	resp, err := llm.GenerateContent(ctx, messages)
+	// Make the LLM call with options
+	resp, err := llm.GenerateContent(ctx, messages, options...)
 
 	duration := time.Since(startTime)
 
@@ -42,106 +75,133 @@ func TestLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent, p
 	fmt.Printf("   Response length: %d chars\n", len(content))
 	fmt.Printf("   Content: %s\n\n", content)
 
-	// Check for token usage information
+	// Check for token usage information (using unified Usage field)
 	fmt.Printf("🔍 Token Usage Analysis:\n")
 	fmt.Printf("========================\n")
 
-	if choice.GenerationInfo == nil {
-		fmt.Printf("❌ No GenerationInfo found in response\n")
-		fmt.Printf("   This means LangChain is not providing token usage data\n")
+	// First check the unified Usage field
+	if resp.Usage != nil {
+		fmt.Printf("✅ Unified Usage field found!\n")
+		fmt.Printf("   Input tokens:  %d\n", resp.Usage.InputTokens)
+		fmt.Printf("   Output tokens: %d\n", resp.Usage.OutputTokens)
+		fmt.Printf("   Total tokens:  %d\n", resp.Usage.TotalTokens)
+
+		// Validate ReasoningTokens in unified Usage field (if present)
+		if resp.Usage.ReasoningTokens != nil {
+			fmt.Printf("   ✅ Reasoning tokens in Usage field: %d (OpenAI gpt-5.1, etc.)\n", *resp.Usage.ReasoningTokens)
+			fmt.Printf("   ✅ VALIDATION: ReasoningTokens successfully extracted to unified Usage field\n")
+		}
+
+		// Validate ThoughtsTokens in unified Usage field (if present)
+		if resp.Usage.ThoughtsTokens != nil {
+			fmt.Printf("   ✅ Thoughts tokens in Usage field: %d (Gemini 3 Pro, etc.)\n", *resp.Usage.ThoughtsTokens)
+			fmt.Printf("   ✅ VALIDATION: ThoughtsTokens successfully extracted to unified Usage field\n")
+		}
+
+		fmt.Printf("\n✅ Token usage data is available via unified interface!\n")
+		fmt.Printf("   This means proper cost tracking and observability will work\n")
+	} else if choice.GenerationInfo != nil {
+		fmt.Printf("⚠️  Unified Usage field not found, but GenerationInfo is available\n")
+		fmt.Printf("   Falling back to GenerationInfo extraction...\n\n")
+	} else {
+		fmt.Printf("❌ No token usage found in response (neither Usage nor GenerationInfo)\n")
+		fmt.Printf("   This means the LLM provider is not providing token usage data\n")
 		fmt.Printf("   Token usage will need to be estimated\n")
 		return
 	}
 
-	fmt.Printf("✅ GenerationInfo found! Checking for token data...\n\n")
+	// Still check GenerationInfo for advanced metadata (cache tokens, reasoning tokens, etc.)
+	var foundTokens bool
+	var info *llmtypes.GenerationInfo
+	if choice.GenerationInfo != nil {
+		fmt.Printf("\n🔍 Checking GenerationInfo for advanced metadata...\n\n")
 
-	// Check for specific token fields
-	tokenFields := map[string]string{
-		"input_tokens":      "Input tokens",
-		"output_tokens":     "Output tokens",
-		"total_tokens":      "Total tokens",
-		"prompt_tokens":     "Prompt tokens",
-		"completion_tokens": "Completion tokens",
-		// OpenAI-specific field names
-		"PromptTokens":     "Prompt tokens (OpenAI)",
-		"CompletionTokens": "Completion tokens (OpenAI)",
-		"TotalTokens":      "Total tokens (OpenAI)",
-		"ReasoningTokens":  "Reasoning tokens (OpenAI o3)",
-		// Anthropic-specific field names
-		"InputTokens":  "Input tokens (Anthropic)",
-		"OutputTokens": "Output tokens (Anthropic)",
-		// OpenRouter cache token fields
-		"cache_tokens":     "Cache tokens (OpenRouter)",
-		"cache_discount":   "Cache discount (OpenRouter)",
-		"cache_write_cost": "Cache write cost (OpenRouter)",
-		"cache_read_cost":  "Cache read cost (OpenRouter)",
-	}
+		// Check for specific token fields
+		tokenFields := map[string]string{
+			"input_tokens":      "Input tokens",
+			"output_tokens":     "Output tokens",
+			"total_tokens":      "Total tokens",
+			"prompt_tokens":     "Prompt tokens",
+			"completion_tokens": "Completion tokens",
+			// OpenAI-specific field names
+			"PromptTokens":     "Prompt tokens (OpenAI)",
+			"CompletionTokens": "Completion tokens (OpenAI)",
+			"TotalTokens":      "Total tokens (OpenAI)",
+			"ReasoningTokens":  "Reasoning tokens (OpenAI o3)",
+			// Anthropic-specific field names
+			"InputTokens":  "Input tokens (Anthropic)",
+			"OutputTokens": "Output tokens (Anthropic)",
+			// OpenRouter cache token fields
+			"cache_tokens":     "Cache tokens (OpenRouter)",
+			"cache_discount":   "Cache discount (OpenRouter)",
+			"cache_write_cost": "Cache write cost (OpenRouter)",
+			"cache_read_cost":  "Cache read cost (OpenRouter)",
+		}
 
-	foundTokens := false
-	info := choice.GenerationInfo
-	if info != nil {
-		// Check typed fields
-		if info.InputTokens != nil {
-			fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], *info.InputTokens)
-			foundTokens = true
-		}
-		if info.OutputTokens != nil {
-			fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], *info.OutputTokens)
-			foundTokens = true
-		}
-		if info.TotalTokens != nil {
-			fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], *info.TotalTokens)
-			foundTokens = true
-		}
-		// Check for reasoning tokens (typed field - for o3 models)
-		if info.ReasoningTokens != nil {
-			fmt.Printf("✅ %s: %d (from typed field)\n", tokenFields["ReasoningTokens"], *info.ReasoningTokens)
-			foundTokens = true
-		}
-		// Check for cached tokens
-		if info.CachedContentTokens != nil {
-			fmt.Printf("✅ Cached Content Tokens: %d\n", *info.CachedContentTokens)
-			foundTokens = true
-		}
-		if info.CacheDiscount != nil {
-			fmt.Printf("✅ Cache Discount: %.4f (%.2f%%)\n", *info.CacheDiscount, *info.CacheDiscount*100)
-			foundTokens = true
-		}
-		// Check Additional map for other fields
-		if info.Additional != nil {
-			for field, label := range tokenFields {
-				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" && field != "ReasoningTokens" {
+		foundTokens = false
+		info = choice.GenerationInfo
+		if info != nil {
+			// Check typed fields
+			if info.InputTokens != nil {
+				fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], *info.InputTokens)
+				foundTokens = true
+			}
+			if info.OutputTokens != nil {
+				fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], *info.OutputTokens)
+				foundTokens = true
+			}
+			if info.TotalTokens != nil {
+				fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], *info.TotalTokens)
+				foundTokens = true
+			}
+			// Check for reasoning tokens (typed field - for o3 models)
+			if info.ReasoningTokens != nil {
+				fmt.Printf("✅ %s: %d (from typed field)\n", tokenFields["ReasoningTokens"], *info.ReasoningTokens)
+				foundTokens = true
+			}
+			// Check for cached tokens
+			if info.CachedContentTokens != nil {
+				fmt.Printf("✅ Cached Content Tokens: %d\n", *info.CachedContentTokens)
+				foundTokens = true
+			}
+			if info.CacheDiscount != nil {
+				fmt.Printf("✅ Cache Discount: %.4f (%.2f%%)\n", *info.CacheDiscount, *info.CacheDiscount*100)
+				foundTokens = true
+			}
+			// Check Additional map for other fields
+			if info.Additional != nil {
+				for field, label := range tokenFields {
+					if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" && field != "ReasoningTokens" {
+						if value, ok := info.Additional[field]; ok {
+							fmt.Printf("✅ %s: %v\n", label, value)
+							foundTokens = true
+						}
+					}
+				}
+				// Check for reasoning tokens in Additional map (fallback)
+				if info.ReasoningTokens == nil {
+					if value, ok := info.Additional["ReasoningTokens"]; ok {
+						fmt.Printf("✅ %s: %v (from Additional map)\n", tokenFields["ReasoningTokens"], value)
+						foundTokens = true
+					}
+				}
+				// Check for cache-related fields in Additional
+				cacheFields := []string{"cache_tokens", "cache_read_tokens", "cache_write_tokens", "CacheReadInputTokens", "CacheCreationInputTokens"}
+				for _, field := range cacheFields {
 					if value, ok := info.Additional[field]; ok {
-						fmt.Printf("✅ %s: %v\n", label, value)
+						fmt.Printf("✅ Cache field (%s): %v\n", field, value)
 						foundTokens = true
 					}
 				}
 			}
-			// Check for reasoning tokens in Additional map (fallback)
-			if info.ReasoningTokens == nil {
-				if value, ok := info.Additional["ReasoningTokens"]; ok {
-					fmt.Printf("✅ %s: %v (from Additional map)\n", tokenFields["ReasoningTokens"], value)
-					foundTokens = true
-				}
-			}
-			// Check for cache-related fields in Additional
-			cacheFields := []string{"cache_tokens", "cache_read_tokens", "cache_write_tokens", "CacheReadInputTokens", "CacheCreationInputTokens"}
-			for _, field := range cacheFields {
-				if value, ok := info.Additional[field]; ok {
-					fmt.Printf("✅ Cache field (%s): %v\n", field, value)
-					foundTokens = true
-				}
-			}
 		}
 	}
 
-	if !foundTokens {
-		fmt.Printf("❌ No standard token fields found in GenerationInfo\n")
+	// Summary - already printed Usage if available above
+	if resp.Usage == nil && !foundTokens {
+		fmt.Printf("❌ No standard token fields found\n")
 		fmt.Printf("   GenerationInfo: %+v\n", info)
 		fmt.Printf("\n   This suggests the LLM provider doesn't return token usage\n")
-	} else {
-		fmt.Printf("\n✅ Token usage data is available from LangChain!\n")
-		fmt.Printf("   This means proper cost tracking and observability will work\n")
 	}
 
 	// Show all available GenerationInfo for debugging
@@ -182,8 +242,7 @@ func TestLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent, p
 }
 
 // TestLLMTokenUsageWithTools tests token usage extraction when using tools
-func TestLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageContent, tools []llmtypes.Tool) {
-	ctx := context.Background()
+func TestLLMTokenUsageWithTools(ctx context.Context, llm llmtypes.Model, messages []llmtypes.MessageContent, tools []llmtypes.Tool) {
 	startTime := time.Now()
 
 	fmt.Printf("⏱️  Starting LLM call with tools...\n")
@@ -231,100 +290,119 @@ func TestLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageC
 	}
 	fmt.Printf("\n")
 
-	// Check for token usage information
+	// Check for token usage information (using unified Usage field)
 	fmt.Printf("🔍 Token Usage Analysis (with tools):\n")
 	fmt.Printf("======================================\n")
 
-	if choice.GenerationInfo == nil {
-		fmt.Printf("❌ No GenerationInfo found in response\n")
+	// First check the unified Usage field
+	if resp.Usage != nil {
+		fmt.Printf("✅ Unified Usage field found!\n")
+		fmt.Printf("   Input tokens:  %d\n", resp.Usage.InputTokens)
+		fmt.Printf("   Output tokens: %d\n", resp.Usage.OutputTokens)
+		fmt.Printf("   Total tokens:  %d\n", resp.Usage.TotalTokens)
+		// Validate ReasoningTokens in unified Usage field (if present)
+		if resp.Usage.ReasoningTokens != nil {
+			fmt.Printf("   ✅ Reasoning tokens in Usage field: %d (OpenAI gpt-5.1, etc.)\n", *resp.Usage.ReasoningTokens)
+			fmt.Printf("   ✅ VALIDATION: ReasoningTokens successfully extracted to unified Usage field\n")
+		}
+
+		// Validate ThoughtsTokens in unified Usage field (if present)
+		if resp.Usage.ThoughtsTokens != nil {
+			fmt.Printf("   ✅ Thoughts tokens in Usage field: %d (Gemini 3 Pro, etc.)\n", *resp.Usage.ThoughtsTokens)
+			fmt.Printf("   ✅ VALIDATION: ThoughtsTokens successfully extracted to unified Usage field\n")
+		}
+
+		fmt.Printf("\n✅ Token usage data extracted successfully!\n")
+	} else if choice.GenerationInfo != nil {
+		fmt.Printf("⚠️  Unified Usage field not found, but GenerationInfo is available\n")
+		fmt.Printf("   Falling back to GenerationInfo extraction...\n\n")
+	} else {
+		fmt.Printf("❌ No token usage found in response\n")
 		fmt.Printf("   Token usage extraction failed\n")
 		return
 	}
 
-	fmt.Printf("✅ GenerationInfo found! Checking for token data...\n\n")
+	// Still check GenerationInfo for advanced metadata
+	var foundTokens bool
+	var info *llmtypes.GenerationInfo
+	if choice.GenerationInfo != nil {
+		fmt.Printf("\n🔍 Checking GenerationInfo for advanced metadata...\n\n")
 
-	// Check for specific token fields (Google GenAI uses these field names)
-	tokenFields := map[string]string{
-		"input_tokens":  "Input tokens",
-		"output_tokens": "Output tokens",
-		"total_tokens":  "Total tokens",
-	}
+		// Check for specific token fields (Google GenAI uses these field names)
+		tokenFields := map[string]string{
+			"input_tokens":  "Input tokens",
+			"output_tokens": "Output tokens",
+			"total_tokens":  "Total tokens",
+		}
 
-	foundTokens := false
-	var inputTokens, outputTokens, totalTokens interface{}
-	info := choice.GenerationInfo
+		foundTokens = false
+		var inputTokens, outputTokens, totalTokens interface{}
+		info = choice.GenerationInfo
 
-	if info != nil {
-		// Check typed fields
-		if info.InputTokens != nil {
-			inputTokens = *info.InputTokens
-			fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], inputTokens)
-			foundTokens = true
-		}
-		if info.OutputTokens != nil {
-			outputTokens = *info.OutputTokens
-			fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], outputTokens)
-			foundTokens = true
-		}
-		if info.TotalTokens != nil {
-			totalTokens = *info.TotalTokens
-			fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], totalTokens)
-			foundTokens = true
-		}
-		// Check Additional map for other fields
-		if info.Additional != nil {
-			for field, label := range tokenFields {
-				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
-					if value, ok := info.Additional[field]; ok {
-						fmt.Printf("✅ %s: %v\n", label, value)
-						foundTokens = true
+		if info != nil {
+			// Check typed fields
+			if info.InputTokens != nil {
+				inputTokens = *info.InputTokens
+				fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], inputTokens)
+				foundTokens = true
+			}
+			if info.OutputTokens != nil {
+				outputTokens = *info.OutputTokens
+				fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], outputTokens)
+				foundTokens = true
+			}
+			if info.TotalTokens != nil {
+				totalTokens = *info.TotalTokens
+				fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], totalTokens)
+				foundTokens = true
+			}
+			// Check Additional map for other fields
+			if info.Additional != nil {
+				for field, label := range tokenFields {
+					if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
+						if value, ok := info.Additional[field]; ok {
+							fmt.Printf("✅ %s: %v\n", label, value)
+							foundTokens = true
+						}
 					}
 				}
 			}
 		}
 	}
 
-	if !foundTokens {
+	// Validate token counts using unified Usage field if available
+	if resp.Usage != nil {
+		fmt.Printf("\n🔍 Token Usage Validation (from unified Usage field):\n")
+		fmt.Printf("   Input tokens:  %d\n", resp.Usage.InputTokens)
+		fmt.Printf("   Output tokens: %d\n", resp.Usage.OutputTokens)
+		fmt.Printf("   Total tokens:  %d\n", resp.Usage.TotalTokens)
+
+		// Check if total matches sum (allowing for slight discrepancies)
+		calculatedTotal := resp.Usage.InputTokens + resp.Usage.OutputTokens
+		if resp.Usage.TotalTokens > 0 {
+			diff := resp.Usage.TotalTokens - calculatedTotal
+			if diff < 0 {
+				diff = -diff
+			}
+			if resp.Usage.TotalTokens == calculatedTotal {
+				fmt.Printf("   ✅ Total tokens matches input + output\n")
+			} else if diff <= 2 {
+				fmt.Printf("   ⚠️  Total tokens differs from input+output by %d (acceptable)\n", diff)
+			} else {
+				fmt.Printf("   ⚠️  Total tokens (%d) differs significantly from input+output (%d)\n", resp.Usage.TotalTokens, calculatedTotal)
+			}
+		}
+
+		// Check for reasonable token counts
+		if resp.Usage.InputTokens > 0 && resp.Usage.OutputTokens >= 0 {
+			fmt.Printf("   ✅ Token counts are reasonable\n")
+		} else {
+			fmt.Printf("   ⚠️  Unusual token counts detected\n")
+		}
+	} else if !foundTokens {
 		fmt.Printf("❌ No standard token fields found in GenerationInfo\n")
 		fmt.Printf("   GenerationInfo: %+v\n", info)
 		fmt.Printf("\n   This suggests the adapter is not extracting token usage correctly\n")
-	} else {
-		fmt.Printf("\n✅ Token usage data extracted successfully!\n")
-
-		// Validate token counts make sense
-		if inputTokens != nil && outputTokens != nil && totalTokens != nil {
-			inputVal := ExtractIntValue(inputTokens)
-			outputVal := ExtractIntValue(outputTokens)
-			totalVal := ExtractIntValue(totalTokens)
-
-			fmt.Printf("\n🔍 Token Usage Validation:\n")
-			fmt.Printf("   Input tokens: %d\n", inputVal)
-			fmt.Printf("   Output tokens: %d\n", outputVal)
-			fmt.Printf("   Total tokens: %d\n", totalVal)
-
-			// Check if total matches sum (allowing for slight discrepancies)
-			calculatedTotal := inputVal + outputVal
-			if totalVal > 0 {
-				diff := totalVal - calculatedTotal
-				if diff < 0 {
-					diff = -diff
-				}
-				if totalVal == calculatedTotal {
-					fmt.Printf("   ✅ Total tokens matches input + output\n")
-				} else if diff <= 2 {
-					fmt.Printf("   ⚠️  Total tokens differs from input+output by %d (acceptable)\n", diff)
-				} else {
-					fmt.Printf("   ⚠️  Total tokens (%d) differs significantly from input+output (%d)\n", totalVal, calculatedTotal)
-				}
-			}
-
-			// Check for reasonable token counts
-			if inputVal > 0 && outputVal >= 0 {
-				fmt.Printf("   ✅ Token counts are reasonable\n")
-			} else {
-				fmt.Printf("   ⚠️  Unusual token counts detected\n")
-			}
-		}
 	}
 
 	// Show all available GenerationInfo for debugging
@@ -348,8 +426,7 @@ func TestLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageC
 }
 
 // TestLLMTokenUsageWithCache tests token usage with multi-turn conversation to verify cache token extraction
-func TestLLMTokenUsageWithCache(llm llmtypes.Model) {
-	ctx := context.Background()
+func TestLLMTokenUsageWithCache(ctx context.Context, llm llmtypes.Model) {
 
 	// Create a large context document that will be cached
 	largeContext := GetLargeContextForCache()
@@ -388,6 +465,13 @@ func TestLLMTokenUsageWithCache(llm llmtypes.Model) {
 
 	choice1 := resp1.Choices[0]
 	fmt.Printf("✅ Turn 1 completed in %v\n", duration1)
+
+	// Display basic token usage from unified Usage field
+	if resp1.Usage != nil {
+		fmt.Printf("   Turn 1 Tokens (from unified Usage) - Input: %d, Output: %d, Total: %d\n",
+			resp1.Usage.InputTokens, resp1.Usage.OutputTokens, resp1.Usage.TotalTokens)
+	}
+
 	if choice1 != nil {
 		AnalyzeTurn1CacheInfo(choice1)
 	}
@@ -426,9 +510,15 @@ func TestLLMTokenUsageWithCache(llm llmtypes.Model) {
 	choice2 := resp2.Choices[0]
 	fmt.Printf("✅ Turn 2 completed in %v\n", duration2)
 
+	// Display basic token usage from unified Usage field
+	if resp2.Usage != nil {
+		fmt.Printf("   Turn 2 Tokens (from unified Usage) - Input: %d, Output: %d, Total: %d\n",
+			resp2.Usage.InputTokens, resp2.Usage.OutputTokens, resp2.Usage.TotalTokens)
+	}
+
 	// Analyze token usage and cache information
 	if choice1 != nil && choice2 != nil {
-		AnalyzeCacheTokenUsage(choice1, choice2)
+		AnalyzeCacheTokenUsage(choice1, choice2, resp1.Usage, resp2.Usage)
 	}
 }
 
@@ -534,12 +624,15 @@ func AnalyzeTurn1CacheInfo(choice *llmtypes.ContentChoice) {
 }
 
 // AnalyzeCacheTokenUsage analyzes cache token usage from Turn 2 response and compares with Turn 1
-func AnalyzeCacheTokenUsage(choice1, choice2 *llmtypes.ContentChoice) {
+func AnalyzeCacheTokenUsage(choice1, choice2 *llmtypes.ContentChoice, usage1, usage2 *llmtypes.Usage) {
 	fmt.Printf("\n📊 Cache Token Analysis:\n")
 	fmt.Printf("========================\n")
 
-	// First, show Turn 2 basic token info
-	if choice2.GenerationInfo != nil {
+	// First, show Turn 2 basic token info (prefer unified Usage field)
+	if usage2 != nil {
+		fmt.Printf("   Turn 2 Tokens (from unified Usage) - Input: %d, Output: %d, Total: %d\n",
+			usage2.InputTokens, usage2.OutputTokens, usage2.TotalTokens)
+	} else if choice2.GenerationInfo != nil {
 		input2 := 0
 		output2 := 0
 		if choice2.GenerationInfo.InputTokens != nil {
@@ -641,18 +734,22 @@ func AnalyzeCacheTokenUsage(choice1, choice2 *llmtypes.ContentChoice) {
 		fmt.Printf("   Total tokens: %d\n", *info.TotalTokens)
 	}
 
-	// Compare Turn 1 vs Turn 2
-	if choice1.GenerationInfo != nil && choice2.GenerationInfo != nil {
+	// Compare Turn 1 vs Turn 2 (prefer unified Usage fields)
+	if (usage1 != nil && usage2 != nil) || (choice1.GenerationInfo != nil && choice2.GenerationInfo != nil) {
 		fmt.Printf("\n📊 Comparison: Turn 1 vs Turn 2\n")
 		fmt.Printf("===============================\n")
 
-		input1 := 0
-		input2 := 0
-		if choice1.GenerationInfo.InputTokens != nil {
-			input1 = *choice1.GenerationInfo.InputTokens
-		}
-		if choice2.GenerationInfo.InputTokens != nil {
-			input2 = *choice2.GenerationInfo.InputTokens
+		var input1, input2 int
+		if usage1 != nil && usage2 != nil {
+			input1 = usage1.InputTokens
+			input2 = usage2.InputTokens
+		} else if choice1.GenerationInfo != nil && choice2.GenerationInfo != nil {
+			if choice1.GenerationInfo.InputTokens != nil {
+				input1 = *choice1.GenerationInfo.InputTokens
+			}
+			if choice2.GenerationInfo.InputTokens != nil {
+				input2 = *choice2.GenerationInfo.InputTokens
+			}
 		}
 
 		if input1 > 0 && input2 > 0 {

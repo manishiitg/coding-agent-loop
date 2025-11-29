@@ -56,6 +56,9 @@ func runTestSuite(cmd *cobra.Command, args []string) {
 	testing.InitTestLogger(logFile, logLevel)
 	logger := testing.GetTestLogger()
 
+	// Initialize test registry
+	initTestRegistry()
+
 	// Discover all test files
 	testCases, err := discoverTestFiles(suiteFlags.testDir)
 	if err != nil {
@@ -69,6 +72,7 @@ func runTestSuite(cmd *cobra.Command, args []string) {
 
 	log.Printf("🚀 Test Suite: Running %d recorded test scenarios", len(testCases))
 	log.Printf("📁 Test directory: %s", suiteFlags.testDir)
+	log.Printf("📋 Registered test types: %v", getRegisteredTestNames())
 
 	// Group by test type and model
 	grouped := groupTests(testCases)
@@ -88,6 +92,16 @@ func runTestSuite(cmd *cobra.Command, args []string) {
 
 	// Print summary
 	printSummary(results)
+}
+
+// getRegisteredTestNames returns a sorted list of all registered test names
+func getRegisteredTestNames() []string {
+	names := make([]string, 0, len(testRegistry))
+	for name := range testRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func discoverTestFiles(baseDir string) ([]testCase, error) {
@@ -153,6 +167,123 @@ type testResult struct {
 	Passed   bool
 	Duration time.Duration
 	Error    string
+}
+
+// testRunner is a function type that runs a test with the given context, LLM instance, and model ID
+type testRunner func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string)
+
+// testRegistry maps test names to their runner functions
+var testRegistry = make(map[string]testRunner)
+
+// registerTest registers a test runner for a given test name
+func registerTest(testName string, runner testRunner) {
+	testRegistry[testName] = runner
+}
+
+// initTestRegistry initializes the test registry with all available tests
+func initTestRegistry() {
+	// Register plain text tests
+	registerTest("plain_text", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+		RunPlainTextTestWithContext(ctx, llm, modelID)
+		return true, ""
+	})
+
+	// Register tool call tests
+	registerTest("tool_call", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+		RunToolCallTestWithContext(ctx, llm, modelID)
+		return true, ""
+	})
+
+	// Register tool call events tests
+	registerTest("tool_call_events", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+		// Create test event emitter to capture events
+		testEmitter := NewTestEventEmitter()
+		// Re-initialize LLM with event emitter
+		var err error
+		if provider == "openai" {
+			llm, err = llmproviders.InitializeLLM(llmproviders.Config{
+				Provider:     llmproviders.ProviderOpenAI,
+				ModelID:      modelID,
+				Temperature:  0.7,
+				Logger:       logger,
+				EventEmitter: testEmitter,
+				Context:      ctx,
+			})
+		} else if provider == "bedrock" {
+			llm, err = llmproviders.InitializeLLM(llmproviders.Config{
+				Provider:     llmproviders.ProviderBedrock,
+				ModelID:      modelID,
+				Temperature:  0.7,
+				Logger:       logger,
+				EventEmitter: testEmitter,
+				Context:      ctx,
+			})
+		} else if provider == "openrouter" {
+			llm, err = llmproviders.InitializeLLM(llmproviders.Config{
+				Provider:     llmproviders.ProviderOpenRouter,
+				ModelID:      modelID,
+				Temperature:  0.7,
+				Logger:       logger,
+				EventEmitter: testEmitter,
+				Context:      ctx,
+			})
+		} else if provider == "anthropic" {
+			llm, err = llmproviders.InitializeLLM(llmproviders.Config{
+				Provider:     llmproviders.ProviderAnthropic,
+				ModelID:      modelID,
+				Temperature:  0.7,
+				Logger:       logger,
+				EventEmitter: testEmitter,
+				Context:      ctx,
+			})
+		} else {
+			// Default to Vertex
+			llm, err = llmproviders.InitializeLLM(llmproviders.Config{
+				Provider:     llmproviders.ProviderVertex,
+				ModelID:      modelID,
+				Temperature:  0.7,
+				Logger:       logger,
+				EventEmitter: testEmitter,
+				Context:      ctx,
+			})
+		}
+		if err != nil {
+			return false, fmt.Sprintf("Failed to re-initialize LLM with event emitter: %v", err)
+		}
+		RunToolCallEventTestWithContext(ctx, llm, modelID, testEmitter)
+		return true, ""
+	})
+
+	// Register token usage tests
+	registerTest("token_usage", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+		messages := []llmtypes.MessageContent{
+			{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Hello world"}},
+			},
+		}
+		TestLLMTokenUsage(ctx, llm, messages, "Hello world")
+		return true, ""
+	})
+
+	// Register token usage cache tests
+	registerTest("token_usage_cache", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+		TestLLMTokenUsageWithCache(ctx, llm)
+		return true, ""
+	})
+
+	// Register simple reasoning tests (for gpt-5.1 with reasoning_effort and verbosity)
+	registerTest("simple_reasoning", func(ctx context.Context, llm llmtypes.Model, modelID string, provider string, logger interfaces.Logger) (bool, string) {
+		messages := []llmtypes.MessageContent{
+			{
+				Role:  llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Hi"}},
+			},
+		}
+		// Use reasoning_effort and verbosity for reasoning models
+		TestLLMTokenUsage(ctx, llm, messages, "Hi", llmtypes.WithReasoningEffort("high"), llmtypes.WithVerbosity("high"))
+		return true, ""
+	})
 }
 
 func runTestGroup(grouped map[string]map[string][]testCase, logger interfaces.Logger) []testResult {
@@ -243,6 +374,22 @@ func runTestWithProvider(testName, modelID, provider string, logger interfaces.L
 			Logger:      logger,
 			Context:     ctx,
 		})
+	} else if provider == "openrouter" {
+		llmInstance, err = llmproviders.InitializeLLM(llmproviders.Config{
+			Provider:    llmproviders.ProviderOpenRouter,
+			ModelID:     modelID,
+			Temperature: 0.7,
+			Logger:      logger,
+			Context:     ctx,
+		})
+	} else if provider == "anthropic" {
+		llmInstance, err = llmproviders.InitializeLLM(llmproviders.Config{
+			Provider:    llmproviders.ProviderAnthropic,
+			ModelID:     modelID,
+			Temperature: 0.7,
+			Logger:      logger,
+			Context:     ctx,
+		})
 	} else {
 		// Default to Vertex
 		llmInstance, err = llmproviders.InitializeLLM(llmproviders.Config{
@@ -258,21 +405,14 @@ func runTestWithProvider(testName, modelID, provider string, logger interfaces.L
 		return false, fmt.Sprintf("Failed to initialize LLM: %v", err)
 	}
 
-	// Run appropriate test based on test name
-	switch testName {
-	case "plain_text":
-		// Run test - if it panics or logs errors, we'll catch them
-		// For now, we assume success if function returns
-		RunPlainTextTestWithContext(ctx, llmInstance, modelID)
-		return true, "" // Assume success if no panic
-
-	case "tool_call":
-		RunToolCallTestWithContext(ctx, llmInstance, modelID)
-		return true, "" // Assume success if no panic
-
-	default:
-		return false, fmt.Sprintf("Unknown test type: %s", testName)
+	// Look up test runner in registry
+	runner, exists := testRegistry[testName]
+	if !exists {
+		return false, fmt.Sprintf("Unknown test type: %s (available: %v)", testName, getRegisteredTestNames())
 	}
+
+	// Run the test using the registered runner
+	return runner(ctx, llmInstance, modelID, provider, logger)
 }
 
 func printSummary(results []testResult) {

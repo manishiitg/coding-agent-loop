@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"mcpagent/llm"
 	"mcpagent/events"
+	"mcpagent/llm"
 	"strings"
 	"time"
 
@@ -375,9 +375,9 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 	// Emit enhanced token usage event for smart routing with cache information
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 		var tokenEvent *events.TokenUsageEvent
-		if response != nil && len(response.Choices) > 0 && response.Choices[0].GenerationInfo != nil {
-			// Extract cache information from GenerationInfo
-			_, cacheDiscount, reasoningTokens, generationInfo := llm.ExtractTokenUsageWithCacheInfo(response.Choices[0].GenerationInfo)
+		if response != nil {
+			// Extract cache information from unified Usage field (with fallback to GenerationInfo)
+			_, cacheDiscount, reasoningTokens, _, _, generationInfo := llm.ExtractTokenUsageWithCacheInfo(response)
 			tokenEvent = events.NewTokenUsageEventWithCache(
 				0, // turn (smart routing is not part of conversation turns)
 				"smart_routing",

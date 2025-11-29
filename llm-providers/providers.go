@@ -248,6 +248,9 @@ func initializeBedrockWithFallback(config Config) (llmtypes.Model, error) {
 	// If primary fails and we have fallback models, try them
 	if len(config.FallbackModels) > 0 {
 		logger := config.Logger
+		if logger == nil {
+			logger = &noopLoggerImpl{}
+		}
 		logger.Infof("Primary Bedrock model failed, trying fallback models - primary_model: %s, fallback_models: %v, error: %s", config.ModelID, config.FallbackModels, err.Error())
 
 		for _, fallbackModel := range config.FallbackModels {
@@ -279,6 +282,9 @@ func initializeOpenAIWithFallback(config Config) (llmtypes.Model, error) {
 	// If primary fails and we have fallback models, try them
 	if len(config.FallbackModels) > 0 {
 		logger := config.Logger
+		if logger == nil {
+			logger = &noopLoggerImpl{}
+		}
 		logger.Infof("Primary OpenAI model failed, trying fallback models - primary_model: %s, fallback_models: %v, error: %s", config.ModelID, config.FallbackModels, err.Error())
 
 		for _, fallbackModel := range config.FallbackModels {
@@ -310,6 +316,9 @@ func initializeOpenRouterWithFallback(config Config) (llmtypes.Model, error) {
 	// If primary fails and we have fallback models, try them
 	if len(config.FallbackModels) > 0 {
 		logger := config.Logger
+		if logger == nil {
+			logger = &noopLoggerImpl{}
+		}
 		logger.Infof("Primary OpenRouter model failed, trying fallback models - primary_model: %s, fallback_models: %v, error: %s", config.ModelID, config.FallbackModels, err.Error())
 
 		for _, fallbackModel := range config.FallbackModels {
@@ -341,6 +350,9 @@ func initializeVertexWithFallback(config Config) (llmtypes.Model, error) {
 	// If primary fails and we have fallback models, try them
 	if len(config.FallbackModels) > 0 {
 		logger := config.Logger
+		if logger == nil {
+			logger = &noopLoggerImpl{}
+		}
 		logger.Infof("Primary Vertex model failed, trying fallback models - primary_model: %s, fallback_models: %v, error: %s", config.ModelID, config.FallbackModels, err.Error())
 
 		for _, fallbackModel := range config.FallbackModels {
@@ -537,6 +549,12 @@ func emitLLMGenerationError(emitter interfaces.EventEmitter, provider string, mo
 	}
 }
 
+func emitToolCallDetected(emitter interfaces.EventEmitter, provider string, modelID string, toolCallID string, toolName string, arguments string, traceID interfaces.TraceID, metadata LLMMetadata) {
+	if emitter != nil {
+		emitter.EmitToolCallDetected(provider, modelID, toolCallID, toolName, arguments, traceID, metadata)
+	}
+}
+
 // initializeOpenAI creates and configures an OpenAI LLM instance
 func initializeOpenAI(config Config) (llmtypes.Model, error) {
 	// Check for API key from config first, then environment
@@ -579,6 +597,9 @@ func initializeOpenAI(config Config) (llmtypes.Model, error) {
 
 	// Create OpenAI adapter
 	logger := config.Logger
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
 	llm := openaiadapter.NewOpenAIAdapter(&client, modelID, logger)
 
 	// Emit LLM initialization success event - use typed structure directly
@@ -633,6 +654,9 @@ func initializeAnthropic(config Config) (llmtypes.Model, error) {
 	}
 
 	logger := config.Logger
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
 	logger.Infof("Initializing Anthropic LLM with model: %s", modelID)
 
 	// Create Anthropic SDK client
@@ -700,6 +724,9 @@ func initializeOpenRouter(config Config) (llmtypes.Model, error) {
 	}
 
 	logger := config.Logger
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
 	logger.Infof("🔧 Initializing OpenRouter LLM - model_id: %s, base_url: https://openrouter.ai/api/v1", modelID)
 
 	// 🆕 DETAILED OPENROUTER INITIALIZATION LOGGING
@@ -773,6 +800,9 @@ func initializeVertex(config Config) (llmtypes.Model, error) {
 	}
 
 	logger := config.Logger
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
 
 	// Detect if this is an Anthropic model (starts with "claude-\n")
 	isAnthropicModel := strings.HasPrefix(modelID, "claude-")
@@ -1066,6 +1096,10 @@ type ProviderAwareLLM struct {
 
 // NewProviderAwareLLM creates a new provider-aware LLM wrapper
 func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, eventEmitter interfaces.EventEmitter, traceID interfaces.TraceID, logger interfaces.Logger) *ProviderAwareLLM {
+	// Use no-op logger if nil is provided
+	if logger == nil {
+		logger = &noopLoggerImpl{}
+	}
 	return &ProviderAwareLLM{
 		Model:        llm,
 		provider:     provider,
@@ -1412,6 +1446,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 			for i, toolCall := range firstChoice.ToolCalls {
 				p.logger.Infof("   Tool Call %d: ID=%s, Type=%s", i+1, toolCall.ID, toolCall.Type)
 			}
+			// Note: Tool call events are emitted later in the function (line ~1594) to avoid duplication
 			// This is a valid response, continue processing
 		} else if firstChoice.FuncCall != nil { // Legacy function call handling
 			p.logger.Infof("✅ Valid function call response detected - Content is empty but FuncCall present")
@@ -1532,6 +1567,32 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 		if choice.GenerationInfo != nil {
 			p.logger.Infof("✅ GenerationInfo available: InputTokens=%v, OutputTokens=%v, TotalTokens=%v",
 				choice.GenerationInfo.InputTokens, choice.GenerationInfo.OutputTokens, choice.GenerationInfo.TotalTokens)
+		}
+
+		// Emit tool call events for all tool calls (even when content is present)
+		if len(choice.ToolCalls) > 0 {
+			for _, toolCall := range choice.ToolCalls {
+				toolName := ""
+				arguments := "{}"
+				if toolCall.FunctionCall != nil {
+					toolName = toolCall.FunctionCall.Name
+					if toolCall.FunctionCall.Arguments != "" {
+						arguments = toolCall.FunctionCall.Arguments
+					}
+				}
+
+				toolCallMetadata := LLMMetadata{
+					User: "tool_call_user",
+					CustomFields: map[string]string{
+						"provider":     string(p.provider),
+						"model_id":     p.modelID,
+						"tool_call_id": toolCall.ID,
+						"tool_type":    toolCall.Type,
+						"tool_name":    toolName,
+					},
+				}
+				emitToolCallDetected(p.eventEmitter, string(p.provider), p.modelID, toolCall.ID, toolName, arguments, p.traceID, toolCallMetadata)
+			}
 		}
 	}
 

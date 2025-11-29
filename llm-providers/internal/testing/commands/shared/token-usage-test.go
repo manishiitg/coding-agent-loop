@@ -3,11 +3,13 @@ package shared
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
 	llmproviders "llm-providers"
 	"llm-providers/interfaces"
+	"llm-providers/internal/recorder"
 	"llm-providers/llmtypes"
 
 	"github.com/spf13/cobra"
@@ -42,11 +44,17 @@ Examples:
 var (
 	tokenTestPrompt   string
 	tokenTestProvider string
+	tokenTestRecord   bool
+	tokenTestReplay   bool
+	tokenTestDir      string
 )
 
 func init() {
 	TokenUsageTestCmd.Flags().StringVar(&tokenTestPrompt, "prompt", "Hello world", "Test prompt")
 	TokenUsageTestCmd.Flags().StringVar(&tokenTestProvider, "provider", "all", "Provider to test (openai, bedrock, anthropic, openrouter, vertex, all)")
+	TokenUsageTestCmd.Flags().BoolVar(&tokenTestRecord, "record", false, "Record LLM responses to testdata/")
+	TokenUsageTestCmd.Flags().BoolVar(&tokenTestReplay, "replay", false, "Replay recorded responses from testdata/")
+	TokenUsageTestCmd.Flags().StringVar(&tokenTestDir, "test-dir", "testdata", "Directory for test recordings")
 }
 
 func runTokenUsageTest(cmd *cobra.Command, args []string) {
@@ -68,7 +76,14 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 	// Test configuration
 	fmt.Printf("🔧 Test Configuration:\n")
 	fmt.Printf("   Provider: %s\n", selectedProvider)
-	fmt.Printf("   Prompt: %s\n\n", tokenTestPrompt)
+	fmt.Printf("   Prompt: %s\n", tokenTestPrompt)
+	if tokenTestRecord {
+		fmt.Printf("   Recording: enabled (saving to %s)\n", tokenTestDir)
+	}
+	if tokenTestReplay {
+		fmt.Printf("   Replay: enabled (using recordings from %s)\n", tokenTestDir)
+	}
+	fmt.Printf("\n")
 
 	// Create simple message
 	messages := []llmtypes.MessageContent{
@@ -80,6 +95,32 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 
 	// Initialize logger and tracer for providers
 	logger := testing.GetTestLogger()
+
+	// Setup recorder if recording or replaying
+	ctx := context.Background()
+	var rec *recorder.Recorder
+	if tokenTestRecord || tokenTestReplay {
+		recConfig := recorder.RecordingConfig{
+			Enabled:  tokenTestRecord,
+			TestName: "token_usage",
+			Provider: selectedProvider, // Will be overridden per provider
+			ModelID:  "",               // Will be set per provider
+			BaseDir:  tokenTestDir,
+		}
+		rec = recorder.NewRecorder(recConfig)
+		if tokenTestReplay {
+			rec.SetReplayMode(true)
+		}
+
+		if tokenTestRecord {
+			log.Printf("📹 Recording mode enabled - responses will be saved to %s", tokenTestDir)
+		}
+		if tokenTestReplay {
+			log.Printf("▶️  Replay mode enabled - using recorded responses from %s", tokenTestDir)
+		}
+
+		ctx = recorder.WithRecorder(ctx, rec)
+	}
 
 	// Set environment for Langfuse tracing
 	os.Setenv("TRACING_PROVIDER", "langfuse")
@@ -104,31 +145,31 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 	// Test OpenAI
 	if selectedProvider == "all" || selectedProvider == "openai" {
 		providersTested = append(providersTested, "openai")
-		testOpenAI(messages, mainTraceID, logger)
+		testOpenAI(ctx, messages, mainTraceID, logger, rec, "openai")
 	}
 
 	// Test Bedrock
 	if selectedProvider == "all" || selectedProvider == "bedrock" {
 		providersTested = append(providersTested, "bedrock")
-		testBedrock(messages, mainTraceID, logger)
+		testBedrock(ctx, messages, mainTraceID, logger, rec, "bedrock")
 	}
 
 	// Test Anthropic
 	if selectedProvider == "all" || selectedProvider == "anthropic" {
 		providersTested = append(providersTested, "anthropic")
-		testAnthropic(messages, mainTraceID, logger)
+		testAnthropic(ctx, messages, mainTraceID, logger, rec, "anthropic")
 	}
 
 	// Test OpenRouter
 	if selectedProvider == "all" || selectedProvider == "openrouter" {
 		providersTested = append(providersTested, "openrouter")
-		testOpenRouter(messages, mainTraceID, logger)
+		testOpenRouter(ctx, messages, mainTraceID, logger, rec, "openrouter")
 	}
 
 	// Test Vertex AI
 	if selectedProvider == "all" || selectedProvider == "vertex" {
 		providersTested = append(providersTested, "vertex")
-		testVertexAI(messages, mainTraceID, logger)
+		testVertexAI(ctx, messages, mainTraceID, logger, rec, "vertex")
 	}
 
 	// End main trace with summary
@@ -146,7 +187,21 @@ func runTokenUsageTest(cmd *cobra.Command, args []string) {
 }
 
 // testOpenAI runs OpenAI token usage tests
-func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger) {
+func testOpenAI(ctx context.Context, messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger, rec *recorder.Recorder, provider string) {
+	// Setup recorder for this provider if needed
+	testCtx := ctx
+	if rec != nil {
+		// Update recorder config for this provider
+		recConfig := rec.GetConfig()
+		recConfig.Provider = provider
+		recConfig.ModelID = "gpt-4.1-mini" // Will be updated per model
+		rec = recorder.NewRecorder(recConfig)
+		if tokenTestReplay {
+			rec.SetReplayMode(true)
+		}
+		testCtx = recorder.WithRecorder(ctx, rec)
+	}
+
 	// Test 1: OpenAI gpt-4.1 for simple query
 	fmt.Printf("\n🧪 TEST: OpenAI gpt-4.1-mini (Simple Query)\n")
 	fmt.Printf("==========================================\n")
@@ -158,6 +213,7 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 		EventEmitter: nil,
 		TraceID:      mainTraceID,
 		Logger:       logger,
+		Context:      testCtx,
 	}
 
 	gpt41LLM, err := llmproviders.InitializeLLM(gpt41Config)
@@ -166,13 +222,24 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 		fmt.Printf("⏭️  Skipping OpenAI gpt-4.1 test\n")
 	} else {
 		fmt.Printf("🔧 Created OpenAI gpt-4.1-mini LLM using providers.go\n")
-		testLLMTokenUsage(gpt41LLM, messages)
+		testLLMTokenUsage(testCtx, gpt41LLM, messages)
 	}
 
 	// Test 2: OpenAI gpt-4o-mini for complex reasoning query
 	// Note: gpt-4o-mini does not support reasoning tokens (only o3/o3-mini models do)
 	fmt.Printf("\n🧪 TEST: OpenAI gpt-4o-mini (Complex Reasoning Query)\n")
 	fmt.Printf("======================================================\n")
+
+	// Update recorder config for this model
+	if rec != nil {
+		recConfig := rec.GetConfig()
+		recConfig.ModelID = "gpt-4o-mini"
+		rec = recorder.NewRecorder(recConfig)
+		if tokenTestReplay {
+			rec.SetReplayMode(true)
+		}
+		testCtx = recorder.WithRecorder(ctx, rec)
+	}
 
 	gpt4oConfig := llmproviders.Config{
 		Provider:     llmproviders.ProviderOpenAI,
@@ -181,6 +248,7 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 		EventEmitter: nil,
 		TraceID:      mainTraceID,
 		Logger:       logger,
+		Context:      testCtx,
 	}
 
 	gpt4oLLM, err := llmproviders.InitializeLLM(gpt4oConfig)
@@ -199,7 +267,7 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 			},
 		}
 
-		testLLMTokenUsage(gpt4oLLM, complexMessages)
+		testLLMTokenUsage(testCtx, gpt4oLLM, complexMessages)
 	}
 
 	// Note: For testing reasoning tokens, use o3-mini or o3 models
@@ -207,7 +275,20 @@ func testOpenAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Trace
 }
 
 // testBedrock runs Bedrock token usage tests
-func testBedrock(messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger) {
+func testBedrock(ctx context.Context, messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger, rec *recorder.Recorder, provider string) {
+	// Setup recorder for this provider if needed
+	testCtx := ctx
+	if rec != nil {
+		recConfig := rec.GetConfig()
+		recConfig.Provider = provider
+		recConfig.ModelID = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+		rec = recorder.NewRecorder(recConfig)
+		if tokenTestReplay {
+			rec.SetReplayMode(true)
+		}
+		testCtx = recorder.WithRecorder(ctx, rec)
+	}
+
 	fmt.Printf("\n🧪 TEST: Bedrock Claude (Simple Query)\n")
 	fmt.Printf("=====================================\n")
 
@@ -218,6 +299,7 @@ func testBedrock(messages []llmtypes.MessageContent, mainTraceID interfaces.Trac
 		EventEmitter: nil,
 		TraceID:      mainTraceID,
 		Logger:       logger,
+		Context:      testCtx,
 	}
 
 	bedrockLLM, err := llmproviders.InitializeLLM(bedrockConfig)
@@ -226,12 +308,25 @@ func testBedrock(messages []llmtypes.MessageContent, mainTraceID interfaces.Trac
 		fmt.Printf("⏭️  Skipping Bedrock test\n")
 	} else {
 		fmt.Printf("🔧 Created Bedrock Claude LLM using providers.go\n")
-		testLLMTokenUsage(bedrockLLM, messages)
+		testLLMTokenUsage(testCtx, bedrockLLM, messages)
 	}
 }
 
 // testAnthropic runs Anthropic token usage tests
-func testAnthropic(messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger) {
+func testAnthropic(ctx context.Context, messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger, rec *recorder.Recorder, provider string) {
+	// Setup recorder for this provider if needed
+	testCtx := ctx
+	if rec != nil {
+		recConfig := rec.GetConfig()
+		recConfig.Provider = provider
+		recConfig.ModelID = "claude-haiku-4-5-20251001"
+		rec = recorder.NewRecorder(recConfig)
+		if tokenTestReplay {
+			rec.SetReplayMode(true)
+		}
+		testCtx = recorder.WithRecorder(ctx, rec)
+	}
+
 	// Test: Anthropic direct API for simple query
 	fmt.Printf("\n🧪 TEST: Anthropic Direct API (Simple Query)\n")
 	fmt.Printf("============================================\n")
@@ -243,6 +338,7 @@ func testAnthropic(messages []llmtypes.MessageContent, mainTraceID interfaces.Tr
 		EventEmitter: nil,
 		TraceID:      mainTraceID,
 		Logger:       logger,
+		Context:      testCtx,
 	}
 
 	anthropicLLM, err := llmproviders.InitializeLLM(anthropicConfig)
@@ -254,12 +350,12 @@ func testAnthropic(messages []llmtypes.MessageContent, mainTraceID interfaces.Tr
 	}
 
 	fmt.Printf("🔧 Created Anthropic Claude LLM using providers.go (Anthropic SDK)\n")
-	testLLMTokenUsage(anthropicLLM, messages)
+	testLLMTokenUsage(testCtx, anthropicLLM, messages)
 
 	// Test cached tokens with multi-turn conversation
 	fmt.Printf("\n🧪 TEST: Anthropic (Multi-Turn Conversation with Cache)\n")
 	fmt.Printf("======================================================\n")
-	testLLMTokenUsageWithCache(anthropicLLM)
+	testLLMTokenUsageWithCache(testCtx, anthropicLLM)
 
 	// Test: Anthropic direct API for tool calling with token usage
 	fmt.Printf("\n🧪 TEST: Anthropic Direct API (Tool Calling with Token Usage)\n")
@@ -292,11 +388,24 @@ func testAnthropic(messages []llmtypes.MessageContent, mainTraceID interfaces.Tr
 	}
 
 	fmt.Printf("🔧 Testing Anthropic with tool calling to verify token usage extraction...\n")
-	testLLMTokenUsageWithTools(anthropicLLM, toolMessages, []llmtypes.Tool{weatherTool})
+	testLLMTokenUsageWithTools(testCtx, anthropicLLM, toolMessages, []llmtypes.Tool{weatherTool})
 }
 
 // testOpenRouter runs OpenRouter token usage tests
-func testOpenRouter(messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger) {
+func testOpenRouter(ctx context.Context, messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger, rec *recorder.Recorder, provider string) {
+	// Setup recorder for this provider if needed
+	testCtx := ctx
+	if rec != nil {
+		recConfig := rec.GetConfig()
+		recConfig.Provider = provider
+		recConfig.ModelID = "moonshotai/kimi-k2"
+		rec = recorder.NewRecorder(recConfig)
+		if tokenTestReplay {
+			rec.SetReplayMode(true)
+		}
+		testCtx = recorder.WithRecorder(ctx, rec)
+	}
+
 	fmt.Printf("\n🧪 TEST: OpenRouter (Simple Query)\n")
 	fmt.Printf("==================================\n")
 
@@ -307,6 +416,7 @@ func testOpenRouter(messages []llmtypes.MessageContent, mainTraceID interfaces.T
 		EventEmitter: nil,
 		TraceID:      mainTraceID,
 		Logger:       logger,
+		Context:      testCtx,
 	}
 
 	openrouterLLM, err := llmproviders.InitializeLLM(openrouterConfig)
@@ -315,17 +425,30 @@ func testOpenRouter(messages []llmtypes.MessageContent, mainTraceID interfaces.T
 		fmt.Printf("⏭️  Skipping OpenRouter test\n")
 	} else {
 		fmt.Printf("🔧 Created OpenRouter LLM using providers.go\n")
-		testLLMTokenUsage(openrouterLLM, messages)
+		testLLMTokenUsage(testCtx, openrouterLLM, messages)
 
 		// Test cached tokens with multi-turn conversation
 		fmt.Printf("\n🧪 TEST: OpenRouter (Multi-Turn Conversation with Cache)\n")
 		fmt.Printf("========================================================\n")
-		testLLMTokenUsageWithCache(openrouterLLM)
+		testLLMTokenUsageWithCache(testCtx, openrouterLLM)
 	}
 }
 
 // testVertexAI runs Vertex AI token usage tests
-func testVertexAI(messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger) {
+func testVertexAI(ctx context.Context, messages []llmtypes.MessageContent, mainTraceID interfaces.TraceID, logger interfaces.Logger, rec *recorder.Recorder, provider string) {
+	// Setup recorder for this provider if needed
+	testCtx := ctx
+	if rec != nil {
+		recConfig := rec.GetConfig()
+		recConfig.Provider = provider
+		recConfig.ModelID = "gemini-2.5-flash"
+		rec = recorder.NewRecorder(recConfig)
+		if tokenTestReplay {
+			rec.SetReplayMode(true)
+		}
+		testCtx = recorder.WithRecorder(ctx, rec)
+	}
+
 	// Test: Vertex AI (Google GenAI) for simple query
 	fmt.Printf("\n🧪 TEST: Vertex AI / Google GenAI (Simple Query)\n")
 	fmt.Printf("================================================\n")
@@ -337,7 +460,7 @@ func testVertexAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Tra
 		EventEmitter: nil,
 		TraceID:      mainTraceID,
 		Logger:       logger,
-		Context:      context.Background(),
+		Context:      testCtx,
 	}
 
 	vertexLLM, err := llmproviders.InitializeLLM(vertexConfig)
@@ -349,12 +472,12 @@ func testVertexAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Tra
 	}
 
 	fmt.Printf("🔧 Created Vertex AI LLM using providers.go (Google GenAI SDK)\n")
-	testLLMTokenUsage(vertexLLM, messages)
+	testLLMTokenUsage(testCtx, vertexLLM, messages)
 
 	// Test cached tokens with multi-turn conversation
 	fmt.Printf("\n🧪 TEST: Vertex AI (Multi-Turn Conversation with Cache)\n")
 	fmt.Printf("=======================================================\n")
-	testLLMTokenUsageWithCache(vertexLLM)
+	testLLMTokenUsageWithCache(testCtx, vertexLLM)
 
 	// Test: Vertex AI (Google GenAI) for tool calling with token usage
 	fmt.Printf("\n🧪 TEST: Vertex AI / Google GenAI (Tool Calling with Token Usage)\n")
@@ -387,11 +510,10 @@ func testVertexAI(messages []llmtypes.MessageContent, mainTraceID interfaces.Tra
 	}
 
 	fmt.Printf("🔧 Testing Vertex AI with tool calling to verify token usage extraction...\n")
-	testLLMTokenUsageWithTools(vertexLLM, toolMessages, []llmtypes.Tool{weatherTool})
+	testLLMTokenUsageWithTools(testCtx, vertexLLM, toolMessages, []llmtypes.Tool{weatherTool})
 }
 
-func testLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent) {
-	ctx := context.Background()
+func testLLMTokenUsage(ctx context.Context, llm llmtypes.Model, messages []llmtypes.MessageContent) {
 	startTime := time.Now()
 
 	fmt.Printf("⏱️  Starting LLM call...\n")
@@ -423,94 +545,108 @@ func testLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent) {
 	fmt.Printf("   Response length: %d chars\n", len(content))
 	fmt.Printf("   Content: %s\n\n", content)
 
-	// Check for token usage information
+	// Check for token usage information (using unified Usage field)
 	fmt.Printf("🔍 Token Usage Analysis:\n")
 	fmt.Printf("========================\n")
 
-	if choice.GenerationInfo == nil {
-		fmt.Printf("❌ No GenerationInfo found in response\n")
-		fmt.Printf("   This means LangChain is not providing token usage data\n")
+	// First check the unified Usage field
+	if resp.Usage != nil {
+		fmt.Printf("✅ Unified Usage field found!\n")
+		fmt.Printf("   Input tokens:  %d\n", resp.Usage.InputTokens)
+		fmt.Printf("   Output tokens: %d\n", resp.Usage.OutputTokens)
+		fmt.Printf("   Total tokens:  %d\n", resp.Usage.TotalTokens)
+		fmt.Printf("\n✅ Token usage data is available via unified interface!\n")
+		fmt.Printf("   This means proper cost tracking and observability will work\n")
+	} else if choice.GenerationInfo != nil {
+		fmt.Printf("⚠️  Unified Usage field not found, but GenerationInfo is available\n")
+		fmt.Printf("   Falling back to GenerationInfo extraction...\n\n")
+	} else {
+		fmt.Printf("❌ No token usage found in response (neither Usage nor GenerationInfo)\n")
+		fmt.Printf("   This means the LLM provider is not providing token usage data\n")
 		fmt.Printf("   Token usage will need to be estimated\n")
 		return
 	}
 
-	fmt.Printf("✅ GenerationInfo found! Checking for token data...\n\n")
+	// Still check GenerationInfo for advanced metadata
+	var foundTokens bool
+	var info *llmtypes.GenerationInfo
+	if choice.GenerationInfo != nil {
+		fmt.Printf("\n🔍 Checking GenerationInfo for advanced metadata...\n\n")
 
-	// Check for specific token fields
-	tokenFields := map[string]string{
-		"input_tokens":      "Input tokens",
-		"output_tokens":     "Output tokens",
-		"total_tokens":      "Total tokens",
-		"prompt_tokens":     "Prompt tokens",
-		"completion_tokens": "Completion tokens",
-		// OpenAI-specific field names
-		"PromptTokens":     "Prompt tokens (OpenAI)",
-		"CompletionTokens": "Completion tokens (OpenAI)",
-		"TotalTokens":      "Total tokens (OpenAI)",
-		"ReasoningTokens":  "Reasoning tokens (OpenAI o3)",
-		// Anthropic-specific field names
-		"InputTokens":  "Input tokens (Anthropic)",
-		"OutputTokens": "Output tokens (Anthropic)",
-		// OpenRouter cache token fields
-		"cache_tokens":     "Cache tokens (OpenRouter)",
-		"cache_discount":   "Cache discount (OpenRouter)",
-		"cache_write_cost": "Cache write cost (OpenRouter)",
-		"cache_read_cost":  "Cache read cost (OpenRouter)",
-	}
+		// Check for specific token fields
+		tokenFields := map[string]string{
+			"input_tokens":      "Input tokens",
+			"output_tokens":     "Output tokens",
+			"total_tokens":      "Total tokens",
+			"prompt_tokens":     "Prompt tokens",
+			"completion_tokens": "Completion tokens",
+			// OpenAI-specific field names
+			"PromptTokens":     "Prompt tokens (OpenAI)",
+			"CompletionTokens": "Completion tokens (OpenAI)",
+			"TotalTokens":      "Total tokens (OpenAI)",
+			"ReasoningTokens":  "Reasoning tokens (OpenAI o3)",
+			// Anthropic-specific field names
+			"InputTokens":  "Input tokens (Anthropic)",
+			"OutputTokens": "Output tokens (Anthropic)",
+			// OpenRouter cache token fields
+			"cache_tokens":     "Cache tokens (OpenRouter)",
+			"cache_discount":   "Cache discount (OpenRouter)",
+			"cache_write_cost": "Cache write cost (OpenRouter)",
+			"cache_read_cost":  "Cache read cost (OpenRouter)",
+		}
 
-	foundTokens := false
-	info := choice.GenerationInfo
-	if info != nil {
-		// Check typed fields
-		if info.InputTokens != nil {
-			fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], *info.InputTokens)
-			foundTokens = true
-		}
-		if info.OutputTokens != nil {
-			fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], *info.OutputTokens)
-			foundTokens = true
-		}
-		if info.TotalTokens != nil {
-			fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], *info.TotalTokens)
-			foundTokens = true
-		}
-		// Check for cached tokens
-		if info.CachedContentTokens != nil {
-			fmt.Printf("✅ Cached Content Tokens: %d\n", *info.CachedContentTokens)
-			foundTokens = true
-		}
-		if info.CacheDiscount != nil {
-			fmt.Printf("✅ Cache Discount: %.4f (%.2f%%)\n", *info.CacheDiscount, *info.CacheDiscount*100)
-			foundTokens = true
-		}
-		// Check Additional map for other fields
-		if info.Additional != nil {
-			for field, label := range tokenFields {
-				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
+		foundTokens = false
+		info = choice.GenerationInfo
+		if info != nil {
+			// Check typed fields
+			if info.InputTokens != nil {
+				fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], *info.InputTokens)
+				foundTokens = true
+			}
+			if info.OutputTokens != nil {
+				fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], *info.OutputTokens)
+				foundTokens = true
+			}
+			if info.TotalTokens != nil {
+				fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], *info.TotalTokens)
+				foundTokens = true
+			}
+			// Check for cached tokens
+			if info.CachedContentTokens != nil {
+				fmt.Printf("✅ Cached Content Tokens: %d\n", *info.CachedContentTokens)
+				foundTokens = true
+			}
+			if info.CacheDiscount != nil {
+				fmt.Printf("✅ Cache Discount: %.4f (%.2f%%)\n", *info.CacheDiscount, *info.CacheDiscount*100)
+				foundTokens = true
+			}
+			// Check Additional map for other fields
+			if info.Additional != nil {
+				for field, label := range tokenFields {
+					if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
+						if value, ok := info.Additional[field]; ok {
+							fmt.Printf("✅ %s: %v\n", label, value)
+							foundTokens = true
+						}
+					}
+				}
+				// Check for cache-related fields in Additional
+				cacheFields := []string{"cache_tokens", "cache_read_tokens", "cache_write_tokens", "CacheReadInputTokens", "CacheCreationInputTokens"}
+				for _, field := range cacheFields {
 					if value, ok := info.Additional[field]; ok {
-						fmt.Printf("✅ %s: %v\n", label, value)
+						fmt.Printf("✅ Cache field (%s): %v\n", field, value)
 						foundTokens = true
 					}
 				}
 			}
-			// Check for cache-related fields in Additional
-			cacheFields := []string{"cache_tokens", "cache_read_tokens", "cache_write_tokens", "CacheReadInputTokens", "CacheCreationInputTokens"}
-			for _, field := range cacheFields {
-				if value, ok := info.Additional[field]; ok {
-					fmt.Printf("✅ Cache field (%s): %v\n", field, value)
-					foundTokens = true
-				}
-			}
 		}
 	}
 
-	if !foundTokens {
-		fmt.Printf("❌ No standard token fields found in GenerationInfo\n")
+	// Summary - already printed Usage if available above
+	if resp.Usage == nil && !foundTokens {
+		fmt.Printf("❌ No standard token fields found\n")
 		fmt.Printf("   GenerationInfo: %+v\n", info)
 		fmt.Printf("\n   This suggests the LLM provider doesn't return token usage\n")
-	} else {
-		fmt.Printf("\n✅ Token usage data is available from LangChain!\n")
-		fmt.Printf("   This means proper cost tracking and observability will work\n")
 	}
 
 	// Show all available GenerationInfo for debugging
@@ -548,8 +684,7 @@ func testLLMTokenUsage(llm llmtypes.Model, messages []llmtypes.MessageContent) {
 }
 
 // testLLMTokenUsageWithTools tests token usage extraction when using tools
-func testLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageContent, tools []llmtypes.Tool) {
-	ctx := context.Background()
+func testLLMTokenUsageWithTools(ctx context.Context, llm llmtypes.Model, messages []llmtypes.MessageContent, tools []llmtypes.Tool) {
 	startTime := time.Now()
 
 	fmt.Printf("⏱️  Starting LLM call with tools...\n")
@@ -597,100 +732,107 @@ func testLLMTokenUsageWithTools(llm llmtypes.Model, messages []llmtypes.MessageC
 	}
 	fmt.Printf("\n")
 
-	// Check for token usage information
+	// Check for token usage information (using unified Usage field)
 	fmt.Printf("🔍 Token Usage Analysis (with tools):\n")
 	fmt.Printf("======================================\n")
 
-	if choice.GenerationInfo == nil {
-		fmt.Printf("❌ No GenerationInfo found in response\n")
+	// First check the unified Usage field
+	if resp.Usage != nil {
+		fmt.Printf("✅ Unified Usage field found!\n")
+		fmt.Printf("   Input tokens:  %d\n", resp.Usage.InputTokens)
+		fmt.Printf("   Output tokens: %d\n", resp.Usage.OutputTokens)
+		fmt.Printf("   Total tokens:  %d\n", resp.Usage.TotalTokens)
+		fmt.Printf("\n✅ Token usage data extracted successfully!\n")
+	} else if choice.GenerationInfo != nil {
+		fmt.Printf("⚠️  Unified Usage field not found, but GenerationInfo is available\n")
+		fmt.Printf("   Falling back to GenerationInfo extraction...\n\n")
+	} else {
+		fmt.Printf("❌ No token usage found in response\n")
 		fmt.Printf("   Token usage extraction failed\n")
 		return
 	}
 
-	fmt.Printf("✅ GenerationInfo found! Checking for token data...\n\n")
+	// Still check GenerationInfo for advanced metadata
+	var foundTokens bool
+	var info *llmtypes.GenerationInfo
+	if choice.GenerationInfo != nil {
+		fmt.Printf("\n🔍 Checking GenerationInfo for advanced metadata...\n\n")
 
-	// Check for specific token fields (Google GenAI uses these field names)
-	tokenFields := map[string]string{
-		"input_tokens":  "Input tokens",
-		"output_tokens": "Output tokens",
-		"total_tokens":  "Total tokens",
-	}
+		// Check for specific token fields (Google GenAI uses these field names)
+		tokenFields := map[string]string{
+			"input_tokens":  "Input tokens",
+			"output_tokens": "Output tokens",
+			"total_tokens":  "Total tokens",
+		}
 
-	foundTokens := false
-	var inputTokens, outputTokens, totalTokens interface{}
-	info := choice.GenerationInfo
+		foundTokens = false
+		var inputTokens, outputTokens, totalTokens interface{}
+		info = choice.GenerationInfo
 
-	if info != nil {
-		// Check typed fields
-		if info.InputTokens != nil {
-			inputTokens = *info.InputTokens
-			fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], inputTokens)
-			foundTokens = true
-		}
-		if info.OutputTokens != nil {
-			outputTokens = *info.OutputTokens
-			fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], outputTokens)
-			foundTokens = true
-		}
-		if info.TotalTokens != nil {
-			totalTokens = *info.TotalTokens
-			fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], totalTokens)
-			foundTokens = true
-		}
-		// Check Additional map for other fields
-		if info.Additional != nil {
-			for field, label := range tokenFields {
-				if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
-					if value, ok := info.Additional[field]; ok {
-						fmt.Printf("✅ %s: %v\n", label, value)
-						foundTokens = true
+		if info != nil {
+			// Check typed fields
+			if info.InputTokens != nil {
+				inputTokens = *info.InputTokens
+				fmt.Printf("✅ %s: %v\n", tokenFields["input_tokens"], inputTokens)
+				foundTokens = true
+			}
+			if info.OutputTokens != nil {
+				outputTokens = *info.OutputTokens
+				fmt.Printf("✅ %s: %v\n", tokenFields["output_tokens"], outputTokens)
+				foundTokens = true
+			}
+			if info.TotalTokens != nil {
+				totalTokens = *info.TotalTokens
+				fmt.Printf("✅ %s: %v\n", tokenFields["total_tokens"], totalTokens)
+				foundTokens = true
+			}
+			// Check Additional map for other fields
+			if info.Additional != nil {
+				for field, label := range tokenFields {
+					if field != "input_tokens" && field != "output_tokens" && field != "total_tokens" {
+						if value, ok := info.Additional[field]; ok {
+							fmt.Printf("✅ %s: %v\n", label, value)
+							foundTokens = true
+						}
 					}
 				}
 			}
 		}
 	}
 
-	if !foundTokens {
+	// Validate token counts using unified Usage field if available
+	if resp.Usage != nil {
+		fmt.Printf("\n🔍 Token Usage Validation (from unified Usage field):\n")
+		fmt.Printf("   Input tokens:  %d\n", resp.Usage.InputTokens)
+		fmt.Printf("   Output tokens: %d\n", resp.Usage.OutputTokens)
+		fmt.Printf("   Total tokens:  %d\n", resp.Usage.TotalTokens)
+
+		// Check if total matches sum (allowing for slight discrepancies)
+		calculatedTotal := resp.Usage.InputTokens + resp.Usage.OutputTokens
+		if resp.Usage.TotalTokens > 0 {
+			diff := resp.Usage.TotalTokens - calculatedTotal
+			if diff < 0 {
+				diff = -diff
+			}
+			if resp.Usage.TotalTokens == calculatedTotal {
+				fmt.Printf("   ✅ Total tokens matches input + output\n")
+			} else if diff <= 2 {
+				fmt.Printf("   ⚠️  Total tokens differs from input+output by %d (acceptable)\n", diff)
+			} else {
+				fmt.Printf("   ⚠️  Total tokens (%d) differs significantly from input+output (%d)\n", resp.Usage.TotalTokens, calculatedTotal)
+			}
+		}
+
+		// Check for reasonable token counts
+		if resp.Usage.InputTokens > 0 && resp.Usage.OutputTokens >= 0 {
+			fmt.Printf("   ✅ Token counts are reasonable\n")
+		} else {
+			fmt.Printf("   ⚠️  Unusual token counts detected\n")
+		}
+	} else if !foundTokens {
 		fmt.Printf("❌ No standard token fields found in GenerationInfo\n")
 		fmt.Printf("   GenerationInfo: %+v\n", info)
 		fmt.Printf("\n   This suggests the adapter is not extracting token usage correctly\n")
-	} else {
-		fmt.Printf("\n✅ Token usage data extracted successfully!\n")
-
-		// Validate token counts make sense
-		if inputTokens != nil && outputTokens != nil && totalTokens != nil {
-			inputVal := extractIntValue(inputTokens)
-			outputVal := extractIntValue(outputTokens)
-			totalVal := extractIntValue(totalTokens)
-
-			fmt.Printf("\n🔍 Token Usage Validation:\n")
-			fmt.Printf("   Input tokens: %d\n", inputVal)
-			fmt.Printf("   Output tokens: %d\n", outputVal)
-			fmt.Printf("   Total tokens: %d\n", totalVal)
-
-			// Check if total matches sum (allowing for slight discrepancies)
-			calculatedTotal := inputVal + outputVal
-			if totalVal > 0 {
-				diff := totalVal - calculatedTotal
-				if diff < 0 {
-					diff = -diff
-				}
-				if totalVal == calculatedTotal {
-					fmt.Printf("   ✅ Total tokens matches input + output\n")
-				} else if diff <= 2 {
-					fmt.Printf("   ⚠️  Total tokens differs from input+output by %d (acceptable)\n", diff)
-				} else {
-					fmt.Printf("   ⚠️  Total tokens (%d) differs significantly from input+output (%d)\n", totalVal, calculatedTotal)
-				}
-			}
-
-			// Check for reasonable token counts
-			if inputVal > 0 && outputVal >= 0 {
-				fmt.Printf("   ✅ Token counts are reasonable\n")
-			} else {
-				fmt.Printf("   ⚠️  Unusual token counts detected\n")
-			}
-		}
 	}
 
 	// Show all available GenerationInfo for debugging
@@ -748,8 +890,7 @@ func extractIntValue(v interface{}) int {
 
 // testLLMTokenUsageWithCache tests token usage with multi-turn conversation to verify cache token extraction
 // This creates a large context that gets cached, then makes a follow-up request that should use cached tokens
-func testLLMTokenUsageWithCache(llm llmtypes.Model) {
-	ctx := context.Background()
+func testLLMTokenUsageWithCache(ctx context.Context, llm llmtypes.Model) {
 
 	// Create a large context document that will be cached
 	// Making it large enough (15000+ chars ≈ 3750+ tokens) to well exceed Anthropic's 2048 token minimum for Claude Haiku
@@ -1033,9 +1174,11 @@ This comprehensive guide should be followed by all software engineers to ensure 
 		fmt.Printf("⚠️  Additional map is nil\n")
 	}
 
-	// Display full token breakdown
+	// Display full token breakdown (prefer unified Usage field)
 	fmt.Printf("\n📊 Full Token Breakdown (Turn 2):\n")
 	fmt.Printf("=================================\n")
+	// Note: resp2 is not available in this function scope, so we check GenerationInfo
+	// The calling function should display Usage if available
 	if info.InputTokens != nil {
 		fmt.Printf("   Input tokens: %d\n", *info.InputTokens)
 	}

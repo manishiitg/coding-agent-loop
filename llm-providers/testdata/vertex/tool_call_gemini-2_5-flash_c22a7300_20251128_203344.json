@@ -1,0 +1,97 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-flash",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:33:44.121464+05:30",
+  "request_hash": "c22a7300a781528b067b42a9547c49606f9608272b6cfc0b85bd085fb0f9e1e2",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "What's the weather in San Francisco?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-flash",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "location": "San Francisco"
+                  },
+                  "name": "get_weather"
+                },
+                "thoughtSignature": "CiQBcsjafGV1lxPDJCsJA1Pf/suOO2zUnbOM7WWSGINdW2fRUJ4KYwFyyNp85USb4eByhX9Fz7+irDXbYEd4ZpnZvE/vRsxiuiZKjzDYHecFM31yUvVadt5F31ybSUrvu3jPVZK0fakouNdHmf6v0EwTiMhhb67KdgdEQ6ypu0tSbcii2nAGj1qSBAr+AQFyyNp8bKk7pi8/22WQJHMq2jEWgYL5X8ezqdutE33Qx59TSwmNo5x05Qoj/b9wXntnXnQaLuiRs6HtiEkK8gGynzh0Ie4Wz0lD9eh1RouucTEgI8BuND3Y3jr3Cvj7VSVGXrnPcm/JqUeXsotqc71oHKE5fSAkX7iF50UuyVv8XahqX1N65fLp3Fwr83baWWhyezAwYr3Rk8hfCsNd8vkVm+zyHR2yIRhzyg8qzAG0hwJKLV60+uLJjiu2XTdI/x5Mik5/nuASe+hGAULBti1uaTgRLSUKaqZ/9BQIPslU6vEpLJxMbymbag2nV/WcctGU5Ko9+B9ZgjT9cG8T"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "z7kpaeqxIM_MjuMP3PDoyAg",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=1374"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 16,
+        "promptTokenCount": 89,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 89
+          }
+        ],
+        "thoughtsTokenCount": 68,
+        "totalTokenCount": 173
+      }
+    }
+  ],
+  "chunk_count": 1
+}

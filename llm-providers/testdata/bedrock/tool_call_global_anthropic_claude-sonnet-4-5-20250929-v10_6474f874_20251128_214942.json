@@ -1,0 +1,163 @@
+{
+  "provider": "bedrock",
+  "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T21:49:42.569527+05:30",
+  "request_hash": "6474f874577d8ee4d18087e8088ef355da6cc95301ab7d455e0f06d4abb53ae2",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Get the weather in New York and also get the current time in UTC. Do both tasks."
+          }
+        ]
+      }
+    ],
+    "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": [
+    {
+      "Value": {
+        "Role": "assistant"
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Start": {
+          "Value": {
+            "Name": "get_weather",
+            "ToolUseId": "tooluse_y7M_-uP8R1acERLZwpLWNQ"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": ""
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "{\"location\""
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": ": \"New"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": " York\"}"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 1,
+        "Start": {
+          "Value": {
+            "Name": "get_current_time",
+            "ToolUseId": "tooluse_gokJbP4bQmGZRp00e-0rig"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 1,
+        "Delta": {
+          "Value": {
+            "Input": ""
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 1,
+        "Delta": {
+          "Value": {
+            "Input": "{\"timezo"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 1,
+        "Delta": {
+          "Value": {
+            "Input": "ne\": \"UT"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 1,
+        "Delta": {
+          "Value": {
+            "Input": "C\"}"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 1
+      }
+    },
+    {
+      "Value": {
+        "AdditionalModelResponseFields": null,
+        "StopReason": "tool_use"
+      }
+    },
+    {
+      "Value": {
+        "Metrics": {
+          "LatencyMs": 2283
+        },
+        "PerformanceConfig": null,
+        "Trace": null,
+        "Usage": {
+          "InputTokens": 665,
+          "OutputTokens": 92,
+          "TotalTokens": 757
+        }
+      }
+    }
+  ],
+  "chunk_count": 15
+}

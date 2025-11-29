@@ -1,0 +1,127 @@
+{
+  "provider": "bedrock",
+  "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T21:49:40.023204+05:30",
+  "request_hash": "d8f754197b98904f43aaa3d3700b2a7b088035c63c8b77f1e08e44104e3025d0",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "What's the weather in San Francisco?"
+          }
+        ]
+      }
+    ],
+    "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": [
+    {
+      "Value": {
+        "Role": "assistant"
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Start": {
+          "Value": {
+            "Name": "get_weather",
+            "ToolUseId": "tooluse_X0AQAmxfQxWI88X1XVbdGg"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": ""
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "{\""
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "location\":"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": " \"S"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "an Fran"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "cisco\"}"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0
+      }
+    },
+    {
+      "Value": {
+        "AdditionalModelResponseFields": null,
+        "StopReason": "tool_use"
+      }
+    },
+    {
+      "Value": {
+        "Metrics": {
+          "LatencyMs": 2315
+        },
+        "PerformanceConfig": null,
+        "Trace": null,
+        "Usage": {
+          "InputTokens": 634,
+          "OutputTokens": 54,
+          "TotalTokens": 688
+        }
+      }
+    }
+  ],
+  "chunk_count": 11
+}

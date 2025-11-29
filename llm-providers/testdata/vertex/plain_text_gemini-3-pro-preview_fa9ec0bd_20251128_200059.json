@@ -1,0 +1,409 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-3-pro-preview",
+  "test_name": "plain_text",
+  "recorded_at": "2025-11-28T20:00:59.149378+05:30",
+  "request_hash": "fa9ec0bdd9f81daae36542b465de402a6c918eb24030385dbce4dd9d9050d453",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hello! Can you introduce yourself?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-3-pro-preview",
+    "options": {}
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Hello! I am Gemini, an AI built by Google.\n\nI am a large language model, capable of communicating in response to a"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "IrIpaez7Be-04-EP2J2YkA8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:30:58 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=7348"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 27,
+        "promptTokenCount": 8,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 495,
+        "totalTokenCount": 530
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": " wide range of prompts and questions. I can assist you with all sorts of tasks, such as:\n\n*   **Writing"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "IrIpaez7Be-04-EP2J2YkA8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:30:58 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=7348"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 52,
+        "promptTokenCount": 8,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 495,
+        "totalTokenCount": 555
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": ":** I can generate emails, essays, stories, and poems.\n*   **Coding:** I can help write, debug, and"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "IrIpaez7Be-04-EP2J2YkA8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:30:58 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=7348"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 79,
+        "promptTokenCount": 8,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 495,
+        "totalTokenCount": 582
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": " explain code.\n*   **Learning:** I can answer questions, summarize complex topics, and translate languages.\n*   "
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "IrIpaez7Be-04-EP2J2YkA8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:30:58 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=7348"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 104,
+        "promptTokenCount": 8,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 495,
+        "totalTokenCount": 607
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "**Brainstorming:** I can help generate ideas for projects or creative works.\n\nHow can I help you today?"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "IrIpaez7Be-04-EP2J2YkA8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:30:58 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=7348"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 128,
+        "promptTokenCount": 8,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 495,
+        "totalTokenCount": 631
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "thoughtSignature": "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"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "IrIpaez7Be-04-EP2J2YkA8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:30:58 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=7348"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 128,
+        "promptTokenCount": 8,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 495,
+        "totalTokenCount": 631
+      }
+    }
+  ],
+  "chunk_count": 6
+}

@@ -1,0 +1,97 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-pro",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:33:55.294068+05:30",
+  "request_hash": "16f32619b958f411741000f3024e78e735d469242de1938c7111763b12b23c5b",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "What's the weather in San Francisco?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-pro",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "location": "San Francisco"
+                  },
+                  "name": "get_weather"
+                },
+                "thoughtSignature": "CiIBcsjafClhEw1AKyvsh0fBnzwwWgcYd6qLGw1/ufYnlwdzCmUBcsjafPp+kJaEuORj5Smz9Jptc1HwBiP08sQb9PgO+kXVhhXxLjCZt2tqESyvXsK1om5X9f/vzfvVh75ItQG+N6/aQez5gFLm5Qs3hlK+EwJHfKFQWvF0AL/a549y7kjTYKeOuAqAAQFyyNp884QM5+mZd5vk8XD5VyM4fKd64MSVwwAKW1LOy0BGSpicSbSZm8UOOG3k2jkvrEzeiJqImfC8/gYflPP3Ent1lSHZrrob7DbpqkIyUJctcbmXF2GgrO15axqVS/TjbRDoLMR9HtF4/MfxUMpnpkprjdByjA8SAdXPTMOwCn0BcsjafBrwDj+gFVKJ0yUdnkrYGqJMzX0B4ur7wIqs5HV6LleRGBWKnNhKn/xYAnQOWVQboj9TEPU9grurcm4YwplCRP3GHjy9cSGrvqWAUL4ihfcKye6OtTTGJKR+UiyLYSMz22BFg2lajMq7xRcPR1yCEDAFcC12FBCqVAqNAQFyyNp8+QFeqxqzb4og8vNNX7VQ6PvM/CJdk5A+ofRhzZ913ZY4G9JNqHrYdmCSvmUfEKWOKmulltmEb8WZdUbVxse/yGLXLuk/zXvp8GHOOEnT29ai+2BLBJcHeAEH729jFNmqvehWN8G7SJBd4Glpj/nRLxApHivHcouY1wpRLAcqBlwsmMSjxx1Z4AphAXLI2nwAbdL2I7dCFFez6+GItiEA0vzMJ/kq73K0diZRrtNnydVQ/DBzawCOLq3HyUrc+Kc5GDXbHmrc48Ci7/xRimeVCK6kJ+m4+gPmnMZZn8YT7E1/PDu/rjV/G5DW+w=="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "2rkpaeLKDYiR4-EPqNSR4QE",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:55 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2129"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 16,
+        "promptTokenCount": 89,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 89
+          }
+        ],
+        "thoughtsTokenCount": 108,
+        "totalTokenCount": 213
+      }
+    }
+  ],
+  "chunk_count": 1
+}

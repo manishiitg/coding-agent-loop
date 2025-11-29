@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"llm-providers/interfaces"
+	"llm-providers/internal/recorder"
 	"llm-providers/llmtypes"
 
 	"github.com/openai/openai-go/v3"
@@ -135,13 +136,49 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 		o.logInputDetails(modelID, messages, params, opts)
 	}
 
+	// Check for recorder in context
+	rec, _ := recorder.FromContext(ctx)
+	if rec != nil {
+		if rec.IsReplayEnabled() {
+			// Build request info for matching
+			requestInfo := buildRequestInfo(messages, modelID, opts)
+
+			// Load recorded response
+			recordedResponse, err := rec.LoadOpenAIResponse(requestInfo)
+			if err != nil {
+				if o.logger != nil {
+					o.logger.Errorf("Failed to load recorded response: %v", err)
+				}
+				return nil, fmt.Errorf("failed to load recorded response: %w", err)
+			}
+
+			if o.logger != nil {
+				o.logger.Infof("▶️  [RECORDER] Replaying recorded OpenAI response")
+			}
+
+			// Convert recorded response back to OpenAI format
+			recordedJSON, err := json.Marshal(recordedResponse)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal recorded response: %w", err)
+			}
+
+			var result openai.ChatCompletion
+			if err := json.Unmarshal(recordedJSON, &result); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal recorded response: %w", err)
+			}
+
+			// Convert response from OpenAI format to llmtypes format
+			return convertResponse(&result, o.logger, isOpenRouter), nil
+		}
+	}
+
 	// Check if streaming is requested
 	if opts.StreamChan != nil {
 		// Enable usage in streaming responses
 		params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: param.NewOpt(true),
 		}
-		return o.generateContentStreaming(ctx, modelID, params, opts, isOpenRouter)
+		return o.generateContentStreaming(ctx, modelID, params, opts, isOpenRouter, messages)
 	}
 
 	// Call OpenAI API (non-streaming)
@@ -154,6 +191,26 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 		return nil, fmt.Errorf("openai generate content: %w", err)
 	}
 
+	// Record response if recording is enabled
+	if rec != nil && rec.IsRecordingEnabled() {
+		// Convert result to interface{} for recording
+		resultJSON, err := json.Marshal(result)
+		if err == nil {
+			var resultMap map[string]interface{}
+			if json.Unmarshal(resultJSON, &resultMap) == nil {
+				requestInfo := buildRequestInfo(messages, modelID, opts)
+				filePath, err := rec.RecordOpenAIResponse(resultMap, requestInfo)
+				if err != nil {
+					if o.logger != nil {
+						o.logger.Errorf("Failed to save recorded response: %v", err)
+					}
+				} else if o.logger != nil {
+					o.logger.Infof("📹 [RECORDER] Saved OpenAI response to %s", filePath)
+				}
+			}
+		}
+	}
+
 	// isOpenRouter already detected above
 
 	// Convert response from OpenAI format to llmtypes format
@@ -161,7 +218,223 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 }
 
 // generateContentStreaming handles streaming responses from OpenAI API
-func (o *OpenAIAdapter) generateContentStreaming(ctx context.Context, modelID string, params openai.ChatCompletionNewParams, opts *llmtypes.CallOptions, isOpenRouter bool) (*llmtypes.ContentResponse, error) {
+func (o *OpenAIAdapter) generateContentStreaming(ctx context.Context, modelID string, params openai.ChatCompletionNewParams, opts *llmtypes.CallOptions, isOpenRouter bool, messages []llmtypes.MessageContent) (*llmtypes.ContentResponse, error) {
+	// Check for recorder in context
+	rec, _ := recorder.FromContext(ctx)
+	var recordedChunks []interface{}
+
+	if rec != nil && rec.IsReplayEnabled() {
+		// Build request info for matching
+		requestInfo := buildRequestInfo(messages, modelID, opts)
+
+		// Load recorded chunks
+		chunks, err := rec.LoadOpenAIChunks(requestInfo)
+		if err != nil {
+			if o.logger != nil {
+				o.logger.Errorf("Failed to load recorded chunks: %v", err)
+			}
+			return nil, fmt.Errorf("failed to load recorded chunks: %w", err)
+		}
+
+		if o.logger != nil {
+			o.logger.Infof("▶️  [RECORDER] Replaying %d recorded chunks", len(chunks))
+		}
+
+		// Process recorded chunks as if they came from the stream
+		var accumulatedContent strings.Builder
+		var accumulatedToolCalls []llmtypes.ToolCall
+		var finishReason string
+		var streamModel string
+		var usage *openai.CompletionUsage
+		toolCallMap := make(map[int64]*llmtypes.ToolCall)
+		completedToolCallIndices := make(map[int64]bool)
+
+		for _, chunkMap := range chunks {
+			// Convert chunk map back to OpenAI format for processing
+			// We need to reconstruct the chunk structure from the map
+			chunkJSON, err := json.Marshal(chunkMap)
+			if err != nil {
+				continue
+			}
+
+			// Parse chunk JSON to extract fields
+			var chunkData struct {
+				Model   string `json:"model"`
+				Choices []struct {
+					Delta struct {
+						Content   string `json:"content"`
+						ToolCalls []struct {
+							Index    int64  `json:"index"`
+							ID       string `json:"id"`
+							Type     string `json:"type"`
+							Function struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							} `json:"function"`
+						} `json:"tool_calls"`
+					} `json:"delta"`
+					FinishReason string `json:"finish_reason"`
+				} `json:"choices"`
+				Usage struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+					TotalTokens      int `json:"total_tokens"`
+				} `json:"usage"`
+			}
+
+			if err := json.Unmarshal(chunkJSON, &chunkData); err != nil {
+				continue
+			}
+
+			// Store model from first chunk
+			if streamModel == "" && chunkData.Model != "" {
+				streamModel = chunkData.Model
+			}
+
+			// Extract usage from chunk if available
+			if chunkData.Usage.PromptTokens > 0 || chunkData.Usage.CompletionTokens > 0 {
+				usage = &openai.CompletionUsage{
+					PromptTokens:     int64(chunkData.Usage.PromptTokens),
+					CompletionTokens: int64(chunkData.Usage.CompletionTokens),
+					TotalTokens:      int64(chunkData.Usage.TotalTokens),
+				}
+			}
+
+			// Process each choice in the chunk
+			for _, choiceData := range chunkData.Choices {
+				// Extract text delta and accumulate
+				if choiceData.Delta.Content != "" {
+					deltaText := choiceData.Delta.Content
+					accumulatedContent.WriteString(deltaText)
+
+					// Stream content chunks immediately
+					if opts.StreamChan != nil {
+						select {
+						case opts.StreamChan <- llmtypes.StreamChunk{
+							Type:    llmtypes.StreamChunkTypeContent,
+							Content: deltaText,
+						}:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					}
+				}
+
+				// Handle tool call deltas (same logic as real streaming)
+				if len(choiceData.Delta.ToolCalls) > 0 {
+					for _, toolCallDelta := range choiceData.Delta.ToolCalls {
+						index := toolCallDelta.Index
+
+						// Initialize tool call if not exists
+						if toolCallMap[index] == nil {
+							toolCallMap[index] = &llmtypes.ToolCall{
+								ID:   toolCallDelta.ID,
+								Type: toolCallDelta.Type,
+								FunctionCall: &llmtypes.FunctionCall{
+									Name:      toolCallDelta.Function.Name,
+									Arguments: "",
+								},
+							}
+						}
+
+						// Update ID if provided
+						if toolCallDelta.ID != "" {
+							toolCallMap[index].ID = toolCallDelta.ID
+						}
+
+						// Update type if provided
+						if toolCallDelta.Type != "" {
+							toolCallMap[index].Type = toolCallDelta.Type
+						}
+
+						// Update function name if provided
+						if toolCallDelta.Function.Name != "" {
+							toolCallMap[index].FunctionCall.Name = toolCallDelta.Function.Name
+						}
+
+						// Accumulate function arguments
+						if toolCallDelta.Function.Arguments != "" {
+							currentArgs := toolCallMap[index].FunctionCall.Arguments
+							toolCallMap[index].FunctionCall.Arguments = currentArgs + toolCallDelta.Function.Arguments
+						}
+					}
+				}
+
+				// Store finish reason from last chunk
+				if choiceData.FinishReason != "" {
+					finishReason = choiceData.FinishReason
+
+					// When finish_reason is "tool_calls", all tool calls are complete
+					if choiceData.FinishReason == "tool_calls" {
+						// Mark all accumulated tool calls as complete and stream them
+						for index := range toolCallMap {
+							if !completedToolCallIndices[index] {
+								completedToolCallIndices[index] = true
+								// Stream complete tool call
+								if opts.StreamChan != nil {
+									toolCall := toolCallMap[index]
+									toolCallCopy := *toolCall
+									select {
+									case opts.StreamChan <- llmtypes.StreamChunk{
+										Type:     llmtypes.StreamChunkTypeToolCall,
+										ToolCall: &toolCallCopy,
+									}:
+									case <-ctx.Done():
+										return nil, ctx.Err()
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Convert accumulated tool calls to slice
+		for index, toolCall := range toolCallMap {
+			accumulatedToolCalls = append(accumulatedToolCalls, *toolCall)
+			// If tool call wasn't streamed yet and we have finish_reason, stream it now
+			if !completedToolCallIndices[index] && finishReason == "tool_calls" && opts.StreamChan != nil {
+				toolCallCopy := *toolCall
+				select {
+				case opts.StreamChan <- llmtypes.StreamChunk{
+					Type:     llmtypes.StreamChunkTypeToolCall,
+					ToolCall: &toolCallCopy,
+				}:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+		}
+
+		// Build final response
+		choice := &llmtypes.ContentChoice{
+			Content:    accumulatedContent.String(),
+			StopReason: finishReason,
+			ToolCalls:  accumulatedToolCalls,
+		}
+
+		// Add usage information if available
+		if usage != nil {
+			inputTokens := int(usage.PromptTokens)
+			outputTokens := int(usage.CompletionTokens)
+			totalTokens := int(usage.TotalTokens)
+
+			choice.GenerationInfo = &llmtypes.GenerationInfo{
+				InputTokens:         &inputTokens,
+				OutputTokens:        &outputTokens,
+				TotalTokens:         &totalTokens,
+				PromptTokens:        &inputTokens,
+				CompletionTokens:    &outputTokens,
+				PromptTokensCap:     &inputTokens,
+				CompletionTokensCap: &outputTokens,
+			}
+		}
+
+		return &llmtypes.ContentResponse{
+			Choices: []*llmtypes.ContentChoice{choice},
+		}, nil
+	}
 	// Create streaming request
 	stream := o.client.Chat.Completions.NewStreaming(ctx, params)
 	defer stream.Close()
@@ -188,6 +461,20 @@ func (o *OpenAIAdapter) generateContentStreaming(ctx context.Context, modelID st
 	// Process streaming chunks
 	for stream.Next() {
 		chunk := stream.Current()
+
+		// Record chunk if recording is enabled
+		if rec != nil && rec.IsRecordingEnabled() {
+			chunkJSON, err := json.Marshal(chunk)
+			if err == nil {
+				var chunkMap map[string]interface{}
+				if json.Unmarshal(chunkJSON, &chunkMap) == nil {
+					recordedChunks = append(recordedChunks, chunkMap)
+					if o.logger != nil {
+						o.logger.Debugf("📹 [RECORDER] Captured chunk %d", len(recordedChunks))
+					}
+				}
+			}
+		}
 
 		// Store model from first chunk
 		if streamModel == "" {
@@ -322,6 +609,19 @@ func (o *OpenAIAdapter) generateContentStreaming(ctx context.Context, modelID st
 		Content:    accumulatedContent.String(),
 		StopReason: finishReason,
 		ToolCalls:  accumulatedToolCalls,
+	}
+
+	// Record chunks if recording was enabled
+	if rec != nil && rec.IsRecordingEnabled() && len(recordedChunks) > 0 {
+		requestInfo := buildRequestInfo(messages, modelID, opts)
+		filePath, err := rec.RecordOpenAIChunks(recordedChunks, requestInfo)
+		if err != nil {
+			if o.logger != nil {
+				o.logger.Errorf("Failed to save recorded chunks: %v", err)
+			}
+		} else if o.logger != nil {
+			o.logger.Infof("📹 [RECORDER] Saved %d chunks to %s", len(recordedChunks), filePath)
+		}
 	}
 
 	// Add usage information if available (from include_usage stream option)
@@ -1357,4 +1657,39 @@ func (o *OpenAIAdapter) logErrorDetails(modelID string, messages []llmtypes.Mess
 
 	// Also log input details for full context
 	o.logInputDetails(modelID, messages, params, opts)
+}
+
+// buildRequestInfo creates a RequestInfo from messages and options for recording/matching
+func buildRequestInfo(messages []llmtypes.MessageContent, modelID string, opts *llmtypes.CallOptions) recorder.RequestInfo {
+	// Convert messages to RequestInfo format
+	messageInfos := make([]recorder.MessageInfo, 0, len(messages))
+	for _, msg := range messages {
+		// Convert parts to interface{} for JSON serialization
+		parts := make([]interface{}, 0, len(msg.Parts))
+		for _, part := range msg.Parts {
+			// Marshal and unmarshal to get clean JSON representation
+			partJSON, _ := json.Marshal(part)
+			var partInterface interface{}
+			json.Unmarshal(partJSON, &partInterface)
+			parts = append(parts, partInterface)
+		}
+		messageInfos = append(messageInfos, recorder.MessageInfo{
+			Role:  string(msg.Role),
+			Parts: parts,
+		})
+	}
+
+	// Build options info
+	optionsInfo := recorder.OptionsInfo{
+		Temperature: opts.Temperature,
+		MaxTokens:   opts.MaxTokens,
+		JSONMode:    opts.JSONMode,
+		ToolsCount:  len(opts.Tools),
+	}
+
+	return recorder.RequestInfo{
+		Messages: messageInfos,
+		ModelID:  modelID,
+		Options:  optionsInfo,
+	}
 }

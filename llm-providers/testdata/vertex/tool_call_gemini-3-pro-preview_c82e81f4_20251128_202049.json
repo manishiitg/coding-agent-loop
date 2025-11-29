@@ -1,0 +1,159 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-3-pro-preview",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:20:49.042362+05:30",
+  "request_hash": "c82e81f4514957ce98608ba5c0bbf3527d1b011ffc09cca3440507876ad4c411",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Use the read_file tool to read the contents of the file 'go.mod'. Make sure to provide the 'path' parameter with the value 'go.mod'."
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-3-pro-preview",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "path": "go.mod"
+                  },
+                  "name": "read_file"
+                },
+                "thoughtSignature": "ErwBCrkBAXLI2nyy+GaCbSTgJQKLmBYEb8NlVQOE+s/nHC4shGeXuHxRqaQgmggLovBF8pT4Q0hVtgCmaKHq8c+aLGH0cUvTRgFhVVCJC5z78QKZYMtUnnxAvvnQ0WR80qQgFfskcqKCm5miXr0DxB5gSzDFOw3A8feWPJge3XZz50Yb7txgQgSEUZNHGO5BSCM5R/U7p0L2wmlAzM12pDoVhQH/YnPr3dIbutkOk13NuJTWARk0pKOESsPDs5A="
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "yLYpaYfQNvyqjuMP-q3AmQI",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:50:49 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2955"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 18,
+        "promptTokenCount": 87,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 87
+          }
+        ],
+        "thoughtsTokenCount": 37,
+        "totalTokenCount": 142
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {}
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "yLYpaYfQNvyqjuMP-q3AmQI",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:50:49 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2955"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 18,
+        "promptTokenCount": 87,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 87
+          }
+        ],
+        "thoughtsTokenCount": 37,
+        "totalTokenCount": 142
+      }
+    }
+  ],
+  "chunk_count": 2
+}

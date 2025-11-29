@@ -1,0 +1,117 @@
+{
+  "provider": "bedrock",
+  "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T21:49:37.442892+05:30",
+  "request_hash": "5b0e2cefd0c06457b5235e62a779c8e752c6f92dea156cfda9fbfd8a7b51409d",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Use the read_file tool to read the contents of the file 'go.mod'. Make sure to provide the 'path' parameter with the value 'go.mod'."
+          }
+        ]
+      }
+    ],
+    "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "Value": {
+        "Role": "assistant"
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Start": {
+          "Value": {
+            "Name": "read_file",
+            "ToolUseId": "tooluse_5LE7GLVISOCI_BzZAaj8pQ"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": ""
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "{\"p"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "ath\": \"g"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "o.m"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": "od\"}"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0
+      }
+    },
+    {
+      "Value": {
+        "AdditionalModelResponseFields": null,
+        "StopReason": "tool_use"
+      }
+    },
+    {
+      "Value": {
+        "Metrics": {
+          "LatencyMs": 2505
+        },
+        "PerformanceConfig": null,
+        "Trace": null,
+        "Usage": {
+          "InputTokens": 603,
+          "OutputTokens": 55,
+          "TotalTokens": 658
+        }
+      }
+    }
+  ],
+  "chunk_count": 10
+}

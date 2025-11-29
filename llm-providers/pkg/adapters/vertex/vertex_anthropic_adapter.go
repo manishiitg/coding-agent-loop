@@ -471,9 +471,17 @@ func (v *VertexAnthropicAdapter) generateContent(ctx context.Context, endpoint, 
 		choice.ToolCalls = toolCalls
 	}
 
+	// Extract usage from GenerationInfo (if available)
+	// Note: vertex_anthropic_adapter may not set GenerationInfo in streaming mode
+	var usage *llmtypes.Usage
+	if choice.GenerationInfo != nil {
+		usage = llmtypes.ExtractUsageFromGenerationInfo(choice.GenerationInfo)
+	}
+
 	// Return accumulated response
 	return &llmtypes.ContentResponse{
 		Choices: []*llmtypes.ContentChoice{choice},
+		Usage:   usage,
 	}, nil
 }
 

@@ -148,3 +148,32 @@ func WithDimensions(dimensions int) EmbeddingOption {
 		opts.Dimensions = &dimensions
 	}
 }
+
+// WithReasoningEffort sets the reasoning effort level for models that support it (e.g., gpt-5.1)
+// Valid values: "minimal", "low", "medium", "high"
+// When set to "minimal", the model uses minimal reasoning effort
+// Higher values enable deeper reasoning for complex problems
+func WithReasoningEffort(effort string) CallOption {
+	return func(opts *CallOptions) {
+		opts.ReasoningEffort = effort
+	}
+}
+
+// WithVerbosity sets the verbosity level for the model's response (for reasoning models)
+// Valid values: "low", "medium", "high"
+// Lower values result in more concise responses, higher values result in more verbose responses
+func WithVerbosity(verbosity string) CallOption {
+	return func(opts *CallOptions) {
+		opts.Verbosity = verbosity
+	}
+}
+
+// WithThinkingLevel sets the thinking level for models that support it (e.g., Gemini 3 Pro)
+// Valid values: "low", "high"
+// "low" reduces latency for simpler tasks, "high" enables deeper reasoning for complex tasks.
+// Default is "high" for Gemini 3 Pro.
+func WithThinkingLevel(level string) CallOption {
+	return func(opts *CallOptions) {
+		opts.ThinkingLevel = level
+	}
+}

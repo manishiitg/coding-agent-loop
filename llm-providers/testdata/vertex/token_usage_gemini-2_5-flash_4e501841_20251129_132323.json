@@ -1,0 +1,97 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-flash",
+  "test_name": "token_usage",
+  "recorded_at": "2025-11-29T13:23:23.881467+05:30",
+  "request_hash": "4e50184125bc4db22c5f3ce0c7b467e9d8797fa774bb39f66e690c8597c2dc51",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "What's the weather in Tokyo?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-flash",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "location": "Tokyo"
+                  },
+                  "name": "get_weather"
+                },
+                "thoughtSignature": "CiQBcsjafDZPYgUcy1q2laWtwbGaYLxqqcSu0E+SI/H6KR7KyU8KYQFyyNp89zp8R/DYQK3g5ezWsimF/3lqff5QQvNTcfZUo6Lfoe1/Y0ObFNHm3AyUfrq3zSS3xzQ3Q0nywA8QGQ8cOCWM6pi54KkLj7bQvqp51k40FVhh0sjEBROXqph3zE0KpAEBcsjafKF/TAWztrgZkXo8aJ3FwzrnjxpePKrSksuTLi4CA94/lnIEYliYAUIpXOHyOv+cNWmn622Z58Gf8BIIULuv7vWmKQDmBUdNbKIbeyV8WFZhwIQVyuuLLDQv0/MSs08oFtU5+KY7zc3ER5o61yhL/eaCRCvKfZyoV/SFAWK0IZBiRPA3awDL5mxfmjAz9TTDkBVLRcFvhuVH597B0NlLSQ=="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "c6YqaaSQF8bHjuMPxeCMuAM",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:53:23 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=1440"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 15,
+        "promptTokenCount": 48,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 48
+          }
+        ],
+        "thoughtsTokenCount": 48,
+        "totalTokenCount": 111
+      }
+    }
+  ],
+  "chunk_count": 1
+}

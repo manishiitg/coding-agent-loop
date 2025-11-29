@@ -117,6 +117,30 @@ func (o *OpenAIAdapter) GenerateContent(ctx context.Context, messages []llmtypes
 		}
 	}
 
+	// Handle reasoning effort (for gpt-5.1 and similar models)
+	// Valid values: "minimal", "low", "medium", "high"
+	// Note: The API expects: {"reasoning_effort": "high"}
+	if opts.ReasoningEffort != "" {
+		if o.logger != nil {
+			o.logger.Debugf("Setting reasoning_effort to: %s", opts.ReasoningEffort)
+		}
+		// Convert string to shared.ReasoningEffort type and set it
+		reasoningEffort := shared.ReasoningEffort(opts.ReasoningEffort)
+		params.ReasoningEffort = reasoningEffort
+	}
+
+	// Handle verbosity (for reasoning models)
+	// Valid values: "low", "medium", "high"
+	// Lower values result in more concise responses, higher values result in more verbose responses
+	if opts.Verbosity != "" {
+		if o.logger != nil {
+			o.logger.Debugf("Setting verbosity to: %s", opts.Verbosity)
+		}
+		// Convert string to ChatCompletionNewParamsVerbosity type and set it
+		verbosity := openai.ChatCompletionNewParamsVerbosity(opts.Verbosity)
+		params.Verbosity = verbosity
+	}
+
 	// Check if we're using OpenRouter and need to add usage parameter
 	isOpenRouter := strings.Contains(modelID, "/")
 	if isOpenRouter && opts.Metadata != nil && opts.Metadata.Usage != nil && opts.Metadata.Usage.Include {
@@ -431,8 +455,11 @@ func (o *OpenAIAdapter) generateContentStreaming(ctx context.Context, modelID st
 			}
 		}
 
+		// Extract token usage from GenerationInfo
+		tokenUsage := llmtypes.ExtractUsageFromGenerationInfo(choice.GenerationInfo)
 		return &llmtypes.ContentResponse{
 			Choices: []*llmtypes.ContentChoice{choice},
+			Usage:   tokenUsage,
 		}, nil
 	}
 	// Create streaming request
@@ -685,8 +712,11 @@ func (o *OpenAIAdapter) generateContentStreaming(ctx context.Context, modelID st
 		}
 	}
 
+	// Extract token usage from GenerationInfo
+	tokenUsage := llmtypes.ExtractUsageFromGenerationInfo(choice.GenerationInfo)
 	return &llmtypes.ContentResponse{
 		Choices: []*llmtypes.ContentChoice{choice},
+		Usage:   tokenUsage,
 	}, nil
 }
 
@@ -1072,6 +1102,7 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 	if result == nil {
 		return &llmtypes.ContentResponse{
 			Choices: []*llmtypes.ContentChoice{},
+			Usage:   nil,
 		}
 	}
 
@@ -1237,8 +1268,15 @@ func convertResponse(result *openai.ChatCompletion, logger interfaces.Logger, is
 		choices = append(choices, langChoice)
 	}
 
+	// Extract usage from first choice's GenerationInfo (most providers return same usage for all choices)
+	var usage *llmtypes.Usage
+	if len(choices) > 0 && choices[0].GenerationInfo != nil {
+		usage = llmtypes.ExtractUsageFromGenerationInfo(choices[0].GenerationInfo)
+	}
+
 	return &llmtypes.ContentResponse{
 		Choices: choices,
+		Usage:   usage,
 	}
 }
 

@@ -1,0 +1,72 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-4.1-mini",
+  "test_name": "token_usage",
+  "recorded_at": "2025-11-29T13:01:51.312286+05:30",
+  "request_hash": "6ddd93c095b9efebab1c3e1a3cb5ae4fa4cd6ad4e9ab3a11d7274289c03249f7",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hello world"
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-4.1-mini",
+    "options": {}
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "Hello! How can I assist you today?",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": null
+        }
+      }
+    ],
+    "created": 1764401510,
+    "id": "chatcmpl-Ch9ioNA3Iz1cH7U6W8yILTnAWu9VT",
+    "model": "gpt-4.1-mini-2025-04-14",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "fp_9766e549b2",
+    "usage": {
+      "completion_tokens": 9,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 9,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 18
+    }
+  },
+  "chunk_count": 1
+}

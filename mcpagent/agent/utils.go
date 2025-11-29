@@ -51,6 +51,7 @@ func TruncateString(s string, maxLen int) string {
 }
 
 // extractUsageMetrics extracts token usage metrics from an LLM response.
+// It prioritizes the unified Usage field, falling back to GenerationInfo if needed.
 func extractUsageMetrics(resp *llmtypes.ContentResponse) observability.UsageMetrics {
 	if resp == nil || len(resp.Choices) == 0 {
 		return observability.UsageMetrics{}
@@ -58,7 +59,23 @@ func extractUsageMetrics(resp *llmtypes.ContentResponse) observability.UsageMetr
 
 	m := observability.UsageMetrics{Unit: "TOKENS"}
 
-	// Try to get token usage from GenerationInfo first
+	// Priority 1: Use unified Usage field (if available)
+	if resp.Usage != nil {
+		m.InputTokens = resp.Usage.InputTokens
+		m.OutputTokens = resp.Usage.OutputTokens
+		m.TotalTokens = resp.Usage.TotalTokens
+
+		// If we got actual token usage from unified field, return it
+		if m.InputTokens > 0 || m.OutputTokens > 0 || m.TotalTokens > 0 {
+			// Ensure total is calculated if not provided
+			if m.TotalTokens == 0 {
+				m.TotalTokens = m.InputTokens + m.OutputTokens
+			}
+			return m
+		}
+	}
+
+	// Priority 2: Fall back to GenerationInfo (for backward compatibility)
 	info := resp.Choices[0].GenerationInfo
 	if info != nil {
 		// Extract input tokens (check multiple naming conventions)

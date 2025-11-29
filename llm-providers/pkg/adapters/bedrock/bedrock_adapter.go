@@ -504,6 +504,11 @@ func (b *BedrockAdapter) generateContentStreaming(ctx context.Context, modelID s
 
 	resp.Choices = append(resp.Choices, choice)
 
+	// Extract usage from GenerationInfo
+	if len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		resp.Usage = llmtypes.ExtractUsageFromGenerationInfo(resp.Choices[0].GenerationInfo)
+	}
+
 	// Record events if recording is enabled (only build requestInfo if needed)
 	if rec != nil && rec.IsRecordingEnabled() && len(recordedEventChunks) > 0 {
 		requestInfo := buildRequestInfo(messages, modelID, opts)
@@ -868,6 +873,12 @@ func (b *BedrockAdapter) processRecordedEvents(ctx context.Context, recordedEven
 	}
 
 	resp.Choices = append(resp.Choices, choice)
+
+	// Extract usage from GenerationInfo
+	if len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		resp.Usage = llmtypes.ExtractUsageFromGenerationInfo(resp.Choices[0].GenerationInfo)
+	}
+
 	return resp, nil
 }
 
@@ -1190,6 +1201,12 @@ func convertConverseResponse(result *bedrockruntime.ConverseOutput) *llmtypes.Co
 	}
 
 	resp.Choices = append(resp.Choices, choice)
+
+	// Extract usage from GenerationInfo
+	if len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		resp.Usage = llmtypes.ExtractUsageFromGenerationInfo(resp.Choices[0].GenerationInfo)
+	}
+
 	return resp
 }
 

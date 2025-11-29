@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"llm-providers/interfaces"
 	"llm-providers/llmtypes"
 )
 
@@ -3856,4 +3858,238 @@ func RunMultiTurnConversationTest(llm llmtypes.Model, modelID string) {
 	if len(toolCalls3) > 0 {
 		log.Printf("   ✅ Turn 4: Continued conversation after tool call ✅")
 	}
+}
+
+// TestEventEmitter is a test event emitter that captures events for validation
+type TestEventEmitter struct {
+	InitializationStartEvents   []map[string]interface{}
+	InitializationSuccessEvents []map[string]interface{}
+	InitializationErrorEvents   []map[string]interface{}
+	GenerationSuccessEvents     []map[string]interface{}
+	GenerationErrorEvents       []map[string]interface{}
+	ToolCallDetectedEvents      []map[string]interface{}
+	mu                          sync.Mutex
+}
+
+func NewTestEventEmitter() *TestEventEmitter {
+	return &TestEventEmitter{
+		InitializationStartEvents:   make([]map[string]interface{}, 0),
+		InitializationSuccessEvents: make([]map[string]interface{}, 0),
+		InitializationErrorEvents:   make([]map[string]interface{}, 0),
+		GenerationSuccessEvents:     make([]map[string]interface{}, 0),
+		GenerationErrorEvents:       make([]map[string]interface{}, 0),
+		ToolCallDetectedEvents:      make([]map[string]interface{}, 0),
+	}
+}
+
+func (e *TestEventEmitter) EmitLLMInitializationStart(provider string, modelID string, temperature float64, traceID interfaces.TraceID, metadata interfaces.LLMMetadata) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.InitializationStartEvents = append(e.InitializationStartEvents, map[string]interface{}{
+		"provider":    provider,
+		"model_id":    modelID,
+		"temperature": temperature,
+		"trace_id":    string(traceID),
+		"metadata":    metadata,
+	})
+}
+
+func (e *TestEventEmitter) EmitLLMInitializationSuccess(provider string, modelID string, capabilities string, traceID interfaces.TraceID, metadata interfaces.LLMMetadata) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.InitializationSuccessEvents = append(e.InitializationSuccessEvents, map[string]interface{}{
+		"provider":     provider,
+		"model_id":     modelID,
+		"capabilities": capabilities,
+		"trace_id":     string(traceID),
+		"metadata":     metadata,
+	})
+}
+
+func (e *TestEventEmitter) EmitLLMInitializationError(provider string, modelID string, operation string, err error, traceID interfaces.TraceID, metadata interfaces.LLMMetadata) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.InitializationErrorEvents = append(e.InitializationErrorEvents, map[string]interface{}{
+		"provider":  provider,
+		"model_id":  modelID,
+		"operation": operation,
+		"error":     err.Error(),
+		"trace_id":  string(traceID),
+		"metadata":  metadata,
+	})
+}
+
+func (e *TestEventEmitter) EmitLLMGenerationSuccess(provider string, modelID string, operation string, messages int, temperature float64, messageContent string, responseLength int, choicesCount int, traceID interfaces.TraceID, metadata interfaces.LLMMetadata) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.GenerationSuccessEvents = append(e.GenerationSuccessEvents, map[string]interface{}{
+		"provider":        provider,
+		"model_id":        modelID,
+		"operation":       operation,
+		"messages":        messages,
+		"temperature":     temperature,
+		"message_content": messageContent,
+		"response_length": responseLength,
+		"choices_count":   choicesCount,
+		"trace_id":        string(traceID),
+		"metadata":        metadata,
+	})
+}
+
+func (e *TestEventEmitter) EmitLLMGenerationError(provider string, modelID string, operation string, messages int, temperature float64, messageContent string, err error, traceID interfaces.TraceID, metadata interfaces.LLMMetadata) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.GenerationErrorEvents = append(e.GenerationErrorEvents, map[string]interface{}{
+		"provider":        provider,
+		"model_id":        modelID,
+		"operation":       operation,
+		"messages":        messages,
+		"temperature":     temperature,
+		"message_content": messageContent,
+		"error":           err.Error(),
+		"trace_id":        string(traceID),
+		"metadata":        metadata,
+	})
+}
+
+func (e *TestEventEmitter) EmitToolCallDetected(provider string, modelID string, toolCallID string, toolName string, arguments string, traceID interfaces.TraceID, metadata interfaces.LLMMetadata) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ToolCallDetectedEvents = append(e.ToolCallDetectedEvents, map[string]interface{}{
+		"provider":     provider,
+		"model_id":     modelID,
+		"tool_call_id": toolCallID,
+		"tool_name":    toolName,
+		"arguments":    arguments,
+		"trace_id":     string(traceID),
+		"metadata":     metadata,
+	})
+}
+
+// RunToolCallEventTestWithContext tests that tool call events are emitted correctly
+func RunToolCallEventTestWithContext(ctx context.Context, llm llmtypes.Model, modelID string, eventEmitter interfaces.EventEmitter) {
+	log.Printf("🧪 Testing tool call events with model: %s", modelID)
+
+	// Define test tool
+	readFileTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "read_file",
+			Description: "Read contents of a file",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "File path to read",
+					},
+				},
+				"required": []string{"path"},
+			}),
+		},
+	}
+
+	// Make a request that should trigger tool calls
+	messages := []llmtypes.MessageContent{
+		llmtypes.TextParts(llmtypes.ChatMessageTypeHuman, "Read the file at /tmp/test.txt"),
+	}
+
+	startTime := time.Now()
+	resp, err := llm.GenerateContent(ctx, messages,
+		llmtypes.WithModel(modelID),
+		llmtypes.WithTools([]llmtypes.Tool{readFileTool}),
+		llmtypes.WithToolChoiceString("auto"),
+	)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		log.Printf("❌ Test failed: %v", err)
+		return
+	}
+
+	if len(resp.Choices) == 0 {
+		log.Printf("❌ Test failed - no choices returned")
+		return
+	}
+
+	toolCalls := resp.Choices[0].ToolCalls
+	if len(toolCalls) == 0 {
+		log.Printf("⚠️ Test: No tool calls detected (model may not support tool calling or chose not to use tools)")
+		log.Printf("   Response: %s", resp.Choices[0].Content)
+		return
+	}
+
+	log.Printf("✅ Tool call test passed in %s", duration)
+	log.Printf("   Tool calls detected: %d", len(toolCalls))
+
+	// Validate tool call events were emitted
+	if testEmitter, ok := eventEmitter.(*TestEventEmitter); ok {
+		testEmitter.mu.Lock()
+		toolCallEvents := testEmitter.ToolCallDetectedEvents
+		testEmitter.mu.Unlock()
+
+		if len(toolCallEvents) == 0 {
+			log.Printf("❌ Test failed - no tool call events were emitted")
+			return
+		}
+
+		if len(toolCallEvents) != len(toolCalls) {
+			log.Printf("❌ Test failed - tool call event count (%d) doesn't match tool call count (%d)", len(toolCallEvents), len(toolCalls))
+			return
+		}
+
+		// Validate each tool call event
+		toolCallMap := make(map[string]*llmtypes.ToolCall)
+		for i := range toolCalls {
+			toolCallMap[toolCalls[i].ID] = &toolCalls[i]
+		}
+
+		for i, event := range toolCallEvents {
+			toolCallID, ok := event["tool_call_id"].(string)
+			if !ok || toolCallID == "" {
+				log.Printf("❌ Test failed - tool call event %d missing or invalid tool_call_id", i+1)
+				return
+			}
+
+			toolCall, exists := toolCallMap[toolCallID]
+			if !exists {
+				log.Printf("❌ Test failed - tool call event %d has tool_call_id %s that doesn't match any tool call", i+1, toolCallID)
+				return
+			}
+
+			eventToolName, ok := event["tool_name"].(string)
+			if !ok {
+				log.Printf("❌ Test failed - tool call event %d missing tool_name", i+1)
+				return
+			}
+
+			if toolCall.FunctionCall != nil && toolCall.FunctionCall.Name != eventToolName {
+				log.Printf("❌ Test failed - tool call event %d tool_name mismatch: event=%s, tool_call=%s", i+1, eventToolName, toolCall.FunctionCall.Name)
+				return
+			}
+
+			eventArgs, ok := event["arguments"].(string)
+			if !ok {
+				log.Printf("❌ Test failed - tool call event %d missing arguments", i+1)
+				return
+			}
+
+			if toolCall.FunctionCall != nil && toolCall.FunctionCall.Arguments != eventArgs {
+				log.Printf("❌ Test failed - tool call event %d arguments mismatch", i+1)
+				log.Printf("   Event args: %s", eventArgs)
+				log.Printf("   Tool call args: %s", toolCall.FunctionCall.Arguments)
+				return
+			}
+
+			log.Printf("   ✅ Tool call event %d validated: ID=%s, Name=%s", i+1, toolCallID, eventToolName)
+		}
+
+		log.Printf("\n✅ All tool call events validated successfully!")
+		log.Printf("   Total tool calls: %d", len(toolCalls))
+		log.Printf("   Total tool call events: %d", len(toolCallEvents))
+	} else {
+		log.Printf("⚠️ Test: Event emitter is not a TestEventEmitter, skipping event validation")
+	}
+
+	logTokenUsage(resp.Choices[0].GenerationInfo)
 }

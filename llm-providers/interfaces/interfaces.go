@@ -66,4 +66,6 @@ type EventEmitter interface {
 	EmitLLMInitializationError(provider string, modelID string, operation string, err error, traceID TraceID, metadata LLMMetadata)
 	EmitLLMGenerationSuccess(provider string, modelID string, operation string, messages int, temperature float64, messageContent string, responseLength int, choicesCount int, traceID TraceID, metadata LLMMetadata)
 	EmitLLMGenerationError(provider string, modelID string, operation string, messages int, temperature float64, messageContent string, err error, traceID TraceID, metadata LLMMetadata)
+	// Tool call events
+	EmitToolCallDetected(provider string, modelID string, toolCallID string, toolName string, arguments string, traceID TraceID, metadata LLMMetadata)
 }

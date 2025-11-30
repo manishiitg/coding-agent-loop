@@ -12,6 +12,7 @@ run:
     - cache
     - bin
     - tool_output_folder
+    - tool_output
     - vendor
     - schema-gen
     - cmd/timeout/timeout-bin

@@ -10,7 +10,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,8 +18,74 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+
+	"mcpagent/events"
+
 	"golang.org/x/image/draw"
 )
+
+// WorkspaceEventEmitter interface for emitting workspace file operation events
+type WorkspaceEventEmitter interface {
+	HandleEvent(ctx context.Context, event *events.AgentEvent) error
+}
+
+// Context keys for workspace event emission
+type contextKey string
+
+const (
+	workspaceEventEmitterKey contextKey = "workspace_event_emitter"
+	turnKey                  contextKey = "turn"
+	serverNameKey            contextKey = "server_name"
+)
+
+// getEventEmitterFromContext extracts the event emitter from context
+func getEventEmitterFromContext(ctx context.Context) WorkspaceEventEmitter {
+	if emitter, ok := ctx.Value(workspaceEventEmitterKey).(WorkspaceEventEmitter); ok {
+		return emitter
+	}
+	return nil
+}
+
+// getTurnFromContext extracts the turn number from context
+func getTurnFromContext(ctx context.Context) int {
+	if turn, ok := ctx.Value(turnKey).(int); ok {
+		return turn
+	}
+	return 0
+}
+
+// getServerNameFromContext extracts the server name from context
+func getServerNameFromContext(ctx context.Context) string {
+	if serverName, ok := ctx.Value(serverNameKey).(string); ok {
+		return serverName
+	}
+	return ""
+}
+
+// emitWorkspaceFileOperation emits a workspace file operation event
+func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder string) {
+	emitter := getEventEmitterFromContext(ctx)
+	if emitter == nil {
+		// No emitter in context - this is expected for some orchestrator direct calls
+		return
+	}
+
+	turn := getTurnFromContext(ctx)
+	serverName := getServerNameFromContext(ctx)
+
+	eventData := events.NewWorkspaceFileOperationEvent(operation, filepath, folder, turn, serverName)
+	agentEvent := &events.AgentEvent{
+		Type:      events.WorkspaceFileOperation,
+		Timestamp: eventData.Timestamp,
+		Data:      eventData,
+	}
+
+	if err := emitter.HandleEvent(ctx, agentEvent); err != nil {
+		// Silently fail - event emission should not break tool execution
+		_ = err
+	}
+}
 
 // WorkspaceAPIResponse represents the response structure from the workspace API
 type WorkspaceAPIResponse struct {
@@ -584,6 +649,10 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Emit workspace file operation event for list operation
+	emitWorkspaceFileOperation(ctx, "list", "", folder)
+
 	return string(responseData), nil
 }
 
@@ -670,6 +739,10 @@ func handleReadWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Emit workspace file operation event for read operation
+	emitWorkspaceFileOperation(ctx, "read", filepathStr, "")
+
 	return string(responseData), nil
 }
 
@@ -905,6 +978,10 @@ func handleUpdateWorkspaceFile(ctx context.Context, args map[string]interface{})
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Emit workspace file operation event for update operation
+	emitWorkspaceFileOperation(ctx, "update", filepath, "")
+
 	return string(responseData), nil
 }
 
@@ -1132,6 +1209,9 @@ func handleDeleteWorkspaceFile(ctx context.Context, args map[string]interface{})
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Emit workspace file operation event for delete operation
+	emitWorkspaceFileOperation(ctx, "delete", filepath, "")
+
 	// Return structured JSON for frontend parsing
 	resultJSON := map[string]interface{}{
 		"filepath": filepath,
@@ -1221,6 +1301,10 @@ func handleMoveWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 	if !apiResp.Success {
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
+
+	// Emit workspace file operation events for move operation (delete source + update destination)
+	emitWorkspaceFileOperation(ctx, "delete", sourceFilepath, "")
+	emitWorkspaceFileOperation(ctx, "update", destinationFilepath, "")
 
 	// Format the response
 	var result strings.Builder
@@ -1603,6 +1687,7 @@ func handleSyncWorkspaceToGitHub(ctx context.Context, args map[string]interface{
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
 	return string(responseData), nil
 }
 
@@ -1759,6 +1844,10 @@ func handleDiffPatchWorkspaceFile(ctx context.Context, args map[string]interface
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Emit workspace file operation event for patch operation
+	emitWorkspaceFileOperation(ctx, "patch", filepath, "")
+
 	return string(responseData), nil
 }
 

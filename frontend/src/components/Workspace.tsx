@@ -97,6 +97,7 @@ export default function Workspace({
     expandedFolders,
     setExpandedFolders,
     expandFoldersForFile,
+    expandFoldersToLevel,
     toggleFolder,
     highlightedFile,
     setSelectedFile,
@@ -259,6 +260,12 @@ export default function Workspace({
     // Skip if no files loaded yet
     if (files.length === 0) return
     
+    // In workflow mode, completely skip restore effect to let auto-expand handle it
+    // This prevents any interference with the auto-expansion logic
+    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+      return
+    }
+    
     // Get current expanded folders
     const currentExpanded = expandedFolders
     const previouslyExpanded = new Set(currentExpanded)
@@ -282,10 +289,7 @@ export default function Workspace({
       })
       setExpandedFolders(restoredExpanded)
     }
-    
-    // If we had no previously expanded folders, we'll rely on the auto-expand
-    // logic in the workflow folder expansion effect below
-  }, [files, applyFilteringAndPathAdjustment, expandedFolders, setExpandedFolders])
+  }, [files, applyFilteringAndPathAdjustment, expandedFolders, setExpandedFolders, selectedModeCategory, workflowFolderPath])
   
   // Function to scroll to highlighted file
   const scrollToHighlightedFile = useCallback((filepath: string) => {
@@ -484,37 +488,64 @@ export default function Workspace({
       const workflowPresetId = activeWorkflowPreset?.id || workflowFolderPath
       
       // Only auto-expand if we haven't done it for this workflow yet
-      // AND if we don't have any folders already expanded
-      if (autoExpandedWorkflowRef.current !== workflowPresetId && expandedFolders.size === 0) {
+      if (autoExpandedWorkflowRef.current !== workflowPresetId) {
         // Small delay to ensure files are fully loaded and rendered
         const timeoutId = setTimeout(() => {
-          // Collect folders to expand (workflow folder + first level children)
-          const foldersToExpand = new Set<string>()
-          
-          // Expand all top-level folders in the filtered tree
-          filteredFiles.forEach(file => {
-            if (file.type === 'folder') {
-              foldersToExpand.add(file.filepath)
-              
-              // Also expand first level children for better visibility
-              if (file.children) {
-                file.children.forEach(child => {
-                  if (child.type === 'folder') {
-                    foldersToExpand.add(child.filepath)
-                  }
-                })
-              }
-            }
+          // Use the store's expandFoldersToLevel function which properly handles the expansion
+          // Expand up to 4 levels deep (level 0, 1, 2, 3, 4) - that's 4 more levels after workflow folder
+          console.log('[Workspace] Auto-expanding workflow folders using expandFoldersToLevel:', {
+            filteredFilesLength: filteredFiles.length,
+            firstItem: filteredFiles[0],
+            workflowFolderPath
           })
           
-          if (foldersToExpand.size > 0) {
-            console.log('[Workspace] Auto-expanding workflow folders:', foldersToExpand.size)
-            setExpandedFolders(foldersToExpand)
-            
-            // Mark this workflow as auto-expanded
-            autoExpandedWorkflowRef.current = workflowPresetId
+          // Determine what files to expand:
+          // - If filteredFiles contains the workflow folder itself as root, expand it first, then its children
+          // - Otherwise, use filteredFiles directly (which are already the children)
+          const workflowFolder = filteredFiles.length > 0 && filteredFiles[0].type === 'folder' ? filteredFiles[0] : null
+          const filesToExpand = workflowFolder && workflowFolder.children
+            ? workflowFolder.children 
+            : filteredFiles
+          
+          console.log('[Workspace] Files to expand:', {
+            workflowFolderPath: workflowFolder?.filepath,
+            workflowFolderHasChildren: !!workflowFolder?.children,
+            childrenCount: filesToExpand.length,
+            firstFew: filesToExpand.slice(0, 3).map(f => ({ path: f.filepath, type: f.type, hasChildren: !!f.children }))
+          })
+          
+          // First, add the workflow folder itself to the expanded set (if it exists)
+          // This ensures it's expanded so we can see its children
+          const foldersToExpand = new Set<string>()
+          if (workflowFolder) {
+            foldersToExpand.add(workflowFolder.filepath)
+            console.log('[Workspace] Adding workflow folder to expanded set:', workflowFolder.filepath)
           }
-        }, 300)
+          
+          // Then expand children up to 4 levels deep (levels 0, 1, 2, 3, 4 = 5 levels total)
+          // We use maxLevel=4 to get 4 levels below the workflow folder
+          expandFoldersToLevel(filesToExpand, 4)
+          
+          // After expandFoldersToLevel runs, it sets the expanded folders
+          // We need to merge our workflow folder with the result
+          // Use a small delay to ensure expandFoldersToLevel has finished
+          setTimeout(() => {
+            if (workflowFolder) {
+              const currentExpanded = new Set(expandedFolders)
+              currentExpanded.add(workflowFolder.filepath)
+              setExpandedFolders(currentExpanded)
+              console.log('[Workspace] Merged workflow folder with expanded folders, total:', currentExpanded.size)
+            }
+          }, 50)
+          
+          // Mark this workflow as auto-expanded
+          autoExpandedWorkflowRef.current = workflowPresetId
+          
+          // Log the result after a short delay to see what was expanded
+          setTimeout(() => {
+            console.log('[Workspace] After expansion, expandedFolders count:', expandedFolders.size)
+          }, 100)
+        }, 500) // Increased delay to ensure files are fully processed
         
         return () => clearTimeout(timeoutId)
       }
@@ -522,7 +553,7 @@ export default function Workspace({
       // Reset the auto-expanded ref when switching away from workflow mode
       autoExpandedWorkflowRef.current = null
     }
-  }, [selectedModeCategory, workflowFolderPath, filteredFiles, setExpandedFolders, activeWorkflowPreset?.id, expandedFolders.size])
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id, expandedFolders, setExpandedFolders])
   
   // Close dropdown when clicking outside
   useEffect(() => {

@@ -23,10 +23,11 @@ const (
 	LLMMessages        EventType = "llm_messages"
 
 	// Tool events
-	ToolCallStart    EventType = "tool_call_start"
-	ToolCallEnd      EventType = "tool_call_end"
-	ToolCallError    EventType = "tool_call_error"
-	ToolCallProgress EventType = "tool_call_progress"
+	ToolCallStart          EventType = "tool_call_start"
+	ToolCallEnd            EventType = "tool_call_end"
+	ToolCallError          EventType = "tool_call_error"
+	ToolCallProgress       EventType = "tool_call_progress"
+	WorkspaceFileOperation EventType = "workspace_file_operation"
 
 	// Agent events
 	AgentStart EventType = "agent_start"
@@ -239,7 +240,7 @@ func GetComponentFromEventType(eventType EventType) string {
 	case eventType == LLMGenerationStart || eventType == LLMGenerationEnd || eventType == LLMGenerationError ||
 		eventType == SmartRoutingStart || eventType == SmartRoutingEnd:
 		return "llm"
-	case eventType == ToolCallStart || eventType == ToolCallEnd || eventType == ToolCallError:
+	case eventType == ToolCallStart || eventType == ToolCallEnd || eventType == ToolCallError || eventType == WorkspaceFileOperation:
 		return "tool"
 	case eventType == ConversationStart || eventType == ConversationEnd || eventType == ConversationError || eventType == ConversationTurn || eventType == ConversationThinking:
 		return "conversation"

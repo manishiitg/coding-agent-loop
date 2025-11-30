@@ -970,6 +970,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					logger.Infof("[CONNECTION CACHE DEBUG] Turn %d, Tool: %s, Using cached connection for server: %s", turn+1, tc.FunctionCall.Name, serverName)
 				}
 
+				// Inject event emitter, turn, and server name into context for workspace tools
+				toolCtx = context.WithValue(toolCtx, "workspace_event_emitter", a)
+				toolCtx = context.WithValue(toolCtx, "turn", turn+1)
+				toolCtx = context.WithValue(toolCtx, "server_name", serverName)
+
 				var result *mcp.CallToolResult
 				var toolErr error
 
@@ -1316,7 +1321,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			if genInfo.CacheDiscount != nil {
 				logger.Infof("      CacheDiscount: %.2f%%", *genInfo.CacheDiscount*100)
 			}
-			if genInfo.Additional != nil && len(genInfo.Additional) > 0 {
+			if len(genInfo.Additional) > 0 {
 				logger.Infof("      Additional fields:")
 				for key, value := range genInfo.Additional {
 					if strings.Contains(strings.ToLower(key), "cache") || strings.Contains(strings.ToLower(key), "token") {

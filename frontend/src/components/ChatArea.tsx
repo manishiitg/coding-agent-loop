@@ -3,7 +3,6 @@ import debounce from 'lodash.debounce'
 import { agentApi } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
-import { EventModeProvider } from './events'
 import { ChatInput, type ChatInputRef } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
@@ -23,19 +22,31 @@ import { VariablesIcon } from './workflow/VariablesIcon'
 interface ChatAreaProps {
   // New chat handler
   onNewChat: () => void
+  // Hide header when used inside another layout (like WorkflowLayout)
+  hideHeader?: boolean
+  // Hide input area when used inside workflow mode
+  hideInput?: boolean
+  // Compact mode for smaller font sizes (used in workflow layout)
+  compact?: boolean
 }
+
+import type { ExecutionOptions } from '../services/api-types'
 
 // Ref interface for ChatArea component
 export interface ChatAreaRef {
   handleNewChat: () => void
   resetChatState: () => void
   refreshWorkflowPresets: () => Promise<void>
+  submitQuery: (query: string, executionOptions?: ExecutionOptions) => Promise<void>
+  getEvents: () => PollingEvent[]
+  isStreaming: boolean
+  currentWorkflowPhase: string
 }
 
 
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
-  const { onNewChat } = props
+  const { onNewChat, hideHeader = false, hideInput = false, compact = false } = props
   // Ref for ChatInput to get code execution mode
   const chatInputRef = useRef<ChatInputRef>(null)
   
@@ -485,7 +496,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       if (!nextPhase) {
         const phases = await getWorkflowPhases()
         // Use second phase (planning) if available, otherwise first phase
-        nextPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+        nextPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
       }
       
       // Update workflow status to the determined next phase
@@ -640,13 +651,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const pollEvents = useCallback(async () => {
     const currentLastEventIndex = lastEventIndexRef.current
     
-    if (!observerId) {
+    // Get observerId from store (may be more up-to-date than closure)
+    const currentObserverId = useChatStore.getState().observerId || observerId
+    
+    if (!currentObserverId) {
       return
     }
 
     
     try {
-      const response = await agentApi.getEvents(observerId, currentLastEventIndex)
+      const response = await agentApi.getEvents(currentObserverId, currentLastEventIndex)
 
       if (response.events.length > 0) {
         
@@ -700,7 +714,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 if (result) {
                   // Get phases to determine planning phase
                   const phases = await getWorkflowPhases()
-                  const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+                  const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
                   
                   // Only reset to planning phase if workflow hasn't been approved yet
                   // This prevents resetting the phase after user approval
@@ -717,7 +731,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             if (event.type === 'workflow_end') {
               // Get phases to determine completion phase (second phase = planning/execution)
               const phases = await getWorkflowPhases()
-              const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+              const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
               setCurrentWorkflowPhase(completionPhase)
             }
           }
@@ -1117,8 +1131,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setLastEventCount(0)
   }, [pollingInterval, setPollingInterval, observerId, setIsStreaming, setLastEventIndex, setLastEventCount])
 
+  // Store execution options for use in the request
+  const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
+
   // Wrapper function to submit query with the current local query
-  const submitQueryWithQuery = useCallback(async (query: string) => {
+  const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions) => {
+    // Store execution options for inclusion in the request
+    executionOptionsRef.current = executionOptions
     if (!query?.trim()) {
       return
     }
@@ -1153,10 +1172,31 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       await stopStreaming()
     }
     
-    // Ensure observer is ready
-    if (!observerId) {
-      console.error('[SUBMIT] No observer ID available, cannot submit query')
-      return
+    // Note: Observer ID is not required for query submission
+    // It's only needed for event polling, which will be set up after the query starts
+    // The observer should be initialized automatically via useEffect
+    // If it's not available yet, we'll wait a bit for initialization, but won't block submission
+    let currentObserverId = observerId
+    if (!currentObserverId) {
+      console.log('[SUBMIT] Observer ID not available yet, waiting briefly for initialization...')
+      // Wait up to 1 second for observer to be initialized (check every 100ms)
+      for (let i = 0; i < 10; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        // Check observerId from the chat store directly
+        const storeObserverId = useChatStore.getState().observerId
+        if (storeObserverId) {
+          console.log(`[SUBMIT] Observer ID became available after ${(i + 1) * 100}ms: ${storeObserverId}`)
+          currentObserverId = storeObserverId
+          break
+        }
+      }
+      
+      if (!currentObserverId) {
+        console.warn('[SUBMIT] Observer ID not available yet, but proceeding with query submission.')
+        console.warn('[SUBMIT] Observer will be initialized automatically, and polling will start once it\'s ready.')
+        // Don't return - allow submission to proceed
+        // The observer initialization effect will handle setting it up
+      }
     }
 
     // Use the query with file context that we prepared earlier
@@ -1285,6 +1325,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         preset_query_id: selectedWorkflowPreset || undefined,
         // Send boolean value directly - don't use || undefined as it converts false to undefined
         use_code_execution_mode: useCodeExecutionMode !== undefined ? useCodeExecutionMode : undefined,
+        // Execution options from frontend (for workflow execution phase)
+        execution_options: executionOptionsRef.current,
       }
       
       console.log('[code_execution] [ChatArea] API Request payload:', {
@@ -1303,6 +1345,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }
         
         // Start polling for events
+        // pollEvents will check for observerId from store and skip if not available
+        // The observer should be initialized by the useEffect hook
         const interval = setInterval(pollEvents, 1000)
         setPollingInterval(interval)
       } else {
@@ -1373,8 +1417,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   useImperativeHandle(ref, () => ({
     handleNewChat,
     resetChatState,
-    refreshWorkflowPresets
-  }), [handleNewChat, resetChatState, refreshWorkflowPresets])
+    refreshWorkflowPresets,
+    submitQuery: submitQueryWithQuery,
+    getEvents: () => events,
+    isStreaming,
+    currentWorkflowPhase
+  }), [handleNewChat, resetChatState, refreshWorkflowPresets, submitQueryWithQuery, events, isStreaming, currentWorkflowPhase])
 
   return (
     <div className="flex flex-col h-full min-w-0">
@@ -1400,58 +1448,60 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         />
       )}
 
-      {/* Header */}
+      {/* Header - hidden when used inside WorkflowLayout */}
+      {!hideHeader && (
       <ChatHeader
         chatSessionTitle={chatSessionTitle}
         chatSessionId={chatSessionId}
         sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
         onModeSelect={handleModeSelect}
       />
+      )}
 
       {/* Chat Content - Separated to prevent input re-renders */}
-      <div ref={chatContentRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative">
+      <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative ${compact ? 'text-sm' : ''}`}>
         {/* Variables Icon - Top Right */}
         <VariablesIcon onSubmitQuery={submitQueryWithQuery} />
         
-        <div className="min-w-0 p-4">
+        <div className={`min-w-0 ${compact ? 'p-2' : 'p-4'}`}>
           {/* Loading indicator for historical events */}
           {isLoadingHistory && (
-            <div className="flex items-center justify-center py-8">
+            <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
               <div className="flex items-center gap-3 text-gray-600 dark:text-gray-400">
-                <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
-                <span className="text-sm">Loading chat history...</span>
+                <div className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin`}></div>
+                <span className={compact ? 'text-xs' : 'text-sm'}>Loading chat history...</span>
               </div>
             </div>
           )}
 
           {/* Loading indicator for active session checking */}
           {isCheckingActiveSessions && (
-            <div className="flex items-center justify-center py-8">
+            <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
               <div className="flex items-center gap-3 text-gray-600 dark:text-gray-400">
-                <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-green-600 dark:border-t-green-400 rounded-full animate-spin"></div>
-                <span className="text-sm">Checking for active session...</span>
+                <div className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} border-2 border-gray-300 dark:border-gray-600 border-t-green-600 dark:border-t-green-400 rounded-full animate-spin`}></div>
+                <span className={compact ? 'text-xs' : 'text-sm'}>Checking for active session...</span>
               </div>
             </div>
           )}
 
           {/* Active session indicator */}
           {sessionState === 'active' && (
-            <div className="flex items-center justify-center py-4">
-              <div className="flex items-center gap-2 px-3 py-2 bg-green-100 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-sm text-green-700 dark:text-green-300 font-medium">Live Session - Reconnected</span>
+            <div className={`flex items-center justify-center ${compact ? 'py-2' : 'py-4'}`}>
+              <div className={`flex items-center gap-2 ${compact ? 'px-2 py-1' : 'px-3 py-2'} bg-green-100 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg`}>
+                <div className={`${compact ? 'w-1.5 h-1.5' : 'w-2 h-2'} bg-green-500 rounded-full animate-pulse`}></div>
+                <span className={`${compact ? 'text-xs' : 'text-sm'} text-green-700 dark:text-green-300 font-medium`}>Live Session - Reconnected</span>
               </div>
             </div>
           )}
 
           {/* Session error indicator */}
           {sessionState === 'error' && (
-            <div className="flex items-center justify-center py-4">
-              <div className="flex items-center gap-2 px-3 py-2 bg-red-100 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <svg className="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className={`flex items-center justify-center ${compact ? 'py-2' : 'py-4'}`}>
+              <div className={`flex items-center gap-2 ${compact ? 'px-2 py-1' : 'px-3 py-2'} bg-red-100 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg`}>
+                <svg className={`${compact ? 'w-3 h-3' : 'w-4 h-4'} text-red-600 dark:text-red-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-sm text-red-700 dark:text-red-300 font-medium">Session Error - Unable to reconnect</span>
+                <span className={`${compact ? 'text-xs' : 'text-sm'} text-red-700 dark:text-red-300 font-medium`}>Session Error - Unable to reconnect</span>
               </div>
             </div>
           )}
@@ -1476,7 +1526,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
           </WorkflowModeHandler>
         ) : (
           <>
@@ -1485,14 +1535,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
           </>
         )}
         </div>
       </div>
 
-      {/* Input Area - Completely isolated from event updates */}
-      {!chatSessionId && (
+      {/* Input Area - Completely isolated from event updates, hidden in workflow mode */}
+      {!chatSessionId && !hideInput && (
         <ChatInput
           ref={chatInputRef}
           onSubmit={submitQueryWithQuery}
@@ -1503,10 +1553,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       
       {/* Historical Session Notice */}
       {chatSessionId && (
-        <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-          <div className="text-center text-sm text-gray-600 dark:text-gray-400">
+        <div className={`${compact ? 'px-2 py-2' : 'px-4 py-3'} border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800`}>
+          <div className={`text-center ${compact ? 'text-xs' : 'text-sm'} text-gray-600 dark:text-gray-400`}>
             <p>Viewing historical chat session</p>
-            <p className="text-xs mt-1">
+            <p className={`${compact ? 'text-[10px]' : 'text-xs'} mt-1`}>
               <button
                 onClick={onNewChat}
                 className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
@@ -1530,14 +1580,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
 ChatAreaInner.displayName = 'ChatAreaInner'
 
-// Main ChatArea component that provides the EventMode context
-const ChatArea = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
-  return (
-    <EventModeProvider>
-      <ChatAreaInner ref={ref} {...props} />
-    </EventModeProvider>
-  )
-})
+// Main ChatArea component (EventModeProvider should be provided by parent)
+const ChatArea = ChatAreaInner
 
 ChatArea.displayName = 'ChatArea'
 

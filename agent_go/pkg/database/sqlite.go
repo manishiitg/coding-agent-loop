@@ -911,7 +911,7 @@ func (s *SQLiteDB) UpdateWorkflow(ctx context.Context, presetQueryID string, req
 	// If workflow doesn't exist, create it
 	if existingWorkflow == nil {
 		// Determine default workflow status
-		workflowStatus := "pre-verification"
+		workflowStatus := "execution"
 		if req.WorkflowStatus != nil {
 			workflowStatus = *req.WorkflowStatus
 		}

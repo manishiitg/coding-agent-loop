@@ -97,7 +97,7 @@ func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder
 type WorkspaceAPIResponse struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message"`
-	Data    interface{} `json:"data"`
+	Data    interface{} `json:"data"` // Can be WorkspaceFolderListing, WorkspaceFileContent, etc.
 	Error   string      `json:"error,omitempty"`
 }
 
@@ -107,6 +107,29 @@ type WorkspaceFile struct {
 	Size        int64     `json:"size,omitempty"`
 	ModifiedAt  time.Time `json:"modified_at,omitempty"`
 	IsDirectory bool      `json:"is_directory,omitempty"`
+}
+
+// WorkspaceFolderItem represents a single item (file or folder) in a workspace folder listing
+type WorkspaceFolderItem struct {
+	Filepath    string                `json:"filepath"`
+	Folder      string                `json:"folder,omitempty"`
+	Name        string                `json:"name,omitempty"`
+	Size        int64                 `json:"size,omitempty"`
+	ModifiedAt  time.Time             `json:"modified_at,omitempty"`
+	Type        string                `json:"type,omitempty"` // "file" or "folder"
+	IsDirectory bool                  `json:"is_directory,omitempty"`
+	IsDir       bool                  `json:"is_dir,omitempty"`   // Alternative field name
+	Children    []WorkspaceFolderItem `json:"children,omitempty"` // Nested children for folders
+}
+
+// WorkspaceFolderListing represents the folder listing response from workspace API
+// The API returns an array of folder items, where each item can have nested children
+type WorkspaceFolderListing []WorkspaceFolderItem
+
+// WorkspaceFileContent represents the content response when reading a file
+type WorkspaceFileContent struct {
+	Filepath string `json:"filepath"`
+	Content  string `json:"content"`
 }
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default

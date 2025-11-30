@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Pencil, RefreshCw, Sparkles } from 'lucide-react';
+import { X, Save, Pencil } from 'lucide-react';
 import { agentApi } from '../../services/api';
 import { MarkdownRenderer } from '../ui/MarkdownRenderer';
 
@@ -15,8 +15,7 @@ interface VariablesModalProps {
   variables: Variable[];
   templatedObjective: string;
   workspacePath: string;
-  onExtractAgain?: () => void;
-  onUpdateVariables?: () => void;
+  inline?: boolean; // If true, render without fixed overlay (for sidebar use)
 }
 
 export const VariablesModal: React.FC<VariablesModalProps> = ({
@@ -25,8 +24,7 @@ export const VariablesModal: React.FC<VariablesModalProps> = ({
   variables: initialVariables,
   templatedObjective: initialTemplatedObjective,
   workspacePath,
-  onExtractAgain,
-  onUpdateVariables,
+  inline = false,
 }) => {
   const [variables, setVariables] = useState<Variable[]>(initialVariables);
   const [templatedObjective, setTemplatedObjective] = useState(initialTemplatedObjective);
@@ -34,7 +32,6 @@ export const VariablesModal: React.FC<VariablesModalProps> = ({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isObjectiveEditing, setIsObjectiveEditing] = useState(false);
   const [editingDescriptions, setEditingDescriptions] = useState<Record<number, boolean>>({});
-  const [isExtracting, setIsExtracting] = useState(false);
 
   // Update state when props change (e.g., when new VariablesExtractedEvent is received)
   useEffect(() => {
@@ -102,78 +99,19 @@ export const VariablesModal: React.FC<VariablesModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/70">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-[95vw] max-h-[95vh] flex flex-col">
+  const content = (
+    <div className={`${inline ? 'h-full' : 'bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-[95vw] max-h-[95vh]'} flex flex-col`}>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Edit Variables
           </h2>
-          <div className="flex items-center gap-2">
-            {/* Extract Again Button */}
-            {onExtractAgain && (
-              <button
-                onClick={async () => {
-                  setIsExtracting(true);
-                  setSaveError(null);
-                  try {
-                    onExtractAgain();
-                    onClose(); // Close modal after triggering extraction
-                  } catch (error) {
-                    console.error('Failed to extract variables:', error);
-                    setSaveError(error instanceof Error ? error.message : 'Failed to extract variables');
-                    setIsExtracting(false);
-                  }
-                }}
-                disabled={isExtracting || isSaving}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Extract variables again using LLM"
-              >
-                {isExtracting ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="w-3.5 h-3.5" />
-                )}
-                Extract Again
-              </button>
-            )}
-            
-            {/* Update Variables Button */}
-            {onUpdateVariables && (
-              <button
-                onClick={async () => {
-                  setIsExtracting(true);
-                  setSaveError(null);
-                  try {
-                    onUpdateVariables();
-                    onClose(); // Close modal after triggering update
-                  } catch (error) {
-                    console.error('Failed to update variables:', error);
-                    setSaveError(error instanceof Error ? error.message : 'Failed to update variables');
-                    setIsExtracting(false);
-                  }
-                }}
-                disabled={isExtracting || isSaving}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/30 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Update variables using LLM with current values as feedback"
-              >
-                {isExtracting ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
-                )}
-                Update Variables
-              </button>
-            )}
-            
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Content */}
@@ -350,6 +288,15 @@ export const VariablesModal: React.FC<VariablesModalProps> = ({
           </button>
         </div>
       </div>
+  );
+
+  if (inline) {
+    return content;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/70">
+      {content}
     </div>
   );
 };

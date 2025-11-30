@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS preset_queries (
 CREATE TABLE IF NOT EXISTS workflows (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     preset_query_id TEXT NOT NULL, -- Links to preset_queries.id for workflow templates
-    workflow_status TEXT DEFAULT 'pre-verification', -- Current workflow status: 'pre-verification', 'post-verification', 'post-verification-todo-refinement'
+    workflow_status TEXT DEFAULT 'execution', -- Current workflow status: 'execution', 'post-verification', 'post-verification-todo-refinement'
     selected_options JSON DEFAULT NULL, -- Selected options for the current workflow phase (JSON object)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

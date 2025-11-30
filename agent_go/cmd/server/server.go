@@ -18,17 +18,19 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/events"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/orchestrator"
+	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
 	unifiedevents "mcpagent/events"
 	"mcpagent/llm"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"mcp-agent/agent_go/pkg/logger"
 
@@ -178,6 +180,10 @@ type StreamingAPI struct {
 	workflowObjectives   map[string]string
 	workflowObjectiveMux sync.RWMutex
 
+	// Workflow step IDs: presetQueryID -> stepID (temporary storage for step-specific phase execution)
+	workflowStepIDs   map[string]string
+	workflowStepIDMux sync.RWMutex
+
 	// Conversation history storage: sessionID -> conversation history
 	conversationHistory map[string][]llmtypes.MessageContent
 	conversationMux     sync.RWMutex
@@ -237,6 +243,8 @@ type QueryRequest struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
+	// Execution options from frontend (for workflow execution phase)
+	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -504,6 +512,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		activeSessions: make(map[string]*ActiveSessionInfo),
 		// Initialize orchestrator storage
 		workflowOrchestrators: make(map[string]orchestrator.Orchestrator),
+		// Initialize workflow step ID storage
+		workflowStepIDs: make(map[string]string),
 	}
 
 	// Setup routes
@@ -585,6 +595,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
+	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/progress", api.handleGetProgress).Methods("GET", "OPTIONS")
 
 	// Static file serving (for frontend)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
@@ -1126,6 +1138,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Check database for workflow approval status if preset_id is provided
 			workflowStatus := database.WorkflowStatusPreVerification // Default status
 			var selectedOptions *database.WorkflowSelectedOptions
+			var stepID string
 			if req.PresetQueryID != "" {
 				// Check workflow approval status from database
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1147,11 +1160,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				} else {
 					log.Printf("[WORKFLOW CHECK] Could not check database: %w", err)
 				}
+
+				// Retrieve step_id if it was stored for this preset
+				api.workflowStepIDMux.RLock()
+				if api.workflowStepIDs != nil {
+					if storedStepID, exists := api.workflowStepIDs[req.PresetQueryID]; exists {
+						stepID = storedStepID
+						log.Printf("[WORKFLOW CHECK] Found step_id for preset: %s", stepID)
+						// Clear it after retrieval (one-time use)
+						delete(api.workflowStepIDs, req.PresetQueryID)
+					}
+				}
+				api.workflowStepIDMux.RUnlock()
 			} else {
 				log.Printf("[WORKFLOW CHECK] No preset_query_id provided, using default workflowStatus: %s", workflowStatus)
 			}
 
 			log.Printf("[WORKFLOW EXECUTION] Executing workflow with status: %s", workflowStatus)
+			if stepID != "" {
+				log.Printf("[WORKFLOW EXECUTION] Step-specific execution for step: %s", stepID)
+			}
 
 			// Extract workspace path from objective
 			workflowWorkspacePath := extractWorkspacePathFromObjective(req.Query)
@@ -1165,6 +1193,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				"workflowStatus":  workflowStatus,  // Current workflow status
 				"selectedOptions": selectedOptions, // Pass selected options from database
 			}
+			if stepID != "" {
+				workflowOptions["stepId"] = stepID // Pass step ID for step-specific phase execution
+			}
 
 			log.Printf("[WORKFLOW EXECUTION DEBUG] About to call workflowOrchestrator.Execute")
 			log.Printf("[WORKFLOW EXECUTION DEBUG] workflowOptions: %+v", workflowOptions)
@@ -1172,6 +1203,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if selectedOptions != nil {
 				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.PhaseID: %s", selectedOptions.PhaseID)
 				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.Selections count: %d", len(selectedOptions.Selections))
+			}
+
+			// Pass execution options from frontend if provided
+			if req.ExecutionOptions != nil {
+				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s",
+					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder)
+
+				// Convert to controller ExecutionOptions and pass to workflow orchestrator
+				controllerOpts := &todo_creation_human.ExecutionOptions{
+					RunMode:            req.ExecutionOptions.RunMode,
+					SelectedRunFolder:  req.ExecutionOptions.SelectedRunFolder,
+					ExecutionStrategy:  req.ExecutionOptions.ExecutionStrategy,
+					ResumeFromStep:     req.ExecutionOptions.ResumeFromStep,
+					FastExecuteEndStep: req.ExecutionOptions.FastExecuteEndStep,
+				}
+
+				// Set execution options on the workflow orchestrator
+				workflowOrchestrator.SetExecutionOptions(controllerOpts)
 			}
 
 			// Execute workflow with the query

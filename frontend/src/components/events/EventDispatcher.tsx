@@ -179,9 +179,10 @@ interface EventDispatcherProps {
   isCollapsed?: boolean  // Whether the session is collapsed
   eventCount?: number  // Number of events in the session (excluding start/end)
   onToggleCollapse?: () => void  // Callback to toggle collapse state
+  compact?: boolean  // Compact mode for smaller font sizes (used in workflow layout)
 }
 
-export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, isCollapsed, eventCount, onToggleCollapse }) => {
+export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, isCollapsed, eventCount, onToggleCollapse, compact = false }) => {
   
   if (!event.type || !event.data) {
     return (
@@ -441,7 +442,8 @@ export const EventList: React.FC<{
   onSubmitFeedback?: (requestId: string, feedback: string) => void
   onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state for approve button
-}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving }) => {
+  compact?: boolean  // Compact mode for smaller font sizes
+}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const { shouldShowEvent, mode } = useEventMode()
   
   // Filter events based on current mode (basic/advanced) - memoized
@@ -457,15 +459,15 @@ export const EventList: React.FC<{
   }, [events, shouldShowEvent])
   
   if (events.length === 0) {
-    return <div className="text-gray-500 text-center py-4">No events to display</div>
+    return <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>No events to display</div>
   }
   
   if (filteredEvents.length === 0) {
     return (
-      <div className="text-gray-500 text-center py-4">
+      <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>
         No events to display in {mode} mode
         {mode === 'basic' && (
-          <div className="text-xs mt-2">
+          <div className={`${compact ? 'text-[10px]' : 'text-xs'} mt-2`}>
             Switch to Advanced mode to see all events
           </div>
         )}
@@ -479,5 +481,6 @@ export const EventList: React.FC<{
     onSubmitFeedback={onSubmitFeedback}
     onFeedbackSubmitted={onFeedbackSubmitted}
     isApproving={isApproving}
+    compact={compact}
   />
 }) 

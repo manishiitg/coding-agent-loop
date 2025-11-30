@@ -125,6 +125,7 @@ export interface PlanStep {
   if_false_steps?: PlanStep[];
   condition_result?: boolean;
   condition_reason?: string;
+  agent_configs?: AgentConfigs;       // Merged from step_config.json
   [key: string]: unknown;              // Allow other fields for flexibility
 }
 

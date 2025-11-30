@@ -9,13 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // StepCurrentToolConfig represents the current tool configuration for a step (mapped from step_config.json)
@@ -347,7 +348,8 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 
 // PlanToolOptimizationOnly runs only the plan tool optimization phase (standalone, independent from other phases)
 // This is a separate workflow phase that can be run independently
-func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Context, workspacePath string) (string, error) {
+// stepID is optional - if provided, the agent will focus only on that specific step
+func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Context, workspacePath string, stepID string) (string, error) {
 	ptom.GetLogger().Infof("🔧 Starting standalone plan tool optimization for workspace: %s", workspacePath)
 
 	// Set workspace path
@@ -490,8 +492,17 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 		ptom.GetLogger().Infof("✅ Added variable names to tool optimization template vars")
 	}
 
+	// Add step ID if provided (for step-specific execution)
+	if stepID != "" {
+		toolOptimizationTemplateVars["StepID"] = stepID
+		ptom.GetLogger().Infof("✅ Added step ID to tool optimization template vars: %s", stepID)
+	}
+
 	// Execute tool optimization agent
 	ptom.GetLogger().Infof("🔧 Executing plan tool optimization agent...")
+	if stepID != "" {
+		ptom.GetLogger().Infof("🔧 Step-specific execution for step: %s", stepID)
+	}
 	result, conversationHistory, err := toolOptimizationAgent.Execute(ctx, toolOptimizationTemplateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("plan tool optimization agent execution failed: %w", err)
@@ -742,6 +753,11 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 		"AllowedPaths":                   allowedPaths,
 	}
 
+	// Add step ID if provided (for step-specific execution)
+	if stepID := templateVars["StepID"]; stepID != "" {
+		toolOptimizationTemplateVars["StepID"] = stepID
+	}
+
 	// Create template data for tool optimization
 	templateData := HumanControlledTodoPlannerPlanToolOptimizationTemplate{
 		WorkspacePath:          workspacePath,
@@ -989,11 +1005,33 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) toolOptimizati
 `
 	}
 
+	// Build step-specific section if step ID is provided
+	stepSpecificSection := ""
+	if stepID := templateVars["StepID"]; stepID != "" {
+		stepSpecificSection = `
+**IMPORTANT - STEP-SPECIFIC EXECUTION**:
+You are optimizing tools for a SPECIFIC STEP ONLY: ` + stepID + `
+
+**CRITICAL INSTRUCTIONS FOR STEP-SPECIFIC EXECUTION**:
+1. **Focus ONLY on step with ID: ` + stepID + `** - Do NOT optimize other steps
+2. When asking which steps to optimize, you should ONLY present the step with ID ` + stepID + ` (or skip the question if you can identify it from the plan)
+3. Extract tools from learnings ONLY for step ` + stepID + `
+4. Update step_config.json ONLY for step ` + stepID + `
+5. Ignore all other steps in the plan - this is a focused optimization for one step only
+
+`
+	}
+
 	return `# Plan Tool Optimization Task
 
-**PRIMARY GOAL**: First ask the user which step(s) to optimize, then analyze successful tool usage from learnings folder for those steps and optimize tool selections in step_config.json. Only use tools from successful learnings (✅ success patterns) to suggest tool configurations.
+**PRIMARY GOAL**: ` + func() string {
+		if stepID := templateVars["StepID"]; stepID != "" {
+			return fmt.Sprintf("Optimize tools for SPECIFIC STEP ONLY (ID: %s). Focus exclusively on this step - do NOT optimize other steps.", stepID)
+		}
+		return "First ask the user which step(s) to optimize, then analyze successful tool usage from learnings folder for those steps and optimize tool selections in step_config.json."
+	}() + ` Only use tools from successful learnings (✅ success patterns) to suggest tool configurations.
 
-**Context**:
+` + stepSpecificSection + `**Context**:
 - **Workspace Path**: ` + templateVars["WorkspacePath"] + `
 - **Allowed Paths**: ` + templateVars["AllowedPaths"] + `
 - **Preset Servers**: ` + templateVars["PresetServers"] + `

@@ -181,7 +181,6 @@ export interface AgentStartEvent {
   agent_type?: string;
   model_id?: string;
   provider?: string;
-  use_code_execution_mode?: boolean;
 }
 export interface AgentEndEvent {
   timestamp?: string;

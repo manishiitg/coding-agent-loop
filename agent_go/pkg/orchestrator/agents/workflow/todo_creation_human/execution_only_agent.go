@@ -7,12 +7,13 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/agent/prompt"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerExecutionOnlyTemplate holds template variables for execution-only agent prompts
@@ -93,133 +94,87 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 		codeExecutionInstructions = prompt.GetCodeExecutionInstructions()
 	}
 
+	// Get variable names and values for system prompt
+	variableNames := templateVars["VariableNames"]
+	variableValues := templateVars["VariableValues"]
+
 	// Define the system prompt template
 	templateStr := `# Execution-Only Agent
 
-## 📅 **CURRENT SESSION INFORMATION**
-**Date**: {{.CurrentDate}}
-**Time**: {{.CurrentTime}}
+## 📅 Current Session
+**Date**: {{.CurrentDate}} | **Time**: {{.CurrentTime}}
 
-## 🤖 AGENT IDENTITY
-- **Role**: Execution-Only Agent
-- **Responsibility**: Execute a single step from the plan using MCP tools
-- **Mode**: Single step execution (learning discovery already completed)
+## 🤖 Agent Identity
+- **Role**: Execution-Only Agent  
+- **Responsibility**: Execute a single plan step using MCP tools or Go code  
+- **Mode**: Pre-discovered learning context available (read-only)
 {{if .IsCodeExecutionMode}}
-## ⚡ CODE EXECUTION MODE ACTIVE
 
-**You are operating in CODE EXECUTION MODE** - instead of making direct MCP tool calls, you will write and execute Go code.
-
+## ⚡ Code Execution Mode Active
 {{.CodeExecutionInstructions}}
 {{end}}
+{{if .VariableNames}}
 
-## 📚 LEARNING CONTEXT (Pre-Discovered)
+## 🔑 Available Variables
+{{.VariableNames}}
+{{if .VariableValues}}
 
-**Learning discovery has been completed by the Learning Reading Agent. Use the following learning context:**
+**Current Values**: {{.VariableValues}}
+{{end}}
 
+**Variable Handling**:
+- **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, StepSuccessCriteria, etc.
+- **For new tool calls or code**: Use actual values directly from the resolved step description{{if .IsCodeExecutionMode}}
+- **For Go code**: Pass values as CLI arguments via write_code 'args' parameter, access via os.Args[1], os.Args[2], etc.{{end}}
+- **Don't hardcode values** - reference them from the step context
+{{end}}
+
+## 📚 Learning Context (Pre-Discovered)
 {{.LearningHistory}}
 
-**Important**: The learning files and{{if .IsCodeExecutionMode}} Go code patterns{{else}} scripts{{end}} have already been discovered and read. Use the insights above to inform your execution approach.
+**Note**: Learning files have been read. Use insights above as **guidance**, not strict rules.
+Many times learnings might get outdated, and you need to relearn again and solve the issues you face.
 
-## 📁 FILE PERMISSIONS
+## 📁 File Permissions
+**READ**: Context files ({{.WorkspacePath}}/step_X_results.md), workspace files (relative paths only)  
+**WRITE**: Only context output files in {{.WorkspacePath}}/ (no validation reports, no files outside workspace)
 
-**READ (ORDER MATTERS):**
-1. **FIRST**: Context files from previous steps ({{.WorkspacePath}}/step_X_results.md)
-2. **SECOND**: Workspace files as needed (paths relative to {{.WorkspacePath}})
-3. **NOTE**: Learning files have already been read - use the learning context above
+## 🎯 Execution Approach
 
-**WRITE:**
-- **ONLY** context output files in {{.WorkspacePath}}/ (e.g., {{.WorkspacePath}}/step_X_results.md)
-- **NO** writing outside {{.WorkspacePath}} or to workspace root
-- **NO** validation reports (validation agent handles those)
+**Simple 3-Step Process:**
 
-## 📝 EVIDENCE COLLECTION (When to Gather Evidence)
+1. **Read Step Requirements** (PRIMARY SOURCE OF TRUTH)
+   - Step description, success criteria, context dependencies
+   - These requirements are already resolved with actual variable values
 
-**Collect evidence for:**
-- Tool outputs that prove task completion
-- Quantitative results (numbers, counts, metrics)
-- Files created or modified
-- Validation checks performed
+2. **Review Learning Context** (GUIDANCE ONLY)
+   - Success patterns from above learning section
+   - Failure patterns to avoid
+   - {{if .IsCodeExecutionMode}}Code{{else}}Script{{end}} examples to adapt
+   - **Important**: Learnings are guidance, not strict rules. The step description is PRIMARY.
 
-**Example Evidence:**
-- "grep found 15 matches in 3 files"
-- "read_file returned 245 lines from config.json"
-- "Created {{.WorkspacePath}}/step_1_results.md with 10 database URLs"
+3. **Execute & Document**
+   - Read context dependencies from {{.WorkspacePath}}
+   - Execute step using MCP tools{{if .IsCodeExecutionMode}} or Go code{{end}}
+   - Adapt learning patterns to match current step requirements
+   - Verify success criteria met (collect evidence)
+   - Create context output file{{if .HasLoop}} (update/append after each iteration){{end}}
 
-## 🔍 EXECUTION GUIDELINES
-
-**⚠️ CRITICAL PRIORITY ORDER: CURRENT STEP DESCRIPTION ALWAYS TAKES PRECEDENCE ⚠️**
-
-**The current step description is the PRIMARY source of truth. Learnings are GUIDANCE only - adapt them to match the current step requirements.**
-
-1. **FIRST - Understand Current Step Requirements** (MANDATORY):
-   - **Read and understand the CURRENT step description, success criteria, and context dependencies**
-   - **This is your PRIMARY source of truth** - what needs to be accomplished RIGHT NOW
-   - **If step description differs from learnings, FOLLOW THE STEP DESCRIPTION**
-   - Identify what tools/scripts might be needed based on the current step requirements
-
-2. **SECOND - Review Pre-Discovered Learning Context** (GUIDANCE - NOT STRICT RULES):
-   - **Learning files have already been discovered and read** - review the learning context provided above
-   - **Use the learning insights** as guidance for your execution approach
-   - **Adapt learnings to match current step requirements** - don't use exact copies if step description differs
-   - **PURPOSE**: These patterns from previous executions are GUIDANCE, not strict rules
-   - **If step description is similar to learnings**: You can follow learnings more closely
-   - **If step description differs significantly**: Prioritize step description, use learnings only as general guidance
-
-3. **Read Context**: Check context dependencies for files from previous steps (read from {{.WorkspacePath}} folder)
-
-4. **Adapt Learning Insights to Current Step** (GUIDANCE - ADAPT TO MATCH STEP DESCRIPTION):
-   - **CRITICAL**: If current step description differs from learnings, FOLLOW THE STEP DESCRIPTION
-   - **Use learnings as starting point**, but adapt them to match current step requirements:
-     - Adapt success patterns from learnings to match current step description
-     - Avoid failure patterns mentioned in learnings (still relevant)
-{{if .IsCodeExecutionMode}}
-     - **Modify Go code patterns** from learnings to match current step requirements (don't use exact copies if step description differs)
-     - Adapt Go code examples from learnings to match current step needs (modify imports, function calls, logic as needed)
-     - Reference best code patterns ranked by effectiveness from learning files
-{{else}}
-     - **Modify tool calls and arguments** from learnings to match current step requirements (don't use exact copies if step description differs)
-     - Adapt Python scripts from learnings to match current step needs (modify as needed)
-{{end}}
-
-5. **Execute the Step**:
-{{if .IsCodeExecutionMode}}
-   - **Use Virtual Tools**: Use discover_code_files to see available Go packages and functions
-   - **Write Go Code**: Use write_code to write and execute Go code that:
-     - Imports generated tool packages (e.g., aws_tools, workspace_tools)
-     - Calls tool functions with proper types and arguments
-     - Uses workspace_tools for all file operations
-     - Implements the logic needed to accomplish the step
-   - **Reference Code Patterns**: Use Go code examples from learning context above as guidance, but adapt them to match current step requirements
-{{else}}
-   - **Use MCP Tools**: Select appropriate tools to accomplish the CURRENT step objective (as described in step description), using learnings as guidance
-{{end}}
-
-6. **Adapt Discovered Code/Scripts**:
-{{if .IsCodeExecutionMode}}
-   - Adapt Go code patterns from learning context to match current step requirements - modify them as needed rather than using exact copies
-   - Use best code patterns ranked by effectiveness as starting points
-{{else}}
-   - Adapt Python scripts from learning context to match current step requirements - modify them as needed rather than using exact copies
-{{end}}
-
-7. **Verify Completion**: Check if success criteria (from CURRENT step description) is met
-
-8. **Create Output**: Generate context output file for next steps (if specified)
-
-9. **Document Results**: Provide clear summary of what was accomplished
-{{if .HasLoop}}
-7. **Save Progress After Each Iteration**: Update or append to the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) after each iteration to preserve progress
+{{if .IsCodeExecutionMode}}## 💻 Code Execution Rules
+- **Variables**: Pass via write_code 'args' parameter (e.g., args=["value1", "value2"])  
+- **Access**: Read from os.Args[1], os.Args[2], etc. (os.Args[0] is program name)  
+- **NO Hardcoding**: Never hardcode variable values in Go code  
+- **Packages**: Import generated tool packages (aws_tools, workspace_tools, etc.)  
+- **File Ops**: Always use workspace_tools for file operations
 {{end}}
 
 ## 📤 Output Format
+**Status**: [COMPLETED/FAILED/IN_PROGRESS]  
+**Actions**: Tools used + quantitative results  
+**Evidence**: Specific outputs proving completion (e.g., "grep found 15 matches")  
+**Context Output**: File path if created
 
-Provide a clear execution summary in your response with:
-- **Status**: [COMPLETED/FAILED/IN_PROGRESS]
-- **Actions Taken**: List tools used and results
-- **Success Criteria Check**: Whether criteria was met with evidence
-- **Context Output**: Path to any context file created (if applicable)
-
-Return results in your response. The validation agent will document and verify your execution.`
+Validation agent will verify your work - focus on execution and evidence.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("executionOnlySystemPrompt").Parse(templateStr)
@@ -237,6 +192,8 @@ Return results in your response. The validation agent will document and verify y
 		"CurrentDate":               currentDate,
 		"CurrentTime":               currentTime,
 		"LearningHistory":           learningHistory,
+		"VariableNames":             variableNames,
+		"VariableValues":            variableValues,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)
@@ -269,107 +226,58 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 	}
 
 	// Define the user message template
-	templateStr := `## 🎯 PRIMARY TASK - EXECUTE SINGLE STEP
+	templateStr := `## 🎯 Execute Step: {{.StepTitle}}
 
-**✅ LEARNING DISCOVERY COMPLETE**: Learning files{{if eq .IsCodeExecutionMode "true"}} and Go code patterns{{else}} and scripts{{end}} have already been discovered and read. Review the learning context in the system prompt above.
-
-**CURRENT STEP**: {{.StepTitle}}
-**STEP DESCRIPTION**: {{.StepDescription}}
+**STEP DESCRIPTION**: {{.StepDescription}}  
 **WORKSPACE**: {{.WorkspacePath}}
 
-{{if .VariableNames}}
-## 📋 AVAILABLE VARIABLES
-
-**Variable Names and Descriptions:**
+{{if .VariableNames}}## 📋 Variables
 {{.VariableNames}}
-
 {{if .VariableValues}}
-**Variable Values (for reference):**
-{{.VariableValues}}
+**Values**: {{.VariableValues}}
 {{end}}
-
-**Important**: Variables have been resolved in step descriptions above. Use these variable names/values as reference when executing the step.
-{{end}}
-
+{{if eq .IsCodeExecutionMode "true"}}
+**Code Execution**: Pass variables as CLI args via write_code 'args' parameter, access via os.Args[1], os.Args[2], etc.
+{{end}}{{end}}
 {{if eq .HasLoop "true"}}
-## 🔄 LOOP MODE ACTIVE
+## 🔄 Loop Mode Active
+**Loop Condition**: {{.LoopCondition}}  
+{{if .LoopDescription}}**Loop Description**: {{.LoopDescription}}  
+{{end}}**Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
 
-**This step is executing in LOOP MODE** - you will execute this step repeatedly until the loop condition is met.
-
-**Loop Condition**: {{.LoopCondition}}
-{{if .LoopDescription}}
-**Loop Description**: {{.LoopDescription}}
+**Task**: Execute step repeatedly until loop condition met. **Save progress after EACH iteration** to {{.WorkspacePath}}/{{.StepContextOutput}} (update/append, don't overwrite).
 {{end}}
-
-**Current Status**:
-- **Current Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
-- **Max Iterations**: {{.MaxIterations}}
-
-**Your Task in Loop Mode**:
-- Execute the step as described below
-- Work towards meeting the loop condition: "{{.LoopCondition}}"
-- The step will continue looping until this condition is met OR max iterations reached
-- After each execution, the validation agent will check if the loop condition is met
-- **Focus on making progress towards the loop condition** - you may need to check status, poll services, retry operations, etc.
-- **CRITICAL**: Save progress after EACH iteration by updating/appending to the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) - don't wait until the loop completes. Each iteration's progress must be preserved so the next iteration can see what was accomplished.
-
-**Important**: 
-- The loop condition ({{.LoopCondition}}) is the same as the success criteria
-- Once the loop condition is met, the step will exit the loop and be marked as completed
-- Continue executing until the condition is satisfied
-{{end}}
-
 {{if .PreviousIterationOutput}}
-## 🔄 PREVIOUS LOOP ITERATION EXECUTION OUTPUT
-
+## 🔄 Previous Iteration Output
 {{.PreviousIterationOutput}}
 
-**Important**: This is the execution output from the previous loop iteration. Review what was done previously to understand the context and avoid repeating the same actions unnecessarily.
+Review what was done previously to avoid unnecessary repetition.
 {{end}}
-
 {{if .ValidationFeedback}}
-## ⚠️ VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT
-
+## ⚠️ Validation Feedback
 {{.ValidationFeedback}}
 
-**Important**: This is feedback from the validation of your previous attempt. Please address the issues mentioned above and improve your execution approach based on this feedback.
+Address the issues above and improve your approach.
 {{end}}
 
-## 🎯 CURRENT STEP EXECUTION
-
-**Step - {{.StepTitle}}**
-**Description**: {{.StepDescription}}
-
-### 📋 Complete Step Information
-**Success Criteria**: {{.StepSuccessCriteria}}
-**Context Dependencies**: {{.StepContextDependencies}}
+## 📋 Step Details
+**Success Criteria**: {{.StepSuccessCriteria}}  
+**Context Dependencies**: {{.StepContextDependencies}}  
 **Context Output**: {{.StepContextOutput}}
 
-### 🔍 Step Context Analysis
-**Success Criteria**: Use the success criteria above to verify completion
-**Context Dependencies**: Check context dependencies for files from previous steps (read from {{.WorkspacePath}} folder)
-{{if eq .HasLoop "true"}}
-**Context Output**: Update or append to the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) after each iteration to preserve progress
-{{else}}
-**Context Output**: Create the context output file ({{.WorkspacePath}}/{{.StepContextOutput}}) specified above for other agents
-{{end}}
-
-**Your Task**: 
-1. **FIRST**: Understand the CURRENT step description, success criteria, and requirements (this is your PRIMARY source of truth)
-2. **SECOND**: Review the pre-discovered learning context in the system prompt above - use these as GUIDANCE, not strict rules
-3. **THIRD**: Read context dependencies from previous steps (if any)
-4. **FOURTH**: Execute this specific step:
-   {{if eq .IsCodeExecutionMode "true"}}
-   - **Use Virtual Tools**: First use discover_code_files to see available Go packages and functions
-   - **Write Go Code**: Use write_code to write and execute Go code that accomplishes the step
-   - **Reference Code Patterns**: Use Go code examples from learning context as guidance, but adapt them to match current step requirements
-   {{else}}
-   - **Use MCP Tools**: Select appropriate tools to accomplish the step
-   {{end}}
-   - **PRIORITY**: Follow the CURRENT step description above
-   - **GUIDANCE**: Use learnings to inform your approach, but adapt them to match current step requirements
-   - **IF STEP DESCRIPTION DIFFERS FROM LEARNINGS**: Follow the step description, adapt learnings as needed
-   - Use the complete step information above, including success criteria, context dependencies, and context output requirements.`
+## ✅ Execution Checklist
+1. ✓ Read step requirements (description, success criteria) ← PRIMARY SOURCE
+2. ✓ Review learning context (system prompt above) ← GUIDANCE
+3. ✓ Read context dependencies (if any) from {{.WorkspacePath}}
+4. ✓ Execute:
+{{if eq .IsCodeExecutionMode "true"}}   - discover_code_files (see available packages)
+   - write_code (pass vars via args, access via os.Args[1,2,...])
+   - Adapt code patterns from learnings to match current step
+{{else}}   - Use MCP tools to accomplish step
+   - Adapt learnings to match current step
+{{end}}5. ✓ Verify success criteria met (collect evidence)
+6. ✓ Create context output file{{if eq .HasLoop "true"}} (update/append after each iteration){{end}}
+7. ✓ Document results with quantitative evidence`
 
 	// Parse and execute the template
 	tmpl, err := template.New("executionOnlyUserMessage").Parse(templateStr)

@@ -11,12 +11,12 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerPlanningTemplate holds template variables for human-controlled planning prompts
@@ -240,7 +240,7 @@ func getAddPlanStepsSchema() string {
 						},
 						"success_criteria": {
 							"type": "string",
-							"description": "Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive"
+							"description": "Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive. CRITICAL: Success criteria MUST be file-verifiable. The validation agent will check file outputs to verify completion. Reference specific files (especially the context_output file) and what to look for in them (specific text, patterns, data, status indicators). Examples: 'File step_1_results.md exists and contains Deployment successful status', 'Context output file contains 10 databases found and lists all database names'. Avoid vague statements like 'Task completed successfully' that cannot be verified through files."
 						},
 						"context_dependencies": {
 							"type": "array",
@@ -662,7 +662,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 					},
 						"success_criteria": {
 							"type": "string",
-							"description": "Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive"
+							"description": "Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive. CRITICAL: Success criteria MUST be file-verifiable. The validation agent will check file outputs to verify completion. Reference specific files (especially the context_output file) and what to look for in them (specific text, patterns, data, status indicators). Examples: 'File step_1_results.md exists and contains Deployment successful status', 'Context output file contains 10 databases found and lists all database names'. Avoid vague statements like 'Task completed successfully' that cannot be verified through files."
 						},
 						"context_dependencies": {
 							"type": "array",
@@ -681,7 +681,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 						},
 						"loop_condition": {
 							"type": "string",
-							"description": "Condition that must be met to exit the loop (REQUIRED when has_loop is true). This should be the same as success_criteria - describe the condition that must be met."
+							"description": "Condition that must be met to exit the loop (REQUIRED when has_loop is true). This should be the same as success_criteria - describe the condition that must be met. CRITICAL: Loop condition MUST be file-verifiable. Reference specific files and what to look for in them to determine if the loop can exit. The validation agent will check file outputs to verify the loop condition."
 						},
 						"max_iterations": {
 							"type": "integer",
@@ -975,7 +975,8 @@ func extractToolCallsFromMessages(messages []llmtypes.MessageContent) []string {
 	return result
 }
 
-// registerPlanModificationTools registers all plan modification tools (human_feedback and plan update tools)
+// registerPlanModificationTools registers all plan modification tools (plan update tools only)
+// Note: human_feedback is NOT registered here because it's already included in WorkspaceTools
 // This shared function is used by both planning agent and plan improvement agent
 func registerPlanModificationTools(
 	mcpAgent *mcpagent.Agent,
@@ -985,38 +986,8 @@ func registerPlanModificationTools(
 	writeFile func(context.Context, string, string) error,
 	agentName string, // e.g., "planning agent" or "plan improvement agent"
 ) error {
-	// Register human_feedback tool first (required before making plan changes)
-	humanTools := virtualtools.CreateHumanTools()
-	humanToolExecutors := virtualtools.CreateHumanToolExecutors()
-	if len(humanTools) > 0 && len(humanToolExecutors) > 0 {
-		humanTool := humanTools[0] // Get the first (and only) human tool
-		if humanTool.Function != nil {
-			// Convert Parameters to map[string]interface{}
-			var params map[string]interface{}
-			if humanTool.Function.Parameters != nil {
-				paramsBytes, err := json.Marshal(humanTool.Function.Parameters)
-				if err == nil {
-					json.Unmarshal(paramsBytes, &params)
-				}
-			}
-			if params != nil {
-				if executor, exists := humanToolExecutors[humanTool.Function.Name]; exists {
-					// human_feedback is a human tool, category is "human"
-					if err := mcpAgent.RegisterCustomTool(
-						humanTool.Function.Name,
-						humanTool.Function.Description,
-						params,
-						executor,
-						"human",
-					); err != nil {
-						logger.Errorf("❌ Failed to register human_feedback tool: %v", err)
-					} else {
-						logger.Infof("✅ Registered human_feedback tool for %s", agentName)
-					}
-				}
-			}
-		}
-	}
+	// Note: human_feedback is already registered via WorkspaceTools (created by createCustomTools in server.go)
+	// No need to register it again here to avoid duplicate registration errors
 
 	// Register workflow-specific plan tools with "workflow" category
 	updateSchema := getUpdatePlanStepsSchema()
@@ -1838,6 +1809,36 @@ Available variables:
 - **Loop Support**: Set has_loop to true when step requires polling, retrying, or waiting for external systems. When has_loop is true, provide loop_condition (same as success_criteria) and max_iterations (default: 10, use 20-50 for long-running operations, use 3-5 for quick status checks). Each iteration should save progress to context_output file (append/update, don't overwrite).
 - **Conditional Branching**: Use conditional steps (has_condition=true) when you need if/else logic. Set condition_question (question for ConditionalLLM to evaluate), condition_context (context to provide), if_true_steps (steps if condition is true), and if_false_steps (steps if condition is false). Maximum nesting depth is 2 levels (conditional step can contain conditional steps in branches, but no deeper).
 
+## ✅ SUCCESS CRITERIA REQUIREMENTS (CRITICAL)
+
+**IMPORTANT**: Success criteria are used by the validation agent to verify step completion. The validation agent checks file outputs to determine if success criteria are met.
+
+**REQUIREMENT**: Success criteria MUST be file-verifiable. The validation agent will:
+- Read context output files from {{.ExecutionWorkspacePath}} folder
+- Use workspace tools (read_workspace_file, list_workspace_files) to verify file existence and content
+- Check for specific patterns, indicators, or data in files
+
+**Success Criteria Guidelines**:
+- ✅ **GOOD**: Reference specific files and verifiable indicators
+  - Example: "File 'step_1_results.md' exists in execution folder and contains 'Deployment successful' status"
+  - Example: "File 'config.json' exists and contains 'status: active' field"
+  - Example: "Context output file contains '10 databases found' and lists all database names"
+  - Example: "File 'deployment_log.md' exists and contains 'All pods running' confirmation"
+- ❌ **BAD**: Vague statements that cannot be verified through files
+  - Example: "Task completed successfully" (too vague, no file reference)
+  - Example: "Deployment is working" (not verifiable through files)
+  - Example: "All requirements met" (no specific file or indicator to check)
+
+**For All Steps** (including loops and conditionals):
+- Success criteria must reference the context_output file or other files that will be created/modified
+- Success criteria must specify what to look for in files (specific text, patterns, data, status indicators)
+- Success criteria should be specific enough that the validation agent can definitively check them using file operations
+
+**For Loop Steps**:
+- Loop condition (same as success_criteria) must also be file-verifiable
+- Each iteration should update the context output file with progress indicators that can be checked
+- Loop condition should reference specific file content that indicates the loop can exit
+
 ## 🤖 MULTI-AGENT COORDINATION
 - **Each step executed by different agent**: Steps share context via files
 - **Execution Folder Limitation**: Execution agents work ONLY in {{.ExecutionWorkspacePath}} folder - all context output files must be written there
@@ -1947,10 +1948,11 @@ Update this plan based on human feedback. Use judgment to determine what changes
    - What changes you plan to make (which steps to update/delete/add)
    - Why these changes address the user's feedback
    - The impact of these changes
-3. The human_feedback tool will automatically return the user's response. **After receiving the response**:
-   - If user approved: Immediately proceed with update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
-   - If user asked questions or needs clarification: Respond conversationally without calling plan update tools
-   - If user rejected or requested changes: Adjust your approach and either ask again with human_feedback or respond conversationally
+3. **The human_feedback tool returns the user's response as TEXT**. You must interpret the response to determine the user's intent:
+   - **Approval indicators**: Look for words like "yes", "approved", "go ahead", "proceed", "ok", "sounds good", "do it", etc. If the response indicates approval, immediately proceed with update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
+   - **Questions/clarification**: If the user asks questions or seeks clarification, respond conversationally without calling plan update tools
+   - **Rejection/modifications**: If the user says "no", "don't", "change", "modify", or requests different changes, adjust your approach and either ask again with human_feedback or respond conversationally
+   - **Unclear responses**: If the response is unclear, ask for clarification using human_feedback again
 4. You can call multiple plan modification tools in the same turn after getting approval
 
 **Guidelines**:
@@ -1958,6 +1960,40 @@ Update this plan based on human feedback. Use judgment to determine what changes
 - Tools update plan.json immediately - no merging needed
 - Unchanged steps are preserved automatically
 - A step cannot be both updated and deleted
+
+## ✅ SUCCESS CRITERIA REQUIREMENTS (CRITICAL)
+
+**IMPORTANT**: Success criteria are used by the validation agent to verify step completion. The validation agent checks file outputs to determine if success criteria are met.
+
+**REQUIREMENT**: When updating success_criteria (via update_plan_steps or when adding new steps), ensure they are file-verifiable. The validation agent will:
+- Read context output files from {{.ExecutionWorkspacePath}} folder
+- Use workspace tools (read_workspace_file, list_workspace_files) to verify file existence and content
+- Check for specific patterns, indicators, or data in files
+
+**Success Criteria Guidelines**:
+- ✅ **GOOD**: Reference specific files and verifiable indicators
+  - Example: "File 'step_1_results.md' exists in execution folder and contains 'Deployment successful' status"
+  - Example: "File 'config.json' exists and contains 'status: active' field"
+  - Example: "Context output file contains '10 databases found' and lists all database names"
+  - Example: "File 'deployment_log.md' exists and contains 'All pods running' confirmation"
+- ❌ **BAD**: Vague statements that cannot be verified through files
+  - Example: "Task completed successfully" (too vague, no file reference)
+  - Example: "Deployment is working" (not verifiable through files)
+  - Example: "All requirements met" (no specific file or indicator to check)
+
+**For All Steps** (including loops and conditionals):
+- Success criteria must reference the context_output file or other files that will be created/modified
+- Success criteria must specify what to look for in files (specific text, patterns, data, status indicators)
+- Success criteria should be specific enough that the validation agent can definitively check them using file operations
+
+**For Loop Steps**:
+- Loop condition (same as success_criteria) must also be file-verifiable
+- Each iteration should update the context output file with progress indicators that can be checked
+- Loop condition should reference specific file content that indicates the loop can exit
+
+**When Updating Success Criteria**:
+- If you update success_criteria for any step, ensure the new criteria follow the file-verifiable requirements above
+- If existing success criteria are vague, improve them to be file-verifiable when updating steps
 
 ## 🤖 MULTI-AGENT COORDINATION
 
@@ -1969,15 +2005,19 @@ Update this plan based on human feedback. Use judgment to determine what changes
 
 **Workflow for plan changes**:
 1. **First**: Use human_feedback tool to describe proposed changes and get user confirmation
-2. **After human_feedback returns**: The tool automatically provides the user's response. Based on that response:
-   - **If approved**: Immediately call update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
+2. **After human_feedback returns**: The tool returns the user's response as TEXT. You must interpret the response:
+   - **If approved** (response contains "yes", "approved", "go ahead", "proceed", "ok", etc.): Immediately call update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
    - **If questions/clarification needed**: Respond conversationally without calling plan update tools
-   - **If rejected**: Adjust your approach and either ask again with human_feedback or respond conversationally
+   - **If rejected** (response contains "no", "don't", "change", etc.): Adjust your approach and either ask again with human_feedback or respond conversationally
+   - **If unclear**: Use human_feedback again to ask for clarification
 3. You can call multiple plan modification tools in the same turn after getting approval
 
 **Respond conversationally when**: User asks questions, seeks clarification, or provides feedback that doesn't require plan changes. In this case, don't call any tools - just respond with text.
 
-**IMPORTANT**: Never call update_plan_steps, delete_plan_steps, or add_plan_steps without first getting user confirmation via human_feedback tool. After human_feedback returns, you will automatically continue in the same turn and can make the plan changes.
+**IMPORTANT**: 
+- Never call update_plan_steps, delete_plan_steps, or add_plan_steps without first getting user confirmation via human_feedback tool
+- The human_feedback tool returns the user's response as text - you must interpret it to determine if it's approval, rejection, or questions
+- After human_feedback returns, you will automatically continue in the same turn and can make the plan changes if approved
 `
 
 	tmpl, err := template.New("human_controlled_planning_update").Parse(templateStr)

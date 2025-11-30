@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useImperativeHandle, forwardRef, useEffect } from 'react'
-import { Send, Loader2, Zap, Square, Plus, Code2, Sparkles } from 'lucide-react'
+import { Send, Loader2, Square, Plus, Code2, Sparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -34,7 +34,6 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   // Store subscriptions
   const {
     agentMode,
-    setAgentMode,
     chatFileContext,
     removeFileFromContext,
     clearFileContext,
@@ -631,27 +630,6 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                 {/* Agent Mode Selector - Only for Chat Mode */}
                 {selectedModeCategory === 'chat' && (
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => setAgentMode('simple')}
-                            className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                              agentMode === 'simple'
-                                ? 'agent-mode-selected'
-                                : 'agent-mode-unselected'
-                            }`}
-                          >
-                            <Zap className="w-3 h-3 inline mr-1" />
-                            Simple
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Simple mode - Ctrl+1</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
                     {/* Code Execution Mode Toggle */}
                     <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
                       <Tooltip>

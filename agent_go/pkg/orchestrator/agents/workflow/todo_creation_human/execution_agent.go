@@ -192,6 +192,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 {{if .IsCodeExecutionMode}}
      - **Modify Go code patterns** from learnings to match current step requirements (don't use exact copies if step description differs)
      - Adapt Go code examples from learnings to match current step needs (modify imports, function calls, logic as needed)
+     - **Pass variables as CLI arguments**: Use write_code's 'args' parameter to pass variable values as command-line arguments (accessible via os.Args[1], os.Args[2], etc.)
+     - **DO NOT hardcode variable values in Go code**: Always pass variables via CLI args using the 'args' parameter in write_code
      - Reference best code patterns ranked by effectiveness from learning files
 {{else}}
      - **Modify tool calls and arguments** from learnings to match current step requirements (don't use exact copies if step description differs)
@@ -205,12 +207,17 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 
 5. **Execute the Step**:
 {{if .IsCodeExecutionMode}}
-   - **Use Virtual Tools**: Use discover_code_files to see available Go packages and functions
+   - **Discover Code**: Use discover_code_files to see available Go packages and functions
    - **Write Go Code**: Use write_code to write and execute Go code that:
      - Imports generated tool packages (e.g., aws_tools, workspace_tools)
      - Calls tool functions with proper types and arguments
      - Uses workspace_tools for all file operations
      - Implements the logic needed to accomplish the step
+     - **Accesses variables via os.Args**: Read variable values from command-line arguments (os.Args[1], os.Args[2], etc.) instead of hardcoding them
+   - **Pass Variables as CLI Args**: Use write_code's 'args' parameter to pass variable values:
+     - Example: write_code(code="...", args=["account-id-value", "region-value"])
+     - Variables are accessible in Go code via os.Args[1], os.Args[2], etc.
+     - Use actual variable values from VariableValues above
    - **Reference Code Patterns**: Use Go code examples from {{.LearningsPath}}/code/ as guidance, but adapt them to match current step requirements
 {{else}}
    - **Use MCP Tools**: Select appropriate tools to accomplish the CURRENT step objective (as described in step description), using learnings as guidance
@@ -219,6 +226,8 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionSystemPromptPro
 6. **Adapt Discovered Code/Scripts**:
 {{if .IsCodeExecutionMode}}
    - Adapt Go code patterns from {{.LearningsPath}}/code/ to match current step requirements - modify them as needed rather than using exact copies
+   - **Pass variables via CLI args**: When adapting code patterns, ensure variables are passed via write_code's 'args' parameter, not hardcoded in the Go code
+   - **Access variables in code**: Use os.Args[1], os.Args[2], etc. to read variable values passed as CLI arguments
    - Use best code patterns ranked by effectiveness as starting points
 {{else}}
    - **Execute Python Scripts with Parameters**: When using Python scripts from {{.LearningsPath}}/scripts/:
@@ -325,12 +334,21 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
 
 **Important**: Variables have been resolved in step descriptions above. Use these variable names/values as reference when executing the step.
 
-**CRITICAL - Python Script Execution with Variables**:
+**CRITICAL - Variable Usage in Code Execution**:
+{{if eq .IsCodeExecutionMode "true"}}
+- **When writing Go code**: Variables should be passed as CLI arguments via write_code's 'args' parameter
+- **Pass variables as CLI args**: Use write_code(code="...", args=["var1-value", "var2-value"]) to pass variable values
+- **Access in Go code**: Read variables via os.Args[1], os.Args[2], etc. (os.Args[0] is the program name)
+- **Use actual variable values**: Use the values from VariableValues above when calling write_code
+- **DO NOT hardcode values**: Never hardcode variable values in Go code - always pass them via CLI args
+- **Example**: If VariableValues shows "{{ACCOUNT_ID}} = 123456789012", use write_code with args=["123456789012"] and access it in code as os.Args[1]
+{{else}}
 - **When executing Python scripts**: Scripts may use variables as parameters (argparse) or environment variables
 - **For argparse scripts**: Pass variable values as command-line arguments (e.g., --account-id "123456789012" --region "us-east-1")
 - **For environment variable scripts**: Set environment variables before execution (e.g., AWS_ACCOUNT_ID="123456789012" python script.py)
 - **Use actual variable values**: Use the values from VariableValues above when executing scripts
 - **DO NOT hardcode values**: Always use parameters/arguments when scripts support them
+{{end}}
 {{end}}
 
 {{if eq .HasLoop "true"}}
@@ -404,17 +422,20 @@ func (hctpea *HumanControlledTodoPlannerExecutionAgent) executionUserMessageProc
    {{if eq .IsCodeExecutionMode "true"}}
    - **Use Virtual Tools**: First use discover_code_files to see available Go packages and functions
    - **Write Go Code**: Use write_code to write and execute Go code that accomplishes the step
+   - **Pass Variables as CLI Args**: Use write_code's 'args' parameter to pass variable values (e.g., write_code(code="...", args=["var1-value", "var2-value"]))
+   - **Access Variables in Code**: Read variable values via os.Args[1], os.Args[2], etc. in your Go code
+   - **DO NOT hardcode variables**: Never hardcode variable values in Go code - always pass them via CLI args
    - **Reference Code Patterns**: Use Go code examples from learnings as guidance, but adapt them to match current step requirements
    {{else}}
    - **Use MCP Tools**: Select appropriate tools to accomplish the step
-   {{end}}
-   - **PRIORITY**: Follow the CURRENT step description above
-   - **GUIDANCE**: Use learnings to inform your approach, but adapt them to match current step requirements
-   - **IF STEP DESCRIPTION DIFFERS FROM LEARNINGS**: Follow the step description, adapt learnings as needed
    - **Python Script Execution**: When executing Python scripts:
      - Check if scripts use argparse (command-line arguments) or environment variables
      - Pass variable values as parameters/arguments using actual values from VariableValues above
      - DO NOT hardcode values in scripts - always use parameters when scripts support them
+   {{end}}
+   - **PRIORITY**: Follow the CURRENT step description above
+   - **GUIDANCE**: Use learnings to inform your approach, but adapt them to match current step requirements
+   - **IF STEP DESCRIPTION DIFFERS FROM LEARNINGS**: Follow the step description, adapt learnings as needed
    - Use the complete step information above, including success criteria, context dependencies, and context output requirements.`
 
 	// Parse and execute the template

@@ -17,7 +17,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "human_feedback",
-			Description: "Use then when there is no option except to get human input, when you are stuck and need to ask a question that requires human input. This tool will pause execution until the user provides input via the UI. Ideal for things like OTP, 2FA, etc.",
+			Description: "Use this tool when you need to get human input, confirmation, or feedback. This tool will pause execution until the user provides input via the UI. The tool returns the user's response as text - you must interpret the response to determine the user's intent (approval, rejection, questions, etc.). Ideal for requesting confirmation before making plan modifications, asking for OTP/2FA codes, or any situation requiring human decision-making.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

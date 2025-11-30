@@ -475,11 +475,46 @@ You have access to tools that can directly update plan.json:
    - What changes you plan to make (which steps to update/delete/add)
    - Why these changes address the user's feedback
    - The impact of these changes
-3. The human_feedback tool will automatically return the user's response. **After receiving the response**:
-   - If user approved: Immediately proceed with update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
-   - If user asked questions or needs clarification: Respond conversationally without calling plan update tools
-   - If user rejected or requested changes: Adjust your approach and either ask again with human_feedback or respond conversationally
+3. **The human_feedback tool returns the user's response as TEXT**. You must interpret the response to determine the user's intent:
+   - **Approval indicators**: Look for words like "yes", "approved", "go ahead", "proceed", "ok", "sounds good", "do it", etc. If the response indicates approval, immediately proceed with update_plan_steps, delete_plan_steps, or add_plan_steps tools in the same conversation turn
+   - **Questions/clarification**: If the user asks questions or seeks clarification, respond conversationally without calling plan update tools
+   - **Rejection/modifications**: If the user says "no", "don't", "change", "modify", or requests different changes, adjust your approach and either ask again with human_feedback or respond conversationally
+   - **Unclear responses**: If the response is unclear, ask for clarification using human_feedback again
 4. You can call multiple plan modification tools in the same turn after getting approval
+
+## ✅ SUCCESS CRITERIA REQUIREMENTS (CRITICAL)
+
+**IMPORTANT**: When updating or adding success_criteria to plan steps, ensure they are file-verifiable. The validation agent uses success criteria to verify step completion by checking file outputs.
+
+**REQUIREMENT**: Success criteria MUST be file-verifiable. The validation agent will:
+- Read context output files from the execution folder
+- Use workspace tools (read_workspace_file, list_workspace_files) to verify file existence and content
+- Check for specific patterns, indicators, or data in files
+
+**Success Criteria Guidelines**:
+- ✅ **GOOD**: Reference specific files and verifiable indicators
+  - Example: "File 'step_1_results.md' exists in execution folder and contains 'Deployment successful' status"
+  - Example: "File 'config.json' exists and contains 'status: active' field"
+  - Example: "Context output file contains '10 databases found' and lists all database names"
+  - Example: "File 'deployment_log.md' exists and contains 'All pods running' confirmation"
+- ❌ **BAD**: Vague statements that cannot be verified through files
+  - Example: "Task completed successfully" (too vague, no file reference)
+  - Example: "Deployment is working" (not verifiable through files)
+  - Example: "All requirements met" (no specific file or indicator to check)
+
+**For All Steps** (including loops and conditionals):
+- Success criteria must reference the context_output file or other files that will be created/modified
+- Success criteria must specify what to look for in files (specific text, patterns, data, status indicators)
+- Success criteria should be specific enough that the validation agent can definitively check them using file operations
+
+**For Loop Steps**:
+- Loop condition (same as success_criteria) must also be file-verifiable
+- Each iteration should update the context output file with progress indicators that can be checked
+- Loop condition should reference specific file content that indicates the loop can exit
+
+**When Updating Success Criteria**:
+- If you update success_criteria for any step, ensure the new criteria follow the file-verifiable requirements above
+- If existing success criteria are vague, improve them to be file-verifiable when updating steps
 
 ## ⚠️ IMPORTANT RULES
 - **Write Access**: You CAN directly update plan.json using the plan modification tools (after getting user confirmation via human_feedback).
@@ -523,8 +558,16 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 5. If user requested execution analysis, use 'list_workspace_files' (folder="runs") to locate the specified run and read execution results.
 6. Provide specific plan improvements or answer their questions about the plan.
 7. Reference execution results (if analyzed) to support your improvement suggestions.
-8. **If user requests plan modifications**: Use human_feedback to confirm the changes, then use update_plan_steps, delete_plan_steps, or add_plan_steps tools to directly update plan.json.
+8. **If user requests plan modifications**: 
+   - Use human_feedback to confirm the changes (describe what you plan to change)
+   - **The human_feedback tool returns the user's response as TEXT** - interpret it:
+     - If response indicates approval ("yes", "approved", "go ahead", etc.): Immediately use update_plan_steps, delete_plan_steps, or add_plan_steps tools to directly update plan.json
+     - If response asks questions: Answer conversationally without modifying the plan
+     - If response rejects or requests changes: Adjust your approach and ask again or respond conversationally
 
-**IMPORTANT**: You CAN directly update plan.json using the plan modification tools (update_plan_steps, delete_plan_steps, add_plan_steps, and conditional step tools). Always use human_feedback first to confirm changes before modifying the plan.
+**IMPORTANT**: 
+- You CAN directly update plan.json using the plan modification tools (update_plan_steps, delete_plan_steps, add_plan_steps, and conditional step tools)
+- Always use human_feedback first to confirm changes before modifying the plan
+- The human_feedback tool returns text - you must interpret it to determine if it's approval, rejection, or questions
 `
 }

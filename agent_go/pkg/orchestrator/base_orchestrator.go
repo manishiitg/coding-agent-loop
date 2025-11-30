@@ -17,7 +17,7 @@ import (
 	"mcpagent/events"
 	"mcpagent/observability"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // Orchestrator defines the common interface for all orchestrators

@@ -28,7 +28,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)

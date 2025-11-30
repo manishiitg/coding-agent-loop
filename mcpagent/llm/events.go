@@ -5,10 +5,11 @@ import (
 	"strings"
 	"time"
 
-	llmproviders "llm-providers"
-	"llm-providers/interfaces"
-	"llm-providers/llmtypes"
 	"mcpagent/observability"
+
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
+	"github.com/manishiitg/multi-llm-provider-go/interfaces"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // LLM Event Types - Constants for event type names
@@ -586,13 +587,13 @@ func ExtractTokenUsageWithCacheInfo(resp *llmtypes.ContentResponse) (observabili
 	return usage, cacheDiscount, reasoningTokens, thoughtsTokens, cacheTokens, infoCopy
 }
 
-// EventEmitterAdapter implements llm-providers EventEmitter interface
+// EventEmitterAdapter implements multi-llm-provider-go EventEmitter interface
 // and bridges events to the existing observability tracers
 type EventEmitterAdapter struct {
 	tracers []observability.Tracer
 }
 
-// NewEventEmitterAdapter creates a new adapter that implements llm-providers EventEmitter
+// NewEventEmitterAdapter creates a new adapter that implements multi-llm-provider-go EventEmitter
 func NewEventEmitterAdapter(tracers []observability.Tracer) *EventEmitterAdapter {
 	return &EventEmitterAdapter{
 		tracers: tracers,

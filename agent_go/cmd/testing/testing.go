@@ -20,8 +20,8 @@ Features:
 - Context cancellation testing
 
 Note: For comprehensive LLM provider testing (tool calls, structured output, 
-streaming, embeddings, etc.), use the llm-providers test suite:
-  cd llm-providers && ./bin/llm-test --help
+streaming, embeddings, etc.), use the multi-llm-provider-go test suite:
+  See: https://github.com/manishiitg/multi-llm-provider-go
 
 Examples:
   # Test agent with different providers
@@ -91,7 +91,7 @@ func initTestingCommands() {
 	// The logger will be initialized in each test command based on the log-file parameter
 
 	// Add subcommands explicitly to ensure they're registered
-	// Note: LLM provider tests (anthropic, bedrock, openai, vertex, etc.) are now in llm-providers/
+	// Note: LLM provider tests (anthropic, bedrock, openai, vertex, etc.) are now in github.com/manishiitg/multi-llm-provider-go
 	// Use ./bin/llm-test for comprehensive provider testing
 	TestingCmd.AddCommand(agentCmd)
 	TestingCmd.AddCommand(comprehensiveSimpleCmd)

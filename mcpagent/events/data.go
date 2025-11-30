@@ -7,7 +7,7 @@ import (
 
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // AgentEventType represents the type of event in the agent flow

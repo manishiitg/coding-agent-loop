@@ -11,7 +11,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcpagent/agent/codeexec"
 	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"

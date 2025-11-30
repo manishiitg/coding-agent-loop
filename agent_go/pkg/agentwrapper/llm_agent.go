@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"

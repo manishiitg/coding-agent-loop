@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	mcpagent "mcpagent/agent"
 	"mcpagent/llm"

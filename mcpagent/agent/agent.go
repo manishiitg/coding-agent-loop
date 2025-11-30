@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 

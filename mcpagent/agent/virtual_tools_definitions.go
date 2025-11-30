@@ -1,6 +1,6 @@
 package mcpagent
 
-import "llm-providers/llmtypes"
+import "github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 // CreateWorkspaceTools creates workspace-related virtual tools
 func CreateWorkspaceTools() []llmtypes.Tool {

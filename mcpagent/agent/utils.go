@@ -14,7 +14,7 @@ package mcpagent
 import (
 	"mcpagent/observability"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // GetDefaultMaxTurns returns the default max turns for a given agent mode.

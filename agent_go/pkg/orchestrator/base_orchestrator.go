@@ -2388,11 +2388,7 @@ func getToolNamesByCategory(category string) map[string]bool {
 		for toolName := range executors {
 			toolNames[toolName] = true
 		}
-		// Future categories can be added here:
-		// case "memory_tools":
-		//     executors := virtualtools.CreateMemoryToolExecutors()
-		//     for toolName := range executors {
-		//         toolNames[toolName] = true
+		// Future categories can be added here
 		//     }
 	}
 

@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/events"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
@@ -29,6 +28,8 @@ import (
 	"mcpagent/llm"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"mcp-agent/agent_go/pkg/logger"
 
@@ -986,9 +987,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create custom tools for workflow agents (workspace tools + human tools)
 		// Workflow agents can be Simple or ReAct agents, tools are registered based on mode
-		// TODO: Memory tools removed from workflow - only needed for individual React agents
-		// memoryTools := virtualtools.CreateMemoryTools()
-		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors, toolCategories := createCustomTools()
 
 		// Load selected tools, code execution mode, and preset LLM config from preset if available (for workflow agents)

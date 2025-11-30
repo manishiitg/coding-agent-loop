@@ -432,7 +432,6 @@ func testCategoryDetection(logger utils.ExtendedLogger) error {
 	categoryDirs := []string{
 		"workspace_tools",
 		"human_tools",
-		"memory_tools",
 	}
 
 	for _, dir := range categoryDirs {

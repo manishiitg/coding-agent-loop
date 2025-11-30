@@ -1,5 +1,5 @@
 services:
-  # Ollama for embeddings (commented out - not using memory API currently)
+  # Ollama for embeddings (commented out)
   # ollama:
   #   image: ollama/ollama:latest
   #   ports:
@@ -10,9 +10,7 @@ services:
   #     - OLLAMA_HOST=0.0.0.0
   #   restart: unless-stopped
 
-  # Neo4j AuraDB Cloud Database (for memory API)
-  # Note: Using cloud Neo4j AuraDB instead of local Neo4j
-  # because vector.similarity.cosine function is only available in AuraDB
+  # Neo4j AuraDB Cloud Database (commented out)
   # neo4j:
   #   image: neo4j:5.26-community
   #   ports:
@@ -36,38 +34,6 @@ services:
   #     timeout: 10s
   #     retries: 3
   #     start_period: 40s
-
-  # Memory API (commented out - not using currently)
-  # memory-api:
-  #   build:
-  #     context: ./memory
-  #     dockerfile: Dockerfile
-  #     args:
-  #       USE_BGE_RERANKER: "true"
-  #   ports:
-  #     - "8055:8000"
-  #   volumes:
-  #     - memory_data:/app/data
-  #     - memory_logs:/app/logs
-  #     - memory_models:/app/models
-  #     - ./memory:/app/memory:ro
-  #   env_file:
-  #     - ./memory/.env
-  #   environment:
-  #     - API_HOST=0.0.0.0
-  #     - API_PORT=8000
-  #     - OLLAMA_BASE_URL=http://ollama:11434/v1
-  #     - KUZU_DB=/app/data/graphiti.kuzu
-  #   depends_on:
-  #     - ollama
-  #     # Removed dependency on local neo4j - using cloud AuraDB instead
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 60s
 
   # Qdrant Vector Database
   qdrant:
@@ -151,7 +117,6 @@ services:
     environment:
       - NODE_ENV=development
       - VITE_API_BASE_URL=http://localhost:8000
-      - VITE_MEMORY_API_URL=http://localhost:8055
       - VITE_WORKSPACE_API_URL=http://localhost:8081
     depends_on:
       workspace-api:
@@ -162,9 +127,6 @@ volumes:
   ollama_data:
   # neo4j_data: # Removed - using cloud AuraDB instead
   # neo4j_logs: # Removed - using cloud AuraDB instead
-  memory_data:
-  memory_logs:
-  memory_models:
   agent_logs:
   workspace-docs:
   workspace_data:

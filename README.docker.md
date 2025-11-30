@@ -1,6 +1,6 @@
 # Docker Setup
 
-Simple docker-compose setup for MCP Agent with Memory API and Frontend.
+Simple docker-compose setup for MCP Agent and Frontend.
 
 ## Quick Start
 
@@ -17,19 +17,17 @@ docker-compose down
 
 ## Services
 
-- **Ollama** (11434) - Embeddings
-- **Memory API** (8055) - Knowledge Graph  
 - **MCP Agent** (8000) - Main server
 - **Frontend** (5173) - React app
-- **Obsidian** (27124) - Note-taking with REST API
+- **Workspace API** (8081) - File management
+- **Qdrant** (6333) - Vector database
 
 ## URLs
 
 - Frontend: http://localhost:5173
 - MCP Agent: http://localhost:8000
-- Memory API: http://localhost:8055
-- Ollama: http://localhost:11434
-- Obsidian: http://localhost:27124
+- Workspace API: http://localhost:8081
+- Qdrant: http://localhost:6333
 
 ## Obsidian REST API Setup
 

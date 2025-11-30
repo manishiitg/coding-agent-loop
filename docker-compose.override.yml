@@ -52,10 +52,8 @@ services:
       - ORCHESTRATOR_STRUCTURED_OUTPUT_TEMPERATURE=0.06
       
       # External Service URLs (internal Docker network)
-      - MEMORY_API_URL=http://memory-api:8000
       - WORKSPACE_API_URL=http://planner-api:8080
       - DOCKER_CONTAINER=true
-      - MEMORY_API_INTERNAL_URL=http://memory-api:8000
     depends_on:
       planner-api:
         condition: service_healthy

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors

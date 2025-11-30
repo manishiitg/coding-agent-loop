@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcpagent/logger"
 )
 

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/logger"
 	mcpagent "mcpagent/agent"

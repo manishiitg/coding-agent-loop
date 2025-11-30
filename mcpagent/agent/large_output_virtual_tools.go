@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // validateFilePath ensures the file path is within the allowed directory and doesn't contain path traversal

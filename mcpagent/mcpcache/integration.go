@@ -10,7 +10,7 @@ import (
 	"mcpagent/logger"
 	"mcpagent/mcpclient"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/sirupsen/logrus"

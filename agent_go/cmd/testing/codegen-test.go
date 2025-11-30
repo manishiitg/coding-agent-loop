@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
 	"mcpagent/llm"

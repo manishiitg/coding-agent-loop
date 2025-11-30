@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -1000,22 +1000,57 @@ func extractCacheTokens(generationInfo *llmtypes.GenerationInfo) int {
 	return totalCacheTokens
 }
 
-// accumulateTokenUsage accumulates token usage from an LLM call
-func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.UsageMetrics, generationInfo *llmtypes.GenerationInfo, turn int) {
+// accumulateTokenUsage accumulates token usage from an LLM call.
+// It accepts ContentResponse to use the unified Usage field, with fallback to GenerationInfo.
+func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse, turn int) {
 	a.tokenTrackingMutex.Lock()
 	defer a.tokenTrackingMutex.Unlock()
 
-	// Extract cache tokens
-	cacheTokens := extractCacheTokens(generationInfo)
+	var cacheTokens int
+	var reasoningTokens int
+	var thoughtsTokens int
+	var cacheDiscount float64
+	var generationInfo *llmtypes.GenerationInfo
 
-	// Extract reasoning tokens
-	reasoningTokens := 0
-	if generationInfo != nil && generationInfo.ReasoningTokens != nil {
+	// Priority 1: Extract from unified Usage field (if available)
+	if resp != nil && resp.Usage != nil {
+		// Extract cache tokens from unified Usage
+		if resp.Usage.CacheTokens != nil {
+			cacheTokens = *resp.Usage.CacheTokens
+		}
+
+		// Extract reasoning tokens from unified Usage
+		if resp.Usage.ReasoningTokens != nil {
+			reasoningTokens = *resp.Usage.ReasoningTokens
+		}
+
+		// Extract thoughts tokens from unified Usage
+		if resp.Usage.ThoughtsTokens != nil {
+			thoughtsTokens = *resp.Usage.ThoughtsTokens
+		}
+	}
+
+	// Priority 2: Fall back to GenerationInfo (for cache discount and detailed breakdown)
+	if resp != nil && len(resp.Choices) > 0 {
+		generationInfo = resp.Choices[0].GenerationInfo
+	}
+
+	// Extract cache tokens from GenerationInfo if not found in Usage
+	if cacheTokens == 0 && generationInfo != nil {
+		cacheTokens = extractCacheTokens(generationInfo)
+	}
+
+	// Extract reasoning tokens from GenerationInfo if not found in Usage
+	if reasoningTokens == 0 && generationInfo != nil && generationInfo.ReasoningTokens != nil {
 		reasoningTokens = *generationInfo.ReasoningTokens
 	}
 
-	// Extract cache discount
-	cacheDiscount := 0.0
+	// Extract thoughts tokens from GenerationInfo if not found in Usage
+	if thoughtsTokens == 0 && generationInfo != nil && generationInfo.ThoughtsTokens != nil {
+		thoughtsTokens = *generationInfo.ThoughtsTokens
+	}
+
+	// Extract cache discount (only available in GenerationInfo)
 	if generationInfo != nil && generationInfo.CacheDiscount != nil {
 		cacheDiscount = *generationInfo.CacheDiscount
 	}
@@ -1074,15 +1109,40 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 }
 
 // EndLLMGeneration ends the current LLM generation
-func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, toolCalls int, duration time.Duration, usageMetrics events.UsageMetrics, generationInfo *llmtypes.GenerationInfo) {
-	// Accumulate token usage (including cache tokens)
-	a.accumulateTokenUsage(ctx, usageMetrics, generationInfo, turn)
+func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, toolCalls int, duration time.Duration, usageMetrics events.UsageMetrics, resp *llmtypes.ContentResponse) {
+	// Accumulate token usage (including cache tokens) - uses unified Usage field
+	a.accumulateTokenUsage(ctx, usageMetrics, resp, turn)
 
 	// Extract cache and reasoning tokens to include in UsageMetrics
-	cacheTokens := extractCacheTokens(generationInfo)
-	reasoningTokens := 0
-	if generationInfo != nil && generationInfo.ReasoningTokens != nil {
-		reasoningTokens = *generationInfo.ReasoningTokens
+	// Priority: Use unified Usage field, fall back to GenerationInfo
+	var cacheTokens int
+	var reasoningTokens int
+	var thoughtsTokens int
+
+	if resp != nil && resp.Usage != nil {
+		if resp.Usage.CacheTokens != nil {
+			cacheTokens = *resp.Usage.CacheTokens
+		}
+		if resp.Usage.ReasoningTokens != nil {
+			reasoningTokens = *resp.Usage.ReasoningTokens
+		}
+		if resp.Usage.ThoughtsTokens != nil {
+			thoughtsTokens = *resp.Usage.ThoughtsTokens
+		}
+	}
+
+	// Fall back to GenerationInfo if not found in Usage
+	if (cacheTokens == 0 || reasoningTokens == 0) && resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		generationInfo := resp.Choices[0].GenerationInfo
+		if cacheTokens == 0 {
+			cacheTokens = extractCacheTokens(generationInfo)
+		}
+		if reasoningTokens == 0 && generationInfo.ReasoningTokens != nil {
+			reasoningTokens = *generationInfo.ReasoningTokens
+		}
+		if thoughtsTokens == 0 && generationInfo.ThoughtsTokens != nil {
+			thoughtsTokens = *generationInfo.ThoughtsTokens
+		}
 	}
 
 	// Add cache and reasoning tokens to usage metrics

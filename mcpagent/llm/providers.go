@@ -3,12 +3,12 @@ package llm
 import (
 	"context"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcpagent/observability"
 	"mcpagent/logger"
 
-	llmproviders "llm-providers"
-	"llm-providers/interfaces"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
+	"github.com/manishiitg/multi-llm-provider-go/interfaces"
 )
 
 // Re-export Provider type and constants from llm-providers

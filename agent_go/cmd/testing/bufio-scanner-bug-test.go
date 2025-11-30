@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"mcpagent/llm"
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcpagent/agent"

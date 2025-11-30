@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // SummarizeTools returns a human-readable summary string of the available tools.

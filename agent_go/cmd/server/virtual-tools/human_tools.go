@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // CreateHumanTools creates human interaction tools

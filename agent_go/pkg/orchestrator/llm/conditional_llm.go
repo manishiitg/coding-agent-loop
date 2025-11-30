@@ -10,7 +10,7 @@ import (
 	"mcpagent/observability"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // ConditionalResponse represents a true/false response with reasoning

@@ -114,7 +114,7 @@ interface WorkspaceState {
   setExpandedFolders: (folders: Set<string>) => void
   expandFoldersForFile: (filepath: string) => void
   toggleFolder: (folderPath: string) => void
-  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number) => void
+  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number, additionalFolders?: string[]) => void
   
   // Auto-scroll functionality
   scrollToFile: (filepath: string) => Promise<void>
@@ -464,6 +464,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       
       // File highlighting
       highlightFile: async (filepath: string) => {
+        console.log('[WorkspaceStore] highlightFile called:', filepath)
         const state = get()
         
         // Clear existing timeout
@@ -474,24 +475,33 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         try {
           // Check if file exists in current file tree
           const fileExists = findFileInTree(state.files, filepath)
+          console.log('[WorkspaceStore] highlightFile - file check:', {
+            filepath,
+            fileExists,
+            currentHighlightedFile: state.highlightedFile,
+            totalFiles: state.files.length
+          })
           
           // If file doesn't exist, refresh the tree
           // Note: In workflow mode, the component will handle filtering
           // so we only refresh if the file is truly missing from raw data
           if (!fileExists) {
-            console.log('[WorkspaceStore] File not found, refreshing:', filepath)
+            console.log('[WorkspaceStore] File not found in tree, refreshing:', filepath)
             await get().fetchFiles()
             
             // Wait a bit for state to update after refresh
             setTimeout(() => {
+              console.log('[WorkspaceStore] Setting highlightedFile after refresh:', filepath)
               set({ highlightedFile: filepath })
             }, 100)
           } else {
+            console.log('[WorkspaceStore] Setting highlightedFile (file exists):', filepath)
             set({ highlightedFile: filepath })
           }
           
           // Auto-clear highlight after 5 seconds
           const timeout = setTimeout(() => {
+            console.log('[WorkspaceStore] Clearing highlight after timeout:', filepath)
             set({ highlightedFile: null, highlightTimeout: null })
           }, 5000)
           
@@ -515,6 +525,14 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           }
           const { operation, filepath } = eventData
           
+          console.log('[WorkspaceStore] Processing workspace_file_operation event:', {
+            operation,
+            filepath,
+            folder: eventData.folder,
+            turn: eventData.turn,
+            server_name: eventData.server_name
+          })
+          
           // Backend emits full filepaths (e.g., "Workflow/MyProject/file.txt")
           // highlightFile searches in raw unfiltered files, so full paths work correctly
           // Workspace component handles filtering and path adjustment for display
@@ -524,10 +542,19 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               // Check if file exists in raw file tree, refresh if new, then highlight
               const state = get()
               const fileExists = findFileInTree(state.files, filepath)
+              console.log('[WorkspaceStore] File check for highlighting:', {
+                filepath,
+                fileExists,
+                operation,
+                totalFiles: state.files.length
+              })
+              
               if (!fileExists && operation === 'update') {
                 // New file created - refresh tree to show it
+                console.log('[WorkspaceStore] File not found, refreshing tree for new file:', filepath)
                 get().fetchFiles().then(() => {
                   setTimeout(() => {
+                    console.log('[WorkspaceStore] Calling highlightFile after refresh:', filepath)
                     get().highlightFile(filepath)
                     // Expand folders to show the file (works with workflow folder filtering)
                     get().expandFoldersForFile(filepath)
@@ -535,9 +562,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 })
               } else {
                 // File exists - highlight and expand folders
+                console.log('[WorkspaceStore] File exists, calling highlightFile:', filepath)
                 get().highlightFile(filepath)
                 get().expandFoldersForFile(filepath)
               }
+            } else {
+              console.warn('[WorkspaceStore] No filepath in event for operation:', operation)
             }
           } else if (operation === 'delete') {
             if (filepath) {
@@ -639,8 +669,15 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         })
       },
       
-      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2) => {
-        const foldersToExpand = new Set<string>()
+      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2, additionalFolders?: string[]) => {
+        // Start with existing expanded folders to merge with them instead of replacing
+        const currentExpanded = get().expandedFolders
+        const foldersToExpand = new Set<string>(currentExpanded)
+        
+        // Add any additional folders that should be included (e.g., workflow folder)
+        if (additionalFolders) {
+          additionalFolders.forEach(folder => foldersToExpand.add(folder))
+        }
         
         const collectFoldersAtLevel = (fileList: PlannerFile[], currentLevel: number) => {
           fileList.forEach(file => {
@@ -672,7 +709,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         console.log('[WorkspaceStore] expandFoldersToLevel:', {
           maxLevel,
           filesCount: files.length,
+          previousExpandedCount: currentExpanded.size,
           foldersToExpandCount: foldersToExpand.size,
+          newFoldersAdded: foldersToExpand.size - currentExpanded.size,
           foldersToExpand: Array.from(foldersToExpand).slice(0, 20) // First 20 for debugging
         })
         

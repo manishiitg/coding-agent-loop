@@ -671,8 +671,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             }
             
             // Process workspace events using the centralized store
+            if (event.type === 'workspace_file_operation') {
+              console.log('[ChatArea] Received workspace_file_operation event:', {
+                type: event.type,
+                data: event.data,
+                timestamp: event.timestamp
+              })
+            }
             const { processWorkspaceEvent } = useWorkspaceStore.getState()
-            processWorkspaceEvent(event)
+            const processed = processWorkspaceEvent(event)
+            if (event.type === 'workspace_file_operation') {
+              console.log('[ChatArea] Event processed:', processed)
+            }
             
             // Only filter out user_message events from backend since we add them immediately in submitQuery
             return event.type !== 'user_message'

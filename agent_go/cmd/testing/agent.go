@@ -14,7 +14,7 @@ import (
 	mcpagent "mcpagent/agent"
 	"mcpagent/llm"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // agentCmd represents the agent test command

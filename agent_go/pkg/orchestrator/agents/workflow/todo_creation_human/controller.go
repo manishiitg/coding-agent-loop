@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
@@ -21,6 +20,8 @@ import (
 	"mcpagent/events"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // BranchStepProgress tracks branch execution progress for conditional steps
@@ -1973,6 +1974,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				}
 			}
 
+			// Track if validation failed after exhausting all retry attempts
+			validationFailedAfterMaxRetries := false
+
 			// Retry loop: Execute with validation feedback, reusing the same learning history
 			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
 				hcpo.GetLogger().Infof("🔄 Executing step %d/%d (attempt %d/%d): %s", stepIndex+1, totalSteps, retryAttempt, maxRetryAttempts, step.Title)
@@ -2286,7 +2290,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 						if retryAttempt >= maxRetryAttempts {
 							hcpo.GetLogger().Errorf("❌ Step %d failed validation after %d attempts", stepIndex+1, maxRetryAttempts)
-							// Continue to next step even if validation failed
+							// Mark that validation failed after exhausting all retries
+							validationFailedAfterMaxRetries = true
 							break
 						} else {
 							hcpo.GetLogger().Infof("🔄 Retrying step %d execution with validation feedback", stepIndex+1)
@@ -2295,6 +2300,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					}
 				}
 			} // End of retry loop
+
+			// Exit immediately if validation failed after exhausting all retry attempts
+			if validationFailedAfterMaxRetries && !step.HasLoop {
+				hcpo.GetLogger().Errorf("🛑 Step %d failed validation after %d attempts - exiting workflow", stepIndex+1, maxRetryAttempts)
+				var validationDetails string
+				if validationResponse != nil {
+					validationDetails = fmt.Sprintf("Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus)
+					if validationResponse.Reasoning != "" {
+						validationDetails += fmt.Sprintf(", Reasoning: %s", validationResponse.Reasoning)
+					}
+				} else {
+					validationDetails = "No validation response available"
+				}
+				return executionResult, updatedContextFiles, fmt.Errorf("step %d failed validation after %d retry attempts. %s. Please review the execution results and update the plan if needed", stepIndex+1, maxRetryAttempts, validationDetails)
+			}
 
 			// If in loop mode and condition not met, continue main loop
 			if step.HasLoop && !loopConditionMet {

@@ -28,7 +28,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)
@@ -448,15 +448,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 		// NEW: End LLM generation for hierarchy tracking
 		if resp != nil && len(resp.Choices) > 0 {
-			var generationInfo *llmtypes.GenerationInfo
-			if resp.Choices[0].GenerationInfo != nil {
-				generationInfo = resp.Choices[0].GenerationInfo
-			}
 			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
 				PromptTokens:     usage.InputTokens,
 				CompletionTokens: usage.OutputTokens,
 				TotalTokens:      usage.TotalTokens,
-			}, generationInfo)
+			}, resp)
 		}
 
 		// Check for context cancellation after LLM generation
@@ -1337,15 +1333,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 	// Accumulate token usage from final LLM call
 	if finalResp != nil && len(finalResp.Choices) > 0 && finalUsage.TotalTokens > 0 {
-		var generationInfo *llmtypes.GenerationInfo
-		if finalResp.Choices[0].GenerationInfo != nil {
-			generationInfo = finalResp.Choices[0].GenerationInfo
-		}
 		a.accumulateTokenUsage(ctx, events.UsageMetrics{
 			PromptTokens:     finalUsage.InputTokens,
 			CompletionTokens: finalUsage.OutputTokens,
 			TotalTokens:      finalUsage.TotalTokens,
-		}, generationInfo, a.MaxTurns+1)
+		}, finalResp, a.MaxTurns+1)
 	} else {
 		logger.Warnf("⚠️  [FINAL LLM CALL DEBUG] Skipping token accumulation - finalResp: %v, choices: %d, finalUsage.TotalTokens: %d",
 			finalResp != nil, func() int {

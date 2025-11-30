@@ -2,7 +2,7 @@ package shared
 
 import (
 	"fmt"
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"strings"
 )
 

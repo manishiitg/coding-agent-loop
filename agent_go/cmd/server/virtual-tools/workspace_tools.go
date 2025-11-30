@@ -10,7 +10,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"net/http"
 	"net/url"
 	"os"

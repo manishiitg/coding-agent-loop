@@ -10,7 +10,7 @@ import (
 	"mcpagent/agent"
 	"mcpagent/mcpclient"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

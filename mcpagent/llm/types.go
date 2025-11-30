@@ -2,7 +2,7 @@ package llm
 
 import (
 	"context"
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // LLMCallFunc is a type-safe function signature for LLM calls.

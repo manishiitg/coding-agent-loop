@@ -7,12 +7,13 @@ import (
 	"text/template"
 	"time"
 
-	"llm-providers/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/agent/prompt"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerExecutionOnlyTemplate holds template variables for execution-only agent prompts
@@ -93,6 +94,10 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 		codeExecutionInstructions = prompt.GetCodeExecutionInstructions()
 	}
 
+	// Get variable names and values for system prompt
+	variableNames := templateVars["VariableNames"]
+	variableValues := templateVars["VariableValues"]
+
 	// Define the system prompt template
 	templateStr := `# Execution-Only Agent
 
@@ -108,65 +113,52 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 ## ⚡ Code Execution Mode Active
 {{.CodeExecutionInstructions}}
 {{end}}
+{{if .VariableNames}}
+
+## 🔑 Available Variables
+{{.VariableNames}}
+{{if .VariableValues}}
+
+**Current Values**: {{.VariableValues}}
+{{end}}
+
+**Variable Handling**:
+- **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, StepSuccessCriteria, etc.
+- **For new tool calls or code**: Use actual values directly from the resolved step description{{if .IsCodeExecutionMode}}
+- **For Go code**: Pass values as CLI arguments via write_code 'args' parameter, access via os.Args[1], os.Args[2], etc.{{end}}
+- **Don't hardcode values** - reference them from the step context
+{{end}}
 
 ## 📚 Learning Context (Pre-Discovered)
 {{.LearningHistory}}
 
 **Note**: Learning files have been read. Use insights above as **guidance**, not strict rules.
+Many times learnings might get outdated, and you need to relearn again and solve the issues you face.
 
 ## 📁 File Permissions
 **READ**: Context files ({{.WorkspacePath}}/step_X_results.md), workspace files (relative paths only)  
 **WRITE**: Only context output files in {{.WorkspacePath}}/ (no validation reports, no files outside workspace)
 
-## 🎯 Execution Decision Flow
+## 🎯 Execution Approach
 
-**STEP DESCRIPTION is PRIMARY. Learnings are GUIDANCE.**
+**Simple 3-Step Process:**
 
-┌─────────────────────────────────────────┐
-│ 1. Read Current Step Requirements      │ ← PRIMARY SOURCE OF TRUTH
-│    - Description, success criteria      │
-│    - Context dependencies               │
-└─────────────────────────────────────────┘
-              ↓
-┌─────────────────────────────────────────┐
-│ 2. Review Learning Context (Above)     │ ← GUIDANCE ONLY
-│    - Success patterns to adapt          │
-│    - Failure patterns to avoid          │
-{{if .IsCodeExecutionMode}}│    - Code patterns to modify            │{{else}}│    - Scripts to modify                  │{{end}}
-└─────────────────────────────────────────┘
-              ↓
-┌─────────────────────────────────────────┐
-│ 3. Read Context Dependencies            │
-│    (from {{.WorkspacePath}})            │
-└─────────────────────────────────────────┘
-              ↓
-    ┌──────────────────────────────┐
-    │ Step ≈ Learnings?            │
-    └──────────────────────────────┘
-       │                    │
-      YES                  NO
-       │                    │
-       ↓                    ↓
-  Follow learnings      Adapt learnings
-  more closely          to match step
-       │                    │
-       └────────┬───────────┘
-                ↓
-┌─────────────────────────────────────────┐
-│ 4. Execute Step                         │
-{{if .IsCodeExecutionMode}}│    - discover_code_files               │
-│    - write_code (pass vars via args)    │
-│    - Access vars via os.Args[1,2,...]   │{{else}}│    - Use MCP tools                      │{{end}}
-│    - Follow current step description    │
-└─────────────────────────────────────────┘
-              ↓
-┌─────────────────────────────────────────┐
-│ 5. Verify & Document                    │
-│    - Check success criteria             │
-│    - Create context output file         │{{if .HasLoop}}
-│    - Save progress after each iteration │{{end}}
-│    - Collect evidence (numbers, files)  │
-└─────────────────────────────────────────┘
+1. **Read Step Requirements** (PRIMARY SOURCE OF TRUTH)
+   - Step description, success criteria, context dependencies
+   - These requirements are already resolved with actual variable values
+
+2. **Review Learning Context** (GUIDANCE ONLY)
+   - Success patterns from above learning section
+   - Failure patterns to avoid
+   - {{if .IsCodeExecutionMode}}Code{{else}}Script{{end}} examples to adapt
+   - **Important**: Learnings are guidance, not strict rules. The step description is PRIMARY.
+
+3. **Execute & Document**
+   - Read context dependencies from {{.WorkspacePath}}
+   - Execute step using MCP tools{{if .IsCodeExecutionMode}} or Go code{{end}}
+   - Adapt learning patterns to match current step requirements
+   - Verify success criteria met (collect evidence)
+   - Create context output file{{if .HasLoop}} (update/append after each iteration){{end}}
 
 {{if .IsCodeExecutionMode}}## 💻 Code Execution Rules
 - **Variables**: Pass via write_code 'args' parameter (e.g., args=["value1", "value2"])  
@@ -200,6 +192,8 @@ Validation agent will verify your work - focus on execution and evidence.`
 		"CurrentDate":               currentDate,
 		"CurrentTime":               currentTime,
 		"LearningHistory":           learningHistory,
+		"VariableNames":             variableNames,
+		"VariableValues":            variableValues,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

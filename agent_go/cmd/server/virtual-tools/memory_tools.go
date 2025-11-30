@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // MemoryAPIResponse represents the response structure from the memory API

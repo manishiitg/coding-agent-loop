@@ -828,27 +828,67 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				if a.customTools != nil {
 					if _, exists := a.customTools[tc.FunctionCall.Name]; exists {
 						isCustomTool = true
+						logger.Debugf("🔧 [TOOL_LOOKUP] Tool '%s' identified as custom tool (customTools map has %d tools)", tc.FunctionCall.Name, len(a.customTools))
+					} else {
+						logger.Debugf("🔧 [TOOL_LOOKUP] Tool '%s' not found in customTools (map has %d tools)", tc.FunctionCall.Name, len(a.customTools))
 					}
+				} else {
+					logger.Debugf("🔧 [TOOL_LOOKUP] customTools map is nil for tool '%s'", tc.FunctionCall.Name)
+				}
+
+				// Check if it's a virtual tool
+				isVirtual := isVirtualTool(tc.FunctionCall.Name)
+				if isVirtual {
+					logger.Debugf("🔧 [TOOL_LOOKUP] Tool '%s' identified as virtual tool", tc.FunctionCall.Name)
 				}
 
 				client := a.Client
 				if a.toolToServer != nil {
 					if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
-						if a.Clients != nil {
+						logger.Debugf("🔧 [TOOL_LOOKUP] Tool '%s' mapped to server '%s' in toolToServer", tc.FunctionCall.Name, mapped)
+						if mapped == "custom" {
+							// Custom tool - no client needed
+							logger.Debugf("🔧 [TOOL_LOOKUP] Tool '%s' is a custom tool (mapped to 'custom'), skipping client lookup", tc.FunctionCall.Name)
+							isCustomTool = true // Ensure it's marked as custom
+						} else if a.Clients != nil {
 							if c, exists := a.Clients[mapped]; exists {
 								client = c
+								logger.Debugf("🔧 [TOOL_LOOKUP] Found client for tool '%s' from server '%s'", tc.FunctionCall.Name, mapped)
+							} else {
+								logger.Debugf("🔧 [TOOL_LOOKUP] Server '%s' mapped for tool '%s' but no client found in Clients map", mapped, tc.FunctionCall.Name)
 							}
 						}
+					} else {
+						logger.Debugf("🔧 [TOOL_LOOKUP] Tool '%s' not found in toolToServer mapping (map has %d entries)", tc.FunctionCall.Name, len(a.toolToServer))
 					}
+				} else {
+					logger.Debugf("🔧 [TOOL_LOOKUP] toolToServer map is nil for tool '%s'", tc.FunctionCall.Name)
 				}
+
 				// Only check for client errors for non-custom tools and non-virtual tools
-				if !isCustomTool && !isVirtualTool(tc.FunctionCall.Name) && client == nil {
+				if !isCustomTool && !isVirtual && client == nil {
+					logger.Debugf("🔧 [TOOL_LOOKUP] Tool '%s' requires client but none found (isCustomTool=%v, isVirtual=%v, client=nil)", tc.FunctionCall.Name, isCustomTool, isVirtual)
 					// Check if we have no active connections
 					if len(a.Clients) == 0 {
+						logger.Debugf("🔧 [TOOL_LOOKUP] No active clients (len(a.Clients)=%d), attempting on-demand connection for tool '%s'", len(a.Clients), tc.FunctionCall.Name)
 
 						// Create connection on-demand for the specific server
-						serverName := a.toolToServer[tc.FunctionCall.Name]
+						serverName := ""
+						if a.toolToServer != nil {
+							serverName = a.toolToServer[tc.FunctionCall.Name]
+						}
 						if serverName == "" {
+							// Calculate counts for logging
+							customToolsCount := 0
+							if a.customTools != nil {
+								customToolsCount = len(a.customTools)
+							}
+							toolToServerCount := 0
+							if a.toolToServer != nil {
+								toolToServerCount = len(a.toolToServer)
+							}
+							logger.Warnf("🔧 [TOOL_LOOKUP] Tool '%s' not mapped to any server. isCustomTool=%v, isVirtual=%v, customTools has %d tools, toolToServer has %d entries",
+								tc.FunctionCall.Name, isCustomTool, isVirtual, customToolsCount, toolToServerCount)
 							logger.Warnf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name)
 
 							// Generate helpful feedback instead of failing
@@ -957,21 +997,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				} else if a.customTools != nil {
 					// Check if this is a custom tool
 					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists {
+						logger.Debugf("🔧 [TOOL_EXECUTION] Executing custom tool '%s' (category: %s)", tc.FunctionCall.Name, customTool.Category)
 						// Handle custom tool execution using the stored execution function
 						resultText, toolErr := customTool.Execution(toolCtx, args)
 
 						if toolErr != nil {
+							logger.Errorf("🔧 [TOOL_EXECUTION] Custom tool '%s' execution failed: %v", tc.FunctionCall.Name, toolErr)
 							result = &mcp.CallToolResult{
 								IsError: true,
 								Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
 							}
 						} else {
+							logger.Debugf("🔧 [TOOL_EXECUTION] Custom tool '%s' executed successfully (result length: %d chars)", tc.FunctionCall.Name, len(resultText))
 							result = &mcp.CallToolResult{
 								IsError: false,
 								Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
 							}
 						}
 					} else {
+						logger.Warnf("🔧 [TOOL_EXECUTION] Tool '%s' not found in customTools map (map has %d tools) - attempting MCP client call", tc.FunctionCall.Name, len(a.customTools))
 						// Handle regular MCP tool execution
 						result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
 					}

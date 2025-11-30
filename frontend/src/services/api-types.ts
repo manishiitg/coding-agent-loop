@@ -472,6 +472,7 @@ export interface PresetLLMConfig {
   plan_improvement_llm?: AgentLLMConfig // Default for plan improvement agent
   plan_tool_optimization_llm?: AgentLLMConfig // Default for plan tool optimization agent
   plan_learnings_alignment_llm?: AgentLLMConfig // Default for plan learnings alignment agent
+  learning_consolidation_llm?: AgentLLMConfig // Default for learning consolidation agent
 }
 
 // Preset Query API types

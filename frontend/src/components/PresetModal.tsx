@@ -53,6 +53,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [planImprovementLLM, setPlanImprovementLLM] = useState<AgentLLMConfig | null>(null);
   const [planToolOptimizationLLM, setPlanToolOptimizationLLM] = useState<AgentLLMConfig | null>(null);
   const [planLearningsAlignmentLLM, setPlanLearningsAlignmentLLM] = useState<AgentLLMConfig | null>(null);
+  const [learningConsolidationLLM, setLearningConsolidationLLM] = useState<AgentLLMConfig | null>(null);
 
   // Store subscriptions - using selectors for stable references
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -111,6 +112,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setPlanImprovementLLM(presetLLM.plan_improvement_llm || null);
       setPlanToolOptimizationLLM(presetLLM.plan_tool_optimization_llm || null);
       setPlanLearningsAlignmentLLM(presetLLM.plan_learnings_alignment_llm || null);
+      setLearningConsolidationLLM(presetLLM.learning_consolidation_llm || null);
     } else {
       setLabel('');
       setQuery('');
@@ -137,6 +139,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setPlanImprovementLLM(null);
       setPlanToolOptimizationLLM(null);
       setPlanLearningsAlignmentLLM(null);
+      setLearningConsolidationLLM(null);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
@@ -187,7 +190,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       
       // Build LLM config with agent-specific defaults for workflow mode
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
-      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || planningLLM || variableExtractionLLM || anonymizationLLM || planImprovementLLM || planToolOptimizationLLM || planLearningsAlignmentLLM)) {
+      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || planningLLM || variableExtractionLLM || anonymizationLLM || planImprovementLLM || planToolOptimizationLLM || planLearningsAlignmentLLM || learningConsolidationLLM)) {
         // For workflow mode, include agent-specific configs
         finalLLMConfig = {
           ...(llmConfig || {}),
@@ -200,6 +203,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           plan_improvement_llm: planImprovementLLM || undefined,
           plan_tool_optimization_llm: planToolOptimizationLLM || undefined,
           plan_learnings_alignment_llm: planLearningsAlignmentLLM || undefined,
+          learning_consolidation_llm: learningConsolidationLLM || undefined,
         };
       }
       console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
@@ -239,7 +243,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, planningLLM, variableExtractionLLM, anonymizationLLM, planImprovementLLM, planToolOptimizationLLM, planLearningsAlignmentLLM, useCodeExecutionMode, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, planningLLM, variableExtractionLLM, anonymizationLLM, planImprovementLLM, planToolOptimizationLLM, planLearningsAlignmentLLM, learningConsolidationLLM, useCodeExecutionMode, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {

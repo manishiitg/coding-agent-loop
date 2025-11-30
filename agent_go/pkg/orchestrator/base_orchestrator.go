@@ -887,6 +887,26 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 	return wrappedExecutors
 }
 
+// PrepareWorkspaceToolsWithFolderGuard wraps executors and enhances tool descriptions with folder guard information
+// This is a convenience method that combines WrapWorkspaceToolsWithFolderGuard and EnhanceToolDescriptionWithFolderGuard
+// Returns wrapped executors and enhanced tools (tools are modified in-place)
+func (bo *BaseOrchestrator) PrepareWorkspaceToolsWithFolderGuard(tools []llmtypes.Tool, executors map[string]interface{}) ([]llmtypes.Tool, map[string]interface{}) {
+	// Wrap executors with folder guard
+	wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(executors)
+
+	// Enhance tool descriptions with folder guard information automatically
+	for i := range tools {
+		if tools[i].Function != nil {
+			tools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
+				tools[i].Function.Name,
+				tools[i].Function.Description,
+			)
+		}
+	}
+
+	return tools, wrappedExecutors
+}
+
 // CreateStandardAgentConfig creates a standardized agent configuration
 // use CreateAndSetupStandardAgent instead which combines configuration and setup.
 func (bo *BaseOrchestrator) CreateStandardAgentConfig(agentName string, maxTurns int, outputFormat agents.OutputFormat) *agents.OrchestratorAgentConfig {
@@ -1032,18 +1052,8 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 			}
 		}
 
-		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
-
-		// Enhance tool descriptions with folder guard information automatically
-		for i := range filteredTools {
-			if filteredTools[i].Function != nil {
-				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
-					filteredTools[i].Function.Name,
-					filteredTools[i].Function.Description,
-				)
-			}
-		}
+		// Wrap executors and enhance tool descriptions with folder guard (automatic)
+		filteredTools, wrappedExecutors := bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 		if bo.ToolCategories != nil {
@@ -1228,18 +1238,8 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 			}
 		}
 
-		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
-
-		// Enhance tool descriptions with folder guard information automatically
-		for i := range filteredTools {
-			if filteredTools[i].Function != nil {
-				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
-					filteredTools[i].Function.Name,
-					filteredTools[i].Function.Description,
-				)
-			}
-		}
+		// Wrap executors and enhance tool descriptions with folder guard (automatic)
+		filteredTools, wrappedExecutors := bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 		if bo.ToolCategories != nil {
@@ -1423,18 +1423,8 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 			}
 		}
 
-		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
-
-		// Enhance tool descriptions with folder guard information automatically
-		for i := range filteredTools {
-			if filteredTools[i].Function != nil {
-				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
-					filteredTools[i].Function.Name,
-					filteredTools[i].Function.Description,
-				)
-			}
-		}
+		// Wrap executors and enhance tool descriptions with folder guard (automatic)
+		filteredTools, wrappedExecutors := bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), config.AgentName, baseAgent.GetMode(), len(customTools))
 
@@ -1581,18 +1571,8 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 			}
 		}
 
-		// Wrap executors with folder guard if workspacePath is set
-		wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(customToolExecutors)
-
-		// Enhance tool descriptions with folder guard information automatically
-		for i := range filteredTools {
-			if filteredTools[i].Function != nil {
-				filteredTools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
-					filteredTools[i].Function.Name,
-					filteredTools[i].Function.Description,
-				)
-			}
-		}
+		// Wrap executors and enhance tool descriptions with folder guard (automatic)
+		filteredTools, wrappedExecutors := bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
 
 		bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
 		if bo.ToolCategories != nil {

@@ -114,6 +114,17 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
     const filename = (parsedArgs.filename as string) || null
     const code = (parsedArgs.code as string) || ''
     const lineCount = code.split('\n').length
+    
+    // Extract CLI arguments if present
+    let cliArgs: string[] = []
+    if (parsedArgs.args) {
+      if (Array.isArray(parsedArgs.args)) {
+        cliArgs = parsedArgs.args.map(arg => String(arg))
+      } else if (typeof parsedArgs.args === 'string') {
+        // Handle case where args might be a single string
+        cliArgs = [parsedArgs.args]
+      }
+    }
 
     return (
       <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded p-2">
@@ -143,6 +154,17 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
               <div className="text-xs font-medium text-purple-700 dark:text-purple-300 mb-1">📄 Filename:</div>
               <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
                 {filename}
+              </div>
+            </div>
+          )}
+
+          {cliArgs.length > 0 && (
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+              <div className="text-xs font-medium text-purple-700 dark:text-purple-300">
+                🔧 CLI Arguments:{' '}
+                <span className="font-mono text-gray-800 dark:text-gray-200">
+                  {cliArgs.join(', ')}
+                </span>
               </div>
             </div>
           )}

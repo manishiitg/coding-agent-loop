@@ -25,7 +25,7 @@ import (
 }
 
 // GenerateToolPackageHeader generates a minimal package header for tool files
-// Tool files only need encoding/json and fmt since they use the common callAPI function
+// Tool files need encoding/json and fmt
 func GenerateToolPackageHeader(packageName string) string {
 	return fmt.Sprintf(`package %s
 
@@ -38,11 +38,13 @@ import (
 
 // GenerateAPIClient generates a common API client function for all tools in a package
 // This reduces code duplication across generated tool functions
+// API errors (network, HTTP) panic - tool execution errors are returned in result string
 func GenerateAPIClient(timeout time.Duration) string {
 	timeoutSeconds := int(timeout.Seconds())
 	return fmt.Sprintf(`// callAPI makes an HTTP POST request to the specified endpoint with the given payload
 // This is a common function used by all tool functions to reduce code duplication
-func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
+// Panics on API errors (network, HTTP failures) - tool execution errors are in result string
+func callAPI(endpoint string, payload map[string]interface{}) string {
 	apiURL := os.Getenv("MCP_API_URL")
 	if apiURL == "" {
 		apiURL = "http://localhost:8000"
@@ -50,7 +52,7 @@ func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
 
 	reqBody, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %%w", err)
+		panic(fmt.Sprintf("failed to marshal request: %%v", err))
 	}
 
 	// Create request with %d second timeout (from agent ToolTimeout)
@@ -59,19 +61,19 @@ func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL+endpoint, bytes.NewBuffer(reqBody))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %%w", err)
+		panic(fmt.Sprintf("failed to create request: %%v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %%w", err)
+		panic(fmt.Sprintf("HTTP request failed: %%v", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("HTTP %%d: %%s", resp.StatusCode, string(body))
+		panic(fmt.Sprintf("HTTP %%d: %%s", resp.StatusCode, string(body)))
 	}
 
 	var result struct {
@@ -80,13 +82,14 @@ func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
 		Error   string `+"`json:\"error\"`"+`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %%w", err)
+		panic(fmt.Sprintf("failed to decode response: %%v", err))
 	}
 
 	if !result.Success {
-		return "", fmt.Errorf("%%s", result.Error)
+		panic(fmt.Sprintf("API error: %%s", result.Error))
 	}
-	return result.Result, nil
+	// Return result string - tool execution errors will be in result (check output for error indicators)
+	return result.Result
 }
 
 `, timeoutSeconds, timeoutSeconds)
@@ -148,8 +151,9 @@ func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolN
 	builder.WriteString("//\n")
 	builder.WriteString("// Usage: Import package and call with typed struct\n")
 	builder.WriteString(fmt.Sprintf("// Note: This function connects to MCP server '%s'\n", serverName))
+	builder.WriteString("//       Panics on API errors - check output string for tool execution errors\n")
 	if goStruct != nil && len(goStruct.Fields) > 0 {
-		builder.WriteString("//          output, err := " + funcName + "(" + goStruct.Name + "{\n")
+		builder.WriteString("//          output := " + funcName + "(" + goStruct.Name + "{\n")
 		// Add example with first field
 		firstField := goStruct.Fields[0]
 		builder.WriteString(fmt.Sprintf("//              %s: \"value\",\n", firstField.Name))
@@ -157,25 +161,29 @@ func GenerateFunctionWithParams(toolName string, goStruct *GoStruct, actualToolN
 			builder.WriteString("//              // ... other parameters\n")
 		}
 		builder.WriteString("//          })\n")
+		builder.WriteString("//          // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+		builder.WriteString("//          // Handle tool execution error if detected\n")
 	} else {
-		builder.WriteString("//          output, err := " + funcName + "(" + goStruct.Name + "{})\n")
+		builder.WriteString("//          output := " + funcName + "(" + goStruct.Name + "{})\n")
+		builder.WriteString("//          // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+		builder.WriteString("//          // Handle tool execution error if detected\n")
 	}
 	builder.WriteString("//\n")
 
-	// Function signature - typed struct parameter
+	// Function signature - typed struct parameter, returns only string (no error)
 	// Use struct name for parameter type (empty struct if no fields)
 	paramType := goStruct.Name
-	builder.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, paramType))
+	builder.WriteString(fmt.Sprintf("func %s(params %s) string {\n", funcName, paramType))
 
-	// Convert struct to map for API call with proper error handling
+	// Convert struct to map for API call (panic on errors)
 	builder.WriteString("\t// Convert params struct to map for API call\n")
 	builder.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	builder.WriteString("\tif err != nil {\n")
-	builder.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to marshal parameters: %w\", err)\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
 	builder.WriteString("\t}\n")
 	builder.WriteString("\tvar paramsMap map[string]interface{}\n")
 	builder.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	builder.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to unmarshal parameters: %w\", err)\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
 	builder.WriteString("\t}\n\n")
 
 	// Build request payload and call common API client
@@ -218,8 +226,9 @@ func GenerateCustomToolFunction(toolName string, goStruct *GoStruct, actualToolN
 	// Add usage comment with parameter information
 	builder.WriteString("//\n")
 	builder.WriteString("// Usage: Import package and call with typed struct\n")
+	builder.WriteString("//       Panics on API errors - check output string for tool execution errors\n")
 	if goStruct != nil && len(goStruct.Fields) > 0 {
-		builder.WriteString("// Example: output, err := " + funcName + "(" + goStruct.Name + "{\n")
+		builder.WriteString("// Example: output := " + funcName + "(" + goStruct.Name + "{\n")
 		// Add example with first field
 		firstField := goStruct.Fields[0]
 		builder.WriteString(fmt.Sprintf("//     %s: \"value\",\n", firstField.Name))
@@ -227,25 +236,29 @@ func GenerateCustomToolFunction(toolName string, goStruct *GoStruct, actualToolN
 			builder.WriteString("//     // ... other parameters\n")
 		}
 		builder.WriteString("// })\n")
+		builder.WriteString("// // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+		builder.WriteString("// // Handle tool execution error if detected\n")
 	} else {
-		builder.WriteString("// Example: output, err := " + funcName + "(" + goStruct.Name + "{})\n")
+		builder.WriteString("// Example: output := " + funcName + "(" + goStruct.Name + "{})\n")
+		builder.WriteString("// // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+		builder.WriteString("// // Handle tool execution error if detected\n")
 	}
 	builder.WriteString("//\n")
 
-	// Function signature - typed struct parameter
+	// Function signature - typed struct parameter, returns only string (no error)
 	// Use struct name for parameter type (empty struct if no fields)
 	paramType := goStruct.Name
-	builder.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, paramType))
+	builder.WriteString(fmt.Sprintf("func %s(params %s) string {\n", funcName, paramType))
 
-	// Convert struct to map for API call with proper error handling
+	// Convert struct to map for API call (panic on errors)
 	builder.WriteString("\t// Convert params struct to map for API call\n")
 	builder.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	builder.WriteString("\tif err != nil {\n")
-	builder.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to marshal parameters: %w\", err)\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
 	builder.WriteString("\t}\n")
 	builder.WriteString("\tvar paramsMap map[string]interface{}\n")
 	builder.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	builder.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to unmarshal parameters: %w\", err)\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
 	builder.WriteString("\t}\n\n")
 
 	// Build request payload and call common API client
@@ -287,8 +300,9 @@ func GenerateVirtualToolFunction(toolName string, goStruct *GoStruct, actualTool
 	// Add usage comment with parameter information
 	builder.WriteString("//\n")
 	builder.WriteString("// Usage: Import package and call with typed struct\n")
+	builder.WriteString("//       Panics on API errors - check output string for tool execution errors\n")
 	if goStruct != nil && len(goStruct.Fields) > 0 {
-		builder.WriteString("// Example: output, err := " + funcName + "(" + goStruct.Name + "{\n")
+		builder.WriteString("// Example: output := " + funcName + "(" + goStruct.Name + "{\n")
 		// Add example with first field
 		firstField := goStruct.Fields[0]
 		builder.WriteString(fmt.Sprintf("//     %s: \"value\",\n", firstField.Name))
@@ -296,25 +310,29 @@ func GenerateVirtualToolFunction(toolName string, goStruct *GoStruct, actualTool
 			builder.WriteString("//     // ... other parameters\n")
 		}
 		builder.WriteString("// })\n")
+		builder.WriteString("// // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+		builder.WriteString("// // Handle tool execution error if detected\n")
 	} else {
-		builder.WriteString("// Example: output, err := " + funcName + "(" + goStruct.Name + "{})\n")
+		builder.WriteString("// Example: output := " + funcName + "(" + goStruct.Name + "{})\n")
+		builder.WriteString("// // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+		builder.WriteString("// // Handle tool execution error if detected\n")
 	}
 	builder.WriteString("//\n")
 
-	// Function signature - typed struct parameter
+	// Function signature - typed struct parameter, returns only string (no error)
 	// Use struct name for parameter type (empty struct if no fields)
 	paramType := goStruct.Name
-	builder.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, paramType))
+	builder.WriteString(fmt.Sprintf("func %s(params %s) string {\n", funcName, paramType))
 
-	// Convert struct to map for API call with error handling
+	// Convert struct to map for API call (panic on errors)
 	builder.WriteString("\t// Convert params struct to map for API call\n")
 	builder.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	builder.WriteString("\tif err != nil {\n")
-	builder.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to marshal parameters: %w\", err)\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
 	builder.WriteString("\t}\n")
 	builder.WriteString("\tvar paramsMap map[string]interface{}\n")
 	builder.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	builder.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to unmarshal parameters: %w\", err)\n")
+	builder.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
 	builder.WriteString("\t}\n\n")
 
 	// Build request payload and call common API client

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
@@ -25,10 +26,11 @@ type HumanControlledTodoPlannerAnonymizationTemplate struct {
 // HumanControlledTodoPlannerAnonymizationAgent scans learnings folder and replaces actual values with variable placeholders
 type HumanControlledTodoPlannerAnonymizationAgent struct {
 	*agents.BaseOrchestratorAgent
+	baseOrchestrator *orchestrator.BaseOrchestrator // Reference to base orchestrator for RequestHumanFeedback
 }
 
 // NewHumanControlledTodoPlannerAnonymizationAgent creates a new anonymization agent
-func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerAnonymizationAgent {
+func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerAnonymizationAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -39,6 +41,7 @@ func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.Orchestrator
 
 	return &HumanControlledTodoPlannerAnonymizationAgent{
 		BaseOrchestratorAgent: baseAgent,
+		baseOrchestrator:      baseOrchestrator,
 	}
 }
 
@@ -47,6 +50,10 @@ type AnonymizationManager struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
 
+	// Session and workflow IDs for human feedback
+	sessionID  string
+	workflowID string
+
 	// Anonymization LLM config (optional preset)
 	presetAnonymizationLLM *AgentLLMConfig
 }
@@ -54,10 +61,14 @@ type AnonymizationManager struct {
 // NewAnonymizationManager creates a new AnonymizationManager
 func NewAnonymizationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
+	sessionID string,
+	workflowID string,
 	presetAnonymizationLLM *AgentLLMConfig,
 ) *AnonymizationManager {
 	return &AnonymizationManager{
 		BaseOrchestrator:       baseOrchestrator,
+		sessionID:              sessionID,
+		workflowID:             workflowID,
 		presetAnonymizationLLM: presetAnonymizationLLM,
 	}
 }
@@ -111,7 +122,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 
 	// Create wrapper function that returns OrchestratorAgent interface
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-		return NewHumanControlledTodoPlannerAnonymizationAgent(cfg, logger, tracer, eventBridge)
+		return NewHumanControlledTodoPlannerAnonymizationAgent(cfg, logger, tracer, eventBridge, am.BaseOrchestrator)
 	}
 
 	// Use base orchestrator's CreateAndSetupStandardAgentWithConfig to avoid code duplication
@@ -180,6 +191,8 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 		"WorkspacePath": am.GetWorkspacePath(),
 		"VariablesJSON": string(variablesJSONBytes),
 		"VariableNames": variableNames.String(),
+		"SessionID":     am.sessionID,
+		"WorkflowID":    am.workflowID,
 	}
 
 	// Execute anonymization agent
@@ -249,13 +262,109 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 	systemPrompt := agent.anonymizationSystemPromptProcessor(anonymizationTemplateVars)
 	userMessage := agent.anonymizationUserMessageProcessor(anonymizationTemplateVars)
 
-	// Create a simple input processor that returns the user message
-	inputProcessor := func(map[string]string) string {
-		return userMessage
+	// Get logger from base agent's MCP agent
+	baseAgent := agent.GetBaseAgent()
+	var logger utils.ExtendedLogger
+	if baseAgent != nil {
+		mcpAgent := baseAgent.Agent()
+		if mcpAgent != nil && mcpAgent.Logger != nil {
+			logger = mcpAgent.Logger
+		}
 	}
 
-	// Execute with system prompt and user message (overwrite=true to replace default MCP prompt with agent-specific prompt)
-	return agent.ExecuteWithTemplateValidation(ctx, anonymizationTemplateVars, inputProcessor, conversationHistory, templateData, systemPrompt, true)
+	// Maximum iterations for anonymization analysis
+	maxIterations := 20
+	iteration := 0
+	currentResult := ""
+	currentConversationHistory := conversationHistory
+
+	// Extract sessionID and workflowID from template vars
+	sessionID := templateVars["SessionID"]
+	workflowID := templateVars["WorkflowID"]
+
+	// Main execution loop with blocking human feedback
+	for iteration < maxIterations {
+		iteration++
+		if logger != nil {
+			logger.Infof("🔒 Anonymization agent iteration %d/%d", iteration, maxIterations)
+		}
+
+		// Create a simple input processor that returns the user message
+		inputProcessor := func(map[string]string) string {
+			return userMessage
+		}
+
+		// Execute with system prompt and user message (overwrite=true to replace default MCP prompt with agent-specific prompt)
+		result, updatedConversationHistory, err := agent.ExecuteWithTemplateValidation(ctx, anonymizationTemplateVars, inputProcessor, currentConversationHistory, templateData, systemPrompt, true)
+		if err != nil {
+			return "", nil, err
+		}
+
+		currentResult = result
+		currentConversationHistory = updatedConversationHistory
+
+		// After execution, ask if user wants to continue (blocking feedback)
+		if iteration < maxIterations && agent.baseOrchestrator != nil {
+			if logger != nil {
+				logger.Infof("🔒 Anonymization agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations)
+			}
+
+			// Generate unique request ID
+			requestID := fmt.Sprintf("anonymization_continue_%d_%d", iteration, time.Now().UnixNano())
+
+			// Request human feedback (blocking call)
+			approved, feedback, err := agent.baseOrchestrator.RequestHumanFeedback(
+				ctx,
+				requestID,
+				fmt.Sprintf("Anonymization analysis is complete (iteration %d/%d). Would you like to ask more questions or request additional anonymization?", iteration, maxIterations),
+				currentResult,
+				sessionID,
+				workflowID,
+			)
+			if err != nil {
+				if logger != nil {
+					logger.Warnf("⚠️ Failed to get user feedback: %v", err)
+				}
+				// Continue without blocking if feedback fails
+				break
+			}
+
+			// If user clicked Approve button, we're done
+			if approved {
+				if logger != nil {
+					logger.Infof("✅ User approved - anonymization complete")
+				}
+				break
+			}
+
+			// User provided feedback/question - always pass it to the agent and continue
+			if feedback != "" && strings.TrimSpace(feedback) != "" {
+				if logger != nil {
+					logger.Infof("📝 User provided feedback: %s", feedback)
+				}
+				// Use feedback directly as user message for next iteration
+				// Note: BaseAgent.Execute() will automatically add it to conversation history
+				userMessage = feedback
+			} else {
+				// No feedback provided but not approved - continue with same message
+				if logger != nil {
+					logger.Infof("ℹ️ No feedback provided, continuing with same context")
+				}
+			}
+		} else {
+			// Reached max iterations or no base orchestrator
+			if logger != nil {
+				logger.Infof("🔒 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations)
+			}
+			break
+		}
+	}
+
+	if logger != nil {
+		logger.Infof("🔒 Anonymization completed after %d iterations", iteration)
+	}
+
+	return currentResult, currentConversationHistory, nil
 }
 
 // anonymizationSystemPromptProcessor creates the system prompt for anonymization

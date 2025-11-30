@@ -877,6 +877,9 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 				}
 			}
 
+			// Inject event emitter into context before calling executor
+			ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
+
 			// All validations passed and paths normalized - call original executor
 			return originalExecutor(ctx, args)
 		}
@@ -1715,6 +1718,9 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 		return "", fmt.Errorf("read_workspace_file tool executor has wrong type")
 	}
 
+	// Inject event emitter into context before calling executor
+	ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
+
 	// Execute the tool call using existing workspace tool logic
 	readResult, err := readExecutor(ctx, readArgs)
 	if err != nil {
@@ -2008,6 +2014,9 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 		return fmt.Errorf("update_workspace_file tool executor has wrong type")
 	}
 
+	// Inject event emitter into context before calling executor
+	ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
+
 	// Execute the tool call using existing workspace tool logic
 	_, err := writeExecutor(ctx, writeArgs)
 	if err != nil {
@@ -2038,6 +2047,9 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 		return fmt.Errorf("delete_workspace_file tool executor has wrong type")
 	}
 
+	// Inject event emitter into context before calling executor
+	ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
+
 	// Execute the tool call using existing workspace tool logic
 	_, err := deleteExecutor(ctx, deleteArgs)
 	if err != nil {
@@ -2065,6 +2077,9 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 		bo.GetLogger().Warnf("⚠️ list_workspace_files executor has wrong type, skipping directory cleanup")
 		return nil
 	}
+
+	// Inject event emitter into context before calling executor
+	ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
 
 	// Call list_workspace_files to get all files recursively (use high max_depth for recursive listing)
 	listArgs := map[string]interface{}{
@@ -2197,6 +2212,9 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 	}
 
 	// Call list_workspace_files with max_depth: 1 to only get immediate children
+	// Inject event emitter into context before calling executor
+	ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
+
 	listArgs := map[string]interface{}{
 		"folder":    dirPath,
 		"max_depth": 1, // Only list immediate children (directories)
@@ -2286,6 +2304,9 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 		bo.GetLogger().Warnf("⚠️ list_workspace_files executor has wrong type, returning empty list")
 		return []string{}, nil
 	}
+
+	// Inject event emitter into context before calling executor
+	ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
 
 	// Call list_workspace_files with max_depth: 1 to only get immediate children
 	listArgs := map[string]interface{}{

@@ -304,6 +304,36 @@ func (e *ToolCallEndEvent) GetEventType() EventType {
 	return ToolCallEnd
 }
 
+// WorkspaceFileOperationEvent represents a workspace file operation
+type WorkspaceFileOperationEvent struct {
+	BaseEventData
+	Operation  string `json:"operation"`        // "read", "update", "delete", "list", "patch", "move"
+	Filepath   string `json:"filepath"`         // File path (empty for list operations)
+	Folder     string `json:"folder,omitempty"` // Folder path (for list operations)
+	Turn       int    `json:"turn"`
+	ServerName string `json:"server_name"`
+}
+
+func (e *WorkspaceFileOperationEvent) GetEventType() EventType {
+	return WorkspaceFileOperation
+}
+
+// NewWorkspaceFileOperationEvent creates a new WorkspaceFileOperationEvent
+func NewWorkspaceFileOperationEvent(operation, filepath, folder string, turn int, serverName string) *WorkspaceFileOperationEvent {
+	return &WorkspaceFileOperationEvent{
+		BaseEventData: BaseEventData{
+			Timestamp:      time.Now(),
+			HierarchyLevel: 1,
+			Component:      "tool",
+		},
+		Operation:  operation,
+		Filepath:   filepath,
+		Folder:     folder,
+		Turn:       turn,
+		ServerName: serverName,
+	}
+}
+
 // MCPServerConnectionEvent represents MCP server connection
 type MCPServerConnectionEvent struct {
 	BaseEventData

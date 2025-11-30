@@ -11,10 +11,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	"mcp-agent/agent_go/internal/llm"
-	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcpagent/agent"
+	"mcpagent/mcpclient"
 )
 
 var openaiEmptyParamsTestCmd = &cobra.Command{

@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
 )
 
 var largeOutputIntegrationTestCmd = &cobra.Command{
@@ -68,7 +68,7 @@ func testLargeToolOutputDetection(testDir string) error {
 	largeOutput := generateLargeOutput(utils.DefaultLargeToolOutputThreshold + 1000) // Over the threshold
 
 	// Create tool output handler
-	handler := utils.NewToolOutputHandlerWithConfig(
+	handler := mcpagent.NewToolOutputHandlerWithConfig(
 		utils.DefaultLargeToolOutputThreshold, // Default threshold
 		testDir,
 		"test-session-large",
@@ -122,10 +122,10 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 	}
 
 	// Set up the tool output handler
-	toolOutputHandler := utils.NewToolOutputHandler()
+	toolOutputHandler := mcpagent.NewToolOutputHandler()
 	toolOutputHandler.OutputFolder = testDir
 	toolOutputHandler.SessionID = "test-session-virtual"
-	toolOutputHandler.Threshold = utils.DefaultLargeToolOutputThreshold
+	toolOutputHandler.Threshold = mcpagent.DefaultLargeToolOutputThreshold
 
 	// Set the tool output handler using the setter method
 	agent.SetToolOutputHandler(toolOutputHandler)
@@ -214,7 +214,7 @@ func testRealAgentConversation(testDir string) error {
 	}
 
 	// Set up tool output handler for testing
-	toolOutputHandler := utils.NewToolOutputHandler()
+	toolOutputHandler := mcpagent.NewToolOutputHandler()
 	toolOutputHandler.OutputFolder = testDir
 	toolOutputHandler.SessionID = "test-session-agent"
 	toolOutputHandler.Threshold = 1000 // Lower threshold for testing

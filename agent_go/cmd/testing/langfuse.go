@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"mcp-agent/agent_go/internal/observability"
+	"mcpagent/observability"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"

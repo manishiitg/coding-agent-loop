@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
+	"mcpagent/llm"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/external"
 

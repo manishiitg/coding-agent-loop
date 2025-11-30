@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpcache"
+	"mcpagent/events"
+	"mcpagent/mcpcache"
 
 	"github.com/invopop/jsonschema"
 )

@@ -3,7 +3,7 @@ package eventbridge
 import (
 	"context"
 
-	pkgevents "mcp-agent/agent_go/pkg/events"
+	pkgevents "mcpagent/events"
 )
 
 // OrchestratorAgentEventBridge bridges individual agent events from within orchestrator to the main server event system

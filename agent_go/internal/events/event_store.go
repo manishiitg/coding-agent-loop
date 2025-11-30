@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/events"
 )
 
 // Event represents a generic event that can be stored and retrieved

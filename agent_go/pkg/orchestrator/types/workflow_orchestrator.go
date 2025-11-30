@@ -7,14 +7,14 @@ import (
 	"net/http"
 	"time"
 
-	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
-	"mcp-agent/agent_go/pkg/events"
-	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	mcpagent "mcpagent/agent"
+	"mcpagent/events"
+	"mcpagent/observability"
 )
 
 // WorkflowPhaseOption represents an option for a workflow phase

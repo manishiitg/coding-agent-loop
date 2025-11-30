@@ -68,11 +68,15 @@ func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder
 	emitter := getEventEmitterFromContext(ctx)
 	if emitter == nil {
 		// No emitter in context - this is expected for some orchestrator direct calls
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No emitter in context for operation=%s, filepath=%s, folder=%s\n", operation, filepath, folder)
 		return
 	}
 
 	turn := getTurnFromContext(ctx)
 	serverName := getServerNameFromContext(ctx)
+
+	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Emitting event operation=%s, filepath=%s, folder=%s, turn=%d, serverName=%s\n",
+		operation, filepath, folder, turn, serverName)
 
 	eventData := events.NewWorkspaceFileOperationEvent(operation, filepath, folder, turn, serverName)
 	agentEvent := &events.AgentEvent{
@@ -82,8 +86,10 @@ func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder
 	}
 
 	if err := emitter.HandleEvent(ctx, agentEvent); err != nil {
-		// Silently fail - event emission should not break tool execution
-		_ = err
+		// Log error but don't break tool execution
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Error emitting event: %v\n", err)
+	} else {
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Successfully emitted event\n")
 	}
 }
 

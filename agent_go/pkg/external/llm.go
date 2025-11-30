@@ -1,8 +1,8 @@
 package external
 
 import (
-	"mcp-agent/agent_go/internal/llm"
-	"llm-providers/llmtypes"
+	"mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 )
 

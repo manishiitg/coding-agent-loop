@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"llm-providers/llmtypes"
-	internalLLM "mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
+	internalLLM "mcpagent/llm"
+	"mcpagent/observability"
 )
 
 // contextKey is a custom type for context keys to avoid collisions

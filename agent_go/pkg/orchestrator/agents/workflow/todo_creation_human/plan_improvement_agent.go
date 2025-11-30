@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
+	"mcpagent/mcpclient"
+	"mcpagent/observability"
 )
 
 // HumanControlledTodoPlannerPlanImprovementTemplate holds template variables for plan improvement prompts

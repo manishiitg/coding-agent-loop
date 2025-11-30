@@ -3,7 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"os"
 	"strconv"
 	"strings"

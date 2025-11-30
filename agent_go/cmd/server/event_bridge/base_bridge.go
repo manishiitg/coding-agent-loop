@@ -8,7 +8,7 @@ import (
 	"mcp-agent/agent_go/internal/events"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
-	pkgevents "mcp-agent/agent_go/pkg/events"
+	pkgevents "mcpagent/events"
 )
 
 // EventBridge defines the interface for event bridges

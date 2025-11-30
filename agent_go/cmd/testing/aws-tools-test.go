@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
+	"mcpagent/llm"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/agent"
+	"mcpagent/mcpclient"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

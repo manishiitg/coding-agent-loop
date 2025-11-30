@@ -3,7 +3,7 @@ package eventbridge
 import (
 	"context"
 
-	pkgevents "mcp-agent/agent_go/pkg/events"
+	pkgevents "mcpagent/events"
 )
 
 // WorkflowEventBridge bridges workflow events to the main server event system

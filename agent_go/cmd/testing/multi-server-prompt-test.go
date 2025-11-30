@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	"mcpagent/llm"
+	"mcpagent/agent"
+	"mcpagent/mcpclient"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

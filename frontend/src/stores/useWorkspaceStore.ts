@@ -440,10 +440,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // File fetching
       fetchFiles: async () => {
         try {
-          const state = get()
-          // Preserve expanded folders before fetching
-          const previouslyExpanded = new Set(state.expandedFolders)
-          
           set({ loading: true, error: null })
           const response = await agentApi.getPlannerFiles()
           if (response.success && response.data) {
@@ -453,61 +449,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             const processedFiles = processHierarchicalFiles(allFiles)
             set({ files: processedFiles })
             
-            // Restore expanded folders after fetching
-            // Collect all folder paths from the new file tree
-            // IMPORTANT: In workflow mode, files may have adjusted paths (filepath) and original paths (originalFilepath)
-            // We need to collect both to match against expanded folders which may use either format
-            const collectFolderPaths = (fileList: PlannerFile[]): Set<string> => {
-              const paths = new Set<string>()
-              fileList.forEach(file => {
-                if (file.type === 'folder') {
-                  // Add both filepath (adjusted in workflow mode) and originalFilepath (original)
-                  paths.add(file.filepath)
-                  if ('originalFilepath' in file && file.originalFilepath) {
-                    paths.add(file.originalFilepath)
-                  }
-                  if (file.children) {
-                    collectFolderPaths(file.children).forEach(path => paths.add(path))
-                  }
-                }
-              })
-              return paths
-            }
-            
-            const availableFolderPaths = collectFolderPaths(processedFiles)
-            
-            // Restore previously expanded folders that still exist
-            // Match against both adjusted and original paths
-            const restoredExpanded = new Set<string>()
-            previouslyExpanded.forEach(folderPath => {
-              // Check if this path exists in either format (adjusted or original)
-              if (availableFolderPaths.has(folderPath)) {
-                restoredExpanded.add(folderPath)
-              } else {
-                // Also check if any file has this as its originalFilepath or filepath
-                // This handles cases where paths were adjusted between fetches
-                const pathExists = processedFiles.some(file => {
-                  const checkFile = (f: PlannerFile): boolean => {
-                    if (f.type === 'folder') {
-                      if (f.filepath === folderPath || ('originalFilepath' in f && f.originalFilepath === folderPath)) {
-                        return true
-                      }
-                      if (f.children) {
-                        return f.children.some(checkFile)
-                      }
-                    }
-                    return false
-                  }
-                  return checkFile(file)
-                })
-                if (pathExists) {
-                  restoredExpanded.add(folderPath)
-                }
-              }
-            })
-            
-            // Restore the expanded folders (preserve state)
-            set({ expandedFolders: restoredExpanded })
+            // NOTE: Expansion restoration is now handled by the Workspace component
+            // which has the necessary context about workflow mode and filtered files
+            // The store just fetches and stores raw data
           } else {
             set({ error: response.message || 'Failed to load files' })
           }
@@ -532,20 +476,19 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           // Check if file exists in current file tree
           const fileExists = findFileInTree(state.files, filepath)
           
+          // If file doesn't exist, refresh the tree
+          // Note: In workflow mode, the component will handle filtering
+          // so we only refresh if the file is truly missing from raw data
           if (!fileExists) {
-            // File not found in workspace, refreshing
-            
-            // Trigger file refresh
+            console.log('[WorkspaceStore] File not found, refreshing:', filepath)
             await get().fetchFiles()
             
             // Wait a bit for state to update after refresh
             setTimeout(() => {
               set({ highlightedFile: filepath })
-                  // Highlighting file after refresh
             }, 100)
           } else {
             set({ highlightedFile: filepath })
-            // Highlighting existing file
           }
           
           // Auto-clear highlight after 5 seconds
@@ -630,7 +573,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           return false
         }
         
-        // Handle tool_call_end events for file deletion
+        // Handle tool_call_end events for file creation/update/deletion
         if (event.type === 'tool_call_end' && event.data) {
           const eventData = event.data as Record<string, unknown>
           if (!eventData?.data) {
@@ -639,45 +582,151 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           
           const toolData = eventData.data as Record<string, unknown>
           const toolName = toolData.tool_name as string
+          const toolParams = toolData.tool_params as Record<string, unknown>
           
           // Check if this is write_code tool (code execution mode)
-          // We need to check the original arguments to see if delete operations were performed
           if (toolName === 'write_code') {
-            // For write_code, we can't reliably detect deletions from the result
-            // Deletions would need to be detected from the code itself during tool_call_start
-            // So we skip deletion handling for write_code here
-            return false
-          }
-          
-          // Check if this is a delete_workspace_file tool
-          if (toolName !== 'delete_workspace_file') {
-            return false
-          }
-          
-          try {
-            const result = (toolData.result as string) || ''
-            if (!result) {
-              return false
+            try {
+              // Get the code from tool arguments to parse workspace tool calls
+              const args = JSON.parse((toolParams?.arguments as string) || '{}')
+              const code = args.code as string
+              
+              if (code) {
+                // Parse Go code to find workspace tool calls
+                const workspaceCalls = parseWorkspaceToolCalls(code)
+                
+                if (workspaceCalls.length > 0) {
+                  const state = get()
+                  const filesToRefresh: string[] = []
+                  const filesToHighlight: string[] = []
+                  
+                  // Process each workspace tool call
+                  for (const call of workspaceCalls) {
+                    const filepath = call.filepath
+                    
+                    if (!filepath) continue
+                    
+                    // Check if file exists in current tree
+                    const fileExists = findFileInTree(state.files, filepath)
+                    
+                    // For update operations, check if file is new or existing
+                    if (call.operation === 'update') {
+                      if (!fileExists) {
+                        // New file created - needs refresh
+                        filesToRefresh.push(filepath)
+                      }
+                      // Always highlight updated files (new or existing)
+                      filesToHighlight.push(filepath)
+                    } else if (call.operation === 'delete') {
+                      // Deletion is handled by checking if file still exists
+                      // If it was deleted, it won't be in the tree after refresh
+                      if (fileExists) {
+                        // File exists now but should be deleted - refresh to update
+                        filesToRefresh.push(filepath)
+                      }
+                    }
+                    // Read operations don't need refresh/highlight
+                  }
+                  
+                  // If we have files to refresh (new files or deletions), refresh the tree
+                  if (filesToRefresh.length > 0) {
+                    console.log('[WorkspaceStore] Refreshing tree for write_code operations:', filesToRefresh)
+                    get().fetchFiles().then(() => {
+                      // After refresh, highlight all modified files
+                      setTimeout(() => {
+                        filesToHighlight.forEach(filepath => {
+                          get().highlightFile(filepath)
+                        })
+                      }, 200)
+                    })
+                  } else if (filesToHighlight.length > 0) {
+                    // No refresh needed, just highlight existing files
+                    filesToHighlight.forEach(filepath => {
+                      get().highlightFile(filepath)
+                    })
+                  }
+                  
+                  return filesToRefresh.length > 0 || filesToHighlight.length > 0
+                }
+              }
+            } catch (error) {
+              console.error('[WorkspaceStore] Failed to parse write_code on tool_call_end:', error)
             }
             
-            const parsedResult = JSON.parse(result)
-            const filepath = (parsedResult.filepath as string) || ''
-            const deleted = (parsedResult.deleted as boolean) || false
-            
-            if (filepath && deleted) {
-              // File or folder was successfully deleted, remove it from UI
-              get().removeFile(filepath)
-              
-              // Also clear selection if the deleted file was selected
-              const state = get()
-              if (state.selectedFile?.path === filepath) {
-                set({ selectedFile: null, fileContent: '', showFileContent: false })
+            return false
+          }
+          
+          // Handle file deletion
+          if (toolName === 'delete_workspace_file') {
+            try {
+              const result = (toolData.result as string) || ''
+              if (!result) {
+                return false
               }
               
-              return true
+              const parsedResult = JSON.parse(result)
+              const filepath = (parsedResult.filepath as string) || ''
+              const deleted = (parsedResult.deleted as boolean) || false
+              
+              if (filepath && deleted) {
+                // File or folder was successfully deleted, remove it from UI
+                get().removeFile(filepath)
+                
+                // Also clear selection if the deleted file was selected
+                const state = get()
+                if (state.selectedFile?.path === filepath) {
+                  set({ selectedFile: null, fileContent: '', showFileContent: false })
+                }
+                
+                return true
+              }
+            } catch (error) {
+              console.error('[WorkspaceStore] Failed to parse delete tool result:', error)
             }
-          } catch (error) {
-            console.error('[WorkspaceStore] Failed to parse delete tool result:', error)
+            
+            return false
+          }
+          
+          // Handle file creation/update - refresh to show new/updated files
+          const fileModificationTools = [
+            'update_workspace_file', 
+            'patch_workspace_file', 
+            'diff_patch_workspace_file'
+          ]
+          
+          if (fileModificationTools.includes(toolName)) {
+            try {
+              // Get filepath from tool arguments
+              const args = JSON.parse((toolParams?.arguments as string) || '{}')
+              const filepath = args.filepath as string
+              
+              if (filepath) {
+                // Check if file exists in current tree
+                const state = get()
+                const fileExists = findFileInTree(state.files, filepath)
+                
+                // If file doesn't exist (new file) or we want to ensure it's up-to-date, refresh
+                if (!fileExists) {
+                  console.log('[WorkspaceStore] New file created, refreshing tree:', filepath)
+                  // Refresh files to show the newly created file
+                  get().fetchFiles().then(() => {
+                    // After refresh, highlight the file
+                    setTimeout(() => {
+                      get().highlightFile(filepath)
+                    }, 200)
+                  })
+                } else {
+                  // File exists, just highlight it (it might have been updated)
+                  get().highlightFile(filepath)
+                }
+                
+                return true
+              }
+            } catch (error) {
+              console.error('[WorkspaceStore] Failed to parse file modification tool result:', error)
+            }
+            
+            return false
           }
           
           return false

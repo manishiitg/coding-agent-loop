@@ -8,7 +8,7 @@ import (
 	"time"
 
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
-	"mcp-agent/agent_go/internal/llm"
+	"mcpagent/llm"
 	"mcp-agent/agent_go/pkg/external"
 
 	"github.com/joho/godotenv"

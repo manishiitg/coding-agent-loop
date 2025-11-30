@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )

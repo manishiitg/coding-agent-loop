@@ -4,8 +4,8 @@ import (
 	"os"
 	"time"
 
-	"mcp-agent/agent_go/internal/llm"
-	"mcp-agent/agent_go/internal/observability"
+	"mcpagent/llm"
+	"mcpagent/observability"
 	"mcp-agent/agent_go/internal/utils"
 )
 

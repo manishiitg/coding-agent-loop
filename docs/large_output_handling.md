@@ -1,82 +1,303 @@
 # Large Tool Output Handling
 
-The MCP Agent includes a sophisticated system for handling large tool outputs (e.g., massive JSON files, long logs, or extensive search results) that would otherwise exceed the LLM's context window.
+## 📋 Overview
 
-## 🎯 The Problem
+The MCP Agent includes a sophisticated system for handling large tool outputs (e.g., massive JSON files, long logs, or extensive search results) that would otherwise exceed the LLM's context window. The system automatically intercepts large outputs, saves them to files, and provides specialized "Virtual Tools" for efficient data inspection.
 
-When a tool returns a very large result (e.g., 100,000+ tokens):
-1.  **Context Overflow**: The LLM's context window is exceeded, causing the request to fail.
-2.  **Cost**: Processing massive inputs is expensive.
-3.  **Performance**: Large inputs slow down generation and can confuse the model.
+**Key Benefits:**
+- Prevents context window overflow
+- Reduces token costs by avoiding large payloads
+- Maintains conversation performance
+- Enables targeted data exploration
 
-## 🛠️ The Solution
+---
 
-The agent automatically intercepts large outputs, saves them to a file, and provides the LLM with specialized "Virtual Tools" to inspect the data efficiently.
+## 📁 Key Files & Locations
 
-### Process Flow
+| Component | File | Key Functions |
+|-----------|------|---------------|
+| **Handler** | [`tool_output_handler.go`](file:///Users/mipl/ai-work/mcp-agent/agent_go/internal/utils/tool_output_handler.go) | `NewToolOutputHandler()`, `IsLargeToolOutputWithModel()`, `WriteToolOutputToFile()`, `CreateToolOutputMessageWithPreview()` |
+| **Virtual Tools** | [`large_output_virtual_tools.go`](file:///Users/mipl/ai-work/mcp-agent/agent_go/pkg/mcpagent/large_output_virtual_tools.go) | `CreateLargeOutputVirtualTools()`, `HandleLargeOutputVirtualTool()`, `handleReadLargeOutput()`, `handleSearchLargeOutput()`, `handleQueryLargeOutput()` |
+| **Agent Integration** | [`agent.go`](file:///Users/mipl/ai-work/mcp-agent/agent_go/pkg/mcpagent/agent.go) | `WithLargeOutputVirtualTools()`, `WithLargeOutputThreshold()`, `WithToolOutputFolder()` |
 
-1.  **Detection**: After every tool execution, the agent checks the output size.
-    *   It uses **Token Counting** (via `tiktoken`) for accurate estimation.
-    *   Default threshold: **20,000 characters** (configurable).
-2.  **Interception**: If the output is too large:
-    *   The full content is saved to a file in `tool_output_folder/{session_id}/`.
-    *   The original output in the conversation history is **replaced** with a summary message.
-3.  **Notification**: The summary message contains:
-    *   The file path where data is saved.
-    *   A preview (first 50% of the threshold characters).
-    *   Instructions on how to use virtual tools to read the rest.
-4.  **Inspection**: The LLM uses virtual tools to read, search, or query the file as needed.
+---
+
+## 🔄 How It Works
+
+1. **Detection**: After every tool execution, the agent checks output size using token counting via `tiktoken`
+2. **Interception**: If output exceeds threshold (default: 20,000 characters):
+   - Full content is saved to `tool_output_folder/{session_id}/tool_YYYYMMDD_HHMMSS_toolname.ext`
+   - Original output is replaced with a summary message
+3. **Notification**: Summary message includes:
+   - File path where data is saved
+   - Preview (first 50% of threshold characters)
+   - Instructions for using virtual tools
+4. **Inspection**: LLM uses virtual tools to read, search, or query the file as needed
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    A[Tool Execution] --> B{Check Output Size}
+    B -->|"< 20k chars"| C[Return Directly to LLM]
+    B -->|">= 20k chars"| D[Token Count Check]
+    D --> E[Write to File]
+    E --> F[Generate Summary Message]
+    F --> G[Replace Original Output]
+    G --> H[Add Virtual Tools to LLM]
+    H --> I{LLM Needs More Data?}
+    I -->|Yes| J[Use Virtual Tools]
+    J --> K{Tool Type}
+    K -->|read_large_output| L[Read Chunk]
+    K -->|search_large_output| M[Ripgrep Search]
+    K -->|query_large_output| N[JQ Query]
+    I -->|No| O[Continue Conversation]
+```
+
+---
 
 ## 🧰 Virtual Tools
 
-These tools are automatically enabled when Large Output Handling is active.
-
 ### 1. `read_large_output`
+
 Reads a specific range of characters from the file.
-- **Params**: `filename`, `start`, `end`
-- **Use Case**: Reading a file chunk by chunk (pagination).
+
+**Parameters:**
+- `filename` (string): Name of the saved file
+- `start` (int): Starting character position
+- `end` (int): Ending character position
+
+**Use Case:** Reading a file chunk by chunk (pagination).
+
+**Example:**
+```json
+{
+  "tool": "read_large_output",
+  "args": {
+    "filename": "tool_20250727_093045_tavily-search.json",
+    "start": 0,
+    "end": 5000
+  }
+}
+```
 
 ### 2. `search_large_output`
+
 Searches for regex patterns within the file using `ripgrep` (rg).
-- **Params**: `filename`, `pattern`, `case_sensitive`, `max_results`
-- **Use Case**: Finding specific error logs or keywords in a massive text file.
+
+**Parameters:**
+- `filename` (string): Name of the saved file
+- `pattern` (string): Regex pattern to search for
+- `case_sensitive` (bool): Whether search is case-sensitive
+- `max_results` (int): Maximum number of results to return
+
+**Use Case:** Finding specific error logs or keywords in a massive text file.
+
+**Example:**
+```json
+{
+  "tool": "search_large_output",
+  "args": {
+    "filename": "tool_20250727_093045_logs.txt",
+    "pattern": "ERROR|FATAL",
+    "case_sensitive": false,
+    "max_results": 50
+  }
+}
+```
 
 ### 3. `query_large_output`
+
 Executes `jq` queries on JSON files.
-- **Params**: `filename`, `query`
-- **Use Case**: Extracting specific fields from a large JSON response (e.g., `.items[0].name`).
+
+**Parameters:**
+- `filename` (string): Name of the saved JSON file
+- `query` (string): jq query expression
+- `compact` (bool, optional): Output compact JSON
+- `raw` (bool, optional): Output raw strings (not JSON-encoded)
+
+**Use Case:** Extracting specific fields from a large JSON response.
+
+**Example:**
+```json
+{
+  "tool": "query_large_output",
+  "args": {
+    "filename": "tool_20250727_093045_api-response.json",
+    "query": ".results[] | select(.status == \"active\") | .name"
+  }
+}
+```
+
+---
 
 ## ⚙️ Configuration
 
-You can configure the handler using functional options when creating the agent.
+### Agent Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `WithLargeOutputVirtualTools(enabled)` | `bool` | `true` | Enable/disable virtual tools for large outputs |
+| `WithLargeOutputThreshold(chars)` | `int` | `20000` | Character threshold for considering output as "large" |
+| `WithToolOutputFolder(path)` | `string` | `"tool_output_folder"` | Directory path for storing large outputs |
+
+### Example Configuration
 
 ```go
-agent, err := mcpagent.NewAgent(..., 
-    // Enable Large Output Handling (enabled by default)
-    mcpagent.WithLargeOutputHandling(true),
-    
-    // Set the threshold (in characters)
-    mcpagent.WithLargeOutputThreshold(20000),
-    
-    // Set the output folder
-    mcpagent.WithToolOutputFolder("./my_tool_outputs"),
+package main
+
+import (
+    "mcp-agent/agent_go/pkg/mcpagent"
+    "mcp-agent/agent_go/internal/llm"
 )
+
+func main() {
+    // Create agent with large output handling enabled
+    agent, err := mcpagent.NewAgent(
+        mcpClientManager,
+        mcpagent.WithProvider(llm.NewOpenAIProvider()),
+        
+        // Enable large output handling (enabled by default)
+        mcpagent.WithLargeOutputVirtualTools(true),
+        
+        // Set threshold in characters (default: 20000)
+        mcpagent.WithLargeOutputThreshold(20000),
+        
+        // Set custom output folder (default: "tool_output_folder")
+        mcpagent.WithToolOutputFolder("./custom_outputs"),
+    )
+    if err != nil {
+        panic(err)
+    }
+}
 ```
 
-## 🧩 Implementation Details
+---
 
-### `ToolOutputHandler`
-Located in `internal/utils/tool_output_handler.go`.
-- Manages file writing and naming (timestamped filenames).
-- Handles token counting logic (`IsLargeToolOutputWithModel`).
-- Generates the summary message with instructions.
+## 🛠️ Common Issues & Solutions
 
-### `Virtual Tools`
-Located in `pkg/mcpagent/large_output_virtual_tools.go`.
-- Implements the actual logic for reading, searching (`ripgrep`), and querying (`jq`).
-- Includes security validation to prevent path traversal.
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `file not found` error | LLM provided wrong filename | Check the summary message for the exact filename. Use the full path if needed: `tool_output_folder/session-id/filename.ext` |
+| `path traversal detected` error | LLM tried to access files outside output folder | Only use filenames from the summary message. Path traversal (`../`) is blocked for security. See [`large_output_virtual_tools.go:16`](file:///Users/mipl/ai-work/mcp-agent/agent_go/pkg/mcpagent/large_output_virtual_tools.go#L16) |
+| `ripgrep not found` | `rg` command not installed on system | Install ripgrep: `brew install ripgrep` (Mac) or `apt-get install ripgrep` (Linux) |
+| `jq not found` | `jq` command not installed on system | Install jq: `brew install jq` (Mac) or `apt-get install jq` (Linux) |
+| Large output not intercepted | Threshold too high or handler disabled | Check `WithLargeOutputThreshold()` and `WithLargeOutputVirtualTools(true)` settings |
+
+---
+
+## 🔍 For LLMs: Quick Reference
+
+### When to Use Virtual Tools
+
+✅ **Use when:**
+- You see a message: "Tool output was large and saved to file..."
+- The message includes a filename like `tool_20250727_093045_toolname.ext`
+- You need to inspect specific parts of the data
+
+❌ **Don't use when:**
+- The original tool output is already complete
+- You have all the data needed to answer the user's question
+
+### Tool Selection Guide
+
+| Tool | Best For | Example Use Case |
+|------|----------|------------------|
+| `read_large_output` | Sequential reading, pagination | Reading logs line by line |
+| `search_large_output` | Finding specific patterns | Searching for error messages in logs |
+| `query_large_output` | Extracting JSON fields | Getting specific object properties from API responses |
+
+### Filename Format
+
+Files are named: `tool_YYYYMMDD_HHMMSS_toolname.ext`
+
+**Important:** Use the EXACT filename from the summary message.
+
+### Common Patterns
+
+**Pattern 1: Iterative Reading**
+```
+1. Call read_large_output with start=0, end=10000
+2. Analyze content
+3. Call read_large_output with start=10000, end=20000
+4. Continue until you have enough data
+```
+
+**Pattern 2: Targeted Search**
+```
+1. Call search_large_output with pattern="ERROR"
+2. Review matches
+3. If needed, call read_large_output at specific locations
+```
+
+**Pattern 3: JSON Extraction**
+```
+1. Call query_large_output with query to get specific fields
+2. Use compact=true for minimal output
+3. Use raw=true for raw string values (not JSON-encoded)
+```
+
+### Constraints
+
+✅ **Allowed:**
+- Reading any file in the output folder
+- Multiple sequential reads
+- Combining different virtual tools
+
+❌ **Forbidden:**
+- Path traversal (`../`) attempts
+- Accessing files outside output folder
+- Shell injection in patterns/queries
+
+---
 
 ## 🔒 Security
 
-- **Path Validation**: All file operations are restricted to the configured output folder. Path traversal (`../`) is blocked.
-- **Command Injection**: `ripgrep` and `jq` are executed using `exec.Command` with separate arguments, preventing shell injection attacks.
+### Path Validation
+
+All file operations are restricted to the configured output folder. Path traversal (`../`) is blocked by `validateFilePath()` in [`large_output_virtual_tools.go`](file:///Users/mipl/ai-work/mcp-agent/agent_go/pkg/mcpagent/large_output_virtual_tools.go).
+
+**Implementation:**
+```go
+// validateFilePath ensures the file path is within the allowed directory
+func validateFilePath(filePath, baseDir string) error {
+    absFilePath, err := filepath.Abs(filePath)
+    if err != nil {
+        return fmt.Errorf("invalid file path: %w", err)
+    }
+    
+    absBaseDir, err := filepath.Abs(baseDir)
+    if err != nil {
+        return fmt.Errorf("invalid base directory: %w", err)
+    }
+    
+    if !strings.HasPrefix(absFilePath, absBaseDir) {
+        return errors.New("path traversal detected")
+    }
+    
+    return nil
+}
+```
+
+### Command Injection Prevention
+
+`ripgrep` and `jq` are executed using `exec.Command` with separate arguments, preventing shell injection attacks.
+
+**Safe Execution:**
+```go
+// Safe: Arguments are passed separately, not through shell
+cmd := exec.Command("rg", pattern, "--max-count", maxResults, filePath)
+
+// Safe: Query is passed as argument, not evaluated by shell
+cmd := exec.Command("jq", query, filePath)
+```
+
+---
+
+## 📖 Related Documentation
+
+- [doc_writing_guide.md](file:///Users/mipl/ai-work/mcp-agent/docs/doc_writing_guide.md) - Standards for writing technical documentation
+- [smart_routing.md](file:///Users/mipl/ai-work/mcp-agent/docs/smart_routing.md) - Tool filtering and routing system
+- [mcp_cache_system.md](file:///Users/mipl/ai-work/mcp-agent/docs/mcp_cache_system.md) - MCP server caching system

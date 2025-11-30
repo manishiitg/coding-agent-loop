@@ -12,10 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent/agent_go/internal/llm"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpclient"
+	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
+	"mcpagent/mcpclient"
 
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 )

@@ -12,8 +12,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	"mcp-agent/agent_go/internal/llm"
-	"llm-providers/llmtypes"
+	"mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 var genaiMultiTurnToolTestCmd = &cobra.Command{

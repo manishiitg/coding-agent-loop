@@ -2,6 +2,6 @@ go 1.24.4
 
 use (
 	./agent_go
-	./llm-providers
+	./mcpagent
 	./workspace
 )

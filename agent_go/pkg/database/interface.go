@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"mcp-agent/agent_go/pkg/events"
+	"mcpagent/events"
 )
 
 // Database interface for chat history storage

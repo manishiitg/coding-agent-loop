@@ -10,11 +10,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent/agent_go/internal/llm"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
 
-	"llm-providers/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // agentCmd represents the agent test command

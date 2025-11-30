@@ -3,11 +3,11 @@ package todo_creation_human
 import (
 	"context"
 
-	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
+	"mcpagent/observability"
 )
 
 // HumanControlledTodoPlannerCodeExecutionLearningAgent analyzes code execution mode executions

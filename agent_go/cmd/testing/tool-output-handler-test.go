@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
+	mcpagent "mcpagent/agent"
 )
 
 var toolOutputHandlerTestCmd = &cobra.Command{
@@ -113,7 +113,7 @@ func testFileCreationWithMCPFormat(testDir string) error {
 	logger := GetTestLogger()
 
 	// Create tool output handler
-	handler := utils.NewToolOutputHandlerWithConfig(
+	handler := mcpagent.NewToolOutputHandlerWithConfig(
 		100, // Small threshold for testing
 		testDir,
 		"test-session-123",
@@ -176,7 +176,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 	agent := &mcpagent.Agent{
 		EnableLargeOutputVirtualTools: true,
 	}
-	agent.SetToolOutputHandler(utils.NewToolOutputHandler())
+	agent.SetToolOutputHandler(mcpagent.NewToolOutputHandler())
 
 	// Test 1: Check if large output virtual tools are enabled by default
 	logger.Info("Test 1: Default Configuration")
@@ -206,7 +206,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 	logger.Info("Test 4: File Path Building")
 
 	// Create a test tool output handler
-	toolOutputHandler := utils.NewToolOutputHandler()
+	toolOutputHandler := mcpagent.NewToolOutputHandler()
 	toolOutputHandler.SetSessionID("test-session")
 	agent.SetToolOutputHandler(toolOutputHandler)
 

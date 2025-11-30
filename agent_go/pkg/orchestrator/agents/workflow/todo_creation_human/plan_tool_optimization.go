@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpclient"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
+	"mcpagent/mcpclient"
+	"mcpagent/observability"
 )
 
 // StepCurrentToolConfig represents the current tool configuration for a step (mapped from step_config.json)

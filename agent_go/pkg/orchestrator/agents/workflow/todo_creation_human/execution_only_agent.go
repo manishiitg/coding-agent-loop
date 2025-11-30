@@ -7,12 +7,12 @@ import (
 	"text/template"
 	"time"
 
-	"llm-providers/llmtypes"
-	"mcp-agent/agent_go/internal/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/mcpagent"
-	"mcp-agent/agent_go/pkg/mcpagent/prompt"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
+	"mcpagent/agent/prompt"
+	"mcpagent/observability"
 )
 
 // HumanControlledTodoPlannerExecutionOnlyTemplate holds template variables for execution-only agent prompts

@@ -47,6 +47,8 @@ export interface AgentQueryRequest {
   // Code execution mode: When enabled, only virtual tools are added to LLM
   // MCP tools are accessed via generated Go code using discover_code_files and write_code
   use_code_execution_mode?: boolean
+  // Execution options from frontend (for workflow execution phase)
+  execution_options?: ExecutionOptions
 }
 
 export interface AgentQueryResponse {
@@ -622,3 +624,62 @@ export interface MCPRegistryResponse {
   limit: number;
   offset: number;
 } 
+
+// Workflow Run Folders API types
+export interface RunFolderInfo {
+  name: string;
+  progress?: StepProgress; // Progress info if available
+}
+
+export interface RunFoldersResponse {
+  folders: RunFolderInfo[]; // Changed from string[] to RunFolderInfo[]
+  total_count: number;
+  showing_count: number;
+}
+
+// Branch step progress for conditional steps
+export interface BranchStepProgress {
+  branch_executed: string;  // "if_true" or "if_false"
+  completed_steps: string[];
+}
+
+// Execution progress for a run folder
+export interface StepProgress {
+  completed_step_indices: number[];  // 0-based indices
+  total_steps: number;
+  last_updated: string;  // ISO timestamp
+  branch_steps?: Record<number, BranchStepProgress>;  // key is step index (0-based)
+}
+
+export interface ProgressResponse {
+  exists: boolean;
+  progress: StepProgress | null;
+}
+
+// Execution options for frontend-controlled execution
+export interface ExecutionOptions {
+  run_mode: 'use_same_run' | 'create_new_runs_always';
+  selected_run_folder?: string;
+  execution_strategy: string;
+  resume_from_step?: number;  // 1-based step number
+  fast_execute_end_step?: number;  // 0-based last step for fast execute range
+  plan_change_action?: 'keep_old_progress' | 'delete_old_progress';
+  all_steps_completed_action?: 'fast_execute_again' | 'skip_execution';
+}
+
+// Execution strategy constants (matching backend)
+export const ExecutionStrategy = {
+  // Fresh start strategies
+  START_FROM_BEGINNING: 'start_from_beginning',
+  FAST_EXECUTE_ALL: 'fast_execute_all',
+  START_FROM_BEGINNING_NO_HUMAN: 'start_from_beginning_no_human',
+  // Resume strategies
+  RESUME_FROM_STEP: 'resume_from_step',
+  FAST_RESUME_FROM_STEP: 'fast_resume_from_step',
+  RESUME_FROM_STEP_NO_HUMAN: 'resume_from_step_no_human',
+  FAST_EXECUTE_RANGE: 'fast_execute_range',
+  // Single step execution
+  RUN_SINGLE_STEP: 'run_single_step',
+} as const;
+
+export type ExecutionStrategyType = typeof ExecutionStrategy[keyof typeof ExecutionStrategy]; 

@@ -9,6 +9,7 @@ interface EventHierarchyProps {
   onSubmitFeedback?: (requestId: string, feedback: string) => void
   onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state for approve button
+  compact?: boolean  // Compact mode for smaller font sizes
 }
 
 interface EventNode {
@@ -18,7 +19,7 @@ interface EventNode {
   isExpanded: boolean;
 }
 
-export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving }) => {
+export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Track sessions that user has manually expanded - these should never be auto-collapsed
@@ -374,6 +375,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
                 isCollapsed={isCollapsed}
                 eventCount={eventCount}
                 onToggleCollapse={onToggleCollapse}
+                compact={compact}
               />
             </div>
           </div>

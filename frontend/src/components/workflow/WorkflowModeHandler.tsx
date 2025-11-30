@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
-import { WorkflowPhaseHandler } from './WorkflowPhaseHandler'
 import { agentApi } from '../../services/api'
 import { type WorkflowPhase, getDefaultWorkflowPhase, getWorkflowPhases } from '../../constants/workflow'
 import { useAppStore, useChatStore } from '../../stores'
@@ -147,7 +146,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
         // We'll return the objective so ChatArea can submit it as a normal query
         // Workflow created, transitioning to planning phase (second phase)
         const phases = await getWorkflowPhases()
-        const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+        const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
         onWorkflowPhaseChange?.(planningPhase)
 
         // Return the objective so ChatArea can submit it as a normal agent query
@@ -162,21 +161,13 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   }, [selectedWorkflowPreset, onWorkflowPhaseChange])
 
 
-  // Handle state change from WorkflowStatesOverview
-  const handleStateChange = useCallback((newPhase: string) => {
-    // State change requested
-    onWorkflowPhaseChange?.(newPhase as WorkflowPhase)
-  }, [onWorkflowPhaseChange])
-
-
-
   // Handle chat input submission based on current phase
   const handleChatSubmit = useCallback(async (query: string) => {
     // handleChatSubmit called
 
     // Get phases to determine planning phase (second phase)
     const phases = await getWorkflowPhases()
-    const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+    const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
     
     if (currentPhase === planningPhase) {
       // Calling handleObjectiveSubmit
@@ -196,23 +187,12 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
 
 
   // Show workflow components when in workflow mode
+  // WorkflowPhaseHandler removed - phase selection now in WorkflowToolbar
   if (agentMode === 'workflow') {
-    return (
-      <>
-        {selectedWorkflowPreset && (
-          <WorkflowPhaseHandler
-            phase={currentPhase || 'variable-extraction'}
-            presetQueryId={selectedWorkflowPreset}
-            onStateChange={handleStateChange}
-          />
-        )}
-        {children}
-      </>
-    )
+    return <>{children}</>
   }
 
   // For non-workflow modes, just render children
-  // Rendering children only
   return <>{children}</>
 })
 

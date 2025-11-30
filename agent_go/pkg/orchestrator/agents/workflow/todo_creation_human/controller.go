@@ -38,6 +38,43 @@ type StepProgress struct {
 	BranchSteps          map[int]BranchStepProgress `json:"branch_steps,omitempty"` // key is step index (0-based)
 }
 
+// ExecutionOptions represents user-selected execution options from frontend
+// When provided, backend will use these options instead of asking interactively
+type ExecutionOptions struct {
+	RunMode                 string `json:"run_mode"`                             // "use_same_run" or "create_new_runs_always"
+	SelectedRunFolder       string `json:"selected_run_folder,omitempty"`        // If use_same_run and user selected specific folder
+	ExecutionStrategy       string `json:"execution_strategy"`                   // Execution strategy (see constants below)
+	ResumeFromStep          int    `json:"resume_from_step,omitempty"`           // 1-based step number to resume from
+	FastExecuteEndStep      int    `json:"fast_execute_end_step,omitempty"`      // 0-based last step for fast execute range
+	PlanChangeAction        string `json:"plan_change_action,omitempty"`         // "keep_old_progress" or "delete_old_progress"
+	AllStepsCompletedAction string `json:"all_steps_completed_action,omitempty"` // "fast_execute_again" or "skip_execution"
+}
+
+// Execution strategy constants
+const (
+	// Fresh start strategies
+	ExecutionStrategyStartFromBeginning        = "start_from_beginning"          // Normal execution with learning and human feedback
+	ExecutionStrategyFastExecuteAll            = "fast_execute_all"              // Fast execute all steps (skip learning and human feedback)
+	ExecutionStrategyStartFromBeginningNoHuman = "start_from_beginning_no_human" // Without human feedback (learning enabled)
+
+	// Resume strategies
+	ExecutionStrategyResumeFromStep        = "resume_from_step"          // Resume from specific step (normal mode)
+	ExecutionStrategyFastResumeFromStep    = "fast_resume_from_step"     // Fast resume from step
+	ExecutionStrategyResumeFromStepNoHuman = "resume_from_step_no_human" // Resume without human
+	ExecutionStrategyFastExecuteRange      = "fast_execute_range"        // Fast execute 0 to step X
+
+	// Single step execution
+	ExecutionStrategyRunSingleStep = "run_single_step" // Run only the specified step and stop
+
+	// Plan change actions
+	PlanChangeActionKeepOldProgress   = "keep_old_progress"
+	PlanChangeActionDeleteOldProgress = "delete_old_progress"
+
+	// All steps completed actions
+	AllStepsCompletedActionFastExecuteAgain = "fast_execute_again"
+	AllStepsCompletedActionSkipExecution    = "skip_execution"
+)
+
 // TodoStep represents a todo step in the execution
 type TodoStep struct {
 	ID                       string   `json:"id"` // Stable step ID (from PlanStep) - required for frontend matching
@@ -102,6 +139,10 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	fastExecuteMode    bool // Whether we're in fast execute mode
 	fastExecuteEndStep int  // Last step index to fast execute (0-based)
 
+	// Single step execution mode
+	runSingleStepOnly bool // Whether to run only a single step and stop
+	singleStepTarget  int  // Target step index to run (0-based)
+
 	// Skip human input mode tracking (runs learning but skips human feedback)
 	skipHumanInput bool // Whether to skip human feedback requests (auto-approve steps)
 
@@ -112,8 +153,11 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	approvedPlan *PlanningResponse // Store approved plan
 
 	// Run folder management
-	selectedRunFolder string // Selected run folder name (e.g., "iteration-same", "iteration-1", "iteration-2")
+	selectedRunFolder string // Selected run folder name (e.g., "iteration-1", "iteration-2")
 	selectedRunMode   string // Selected run mode (e.g., "use_same_run", "create_new_runs_always")
+
+	// Frontend-provided execution options (when provided, skips interactive prompts)
+	executionOptions *ExecutionOptions
 
 	// Conditional LLM for conditional step evaluation
 	conditionalLLM *orchestratorllm.ConditionalLLM
@@ -405,53 +449,81 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 	// Note: Learning integration phase removed - execution agent now auto-discovers learning files and scripts
 
-	// Ask for run mode FIRST (before checking progress)
-	// This allows user to select which run folder to use before we check for existing progress
-	hcpo.GetLogger().Infof("📁 Asking for run mode selection before checking progress")
-
-	// First, ask for run mode
-	runModeRequestID := fmt.Sprintf("run_mode_selection_%d", time.Now().UnixNano())
-	runModeOptions := []string{
-		"Use Same Run",   // Option 0: use_same_run
-		"Create New Run", // Option 1: create_new_runs_always
-	}
-
-	runModeChoice, err := hcpo.RequestMultipleChoiceFeedback(
-		ctx,
-		runModeRequestID,
-		"Which run mode would you like to use for this execution?",
-		runModeOptions,
-		"Run mode determines how execution folders are organized:\n- Use Same Run: Reuses an existing run folder (you'll be asked to select which one)\n- Create New Run: Creates a new folder for this execution",
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
-	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for run mode: %w, defaulting to 'use_same_run'", err)
-		runModeChoice = "option0" // Default to use_same_run
-	}
-
-	// Map choice to run mode value
+	// Check if execution options are provided from frontend
+	execOpts := hcpo.executionOptions
 	var selectedRunMode string
-	switch runModeChoice {
-	case "option0": // Use Same Run
-		selectedRunMode = "use_same_run"
-		hcpo.GetLogger().Infof("✅ User chose run mode: use_same_run")
-	case "option1": // Create New Run
-		selectedRunMode = "create_new_runs_always"
-		hcpo.GetLogger().Infof("✅ User chose run mode: create_new_runs_always")
-	default:
-		hcpo.GetLogger().Warnf("⚠️ Unknown run mode choice: %s, defaulting to 'use_same_run'", runModeChoice)
-		selectedRunMode = "use_same_run"
-	}
+	var selectedRunFolder string
 
-	// Store selected run mode and resolve run folder with it
-	hcpo.selectedRunMode = selectedRunMode
-	selectedRunFolder, err := hcpo.resolveRunFolder(ctx, hcpo.GetWorkspacePath(), selectedRunMode)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve run folder with selected run mode: %w", err)
+	if execOpts != nil {
+		// ===== FRONTEND-PROVIDED EXECUTION OPTIONS =====
+		// Use options from frontend, skip interactive prompts
+		hcpo.GetLogger().Infof("📋 Using frontend-provided execution options")
+
+		// Use run mode from options
+		selectedRunMode = execOpts.RunMode
+		if selectedRunMode == "" {
+			selectedRunMode = "use_same_run" // Default
+		}
+		hcpo.selectedRunMode = selectedRunMode
+		hcpo.GetLogger().Infof("📁 Using run mode from frontend: %s", selectedRunMode)
+
+		// Resolve run folder with provided options
+		var err error
+		selectedRunFolder, err = hcpo.resolveRunFolderWithOptions(ctx, hcpo.GetWorkspacePath(), selectedRunMode, execOpts.SelectedRunFolder)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve run folder with frontend options: %w", err)
+		}
+		hcpo.selectedRunFolder = selectedRunFolder
+		hcpo.GetLogger().Infof("📁 Resolved run folder: %s", selectedRunFolder)
+	} else {
+		// ===== INTERACTIVE MODE (no frontend options) =====
+		// Ask for run mode FIRST (before checking progress)
+		// This allows user to select which run folder to use before we check for existing progress
+		hcpo.GetLogger().Infof("📁 Asking for run mode selection before checking progress")
+
+		// First, ask for run mode
+		runModeRequestID := fmt.Sprintf("run_mode_selection_%d", time.Now().UnixNano())
+		runModeOptions := []string{
+			"Use Same Run",   // Option 0: use_same_run
+			"Create New Run", // Option 1: create_new_runs_always
+		}
+
+		runModeChoice, err := hcpo.RequestMultipleChoiceFeedback(
+			ctx,
+			runModeRequestID,
+			"Which run mode would you like to use for this execution?",
+			runModeOptions,
+			"Run mode determines how execution folders are organized:\n- Use Same Run: Reuses an existing run folder (you'll be asked to select which one)\n- Create New Run: Creates a new folder for this execution",
+			hcpo.getSessionID(),
+			hcpo.getWorkflowID(),
+		)
+		if err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for run mode: %w, defaulting to 'use_same_run'", err)
+			runModeChoice = "option0" // Default to use_same_run
+		}
+
+		// Map choice to run mode value
+		switch runModeChoice {
+		case "option0": // Use Same Run
+			selectedRunMode = "use_same_run"
+			hcpo.GetLogger().Infof("✅ User chose run mode: use_same_run")
+		case "option1": // Create New Run
+			selectedRunMode = "create_new_runs_always"
+			hcpo.GetLogger().Infof("✅ User chose run mode: create_new_runs_always")
+		default:
+			hcpo.GetLogger().Warnf("⚠️ Unknown run mode choice: %s, defaulting to 'use_same_run'", runModeChoice)
+			selectedRunMode = "use_same_run"
+		}
+
+		// Store selected run mode and resolve run folder with it
+		hcpo.selectedRunMode = selectedRunMode
+		selectedRunFolder, err = hcpo.resolveRunFolder(ctx, hcpo.GetWorkspacePath(), selectedRunMode)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve run folder with selected run mode: %w", err)
+		}
+		hcpo.selectedRunFolder = selectedRunFolder
+		hcpo.GetLogger().Infof("📁 Resolved run folder with selected run mode: %s", selectedRunFolder)
 	}
-	hcpo.selectedRunFolder = selectedRunFolder
-	hcpo.GetLogger().Infof("📁 Resolved run folder with selected run mode: %s", selectedRunFolder)
 
 	// EARLY PROGRESS CHECK: Check if all steps are already completed before proceeding
 	// This prevents running execution unnecessarily if all steps are done
@@ -469,65 +541,87 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		if earlyProgress.TotalSteps == len(breakdownSteps) {
 			// Calculate if all steps are completed
 			if len(earlyProgress.CompletedStepIndices) == earlyProgress.TotalSteps {
-				hcpo.GetLogger().Infof("✅ ALL steps already completed - asking user if they want to fast execute all steps again")
+				hcpo.GetLogger().Infof("✅ ALL steps already completed")
 
-				// Ask user if they want to fast execute all steps again
-				requestID := fmt.Sprintf("all_steps_done_decision_%d", time.Now().UnixNano())
-				options := []string{
-					"Fast Execute All Steps Again", // Option 0: Re-execute all steps
-					"Skip Execution",               // Option 1: Skip to writer phase
-				}
-				progressPath, _ := hcpo.getStepsProgressPath()
-				progressInfo := fmt.Sprintf("Last updated: %s", earlyProgress.LastUpdated.Format("2006-01-02 15:04:05"))
-				if progressPath != "" {
-					progressInfo = fmt.Sprintf("Progress file: %s\n%s", progressPath, progressInfo)
-				}
-				choice, err := hcpo.RequestMultipleChoiceFeedback(
-					ctx,
-					requestID,
-					fmt.Sprintf("All steps are already completed (%d/%d). What would you like to do?", len(earlyProgress.CompletedStepIndices), earlyProgress.TotalSteps),
-					options,
-					progressInfo,
-					hcpo.getSessionID(),
-					hcpo.getWorkflowID(),
-				)
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision: %v, defaulting to skip execution", err)
-					choice = "option1" // Default to skip
-				}
-
-				switch choice {
-				case "option0":
-					// Fast execute all steps again - delete progress and continue with execution
-					hcpo.GetLogger().Infof("⚡ User chose to fast execute all steps again, clearing progress")
-					if err := hcpo.deleteStepProgress(ctx); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %v (will continue anyway)", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Deleted steps_done.json to allow re-execution")
+				// Check if frontend provided action for all steps completed
+				if execOpts != nil && execOpts.AllStepsCompletedAction != "" {
+					// Use frontend-provided action
+					switch execOpts.AllStepsCompletedAction {
+					case AllStepsCompletedActionFastExecuteAgain:
+						hcpo.GetLogger().Infof("⚡ Frontend chose to fast execute all steps again, clearing progress")
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %v (will continue anyway)", err)
+						}
+						hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
+						earlyProgress = nil
+						hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", len(breakdownSteps)-1)
+					case AllStepsCompletedActionSkipExecution:
+						hcpo.GetLogger().Infof("⏭️ Frontend chose to skip execution")
+						return "Todo planning complete. All steps already executed.", nil
+					default:
+						hcpo.GetLogger().Warnf("⚠️ Unknown all_steps_completed_action: %s, defaulting to skip", execOpts.AllStepsCompletedAction)
+						return "Todo planning complete. All steps already executed.", nil
 					}
-					// Set fast execute mode for all steps
-					hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
-					// Clear earlyProgress so execution continues normally
-					earlyProgress = nil
-					hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", len(breakdownSteps)-1)
+				} else {
+					// Interactive mode - ask user
+					hcpo.GetLogger().Infof("🤔 Asking user if they want to fast execute all steps again")
+					requestID := fmt.Sprintf("all_steps_done_decision_%d", time.Now().UnixNano())
+					options := []string{
+						"Fast Execute All Steps Again", // Option 0: Re-execute all steps
+						"Skip Execution",               // Option 1: Skip to writer phase
+					}
+					progressPath, _ := hcpo.getStepsProgressPath()
+					progressInfo := fmt.Sprintf("Last updated: %s", earlyProgress.LastUpdated.Format("2006-01-02 15:04:05"))
+					if progressPath != "" {
+						progressInfo = fmt.Sprintf("Progress file: %s\n%s", progressPath, progressInfo)
+					}
+					choice, err := hcpo.RequestMultipleChoiceFeedback(
+						ctx,
+						requestID,
+						fmt.Sprintf("All steps are already completed (%d/%d). What would you like to do?", len(earlyProgress.CompletedStepIndices), earlyProgress.TotalSteps),
+						options,
+						progressInfo,
+						hcpo.getSessionID(),
+						hcpo.getWorkflowID(),
+					)
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to get user decision: %v, defaulting to skip execution", err)
+						choice = "option1" // Default to skip
+					}
 
-				case "option1":
-					// Skip execution
-					hcpo.GetLogger().Infof("⏭️ User chose to skip execution")
+					switch choice {
+					case "option0":
+						// Fast execute all steps again - delete progress and continue with execution
+						hcpo.GetLogger().Infof("⚡ User chose to fast execute all steps again, clearing progress")
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %v (will continue anyway)", err)
+						} else {
+							hcpo.GetLogger().Infof("🗑️ Deleted steps_done.json to allow re-execution")
+						}
+						// Set fast execute mode for all steps
+						hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
+						// Clear earlyProgress so execution continues normally
+						earlyProgress = nil
+						hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", len(breakdownSteps)-1)
 
-					// Return early with completion message
-					return "Todo planning complete. All steps already executed.", nil
+					case "option1":
+						// Skip execution
+						hcpo.GetLogger().Infof("⏭️ User chose to skip execution")
 
-				default:
-					// Unknown choice - default to skip
-					hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to skip execution", choice)
-					return "Todo planning complete. All steps already executed.", nil
+						// Return early with completion message
+						return "Todo planning complete. All steps already executed.", nil
+
+					default:
+						// Unknown choice - default to skip
+						hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to skip execution", choice)
+						return "Todo planning complete. All steps already executed.", nil
+					}
 				}
 			}
 			hcpo.GetLogger().Infof("📊 Not all steps completed yet - will proceed with execution")
 		} else {
-			// Plan changed - ask user what to do (only once)
-			hcpo.GetLogger().Warnf("⚠️ Total steps changed (previous: %d, current: %d), prompting user for decision",
+			// Plan changed - handle based on frontend options or ask user
+			hcpo.GetLogger().Warnf("⚠️ Total steps changed (previous: %d, current: %d)",
 				earlyProgress.TotalSteps, len(breakdownSteps))
 
 			// Use selected run mode (or default if not set yet)
@@ -541,16 +635,33 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			// Check if we should ask the question (only when reusing existing folder)
 			shouldAsk := hcpo.shouldAskDeleteOldProgress(ctx, hcpo.GetWorkspacePath(), runMode)
 			if !shouldAsk {
-				hcpo.GetLogger().Infof("📁 Run mode '%s' will create new folder - skipping 'Delete old progress' question, old progress in old folder will be preserved", runMode)
-				// Don't delete old progress file - it's in a different folder and won't interfere
-				// Just clean up execution artifacts for the new folder (which will be created later)
-				// Note: We don't call cleanupExecutionArtifactsForFreshStart here because it would try to clean
-				// the folder that will be created, which doesn't exist yet. The cleanup will happen when needed.
-				// Clear earlyProgress so we start fresh in the new folder
+				hcpo.GetLogger().Infof("📁 Run mode '%s' will create new folder - skipping 'Delete old progress' question", runMode)
 				earlyProgress = nil
 				planChangeHandled = true
+			} else if execOpts != nil && execOpts.PlanChangeAction != "" {
+				// Use frontend-provided action
+				planChangeHandled = true
+				switch execOpts.PlanChangeAction {
+				case PlanChangeActionKeepOldProgress:
+					hcpo.GetLogger().Infof("✅ Frontend chose to keep old progress (will try to match steps)")
+					// Keep earlyProgress as-is
+				case PlanChangeActionDeleteOldProgress:
+					hcpo.GetLogger().Infof("🔄 Frontend chose to delete old progress and start fresh")
+					if err := hcpo.deleteStepProgress(ctx); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+					}
+					if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
+					}
+					if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
+					}
+					earlyProgress = nil
+				default:
+					hcpo.GetLogger().Warnf("⚠️ Unknown plan_change_action: %s, keeping old progress", execOpts.PlanChangeAction)
+				}
 			} else {
-				// Ask user what to do
+				// Interactive mode - ask user what to do
 				choice, err := hcpo.handlePlanChange(ctx, earlyProgress, len(breakdownSteps))
 				planChangeHandled = true // Mark that we've already handled plan change
 				if err != nil {
@@ -618,50 +729,80 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	// Ask for execution options when starting fresh (no existing progress)
 	// Run mode was already selected earlier, so we only need to ask for execution mode
 	if existingProgress == nil && startFromStep == 0 {
-		hcpo.GetLogger().Infof("🆕 Starting fresh execution - asking for execution options")
-
-		// Ask for execution mode
-		execRequestID := fmt.Sprintf("fresh_start_execution_mode_%d", time.Now().UnixNano())
-		execOptions := []string{
-			"Start from Beginning",               // Option 0: Normal execution
-			"Fast Execute all steps",             // Option 1: Fast execute all steps
-			"Start from Beginning without Human", // Option 2: Skip human feedback
-		}
-
-		execChoice, err := hcpo.RequestMultipleChoiceFeedback(
-			ctx,
-			execRequestID,
-			fmt.Sprintf("How would you like to execute the %d steps?", len(breakdownSteps)),
-			execOptions,
-			"Execution mode determines how steps are executed:\n- Start from Beginning: Normal execution with learning and human feedback\n- Fast Execute all steps: Skips learning and human feedback for faster execution\n- Start from Beginning without Human: Runs learning but auto-approves steps",
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
-		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for execution mode: %w, defaulting to normal execution", err)
-			execChoice = "option0" // Default to normal execution
-		}
+		hcpo.GetLogger().Infof("🆕 Starting fresh execution")
 
 		// Track fast execute mode and skip human input mode
 		fastExecuteMode := false
 		fastExecuteEndStep := -1
 		skipHumanInput := false
 
-		switch execChoice {
-		case "option0": // Start from beginning (normal execution)
-			hcpo.GetLogger().Infof("✅ User chose normal execution from beginning")
-			// No changes needed - defaults are correct
-		case "option1": // Fast execute all steps
-			hcpo.GetLogger().Infof("⚡ User chose fast execute mode for all steps")
-			fastExecuteMode = true
-			fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute all steps
-			hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", fastExecuteEndStep)
-		case "option2": // Start from beginning without human input
-			hcpo.GetLogger().Infof("⚡ User chose to start from beginning without human input")
-			skipHumanInput = true
-		default:
-			hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to normal execution", execChoice)
-			// Defaults are already set
+		// Check if frontend provided execution strategy
+		if execOpts != nil && execOpts.ExecutionStrategy != "" {
+			// Use frontend-provided execution strategy
+			hcpo.GetLogger().Infof("📋 Using frontend-provided execution strategy: %s", execOpts.ExecutionStrategy)
+			switch execOpts.ExecutionStrategy {
+			case ExecutionStrategyStartFromBeginning:
+				hcpo.GetLogger().Infof("✅ Frontend chose normal execution from beginning")
+				// Defaults are correct
+			case ExecutionStrategyFastExecuteAll:
+				hcpo.GetLogger().Infof("⚡ Frontend chose fast execute mode for all steps")
+				fastExecuteMode = true
+				fastExecuteEndStep = len(breakdownSteps) - 1
+				hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", fastExecuteEndStep)
+			case ExecutionStrategyStartFromBeginningNoHuman:
+				hcpo.GetLogger().Infof("⚡ Frontend chose to start from beginning without human input")
+				skipHumanInput = true
+			case ExecutionStrategyRunSingleStep:
+				targetStep := execOpts.ResumeFromStep
+				if targetStep <= 0 {
+					targetStep = 1 // Default to first step
+				}
+				hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only", targetStep)
+				startFromStep = targetStep - 1 // Convert to 0-based
+				hcpo.SetRunSingleStepMode(true, startFromStep)
+			default:
+				hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to normal execution", execOpts.ExecutionStrategy)
+			}
+		} else {
+			// Interactive mode - ask for execution mode
+			hcpo.GetLogger().Infof("🤔 Asking for execution options")
+			execRequestID := fmt.Sprintf("fresh_start_execution_mode_%d", time.Now().UnixNano())
+			execOptions := []string{
+				"Start from Beginning",               // Option 0: Normal execution
+				"Fast Execute all steps",             // Option 1: Fast execute all steps
+				"Start from Beginning without Human", // Option 2: Skip human feedback
+			}
+
+			execChoice, err := hcpo.RequestMultipleChoiceFeedback(
+				ctx,
+				execRequestID,
+				fmt.Sprintf("How would you like to execute the %d steps?", len(breakdownSteps)),
+				execOptions,
+				"Execution mode determines how steps are executed:\n- Start from Beginning: Normal execution with learning and human feedback\n- Fast Execute all steps: Skips learning and human feedback for faster execution\n- Start from Beginning without Human: Runs learning but auto-approves steps",
+				hcpo.getSessionID(),
+				hcpo.getWorkflowID(),
+			)
+			if err != nil {
+				hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for execution mode: %w, defaulting to normal execution", err)
+				execChoice = "option0" // Default to normal execution
+			}
+
+			switch execChoice {
+			case "option0": // Start from beginning (normal execution)
+				hcpo.GetLogger().Infof("✅ User chose normal execution from beginning")
+				// No changes needed - defaults are correct
+			case "option1": // Fast execute all steps
+				hcpo.GetLogger().Infof("⚡ User chose fast execute mode for all steps")
+				fastExecuteMode = true
+				fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute all steps
+				hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", fastExecuteEndStep)
+			case "option2": // Start from beginning without human input
+				hcpo.GetLogger().Infof("⚡ User chose to start from beginning without human input")
+				skipHumanInput = true
+			default:
+				hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to normal execution", execChoice)
+				// Defaults are already set
+			}
 		}
 
 		// Store fast execute mode and skip human input mode for use in execution loop
@@ -791,205 +932,319 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			}
 
 			if allStepsCompleted {
-				// All steps are completed, ask user if they want to fast execute all steps again
-				hcpo.GetLogger().Infof("✅ All steps already completed (%d/%d), asking user if they want to fast execute all steps again",
+				// All steps are completed
+				hcpo.GetLogger().Infof("✅ All steps already completed (%d/%d)",
 					len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps)
 
-				// Ask user if they want to fast execute all steps again
-				requestID := fmt.Sprintf("all_steps_done_decision_%d", time.Now().UnixNano())
-				options := []string{
-					"Fast Execute All Steps Again", // Option 0: Re-execute all steps
-					"Skip Execution",               // Option 1: Skip to writer phase
-				}
-				progressPath, _ := hcpo.getStepsProgressPath()
-				progressInfo := fmt.Sprintf("Last updated: %s", existingProgress.LastUpdated.Format("2006-01-02 15:04:05"))
-				if progressPath != "" {
-					progressInfo = fmt.Sprintf("Progress file: %s\n%s", progressPath, progressInfo)
-				}
-				choice, err := hcpo.RequestMultipleChoiceFeedback(
-					ctx,
-					requestID,
-					fmt.Sprintf("All steps are already completed (%d/%d). What would you like to do?", len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps),
-					options,
-					progressInfo,
-					hcpo.getSessionID(),
-					hcpo.getWorkflowID(),
-				)
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision: %v, defaulting to skip execution", err)
-					choice = "option1" // Default to skip
-				}
-
-				switch choice {
-				case "option0":
-					// Fast execute all steps again - delete progress and continue with execution
-					hcpo.GetLogger().Infof("⚡ User chose to fast execute all steps again, clearing progress")
-					if err := hcpo.deleteStepProgress(ctx); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %v (will continue anyway)", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Deleted steps_done.json to allow re-execution")
+				// Check if frontend provided action
+				if execOpts != nil && execOpts.AllStepsCompletedAction != "" {
+					switch execOpts.AllStepsCompletedAction {
+					case AllStepsCompletedActionFastExecuteAgain:
+						hcpo.GetLogger().Infof("⚡ Frontend chose to fast execute all steps again, clearing progress")
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %v", err)
+						}
+						hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
+						existingProgress = nil
+						startFromStep = 0
+						hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", len(breakdownSteps)-1)
+					case AllStepsCompletedActionSkipExecution:
+						hcpo.GetLogger().Infof("⏭️ Frontend chose to skip execution")
+						return "Todo planning complete. All steps already executed.", nil
+					default:
+						hcpo.GetLogger().Warnf("⚠️ Unknown action: %s, defaulting to skip", execOpts.AllStepsCompletedAction)
+						return "Todo planning complete. All steps already executed.", nil
 					}
-					// Set fast execute mode for all steps
-					hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
-					// Clear existingProgress so execution continues normally
-					existingProgress = nil
-					startFromStep = 0
-					hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", len(breakdownSteps)-1)
+				} else {
+					// Interactive mode - ask user
+					requestID := fmt.Sprintf("all_steps_done_decision_%d", time.Now().UnixNano())
+					options := []string{
+						"Fast Execute All Steps Again", // Option 0: Re-execute all steps
+						"Skip Execution",               // Option 1: Skip to writer phase
+					}
+					progressPath, _ := hcpo.getStepsProgressPath()
+					progressInfo := fmt.Sprintf("Last updated: %s", existingProgress.LastUpdated.Format("2006-01-02 15:04:05"))
+					if progressPath != "" {
+						progressInfo = fmt.Sprintf("Progress file: %s\n%s", progressPath, progressInfo)
+					}
+					choice, err := hcpo.RequestMultipleChoiceFeedback(
+						ctx,
+						requestID,
+						fmt.Sprintf("All steps are already completed (%d/%d). What would you like to do?", len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps),
+						options,
+						progressInfo,
+						hcpo.getSessionID(),
+						hcpo.getWorkflowID(),
+					)
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to get user decision: %v, defaulting to skip execution", err)
+						choice = "option1" // Default to skip
+					}
 
-				case "option1":
-					// Skip execution
-					hcpo.GetLogger().Infof("⏭️ User chose to skip execution")
-
-					// Return early with completion message
-					return "Todo planning complete. All steps already executed.", nil
-
-				default:
-					// Unknown choice - default to skip
-					hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to skip execution", choice)
-					return "Todo planning complete. All steps already executed.", nil
+					switch choice {
+					case "option0":
+						hcpo.GetLogger().Infof("⚡ User chose to fast execute all steps again, clearing progress")
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json: %v (will continue anyway)", err)
+						} else {
+							hcpo.GetLogger().Infof("🗑️ Deleted steps_done.json to allow re-execution")
+						}
+						hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
+						existingProgress = nil
+						startFromStep = 0
+						hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", len(breakdownSteps)-1)
+					case "option1":
+						hcpo.GetLogger().Infof("⏭️ User chose to skip execution")
+						return "Todo planning complete. All steps already executed.", nil
+					default:
+						hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to skip execution", choice)
+						return "Todo planning complete. All steps already executed.", nil
+					}
 				}
 			} else if nextIncompleteStep > 0 {
 				// Calculate the last completed step number (1-based) for display
 				lastCompletedStepNumber := max(existingProgress.CompletedStepIndices) + 1 // Convert to 1-based
-
-				requestID := fmt.Sprintf("resume_progress_%d", time.Now().UnixNano())
-				resumeOptions := []string{
-					fmt.Sprintf("Resume from Step %d", nextIncompleteStep),
-					"Start from Beginning",
-					fmt.Sprintf("Fast Execute (0 to Step %d)", lastCompletedStepNumber),
-					"Fast Execute all steps",
-					fmt.Sprintf("Fast Resume From Step %d", nextIncompleteStep),
-					fmt.Sprintf("Resume from Step %d without Human", nextIncompleteStep),
-					"Start from Beginning without Human",
-				}
-				choice, err := hcpo.RequestMultipleChoiceFeedback(
-					ctx,
-					requestID,
-					fmt.Sprintf("Found existing progress: %d/%d steps completed. How would you like to proceed?",
-						len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps),
-					resumeOptions,
-					fmt.Sprintf("Last updated: %s", existingProgress.LastUpdated.Format("2006-01-02 15:04:05")),
-					hcpo.getSessionID(),
-					hcpo.getWorkflowID(),
-				)
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for resuming: %w", err)
-					choice = "option0" // Default to resume
-				}
 
 				// Track fast execute mode
 				fastExecuteMode := false
 				fastExecuteEndStep := -1
 				skipHumanInput := false
 
-				switch choice {
-				case "option0": // Resume from next incomplete step
-					startFromStep = nextIncompleteStep - 1 // Convert back to 0-based
-					hcpo.GetLogger().Infof("✅ User chose to resume from step %d", nextIncompleteStep)
-				case "option1": // Start from beginning (normal execution)
-					hcpo.GetLogger().Infof("🔄 User chose to start from beginning, will reset progress and cleanup execution artifacts")
-					// Delete existing progress
-					if err := hcpo.deleteStepProgress(ctx); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
-					}
-					// Use selected run mode (or default if not set yet)
-					runMode := hcpo.selectedRunMode
-					if runMode == "" {
-						runMode = "use_same_run"
-						hcpo.selectedRunMode = runMode
-					}
-					hcpo.GetLogger().Infof("📁 Using selected run mode: %s", runMode)
-					// Clean up execution artifacts for fresh start (handles both new and old structure)
-					if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
-					}
-					// Note: learnings/ folder is preserved - deleted manually only
-					existingProgress = nil
-					startFromStep = 0
-				case "option2": // Fast execute completed steps (0 to lastCompletedStepNumber)
-					hcpo.GetLogger().Infof("⚡ User chose fast execute mode for completed steps (0 to %d)", lastCompletedStepNumber)
-
-					// Clean up execution artifacts for steps that will be re-executed
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					hcpo.GetLogger().Infof("🔍 DEBUG: About to call CleanupDirectory for fast execute, path: %s", executionDir)
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory for fast re-execution")
-					}
-					hcpo.GetLogger().Infof("🔍 DEBUG: CleanupDirectory call completed for fast execute")
-
-					fastExecuteMode = true
-					fastExecuteEndStep = max(existingProgress.CompletedStepIndices)
-					// Delete previous completed indices to re-execute them
-					startFromStep = 0
-					// Reset completed indices for steps to be re-executed
-					var newCompletedIndices []int
-					for _, idx := range existingProgress.CompletedStepIndices {
-						if idx > fastExecuteEndStep {
-							newCompletedIndices = append(newCompletedIndices, idx)
+				// Check if frontend provided execution strategy
+				if execOpts != nil && execOpts.ExecutionStrategy != "" {
+					hcpo.GetLogger().Infof("📋 Using frontend-provided execution strategy: %s", execOpts.ExecutionStrategy)
+					switch execOpts.ExecutionStrategy {
+					case ExecutionStrategyResumeFromStep:
+						resumeStep := execOpts.ResumeFromStep
+						if resumeStep <= 0 {
+							resumeStep = nextIncompleteStep
 						}
+						startFromStep = resumeStep - 1 // Convert to 0-based
+						hcpo.GetLogger().Infof("✅ Frontend chose to resume from step %d", resumeStep)
+					case ExecutionStrategyStartFromBeginning:
+						hcpo.GetLogger().Infof("🔄 Frontend chose to start from beginning")
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+						}
+						runMode := hcpo.selectedRunMode
+						if runMode == "" {
+							runMode = "use_same_run"
+						}
+						if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
+						}
+						existingProgress = nil
+						startFromStep = 0
+					case ExecutionStrategyFastExecuteRange:
+						endStep := execOpts.FastExecuteEndStep
+						if endStep <= 0 {
+							endStep = max(existingProgress.CompletedStepIndices)
+						}
+						hcpo.GetLogger().Infof("⚡ Frontend chose fast execute mode (0 to %d)", endStep)
+						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+						}
+						fastExecuteMode = true
+						fastExecuteEndStep = endStep
+						startFromStep = 0
+						var newCompletedIndices []int
+						for _, idx := range existingProgress.CompletedStepIndices {
+							if idx > fastExecuteEndStep {
+								newCompletedIndices = append(newCompletedIndices, idx)
+							}
+						}
+						existingProgress.CompletedStepIndices = newCompletedIndices
+					case ExecutionStrategyFastExecuteAll:
+						hcpo.GetLogger().Infof("⚡ Frontend chose fast execute mode for all steps")
+						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+						}
+						fastExecuteMode = true
+						fastExecuteEndStep = len(breakdownSteps) - 1
+						startFromStep = 0
+						existingProgress.CompletedStepIndices = []int{}
+					case ExecutionStrategyFastResumeFromStep:
+						resumeStep := execOpts.ResumeFromStep
+						if resumeStep <= 0 {
+							resumeStep = nextIncompleteStep
+						}
+						hcpo.GetLogger().Infof("⚡ Frontend chose fast resume mode from step %d", resumeStep)
+						fastExecuteMode = true
+						fastExecuteEndStep = len(breakdownSteps) - 1
+						startFromStep = resumeStep - 1
+					case ExecutionStrategyResumeFromStepNoHuman:
+						resumeStep := execOpts.ResumeFromStep
+						if resumeStep <= 0 {
+							resumeStep = nextIncompleteStep
+						}
+						startFromStep = resumeStep - 1
+						skipHumanInput = true
+						hcpo.GetLogger().Infof("✅ Frontend chose to resume from step %d without human input", resumeStep)
+					case ExecutionStrategyStartFromBeginningNoHuman:
+						hcpo.GetLogger().Infof("🔄 Frontend chose to start from beginning without human input")
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+						}
+						runMode := hcpo.selectedRunMode
+						if runMode == "" {
+							runMode = "use_same_run"
+						}
+						if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
+						}
+						existingProgress = nil
+						startFromStep = 0
+						skipHumanInput = true
+					case ExecutionStrategyRunSingleStep:
+						targetStep := execOpts.ResumeFromStep
+						if targetStep <= 0 {
+							targetStep = nextIncompleteStep
+						}
+						hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only", targetStep)
+						startFromStep = targetStep - 1 // Convert to 0-based
+						hcpo.SetRunSingleStepMode(true, startFromStep)
+					default:
+						hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to resume", execOpts.ExecutionStrategy)
+						startFromStep = nextIncompleteStep - 1
 					}
-					existingProgress.CompletedStepIndices = newCompletedIndices
-					hcpo.GetLogger().Infof("⚡ Will fast execute steps 0 to %d, then continue with normal execution from step %d", fastExecuteEndStep, nextIncompleteStep)
-				case "option3": // Fast execute all steps
-					hcpo.GetLogger().Infof("⚡ User chose fast execute mode for all steps")
-
-					// Clean up execution artifacts for all steps
-					executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
-					if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
-					} else {
-						hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory for fast re-execution")
+				} else {
+					// Interactive mode - ask user
+					requestID := fmt.Sprintf("resume_progress_%d", time.Now().UnixNano())
+					resumeOptions := []string{
+						fmt.Sprintf("Resume from Step %d", nextIncompleteStep),
+						"Start from Beginning",
+						fmt.Sprintf("Fast Execute (0 to Step %d)", lastCompletedStepNumber),
+						"Fast Execute all steps",
+						fmt.Sprintf("Fast Resume From Step %d", nextIncompleteStep),
+						fmt.Sprintf("Resume from Step %d without Human", nextIncompleteStep),
+						"Start from Beginning without Human",
+					}
+					choice, err := hcpo.RequestMultipleChoiceFeedback(
+						ctx,
+						requestID,
+						fmt.Sprintf("Found existing progress: %d/%d steps completed. How would you like to proceed?",
+							len(existingProgress.CompletedStepIndices), existingProgress.TotalSteps),
+						resumeOptions,
+						fmt.Sprintf("Last updated: %s", existingProgress.LastUpdated.Format("2006-01-02 15:04:05")),
+						hcpo.getSessionID(),
+						hcpo.getWorkflowID(),
+					)
+					if err != nil {
+						hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for resuming: %w", err)
+						choice = "option0" // Default to resume
 					}
 
-					fastExecuteMode = true
-					fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute all steps
-					startFromStep = 0
-					// Clear all completed indices to re-execute everything
-					existingProgress.CompletedStepIndices = []int{}
-					hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", fastExecuteEndStep)
-				case "option4": // Fast resume from next incomplete step
-					hcpo.GetLogger().Infof("⚡ User chose fast resume mode from step %d", nextIncompleteStep)
+					switch choice {
+					case "option0": // Resume from next incomplete step
+						startFromStep = nextIncompleteStep - 1 // Convert back to 0-based
+						hcpo.GetLogger().Infof("✅ User chose to resume from step %d", nextIncompleteStep)
+					case "option1": // Start from beginning (normal execution)
+						hcpo.GetLogger().Infof("🔄 User chose to start from beginning, will reset progress and cleanup execution artifacts")
+						// Delete existing progress
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+						}
+						// Use selected run mode (or default if not set yet)
+						runMode := hcpo.selectedRunMode
+						if runMode == "" {
+							runMode = "use_same_run"
+							hcpo.selectedRunMode = runMode
+						}
+						hcpo.GetLogger().Infof("📁 Using selected run mode: %s", runMode)
+						// Clean up execution artifacts for fresh start (handles both new and old structure)
+						if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
+						}
+						// Note: learnings/ folder is preserved - deleted manually only
+						existingProgress = nil
+						startFromStep = 0
+					case "option2": // Fast execute completed steps (0 to lastCompletedStepNumber)
+						hcpo.GetLogger().Infof("⚡ User chose fast execute mode for completed steps (0 to %d)", lastCompletedStepNumber)
 
-					// Note: No cleanup needed - we're just skipping learning/validation/human feedback for ALL steps
-					// Fast execute ALL steps (0 to end) - this ensures any step that gets executed runs in fast mode
+						// Clean up execution artifacts for steps that will be re-executed
+						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						hcpo.GetLogger().Infof("🔍 DEBUG: About to call CleanupDirectory for fast execute, path: %s", executionDir)
+						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+						} else {
+							hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory for fast re-execution")
+						}
+						hcpo.GetLogger().Infof("🔍 DEBUG: CleanupDirectory call completed for fast execute")
 
-					fastExecuteMode = true
-					// Fast execute ALL steps (0 to last step) - this covers all steps
-					// Completed steps will be skipped, but if any step executes, it will be in fast mode
-					fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute ALL steps (0 to end)
-					startFromStep = nextIncompleteStep - 1       // Start from next incomplete step (0-based)
+						fastExecuteMode = true
+						fastExecuteEndStep = max(existingProgress.CompletedStepIndices)
+						// Delete previous completed indices to re-execute them
+						startFromStep = 0
+						// Reset completed indices for steps to be re-executed
+						var newCompletedIndices []int
+						for _, idx := range existingProgress.CompletedStepIndices {
+							if idx > fastExecuteEndStep {
+								newCompletedIndices = append(newCompletedIndices, idx)
+							}
+						}
+						existingProgress.CompletedStepIndices = newCompletedIndices
+						hcpo.GetLogger().Infof("⚡ Will fast execute steps 0 to %d, then continue with normal execution from step %d", fastExecuteEndStep, nextIncompleteStep)
+					case "option3": // Fast execute all steps
+						hcpo.GetLogger().Infof("⚡ User chose fast execute mode for all steps")
 
-					// Keep all completed indices as-is - we're not re-executing completed steps
-					// The execution loop will skip completed steps anyway, but fast execute mode will apply
-					// to ALL steps (0 to end) if they get executed
-					hcpo.GetLogger().Infof("⚡ Will fast execute ALL steps (0 to %d), starting execution from step %d (1-based: %d)", fastExecuteEndStep, startFromStep, nextIncompleteStep)
-				case "option5": // Resume from next incomplete step without human input
-					startFromStep = nextIncompleteStep - 1 // Convert back to 0-based
-					skipHumanInput = true
-					hcpo.GetLogger().Infof("✅ User chose to resume from step %d without human input", nextIncompleteStep)
-				case "option6": // Start from beginning without human input
-					hcpo.GetLogger().Infof("🔄 User chose to start from beginning without human input, will reset progress and cleanup execution artifacts")
-					// Delete existing progress
-					if err := hcpo.deleteStepProgress(ctx); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+						// Clean up execution artifacts for all steps
+						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+						} else {
+							hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory for fast re-execution")
+						}
+
+						fastExecuteMode = true
+						fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute all steps
+						startFromStep = 0
+						// Clear all completed indices to re-execute everything
+						existingProgress.CompletedStepIndices = []int{}
+						hcpo.GetLogger().Infof("⚡ Will fast execute all steps (0 to %d)", fastExecuteEndStep)
+					case "option4": // Fast resume from next incomplete step
+						hcpo.GetLogger().Infof("⚡ User chose fast resume mode from step %d", nextIncompleteStep)
+
+						// Note: No cleanup needed - we're just skipping learning/validation/human feedback for ALL steps
+						// Fast execute ALL steps (0 to end) - this ensures any step that gets executed runs in fast mode
+
+						fastExecuteMode = true
+						// Fast execute ALL steps (0 to last step) - this covers all steps
+						// Completed steps will be skipped, but if any step executes, it will be in fast mode
+						fastExecuteEndStep = len(breakdownSteps) - 1 // Fast execute ALL steps (0 to end)
+						startFromStep = nextIncompleteStep - 1       // Start from next incomplete step (0-based)
+
+						// Keep all completed indices as-is - we're not re-executing completed steps
+						// The execution loop will skip completed steps anyway, but fast execute mode will apply
+						// to ALL steps (0 to end) if they get executed
+						hcpo.GetLogger().Infof("⚡ Will fast execute ALL steps (0 to %d), starting execution from step %d (1-based: %d)", fastExecuteEndStep, startFromStep, nextIncompleteStep)
+					case "option5": // Resume from next incomplete step without human input
+						startFromStep = nextIncompleteStep - 1 // Convert back to 0-based
+						skipHumanInput = true
+						hcpo.GetLogger().Infof("✅ User chose to resume from step %d without human input", nextIncompleteStep)
+					case "option6": // Start from beginning without human input
+						hcpo.GetLogger().Infof("🔄 User chose to start from beginning without human input, will reset progress and cleanup execution artifacts")
+						// Delete existing progress
+						if err := hcpo.deleteStepProgress(ctx); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete step progress: %w", err)
+						}
+						// Use selected run mode (or default if not set yet)
+						runMode := hcpo.selectedRunMode
+						if runMode == "" {
+							runMode = "use_same_run"
+							hcpo.selectedRunMode = runMode
+						}
+						hcpo.GetLogger().Infof("📁 Using selected run mode: %s", runMode)
+						// Clean up execution artifacts for fresh start (handles both new and old structure)
+						if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
+							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
+						}
+						// Note: learnings/ folder is preserved - deleted manually only
+						existingProgress = nil
+						startFromStep = 0
+						skipHumanInput = true
 					}
-					// Use selected run mode (or default if not set yet)
-					runMode := hcpo.selectedRunMode
-					if runMode == "" {
-						runMode = "use_same_run"
-						hcpo.selectedRunMode = runMode
-					}
-					hcpo.GetLogger().Infof("📁 Using selected run mode: %s", runMode)
-					// Clean up execution artifacts for fresh start (handles both new and old structure)
-					if err := hcpo.cleanupExecutionArtifactsForFreshStart(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution artifacts: %w", err)
-					}
-					// Note: learnings/ folder is preserved - deleted manually only
-					existingProgress = nil
-					startFromStep = 0
-					skipHumanInput = true
 				}
 
 				// Store fast execute mode and skip human input mode for use in execution loop
@@ -1047,8 +1302,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 }
 
 // resolveRunFolder determines which run folder to use based on the run mode
-// Returns the selected run folder name (e.g., "iteration-same", "iteration-1", "iteration-2")
+// Returns the selected run folder name (e.g., "iteration-1", "iteration-2")
+// Note: "iteration-same" is deprecated - all folders now use numbered iterations
 func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolder(ctx context.Context, workspacePath, runMode string) (string, error) {
+	return hcpo.resolveRunFolderWithOptions(ctx, workspacePath, runMode, "")
+}
+
+// resolveRunFolderWithOptions determines which run folder to use based on the run mode and optional pre-selected folder
+// If selectedRunFolder is provided, it will be used directly (for frontend-provided options)
+// Returns the selected run folder name (e.g., "iteration-1", "iteration-2")
+func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(ctx context.Context, workspacePath, runMode, selectedRunFolder string) (string, error) {
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 
 	// Default to "use_same_run" if runMode is empty
@@ -1059,13 +1322,28 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolder(ctx context
 
 	switch runMode {
 	case "use_same_run":
+		// If frontend provided a specific folder, use it directly
+		if selectedRunFolder != "" {
+			hcpo.GetLogger().Infof("📁 Using frontend-selected run folder: %s", selectedRunFolder)
+			// Ensure the folder exists
+			fullPath := fmt.Sprintf("%s/%s", runsPath, selectedRunFolder)
+			exists, _ := hcpo.workspaceFileExists(ctx, fullPath)
+			if !exists {
+				hcpo.GetLogger().Warnf("⚠️ Selected folder %s doesn't exist, creating it", selectedRunFolder)
+				if err := hcpo.createRunFolderStructure(ctx, fullPath); err != nil {
+					return "", err
+				}
+			}
+			return selectedRunFolder, nil
+		}
+
 		// Check if runs directory exists
 		hcpo.GetLogger().Infof("🔍 DEBUG: Checking runs directory at: %s", runsPath)
 		exists, _ := hcpo.workspaceFileExists(ctx, runsPath)
 		hcpo.GetLogger().Infof("🔍 DEBUG: Runs directory exists: %v", exists)
 		if !exists {
-			// Create iteration-same run folder
-			selectedFolder := "iteration-same"
+			// Create iteration-1 run folder (not iteration-same)
+			selectedFolder := "iteration-1"
 			if err := hcpo.createRunFolderStructure(ctx, fmt.Sprintf("%s/%s", runsPath, selectedFolder)); err != nil {
 				return "", err
 			}
@@ -1077,29 +1355,28 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolder(ctx context
 		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
 		hcpo.GetLogger().Infof("🔍 DEBUG: listRunFolders returned: folders=%v, error=%v", existingFolders, err)
 		if err != nil || len(existingFolders) == 0 {
-			// Create iteration-same folder if none exist
-			selectedFolder := "iteration-same"
+			// Create iteration-1 folder if none exist (not iteration-same)
+			selectedFolder := "iteration-1"
 			if err := hcpo.createRunFolderStructure(ctx, fmt.Sprintf("%s/%s", runsPath, selectedFolder)); err != nil {
 				return "", err
 			}
 			return selectedFolder, nil
 		}
 
-		// Separate "iteration-same" from iteration number folders and sort by iteration number
-		var iterationSameFolder string
+		// Filter to only numbered iteration folders (iteration-N pattern)
+		// Note: iteration-same is deprecated but still supported for backward compatibility
 		var iterationFolders []string
 
 		hcpo.GetLogger().Infof("🔍 DEBUG: Found %d existing folders: %v", len(existingFolders), existingFolders)
 
 		for _, folder := range existingFolders {
-			if folder == "iteration-same" {
-				iterationSameFolder = folder
-			} else {
+			// Include all iteration-* folders (both numbered and legacy "iteration-same")
+			if strings.HasPrefix(folder, "iteration-") {
 				iterationFolders = append(iterationFolders, folder)
 			}
 		}
 
-		hcpo.GetLogger().Infof("🔍 DEBUG: iteration-same=%s, iterationFolders count=%d: %v", iterationSameFolder, len(iterationFolders), iterationFolders)
+		hcpo.GetLogger().Infof("🔍 DEBUG: iterationFolders count=%d: %v", len(iterationFolders), iterationFolders)
 
 		// Sort iteration folders by iteration number
 		// Supports formats: "iteration-N", "YYYY-MM-DD-iteration-N", or "YYYY-MM-DD-initial"
@@ -1116,11 +1393,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolder(ctx context
 							return num
 						}
 					}
-					// If "initial" or no match, treat as 0 (lowest priority)
-					if strings.HasSuffix(name, "-initial") {
+					// Legacy "iteration-same" treated as 0 (so it appears last after numbered iterations)
+					if name == "iteration-same" {
 						return 0
 					}
-					return -1 // Unknown format, put at end
+					// If "initial" or no match, treat as -1 (lowest priority)
+					if strings.HasSuffix(name, "-initial") {
+						return -1
+					}
+					return -2 // Unknown format, put at end
 				}
 
 				iterI := extractIteration(iterationFolders[i])
@@ -1135,19 +1416,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolder(ctx context
 			})
 		}
 
-		// Build folder options: always include "iteration-same" first if it exists, then up to 10 iteration folders
-		folderOptions := make([]string, 0)
-		if iterationSameFolder != "" {
-			folderOptions = append(folderOptions, iterationSameFolder)
-		}
-
-		// Add up to 10 iteration folders (or all if less than 10)
-		if len(iterationFolders) > 0 {
-			maxIterationFolders := 10
-			if len(iterationFolders) < maxIterationFolders {
-				maxIterationFolders = len(iterationFolders)
-			}
-			folderOptions = append(folderOptions, iterationFolders[:maxIterationFolders]...)
+		// Limit to 10 most recent folders
+		folderOptions := iterationFolders
+		if len(folderOptions) > 10 {
+			folderOptions = folderOptions[:10]
 		}
 
 		hcpo.GetLogger().Infof("🔍 DEBUG: folderOptions count=%d: %v", len(folderOptions), folderOptions)
@@ -1194,7 +1466,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolder(ctx context
 		)
 		if err != nil {
 			hcpo.GetLogger().Warnf("⚠️ Failed to get user selection for run folder: %w, defaulting to first option", err)
-			// Default to first option (iteration-same if exists, otherwise highest iteration)
+			// Default to first option (highest iteration number)
 			return folderOptions[0], nil
 		}
 
@@ -2528,6 +2800,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				hcpo.GetLogger().Infof("💾 Saved progress: conditional step %d marked as completed", i+1)
 			}
 
+			// Check if we're in single step mode and should stop
+			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+				hcpo.GetLogger().Infof("🎯 Single step mode: completed target step %d, stopping execution", i+1)
+				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
+				break
+			}
+
 			// Continue to next step
 			continue
 		}
@@ -2552,6 +2831,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 		// Log execution result (for debugging)
 		hcpo.GetLogger().Infof("✅ Step %d execution completed (result length: %d chars)", i+1, len(executionResult))
+
+		// Check if we're in single step mode and should stop
+		if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+			hcpo.GetLogger().Infof("🎯 Single step mode: completed target step %d, stopping execution", i+1)
+			hcpo.SetRunSingleStepMode(false, -1) // Reset mode
+			break
+		}
 
 		// Note: Progress tracking is handled inside executeSingleStep
 		// Continue to next step
@@ -4284,6 +4570,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetFastExecuteMode(enabled b
 	hcpo.fastExecuteEndStep = endStep
 }
 
+// SetRunSingleStepMode sets the single step execution mode
+func (hcpo *HumanControlledTodoPlannerOrchestrator) SetRunSingleStepMode(enabled bool, stepIndex int) {
+	hcpo.runSingleStepOnly = enabled
+	hcpo.singleStepTarget = stepIndex
+}
+
 // GetLearningDetailLevel returns the stored learning detail level preference
 func (hcpo *HumanControlledTodoPlannerOrchestrator) GetLearningDetailLevel() string {
 	if hcpo.learningDetailLevel == "" {
@@ -4310,6 +4602,26 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetSkipHumanInput(enabled bo
 // IsSkipHumanInput checks if human feedback should be skipped
 func (hcpo *HumanControlledTodoPlannerOrchestrator) IsSkipHumanInput() bool {
 	return hcpo.skipHumanInput
+}
+
+// SetExecutionOptions sets the execution options from frontend
+// When set, backend will use these options instead of asking interactively
+func (hcpo *HumanControlledTodoPlannerOrchestrator) SetExecutionOptions(options *ExecutionOptions) {
+	hcpo.executionOptions = options
+	if options != nil {
+		hcpo.GetLogger().Infof("📋 Execution options set from frontend: run_mode=%s, strategy=%s, run_folder=%s",
+			options.RunMode, options.ExecutionStrategy, options.SelectedRunFolder)
+	}
+}
+
+// GetExecutionOptions returns the current execution options
+func (hcpo *HumanControlledTodoPlannerOrchestrator) GetExecutionOptions() *ExecutionOptions {
+	return hcpo.executionOptions
+}
+
+// HasExecutionOptions checks if execution options are set
+func (hcpo *HumanControlledTodoPlannerOrchestrator) HasExecutionOptions() bool {
+	return hcpo.executionOptions != nil
 }
 
 // formatValidationResponseForTemplate formats validation response data for inclusion in template variables

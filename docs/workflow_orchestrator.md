@@ -84,7 +84,7 @@ type PlanStep struct {
 ```
 
 ### 3. Execution Phase
-**Status:** `pre-verification`  
+**Status:** `execution`  
 **Entry Point:** [`runPlanning()`](file:///Users/mipl/ai-work/mcp-agent/agent_go/pkg/orchestrator/types/workflow_orchestrator.go#L566-L572)
 
 Executes the approved plan step-by-step. Requires both `variables.json` and `plan.json` to exist.
@@ -376,7 +376,7 @@ POST /api/workflow/execute
 {
   "objective": "Deploy app to {{API_BASE_URL}}",
   "workspace_path": "/path/to/workspace",
-  "workflow_status": "pre-verification"
+  "workflow_status": "execution"
 }
 ```
 

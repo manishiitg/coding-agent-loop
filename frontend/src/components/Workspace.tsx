@@ -938,7 +938,31 @@ export default function Workspace({
       <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
-        {!minimized ? (
+        {minimized ? (
+          <div className="flex items-center justify-between">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleMinimize()
+                  }}
+                  className="flex items-center gap-2 px-2 py-1 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                  title="Expand workspace"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span className="text-sm font-medium">Workspace</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Expand workspace (Ctrl+6)</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        ) : (
           <div className="flex items-center justify-between mb-3">
             <div>
               <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
@@ -1038,32 +1062,6 @@ export default function Workspace({
                   </TooltipContent>
                 </Tooltip>
               </div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                Workspace
-              </h2>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={onToggleMinimize}
-                    className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors relative group"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{minimized ? "Expand workspace" : "Minimize workspace"} (Ctrl+5)</p>
-                </TooltipContent>
-              </Tooltip>
             </div>
           </div>
         )}
@@ -1171,39 +1169,60 @@ export default function Workspace({
       {/* Minimized Icons */}
       {minimized && (
         <div className="flex-1 flex flex-col items-center py-4 space-y-4">
-          {/* Files Icon */}
+          {/* Files Icon - Click to expand workspace */}
+          <Tooltip>
+            <TooltipTrigger asChild>
           <button
-            onClick={fetchFiles}
+                onClick={onToggleMinimize}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title="Refresh Files"
+                title="Expand Workspace"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5a2 2 0 012-2h4a2 2 0 012 2v2H8V5z" />
             </svg>
           </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand Workspace</p>
+            </TooltipContent>
+          </Tooltip>
 
-          {/* Search Icon */}
+          {/* Search Icon - Click to expand workspace */}
+          <Tooltip>
+            <TooltipTrigger asChild>
           <button
-            onClick={() => setSearchQuery('')}
+                onClick={onToggleMinimize}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title="Clear Search"
+                title="Expand Workspace"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand Workspace</p>
+            </TooltipContent>
+          </Tooltip>
 
-          {/* Context Icon */}
+          {/* Document Icon - Click to expand workspace */}
+          <Tooltip>
+            <TooltipTrigger asChild>
           <button
-            onClick={() => addFileToContext({name: 'Current Context', path: '/', type: 'folder'})}
+                onClick={onToggleMinimize}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title={`Files in Context: ${chatFileContext.length}`}
+                title="Expand Workspace"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand Workspace</p>
+            </TooltipContent>
+          </Tooltip>
         </div>
       )}
 

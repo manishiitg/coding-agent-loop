@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/orchestrator"
@@ -15,6 +14,8 @@ import (
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // WorkflowPhaseOption represents an option for a workflow phase
@@ -153,6 +154,24 @@ type WorkflowOrchestrator struct {
 	presetPlanToolOptimizationLLM   *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
 	presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig // Default for plan learnings alignment agent
 	presetLearningConsolidationLLM  *todo_creation_human.AgentLLMConfig // Default for learning consolidation agent
+
+	// Frontend-provided execution options (when provided, skips interactive prompts)
+	executionOptions *todo_creation_human.ExecutionOptions
+}
+
+// SetExecutionOptions sets the execution options from frontend
+// When set, backend will use these options instead of asking interactively
+func (wo *WorkflowOrchestrator) SetExecutionOptions(options *todo_creation_human.ExecutionOptions) {
+	wo.executionOptions = options
+	if options != nil {
+		wo.GetLogger().Infof("📋 WorkflowOrchestrator: Execution options set from frontend: run_mode=%s, strategy=%s, run_folder=%s",
+			options.RunMode, options.ExecutionStrategy, options.SelectedRunFolder)
+	}
+}
+
+// GetExecutionOptions returns the current execution options
+func (wo *WorkflowOrchestrator) GetExecutionOptions() *todo_creation_human.ExecutionOptions {
+	return wo.executionOptions
 }
 
 // Human verification types
@@ -385,6 +404,7 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	workspacePath string,
 	workflowStatus string,
 	selectedOptions *database.WorkflowSelectedOptions,
+	stepID string, // Optional step ID for step-specific phase execution
 ) (string, error) {
 	// Set workspace path from parameter
 	wo.SetWorkspacePath(workspacePath)
@@ -426,10 +446,13 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	if workflowStatus == "plan-tool-optimization" {
 		wo.GetLogger().Infof("🔧 Routing to plan tool optimization phase (workflowStatus: %s)", workflowStatus)
-		return wo.runPlanToolOptimization(ctx, objective, selectedOptions)
+		if stepID != "" {
+			wo.GetLogger().Infof("🔧 Step-specific execution for step: %s", stepID)
+		}
+		return wo.runPlanToolOptimization(ctx, objective, selectedOptions, stepID)
 	}
 
-	// All other workflow statuses (pre-verification) go through execution phase
+	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	wo.GetLogger().Infof("🚀 Routing to execution phase (workflowStatus: %s)", workflowStatus)
 	return wo.runPlanning(ctx, objective, selectedOptions)
@@ -591,8 +614,11 @@ func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, ob
 }
 
 // runPlanToolOptimization runs only the plan tool optimization phase
-func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions, stepID string) (string, error) {
 	wo.GetLogger().Infof("🔧 Starting Plan Tool Optimization Phase")
+	if stepID != "" {
+		wo.GetLogger().Infof("🔧 Step-specific execution for step: %s", stepID)
+	}
 
 	// Create plan tool optimization manager directly (independent from controller)
 	toolOptimizationManager := todo_creation_human.NewPlanToolOptimizationManager(
@@ -602,8 +628,8 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 		wo.presetPlanToolOptimizationLLM,
 	)
 
-	// Run only tool optimization
-	result, err := toolOptimizationManager.PlanToolOptimizationOnly(ctx, wo.GetWorkspacePath())
+	// Run only tool optimization (with optional step ID for step-specific execution)
+	result, err := toolOptimizationManager.PlanToolOptimizationOnly(ctx, wo.GetWorkspacePath(), stepID)
 	if err != nil {
 		return "", fmt.Errorf("plan tool optimization failed: %w", err)
 	}
@@ -613,7 +639,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 }
 
 // runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
-// This is called for pre-verification status and executes the approved plan
+// This is called for execution status and executes the approved plan
 func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Infof("🚀 Starting Execution Phase")
 
@@ -654,6 +680,13 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
+	}
+
+	// Pass execution options from WorkflowOrchestrator to the todo planner if set
+	if wo.executionOptions != nil {
+		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
+		wo.GetLogger().Infof("📋 Passed execution options to todo planner: run_mode=%s, strategy=%s",
+			wo.executionOptions.RunMode, wo.executionOptions.ExecutionStrategy)
 	}
 
 	// Generate todo list using Execute method
@@ -833,11 +866,23 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 		return "", fmt.Errorf("objective cannot be empty")
 	}
 
+	// Extract stepId from options if provided
+	var stepID string
+	if stepIDVal, exists := options["stepId"]; exists {
+		if stepIDStr, ok := stepIDVal.(string); ok && stepIDStr != "" {
+			stepID = stepIDStr
+			wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - stepId found: %s", stepID)
+		}
+	}
+
 	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - About to call executeFlow with workflowStatus: %s", workflowStatus)
 	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions for executeFlow: %+v", selectedOptions)
+	if stepID != "" {
+		wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - Step-specific execution for step: %s", stepID)
+	}
 
 	// Call the existing executeFlow method with the extracted parameters
-	result, err := wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions)
+	result, err := wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions, stepID)
 	if err != nil {
 		wo.GetLogger().Errorf("🚀 WORKFLOW EXECUTION ERROR - executeFlow failed: %w", err)
 		return "", err

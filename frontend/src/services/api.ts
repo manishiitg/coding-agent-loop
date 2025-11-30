@@ -23,6 +23,10 @@ import type {
   SessionStatusResponse,
   LLMGuidanceResponse,
   HumanFeedbackResponse,
+  RunFoldersResponse,
+  ProgressResponse,
+  ExecutionOptions,
+  StepProgress,
 } from './api-types'
 
 // Re-export types for other components to use
@@ -33,13 +37,7 @@ export type {
   GetEventsResponse,
   ObserverStatusResponse,
   MCPServerConfig,
-  ToolDefinition,
-  PollingEvent,
-  AgentStreamEvent,
-  RegisterObserverRequest,
   ChatSession,
-  ChatEvent,
-  ChatHistorySummary,
   ListChatSessionsResponse,
   GetSessionEventsResponse,
   CreateChatSessionRequest,
@@ -49,7 +47,16 @@ export type {
   UpdatePresetQueryRequest,
   ListPresetQueriesResponse,
   WorkflowStatusResponse,
-  WorkflowConstantsResponse
+  WorkflowConstantsResponse,
+  GetActiveSessionsResponse,
+  ReconnectSessionResponse,
+  SessionStatusResponse,
+  LLMGuidanceResponse,
+  HumanFeedbackResponse,
+  RunFoldersResponse,
+  ProgressResponse,
+  ExecutionOptions,
+  StepProgress,
 } from './api-types'
 
 const API_BASE_URL = 'http://localhost:8000'
@@ -527,8 +534,8 @@ export const agentApi = {
     return response.data
   },
 
-  updateWorkflow: async (presetQueryId: string, workflowStatus?: string, selectedOptions?: WorkflowSelectedOptions | null) => {
-    const body: { preset_query_id: string; workflow_status?: string; selected_options?: WorkflowSelectedOptions | null } = {
+  updateWorkflow: async (presetQueryId: string, workflowStatus?: string, selectedOptions?: WorkflowSelectedOptions | null, stepId?: string) => {
+    const body: { preset_query_id: string; workflow_status?: string; selected_options?: WorkflowSelectedOptions | null; step_id?: string } = {
       preset_query_id: presetQueryId
     }
 
@@ -540,12 +547,32 @@ export const agentApi = {
       body.selected_options = selectedOptions
     }
 
+    if (stepId !== undefined) {
+      body.step_id = stepId
+    }
+
     const response = await api.post('/api/workflow/update', body)
     return response.data
   },
 
   getWorkflowConstants: async (): Promise<WorkflowConstantsResponse> => {
     const response = await api.get('/api/workflow/constants')
+    return response.data
+  },
+
+  // Get available run folders for a workspace
+  getRunFolders: async (workspacePath: string): Promise<RunFoldersResponse> => {
+    const response = await api.get('/api/workflow/run-folders', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  // Get execution progress for a run folder
+  getProgress: async (workspacePath: string, runFolder: string): Promise<ProgressResponse> => {
+    const response = await api.get('/api/workflow/progress', {
+      params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
     return response.data
   },
 

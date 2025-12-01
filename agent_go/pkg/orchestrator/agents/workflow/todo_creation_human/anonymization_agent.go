@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerAnonymizationTemplate holds template variables for anonymization prompts
@@ -91,11 +92,11 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	orchestratorLLMConfig := am.GetLLMConfig()
 	if am.presetAnonymizationLLM != nil && am.presetAnonymizationLLM.Provider != "" && am.presetAnonymizationLLM.ModelID != "" {
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              am.presetAnonymizationLLM.Provider,
-			ModelID:               am.presetAnonymizationLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
-			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
+			Provider:       am.presetAnonymizationLLM.Provider,
+			ModelID:        am.presetAnonymizationLLM.ModelID,
+			FallbackModels: orchestratorLLMConfig.FallbackModels, // Preserve fallback models from orchestrator
+			APIKeys:        orchestratorLLMConfig.APIKeys,        // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options,        // Preserve LLM options from orchestrator
 		}
 		am.GetLogger().Infof("🔧 Using preset default anonymization LLM: %s/%s", am.presetAnonymizationLLM.Provider, am.presetAnonymizationLLM.ModelID)
 	} else {

@@ -23,6 +23,7 @@ import (
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/orchestrator"
+	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
 	unifiedevents "mcpagent/events"
@@ -247,10 +248,21 @@ type QueryRequest struct {
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 }
 
-// CrossProviderFallback represents cross-provider fallback configuration
-type CrossProviderFallback struct {
-	Provider string   `json:"provider"`
-	Models   []string `json:"models"`
+// convertOrchestratorFallbackModels converts orchestrator FallbackModels to mcpagent FallbackModels
+func convertOrchestratorFallbackModels(models []agents.FallbackModel) []mcpagent.FallbackModel {
+	if len(models) == 0 {
+		return nil
+	}
+	result := make([]mcpagent.FallbackModel, len(models))
+	for i, m := range models {
+		result[i] = mcpagent.FallbackModel{
+			ModelID:  m.ModelID,
+			Provider: m.Provider,
+			Priority: m.Priority,
+			// Options conversion would go here if needed
+		}
+	}
+	return result
 }
 
 // QueryResponse represents an agent query response
@@ -921,24 +933,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Use LLM configuration from request if provided, otherwise use request defaults
 	var finalProvider string
 	var finalModelID string
-	var fallbackModels []string
-	var crossProviderFallback *agent.CrossProviderFallback
+	var fallbackModels []mcpagent.FallbackModel
 
 	if req.LLMConfig != nil {
 		// Use LLM configuration from frontend
 		finalProvider = req.LLMConfig.Provider
 		finalModelID = req.LLMConfig.ModelID
-		fallbackModels = req.LLMConfig.FallbackModels
+		fallbackModels = convertOrchestratorFallbackModels(req.LLMConfig.FallbackModels)
 
-		// Only set cross-provider fallback if it's not nil
-		if req.LLMConfig.CrossProviderFallback != nil {
-			crossProviderFallback = &agent.CrossProviderFallback{
-				Provider: req.LLMConfig.CrossProviderFallback.Provider,
-				Models:   req.LLMConfig.CrossProviderFallback.Models,
-			}
-		}
-		log.Printf("[LLM CONFIG DEBUG] Using detailed LLM config from request - Provider: %s, Model: %s, Fallbacks: %v, CrossProvider: %+v",
-			finalProvider, finalModelID, fallbackModels, crossProviderFallback)
+		log.Printf("[LLM CONFIG DEBUG] Using detailed LLM config from request - Provider: %s, Model: %s, Fallbacks: %d models",
+			finalProvider, finalModelID, len(fallbackModels))
 	} else {
 		// Fall back to request defaults
 		finalProvider = req.Provider
@@ -1446,8 +1450,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			SmartRoutingMaxServers: 4,  // Enable when more than 4 servers
 
 			// Detailed LLM configuration from frontend
-			FallbackModels:        fallbackModels,
-			CrossProviderFallback: crossProviderFallback,
+			FallbackModels: fallbackModels,
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed via generated Go code using discover_code_files and write_code
 			UseCodeExecutionMode: useCodeExecutionMode,

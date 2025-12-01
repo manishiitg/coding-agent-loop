@@ -1,15 +1,103 @@
 // API-specific types (separate from event types)
 import type { PollingEventSchema } from '../generated/events-bridge'
 
-// LLM Configuration types
-export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+// Provider type for type safety
+export type LLMProvider = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+
+// ═══════════════════════════════════════════════════════════════════
+// SAVED LLM CONFIG - Named presets for LLM configurations
+// ═══════════════════════════════════════════════════════════════════
+
+export interface SavedLLMConfig {
+  id: string                // UUID
+  name: string              // User-friendly name: "Production Claude", "Fast Grok"
+  provider: LLMProvider     // 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  model_id: string          // Model identifier: 'gpt-4o', 'claude-sonnet-4', etc.
+  options?: LLMOptions      // Optional: temperature, max_tokens, provider-specific options
+  created_at: string        // ISO timestamp
+  updated_at: string        // ISO timestamp
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FALLBACK MODEL - Unified fallback with provider and priority
+// ═══════════════════════════════════════════════════════════════════
+
+export interface FallbackModel {
   model_id: string
-  fallback_models: string[]
-  cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
-    models: string[]
-  }
+  provider: LLMProvider
+  priority: number  // User-defined order (1 = highest priority)
+  options?: LLMOptions  // Optional: override options for this fallback
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// LLM OPTIONS - Common and provider-specific options
+// ═══════════════════════════════════════════════════════════════════
+
+export interface LLMOptions {
+  // COMMON OPTIONS (all providers support these)
+  temperature?: number
+  max_tokens?: number
+  top_p?: number
+  top_k?: number
+
+  // PROVIDER-SPECIFIC OPTIONS (only one is used based on provider)
+  openai?: OpenAIOptions
+  anthropic?: AnthropicOptions
+  vertex?: VertexOptions
+  bedrock?: BedrockOptions
+  openrouter?: OpenRouterOptions
+}
+
+// OpenAI-specific options
+export interface OpenAIOptions {
+  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high'  // o3/o4/gpt-5.1 models
+  seed?: number
+  response_format?: 'text' | 'json_object'
+  frequency_penalty?: number
+  presence_penalty?: number
+}
+
+// Anthropic-specific options
+export interface AnthropicOptions {
+  extended_thinking?: boolean
+  thinking_budget_tokens?: number
+}
+
+// Vertex/Gemini-specific options
+export interface VertexOptions {
+  thinking_level?: 'none' | 'low' | 'medium' | 'high'  // Gemini 3 Pro
+  safety_settings?: string  // JSON string of safety config
+  grounding_config?: string  // Search grounding
+}
+
+// Bedrock-specific options
+export interface BedrockOptions {
+  guardrail_identifier?: string
+  guardrail_version?: string
+  inference_profile?: string
+}
+
+// OpenRouter-specific options
+export interface OpenRouterOptions {
+  transforms?: string[]  // ["middle-out"]
+  route?: string  // "fallback"
+  models?: string[]  // For multi-model routing
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// LLM CONFIGURATION - Main configuration structure
+// ═══════════════════════════════════════════════════════════════════
+
+export interface LLMConfiguration {
+  provider: LLMProvider
+  model_id: string
+  
+  // UNIFIED: Fallback models with provider info and priority
+  fallback_models: FallbackModel[]
+  
+  // LLM options (common + provider-specific)
+  options?: LLMOptions
+  
   // API keys for each provider
   api_keys?: {
     openrouter?: string
@@ -24,9 +112,10 @@ export interface LLMConfiguration {
 }
 
 // Extended LLM Configuration for frontend (secrets/UI-only)
+// Used for provider-specific config panels where api_key is handled separately
 export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
-  api_key?: string
-  region?: string
+  api_key?: string  // Single API key for this provider
+  region?: string   // AWS region for Bedrock
 }
 
 // Execution mode constants matching backend enum

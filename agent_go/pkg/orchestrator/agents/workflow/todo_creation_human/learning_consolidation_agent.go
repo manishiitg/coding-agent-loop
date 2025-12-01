@@ -98,11 +98,11 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	if lcm.presetLearningConsolidationLLM != nil && lcm.presetLearningConsolidationLLM.Provider != "" && lcm.presetLearningConsolidationLLM.ModelID != "" {
 		// Use preset LLM config
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              lcm.presetLearningConsolidationLLM.Provider,
-			ModelID:               lcm.presetLearningConsolidationLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
+			Provider:       lcm.presetLearningConsolidationLLM.Provider,
+			ModelID:        lcm.presetLearningConsolidationLLM.ModelID,
+			FallbackModels: orchestratorLLMConfig.FallbackModels,
+			APIKeys:        orchestratorLLMConfig.APIKeys,
+			Options:        orchestratorLLMConfig.Options,
 		}
 		lcm.GetLogger().Infof("🔧 Using preset learning consolidation LLM: %s/%s", lcm.presetLearningConsolidationLLM.Provider, lcm.presetLearningConsolidationLLM.ModelID)
 	} else {

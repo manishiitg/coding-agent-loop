@@ -7,6 +7,7 @@ export { useWorkspaceStore } from './useWorkspaceStore'
 export { useGlobalPresetStore, usePresetApplication, usePresetManagement, usePresetState } from './useGlobalPresetStore'
 export { useWorkflowStore, useWorkflowPhases, useWorkflowPhasesLoading, useWorkflowRunFolders, useWorkflowProgress, useCompletedStepIndices } from './useWorkflowStore'
 export type { ExecutionModeType } from './useWorkflowStore'
+export { useSavedLLMConfigsStore, useSavedConfigs, usePrimaryConfigId, useFallbackConfigIds } from './useSavedLLMConfigsStore'
 
 // Export types
 export type * from './types'

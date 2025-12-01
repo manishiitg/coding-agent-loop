@@ -280,8 +280,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetPlanningLLM.Provider,
 			ModelID:        hcpo.presetPlanningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			FallbackModels: nil,                           // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default planning LLM: %s/%s", hcpo.presetPlanningLLM.Provider, hcpo.presetPlanningLLM.ModelID)
 	} else {

@@ -12,8 +12,15 @@ import {
   RefreshCw,
   Link
 } from 'lucide-react'
-import type { WorkflowNode } from '../hooks/usePlanToFlow'
+import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
+
+// Type guard for nodes that have a step property
+type StepContainingNodeData = StepNodeData | ConditionalNodeData | LoopNodeData
+
+function hasStepProperty(data: unknown): data is StepContainingNodeData {
+  return data !== null && typeof data === 'object' && 'step' in data
+}
 
 interface NodeDetailPanelProps {
   node: WorkflowNode | null
@@ -40,7 +47,8 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
   const [editedSuccessCriteria, setEditedSuccessCriteria] = useState('')
   const [showDependencies, setShowDependencies] = useState(false)
 
-  if (!node || node.id === 'start' || node.id === 'end') {
+  // Filter out start/end nodes and nodes without step data (validation/learning nodes)
+  if (!node || node.id === 'start' || node.id === 'end' || !hasStepProperty(node.data)) {
     return null
   }
 

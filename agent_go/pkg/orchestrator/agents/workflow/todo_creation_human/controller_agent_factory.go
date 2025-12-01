@@ -60,16 +60,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionAgent(ctx con
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.ExecutionLLM.Provider,
 			ModelID:        stepConfig.ExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			FallbackModels: nil,                           // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using step-specific execution LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID)
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetExecutionLLM.Provider,
 			ModelID:        hcpo.presetExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			FallbackModels: nil,                           // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default execution LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID)
 	} else {
@@ -285,16 +287,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.ExecutionLLM.Provider,
 			ModelID:        stepConfig.ExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			FallbackModels: nil,                           // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using step-specific learning reading LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID)
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetExecutionLLM.Provider,
 			ModelID:        hcpo.presetExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			FallbackModels: nil,                           // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default learning reading LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID)
 	} else {
@@ -513,16 +517,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.ExecutionLLM.Provider,
 			ModelID:        stepConfig.ExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			FallbackModels: nil,                           // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID)
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetExecutionLLM.Provider,
 			ModelID:        hcpo.presetExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			FallbackModels: nil,                           // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID)
 	} else {
@@ -730,16 +736,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.ValidationLLM.Provider,
 			ModelID:        stepConfig.ValidationLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			FallbackModels: nil,                           // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using step-specific validation LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID)
 	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetValidationLLM.Provider,
 			ModelID:        hcpo.presetValidationLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			FallbackModels: nil,                           // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default validation LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID)
 	} else {
@@ -932,16 +940,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.LearningLLM.Provider,
 			ModelID:        stepConfig.LearningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			FallbackModels: nil,                           // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID)
 	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetLearningLLM.Provider,
 			ModelID:        hcpo.presetLearningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			FallbackModels: nil,                           // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID)
 	} else {
@@ -1148,16 +1158,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.LearningLLM.Provider,
 			ModelID:        stepConfig.LearningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			FallbackModels: nil,                           // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID)
 	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetLearningLLM.Provider,
 			ModelID:        hcpo.presetLearningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			FallbackModels: nil,                           // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options, // Preserve LLM options from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID)
 	} else {

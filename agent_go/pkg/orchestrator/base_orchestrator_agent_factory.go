@@ -75,7 +75,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	// Detailed LLM configuration from frontend
 	if llmConfig != nil {
 		config.FallbackModels = llmConfig.FallbackModels
-		config.CrossProviderFallback = llmConfig.CrossProviderFallback
+		config.Options = llmConfig.Options
 		// Convert API keys from orchestrator format to agent format
 		if llmConfig.APIKeys != nil {
 			config.APIKeys = &agents.AgentAPIKeys{

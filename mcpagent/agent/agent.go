@@ -160,10 +160,17 @@ func WithDiscoverPrompt(enabled bool) AgentOption {
 	}
 }
 
-// WithCrossProviderFallback sets the cross-provider fallback configuration
-func WithCrossProviderFallback(crossProviderFallback *CrossProviderFallback) AgentOption {
+// WithFallbackModels sets the unified fallback models configuration
+func WithFallbackModels(fallbackModels []FallbackModel) AgentOption {
 	return func(a *Agent) {
-		a.CrossProviderFallback = crossProviderFallback
+		a.FallbackModels = fallbackModels
+	}
+}
+
+// WithOptions sets the LLM options (common + provider-specific)
+func WithOptions(options *LLMOptions) AgentOption {
+	return func(a *Agent) {
+		a.Options = options
 	}
 }
 
@@ -304,11 +311,14 @@ type Agent struct {
 	FolderGuardReadPaths  []string // Paths allowed for read operations
 	FolderGuardWritePaths []string // Paths allowed for write operations
 
-	// Cross-provider fallback configuration
-	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration from frontend
+	// Unified fallback models with provider info and priority
+	FallbackModels []FallbackModel // Unified fallback models from frontend
 
 	// API keys for providers (used for fallback LLM creation)
 	APIKeys *AgentAPIKeys
+
+	// LLM options (common + provider-specific)
+	Options *LLMOptions
 
 	// Cumulative token tracking for entire conversation
 	cumulativePromptTokens     int          // Cumulative prompt/input tokens
@@ -322,24 +332,90 @@ type Agent struct {
 	tokenTrackingMutex         sync.RWMutex // Mutex for thread-safe token accumulation
 }
 
-// CrossProviderFallback represents cross-provider fallback configuration
-type CrossProviderFallback struct {
-	Provider string   `json:"provider"`
-	Models   []string `json:"models"`
+// ═══════════════════════════════════════════════════════════════════
+// FALLBACK MODEL - Unified fallback with provider and priority
+// ═══════════════════════════════════════════════════════════════════
+
+// FallbackModel represents a fallback model with provider and priority
+type FallbackModel struct {
+	ModelID  string      `json:"model_id"`
+	Provider string      `json:"provider"`
+	Priority int         `json:"priority"`
+	Options  *LLMOptions `json:"options,omitempty"` // Override options for this fallback
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// LLM OPTIONS - Common + Provider-Specific Nested Structs
+// ═══════════════════════════════════════════════════════════════════
+
+// LLMOptions represents LLM configuration options (common + provider-specific)
+type LLMOptions struct {
+	// Common options (all providers support these)
+	Temperature *float64 `json:"temperature,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
+	TopK        *int     `json:"top_k,omitempty"`
+
+	// Provider-specific options (only one is used based on provider)
+	OpenAI     *OpenAIOptions     `json:"openai,omitempty"`
+	Anthropic  *AnthropicOptions  `json:"anthropic,omitempty"`
+	Vertex     *VertexOptions     `json:"vertex,omitempty"`
+	Bedrock    *BedrockLLMOptions `json:"bedrock,omitempty"`
+	OpenRouter *OpenRouterOptions `json:"openrouter,omitempty"`
+}
+
+// OpenAIOptions represents OpenAI-specific LLM options
+type OpenAIOptions struct {
+	ReasoningEffort  *string  `json:"reasoning_effort,omitempty"` // "low", "medium", "high" (o3/o4 models)
+	Seed             *int     `json:"seed,omitempty"`
+	ResponseFormat   *string  `json:"response_format,omitempty"` // "text", "json_object"
+	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
+}
+
+// AnthropicOptions represents Anthropic-specific LLM options
+type AnthropicOptions struct {
+	ExtendedThinking     *bool `json:"extended_thinking,omitempty"`
+	ThinkingBudgetTokens *int  `json:"thinking_budget_tokens,omitempty"`
+}
+
+// VertexOptions represents Vertex/Gemini-specific LLM options
+type VertexOptions struct {
+	ThinkingLevel   *string `json:"thinking_level,omitempty"`   // "none", "low", "medium", "high"
+	SafetySettings  *string `json:"safety_settings,omitempty"`  // JSON string of safety config
+	GroundingConfig *string `json:"grounding_config,omitempty"` // Search grounding
+}
+
+// BedrockLLMOptions represents Bedrock-specific LLM options
+type BedrockLLMOptions struct {
+	GuardrailIdentifier *string `json:"guardrail_identifier,omitempty"`
+	GuardrailVersion    *string `json:"guardrail_version,omitempty"`
+	InferenceProfile    *string `json:"inference_profile,omitempty"`
+}
+
+// OpenRouterOptions represents OpenRouter-specific LLM options
+type OpenRouterOptions struct {
+	Transforms []string `json:"transforms,omitempty"` // ["middle-out"]
+	Route      *string  `json:"route,omitempty"`      // "fallback"
+	Models     []string `json:"models,omitempty"`     // For multi-model routing
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// API KEYS - Provider credentials
+// ═══════════════════════════════════════════════════════════════════
 
 // AgentAPIKeys holds API keys for different providers (for Agent struct)
 type AgentAPIKeys struct {
-	OpenRouter *string
-	OpenAI     *string
-	Anthropic  *string
-	Vertex     *string
-	Bedrock    *AgentBedrockConfig
+	OpenRouter *string             `json:"openrouter,omitempty"`
+	OpenAI     *string             `json:"openai,omitempty"`
+	Anthropic  *string             `json:"anthropic,omitempty"`
+	Vertex     *string             `json:"vertex,omitempty"`
+	Bedrock    *AgentBedrockConfig `json:"bedrock,omitempty"`
 }
 
 // AgentBedrockConfig holds Bedrock-specific configuration (for Agent struct)
 type AgentBedrockConfig struct {
-	Region string
+	Region string `json:"region"`
 }
 
 // GetProvider returns the provider

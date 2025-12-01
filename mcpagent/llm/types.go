@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -52,4 +53,9 @@ var (
 	ImagePart         = llmtypes.ImagePart
 	ImagePartBase64   = llmtypes.ImagePartBase64
 	ImagePartURL      = llmtypes.ImagePartURL
+
+	// Provider-specific option functions
+	WithReasoningEffort = llmtypes.WithReasoningEffort // OpenAI o3/o4/gpt-5.1: "minimal", "low", "medium", "high"
+	WithVerbosity       = llmtypes.WithVerbosity       // OpenAI reasoning models: "low", "medium", "high"
+	WithThinkingLevel   = llmtypes.WithThinkingLevel   // Vertex Gemini 3 Pro: "low", "high"
 )

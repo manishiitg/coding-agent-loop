@@ -18,10 +18,10 @@ interface VariablesExtractedEventData {
 }
 
 interface VariablesIconProps {
-  onSubmitQuery?: (query: string) => void;
+  onSubmitQuery?: (query: string) => void;  // Reserved for future use
 }
 
-export const VariablesIcon: React.FC<VariablesIconProps> = ({ onSubmitQuery }) => {
+export const VariablesIcon: React.FC<VariablesIconProps> = ({ onSubmitQuery: _onSubmitQuery }) => {
   const { events } = useChatStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -68,17 +68,7 @@ export const VariablesIcon: React.FC<VariablesIconProps> = ({ onSubmitQuery }) =
           variables={latestVariablesEvent.variables || []}
           templatedObjective={latestVariablesEvent.templated_objective || ''}
           workspacePath={latestVariablesEvent.workspace_path || ''}
-          onExtractAgain={onSubmitQuery ? () => {
-            // Submit query to extract new variables
-            onSubmitQuery('Extract new variables from the objective');
-          } : undefined}
-          onUpdateVariables={onSubmitQuery ? () => {
-            // Submit query to update variables with current values
-            const currentVars = latestVariablesEvent.variables || [];
-            const feedback = `Update variables with the following values:\n\n${currentVars.map(v => `${v.name}=${v.value}`).join('\n')}\n\nObjective: ${latestVariablesEvent.templated_objective || ''}`;
-            onSubmitQuery(feedback);
-          } : undefined}
-        />
+          />
       )}
     </>
   );

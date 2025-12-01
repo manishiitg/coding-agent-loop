@@ -1,12 +1,28 @@
 import { useState, useEffect, useCallback } from 'react'
-import { X, Settings, Key, CheckCircle, AlertCircle, Loader2, XCircle, Clock, Plus, Trash2 } from 'lucide-react'
+import { X, Settings, Key, CheckCircle, AlertCircle, Loader2, XCircle, Clock, Plus, Trash2, Save } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { TooltipProvider } from './ui/tooltip'
-import { useLLMStore } from '../stores'
-import type { LLMConfiguration, ExtendedLLMConfiguration } from '../services/api-types'
+import { useLLMStore, useSavedLLMConfigsStore } from '../stores'
+import type { LLMConfiguration, ExtendedLLMConfiguration, FallbackModel, LLMProvider, LLMOptions } from '../services/api-types'
 import { AnthropicSection } from './AnthropicSection'
+import { SavedConfigsSection } from './SavedConfigsSection'
 import { OPENAI_MODELS } from '../utils/llmConfig'
+
+// Tab type including saved configs
+type ModalTab = LLMProvider | 'saved-configs'
+
+// Provider badge colors
+const getProviderColor = (provider: string) => {
+  switch (provider) {
+    case 'openrouter': return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+    case 'bedrock': return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
+    case 'openai': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
+    case 'vertex': return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200';
+    case 'anthropic': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+    default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
+  }
+};
 
 interface LLMConfigurationModalProps {
   isOpen: boolean
@@ -54,7 +70,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   } = useLLMStore()
 
   // Helper function to get available models for any provider
-  const getAvailableModelsForProvider = (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'): string[] => {
+  const getAvailableModelsForProvider = (provider: LLMProvider): string[] => {
     switch (provider) {
       case 'openai':
         return availableOpenAIModels
@@ -87,7 +103,27 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     anthropic: null
   })
 
-  const [activeTab, setActiveTab] = useState<'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'>('openrouter')
+  const [activeTab, setActiveTab] = useState<ModalTab>('saved-configs')
+  
+  // Get addConfig from saved configs store
+  const { addConfig: addSavedConfig } = useSavedLLMConfigsStore()
+  
+  // Handler to save current provider config as a saved configuration
+  const handleSaveAsConfig = useCallback((
+    name: string,
+    provider: LLMProvider,
+    modelId: string,
+    options?: LLMOptions
+  ) => {
+    addSavedConfig({
+      name,
+      provider,
+      model_id: modelId,
+      options
+    })
+    // Switch to saved configs tab to show the newly created config
+    setActiveTab('saved-configs')
+  }, [addSavedConfig])
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
@@ -99,7 +135,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, defaultsLoaded, loadDefaultsFromBackend])
 
   // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string) => {
+  const handleTestAPIKey = useCallback(async (provider: LLMProvider, apiKey: string, modelId?: string) => {
     // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
     if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
       return
@@ -160,14 +196,13 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, onClose])
 
   // Helper function to sync primaryConfig when provider config changes
-  const syncPrimaryConfig = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic', config: ExtendedLLMConfiguration) => {
+  const syncPrimaryConfig = (provider: LLMProvider, config: ExtendedLLMConfiguration) => {
     if (primaryConfig.provider === provider) {
       // If this provider is currently primary, sync the primaryConfig
       const updatedPrimaryConfig: LLMConfiguration = {
         provider: provider,
         model_id: config.model_id,
-        fallback_models: config.fallback_models,
-        cross_provider_fallback: config.cross_provider_fallback
+        fallback_models: config.fallback_models  // Now FallbackModel[]
       }
       setPrimaryConfig(updatedPrimaryConfig)
     }
@@ -200,7 +235,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }
 
   // Handle primary provider selection
-  const handleSetPrimaryProvider = (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic') => {
+  const handleSetPrimaryProvider = (provider: LLMProvider) => {
     let configToUse: ExtendedLLMConfiguration
     
     switch (provider) {
@@ -225,8 +260,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     const primaryConfig: LLMConfiguration = {
       provider: provider,
       model_id: configToUse.model_id,
-      fallback_models: configToUse.fallback_models,
-      cross_provider_fallback: configToUse.cross_provider_fallback
+      fallback_models: configToUse.fallback_models  // Now FallbackModel[]
     }
     
     setPrimaryConfig(primaryConfig)
@@ -289,6 +323,24 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
             {/* Left Sidebar - Provider Tabs */}
             <div className="w-48 sm:w-64 border-r border-border bg-muted/30 p-3 sm:p-4 flex-shrink-0">
               <div className="space-y-2">
+                {/* Saved Configs Tab - Primary Section */}
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">Configurations</h3>
+                <button
+                  onClick={() => setActiveTab('saved-configs')}
+                  className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
+                    activeTab === 'saved-configs'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'hover:bg-secondary'
+                  }`}
+                >
+                  <Save className="w-4 h-4" />
+                  <div className="flex-1">
+                    <div className="font-medium">Saved Configs</div>
+                    <div className="text-xs opacity-75">Manage presets</div>
+                  </div>
+                </button>
+
+                <div className="my-4 border-t border-border" />
                 <h3 className="text-sm font-medium text-muted-foreground mb-3">Providers</h3>
                 
                 {/* OpenRouter Tab */}
@@ -396,6 +448,13 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
             {/* Right Content - Provider Configuration */}
             <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
+              {activeTab === 'saved-configs' && (
+                <SavedConfigsSection
+                  getAvailableModelsForProvider={getAvailableModelsForProvider}
+                  onSwitchToProvider={(provider) => setActiveTab(provider)}
+                />
+              )}
+
               {activeTab === 'openrouter' && (
             <OpenRouterSection
               config={openrouterConfig}
@@ -407,6 +466,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               onSetPrimary={() => handleSetPrimaryProvider('openrouter')}
               getAvailableModelsForProvider={getAvailableModelsForProvider}
               currentProvider="openrouter"
+              onSaveAsConfig={handleSaveAsConfig}
             />
               )}
 
@@ -421,6 +481,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onSetPrimary={() => handleSetPrimaryProvider('bedrock')}
                   getAvailableModelsForProvider={getAvailableModelsForProvider}
                   currentProvider="bedrock"
+                  onSaveAsConfig={handleSaveAsConfig}
                 />
               )}
 
@@ -435,6 +496,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onSetPrimary={() => handleSetPrimaryProvider('openai')}
                   getAvailableModelsForProvider={getAvailableModelsForProvider}
                   currentProvider="openai"
+                  onSaveAsConfig={handleSaveAsConfig}
                 />
               )}
 
@@ -449,6 +511,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onSetPrimary={() => handleSetPrimaryProvider('vertex')}
                   getAvailableModelsForProvider={getAvailableModelsForProvider}
                   currentProvider="vertex"
+                  onSaveAsConfig={handleSaveAsConfig}
                 />
               )}
 
@@ -463,6 +526,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onSetPrimary={() => handleSetPrimaryProvider('anthropic')}
                   getAvailableModelsForProvider={getAvailableModelsForProvider}
                   currentProvider="anthropic"
+                  onSaveAsConfig={handleSaveAsConfig}
                 />
               )}
             </div>
@@ -537,8 +601,9 @@ interface ProviderSectionProps {
   apiKeyError: string | null
   isPrimary: boolean
   onSetPrimary: () => void
-  getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic') => string[]
-  currentProvider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
+  getAvailableModelsForProvider: (provider: LLMProvider) => string[]
+  currentProvider: LLMProvider
+  onSaveAsConfig: (name: string, provider: LLMProvider, modelId: string, options?: LLMOptions) => void
 }
 
 interface BedrockSectionProps {
@@ -549,11 +614,160 @@ interface BedrockSectionProps {
   apiKeyErrors: APIKeyError
   isPrimary: boolean
   onSetPrimary: () => void
-  getAvailableModelsForProvider: (provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic') => string[]
-  currentProvider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
+  getAvailableModelsForProvider: (provider: LLMProvider) => string[]
+  currentProvider: LLMProvider
+  onSaveAsConfig: (name: string, provider: LLMProvider, modelId: string, options?: LLMOptions) => void
 }
 
-function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
+// All available providers
+const ALL_PROVIDERS: LLMProvider[] = ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic']
+
+// Unified Fallback Section Component - used by all provider sections
+interface UnifiedFallbackSectionProps {
+  config: ExtendedLLMConfiguration
+  onUpdate: (config: ExtendedLLMConfiguration) => void
+  getAvailableModelsForProvider: (provider: LLMProvider) => string[]
+}
+
+function UnifiedFallbackSection({ config, onUpdate, getAvailableModelsForProvider }: UnifiedFallbackSectionProps) {
+  const [showAddFallback, setShowAddFallback] = useState(false)
+  const [newFallbackProvider, setNewFallbackProvider] = useState<LLMProvider>(config.provider)
+  const [newFallbackModel, setNewFallbackModel] = useState('')
+
+  // Handle adding a new fallback model
+  const handleAddFallback = () => {
+    if (!newFallbackModel) return
+    
+    // Check if model already exists in fallbacks
+    const exists = config.fallback_models.some(
+      m => m.model_id === newFallbackModel && m.provider === newFallbackProvider
+    )
+    if (exists) {
+      alert("This model is already in the fallback list!")
+      return
+    }
+    
+    const newFallback: FallbackModel = {
+      model_id: newFallbackModel,
+      provider: newFallbackProvider,
+      priority: config.fallback_models.length + 1
+    }
+    
+    onUpdate({
+      ...config,
+      fallback_models: [...config.fallback_models, newFallback]
+    })
+    
+    setNewFallbackModel('')
+    setShowAddFallback(false)
+  }
+
+  // Handle removing a fallback model
+  const handleRemoveFallback = (modelId: string, provider: string) => {
+    const newFallbacks = config.fallback_models
+      .filter(m => !(m.model_id === modelId && m.provider === provider))
+      .map((m, idx) => ({ ...m, priority: idx + 1 })) // Re-assign priorities
+    
+    onUpdate({ ...config, fallback_models: newFallbacks })
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="font-medium text-foreground">Fallback Models (Priority Order)</h4>
+        <Button
+          onClick={() => setShowAddFallback(!showAddFallback)}
+          size="sm"
+          variant="outline"
+        >
+          <Plus className="w-4 h-4 mr-1" />
+          {showAddFallback ? "Cancel" : "Add"}
+        </Button>
+      </div>
+      
+      {/* Add Fallback Form */}
+      {showAddFallback && (
+        <div className="mb-4 p-3 bg-muted rounded-md space-y-2">
+          <div>
+            <label className="block text-sm font-medium text-muted-foreground mb-1">Provider</label>
+            <select
+              value={newFallbackProvider}
+              onChange={(e) => {
+                setNewFallbackProvider(e.target.value as LLMProvider)
+                setNewFallbackModel('')
+              }}
+              className="w-full px-2 py-1 border border-border rounded text-sm bg-background text-foreground"
+            >
+              {ALL_PROVIDERS.map((provider) => (
+                <option key={provider} value={provider}>
+                  {provider.charAt(0).toUpperCase() + provider.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-muted-foreground mb-1">Model</label>
+            <select
+              value={newFallbackModel}
+              onChange={(e) => setNewFallbackModel(e.target.value)}
+              className="w-full px-2 py-1 border border-border rounded text-sm bg-background text-foreground"
+            >
+              <option value="">Select model...</option>
+              {getAvailableModelsForProvider(newFallbackProvider).map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </select>
+          </div>
+          <Button
+            onClick={handleAddFallback}
+            disabled={!newFallbackModel}
+            size="sm"
+            className="w-full"
+          >
+            Add Fallback
+          </Button>
+        </div>
+      )}
+      
+      {/* Fallback Models List */}
+      <div className="space-y-2 max-h-48 overflow-y-auto">
+        {config.fallback_models.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No fallback models configured</p>
+        ) : (
+          config.fallback_models
+            .sort((a, b) => a.priority - b.priority)
+            .map((fallback, index) => (
+              <div 
+                key={`${fallback.provider}-${fallback.model_id}`}
+                className="flex items-center justify-between bg-muted rounded-md px-3 py-2"
+              >
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="text-xs font-medium text-muted-foreground w-4">{index + 1}.</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${getProviderColor(fallback.provider)}`}>
+                    {fallback.provider}
+                  </span>
+                  <span className="text-sm text-foreground truncate">{fallback.model_id}</span>
+                </div>
+                <Button
+                  onClick={() => handleRemoveFallback(fallback.model_id, fallback.provider)}
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 w-6 p-0 text-destructive hover:text-destructive flex-shrink-0"
+                >
+                  ×
+                </Button>
+              </div>
+            ))
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground mt-2">
+        Fallback models from any provider. Priority 1 is tried first.
+      </p>
+    </Card>
+  )
+}
+
+function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, onSaveAsConfig }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [customModelInput, setCustomModelInput] = useState('')
   const [customModels, setCustomModels] = useState<string[]>(() => {
@@ -561,7 +775,19 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
     return saved ? JSON.parse(saved) : []
   })
   
+  // Save as config state
+  const [showSaveConfigInput, setShowSaveConfigInput] = useState(false)
+  const [saveConfigName, setSaveConfigName] = useState('')
+  
   const { availableOpenRouterModels } = useLLMStore()
+  
+  // Handle save as config
+  const handleSaveAsConfig = () => {
+    if (!saveConfigName.trim() || !config.model_id) return
+    onSaveAsConfig(saveConfigName.trim(), 'openrouter', config.model_id, config.options)
+    setSaveConfigName('')
+    setShowSaveConfigInput(false)
+  }
 
   // Update local state when config changes (e.g., when loaded from backend)
   useEffect(() => {
@@ -699,6 +925,58 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
         </div>
       </Card>
 
+      {/* Save as Configuration - Only show when API key is valid */}
+      {apiKeyStatus === 'valid' && config.model_id && (
+        <Card className="p-4 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Save className="w-4 h-4 text-green-600 dark:text-green-400" />
+              <h4 className="font-medium text-green-800 dark:text-green-200">Save as Configuration</h4>
+            </div>
+            <p className="text-sm text-green-700 dark:text-green-300">
+              API key validated! Save this configuration for use as primary or fallback.
+            </p>
+            {!showSaveConfigInput ? (
+              <Button
+                onClick={() => setShowSaveConfigInput(true)}
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Save Configuration
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={saveConfigName}
+                  onChange={(e) => setSaveConfigName(e.target.value)}
+                  placeholder="Enter config name (e.g., 'Production GPT-4')"
+                  className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveAsConfig()
+                    if (e.key === 'Escape') {
+                      setShowSaveConfigInput(false)
+                      setSaveConfigName('')
+                    }
+                  }}
+                />
+                <Button onClick={handleSaveAsConfig} disabled={!saveConfigName.trim()} size="sm">
+                  Save
+                </Button>
+                <Button variant="outline" onClick={() => { setShowSaveConfigInput(false); setSaveConfigName('') }} size="sm">
+                  Cancel
+                </Button>
+              </div>
+            )}
+            <p className="text-xs text-green-600 dark:text-green-400">
+              Model: <span className="font-mono">{config.model_id}</span>
+            </p>
+          </div>
+        </Card>
+      )}
+
       {/* Model Selection */}
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-4">Model Selection</h4>
@@ -765,110 +1043,24 @@ function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKe
         </div>
       </Card>
 
-      {/* Fallback Models */}
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Fallback Models</h4>
-        <div className="space-y-2 max-h-32 overflow-y-auto">
-          {allModels
-            .filter(model => model !== config.model_id)
-            .map((model) => (
-              <label key={model} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={config.fallback_models.includes(model)}
-                  onChange={(e) => {
-                    const newFallbacks = e.target.checked
-                      ? [...config.fallback_models, model]
-                      : config.fallback_models.filter(m => m !== model)
-                    onUpdate({ ...config, fallback_models: newFallbacks })
-                  }}
-                  className="rounded border-border text-primary focus:ring-primary"
-                />
-                <span className="text-sm text-foreground">{model}</span>
-              </label>
-            ))}
-        </div>
-      </Card>
-
-      {/* Cross-Provider Fallback */}
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Cross-Provider Fallback</h4>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-muted-foreground mb-2">
-              Fallback Provider
-            </label>
-            <select
-              value={config.cross_provider_fallback?.provider || ''}
-              onChange={(e) => {
-                const fallbackProvider = e.target.value as 'openai' | 'bedrock' | 'openrouter' | 'vertex'
-                if (fallbackProvider) {
-                  // Get available models for the fallback provider
-                  const fallbackModels = getAvailableModelsForProvider(fallbackProvider)
-                  onUpdate({
-                    ...config,
-                    cross_provider_fallback: {
-                      provider: fallbackProvider,
-                      models: fallbackModels.length > 0 ? [fallbackModels[0]] : []
-                    }
-                  })
-                } else {
-                  onUpdate({ ...config, cross_provider_fallback: undefined })
-                }
-              }}
-              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-            >
-              <option value="">No cross-provider fallback</option>
-              {currentProvider !== 'openai' && <option value="openai">OpenAI</option>}
-              {currentProvider !== 'bedrock' && <option value="bedrock">AWS Bedrock</option>}
-              {currentProvider !== 'openrouter' && <option value="openrouter">OpenRouter</option>}
-              {currentProvider !== 'vertex' && <option value="vertex">Vertex AI</option>}
-            </select>
-          </div>
-
-          {config.cross_provider_fallback && (
-            <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-2">
-                Fallback Models
-              </label>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {getAvailableModelsForProvider(config.cross_provider_fallback.provider)
-                  .map((model) => (
-                    <label key={model} className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={config.cross_provider_fallback?.models.includes(model) || false}
-                        onChange={(e) => {
-                          const currentModels = config.cross_provider_fallback?.models || []
-                          const newModels = e.target.checked
-                            ? [...currentModels, model]
-                            : currentModels.filter(m => m !== model)
-                          onUpdate({
-                            ...config,
-                            cross_provider_fallback: {
-                              ...config.cross_provider_fallback!,
-                              models: newModels
-                            }
-                          })
-                        }}
-                        className="rounded border-border text-primary focus:ring-primary"
-                      />
-                      <span className="text-sm text-foreground">{model}</span>
-                    </label>
-                  ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </Card>
+      {/* Unified Fallback Models */}
+      <UnifiedFallbackSection 
+        config={config} 
+        onUpdate={onUpdate} 
+        getAvailableModelsForProvider={getAvailableModelsForProvider} 
+      />
     </div>
   )
 }
 
 // Bedrock Section Component
-function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErrors, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: BedrockSectionProps) {
+function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErrors, isPrimary, onSetPrimary, getAvailableModelsForProvider, onSaveAsConfig }: BedrockSectionProps) {
   const [region, setRegion] = useState(config.region || 'us-east-1')
   const [newCustomModel, setNewCustomModel] = useState('')
+  
+  // Save as config state
+  const [showSaveConfigInput, setShowSaveConfigInput] = useState(false)
+  const [saveConfigName, setSaveConfigName] = useState('')
   
   const { customBedrockModels, addCustomBedrockModel, removeCustomBedrockModel, availableBedrockModels } = useLLMStore()
 
@@ -878,6 +1070,14 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
   }
 
   const allModels = [...availableBedrockModels, ...customBedrockModels]
+  
+  // Handle save as config
+  const handleSaveAsConfig = () => {
+    if (!saveConfigName.trim() || !config.model_id) return
+    onSaveAsConfig(saveConfigName.trim(), 'bedrock', config.model_id, config.options)
+    setSaveConfigName('')
+    setShowSaveConfigInput(false)
+  }
   
   const handleAddCustomModel = () => {
     if (newCustomModel.trim() && !allModels.includes(newCustomModel.trim())) {
@@ -1004,6 +1204,58 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
         </div>
       </Card>
 
+      {/* Save as Configuration - Only show when credentials are valid */}
+      {apiKeyStatus.bedrock === 'valid' && config.model_id && (
+        <Card className="p-4 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Save className="w-4 h-4 text-green-600 dark:text-green-400" />
+              <h4 className="font-medium text-green-800 dark:text-green-200">Save as Configuration</h4>
+            </div>
+            <p className="text-sm text-green-700 dark:text-green-300">
+              AWS credentials validated! Save this configuration for use as primary or fallback.
+            </p>
+            {!showSaveConfigInput ? (
+              <Button
+                onClick={() => setShowSaveConfigInput(true)}
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Save Configuration
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={saveConfigName}
+                  onChange={(e) => setSaveConfigName(e.target.value)}
+                  placeholder="Enter config name (e.g., 'Production Claude')"
+                  className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveAsConfig()
+                    if (e.key === 'Escape') {
+                      setShowSaveConfigInput(false)
+                      setSaveConfigName('')
+                    }
+                  }}
+                />
+                <Button onClick={handleSaveAsConfig} disabled={!saveConfigName.trim()} size="sm">
+                  Save
+                </Button>
+                <Button variant="outline" onClick={() => { setShowSaveConfigInput(false); setSaveConfigName('') }} size="sm">
+                  Cancel
+                </Button>
+              </div>
+            )}
+            <p className="text-xs text-green-600 dark:text-green-400">
+              Model: <span className="font-mono">{config.model_id}</span> • Region: <span className="font-mono">{region}</span>
+            </p>
+          </div>
+        </Card>
+      )}
+
       {/* Model Selection */}
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-4">Model Selection</h4>
@@ -1025,31 +1277,6 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
               ))}
             </select>
           </div>
-        </div>
-      </Card>
-
-      {/* Fallback Models */}
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Fallback Models</h4>
-        <div className="space-y-2 max-h-32 overflow-y-auto">
-          {allModels
-            .filter(model => model !== config.model_id)
-            .map((model) => (
-              <label key={model} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={config.fallback_models.includes(model)}
-                  onChange={(e) => {
-                    const newFallbacks = e.target.checked
-                      ? [...config.fallback_models, model]
-                      : config.fallback_models.filter(m => m !== model)
-                    onUpdate({ ...config, fallback_models: newFallbacks })
-                  }}
-                  className="rounded border-border text-primary focus:ring-primary"
-                />
-                <span className="text-sm text-foreground">{model}</span>
-              </label>
-            ))}
         </div>
       </Card>
 
@@ -1102,85 +1329,24 @@ function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyEr
         </div>
       </Card>
 
-      {/* Cross-Provider Fallback */}
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Cross-Provider Fallback</h4>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-muted-foreground mb-2">
-              Fallback Provider
-            </label>
-            <select
-              value={config.cross_provider_fallback?.provider || ''}
-              onChange={(e) => {
-                const fallbackProvider = e.target.value as 'openai' | 'bedrock' | 'openrouter' | 'vertex'
-                if (fallbackProvider) {
-                  // Get available models for the fallback provider
-                  const fallbackModels = getAvailableModelsForProvider(fallbackProvider)
-                  onUpdate({
-                    ...config,
-                    cross_provider_fallback: {
-                      provider: fallbackProvider,
-                      models: fallbackModels.length > 0 ? [fallbackModels[0]] : []
-                    }
-                  })
-                } else {
-                  onUpdate({ ...config, cross_provider_fallback: undefined })
-                }
-              }}
-              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-            >
-              <option value="">No cross-provider fallback</option>
-              {currentProvider !== 'openai' && <option value="openai">OpenAI</option>}
-              {currentProvider !== 'bedrock' && <option value="bedrock">AWS Bedrock</option>}
-              {currentProvider !== 'openrouter' && <option value="openrouter">OpenRouter</option>}
-              {currentProvider !== 'vertex' && <option value="vertex">Vertex AI</option>}
-            </select>
-          </div>
-
-          {config.cross_provider_fallback && (
-            <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-2">
-                Fallback Models
-              </label>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {getAvailableModelsForProvider(config.cross_provider_fallback.provider)
-                  .map((model) => (
-                    <label key={model} className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={config.cross_provider_fallback?.models.includes(model) || false}
-                        onChange={(e) => {
-                          const currentModels = config.cross_provider_fallback?.models || []
-                          const newModels = e.target.checked
-                            ? [...currentModels, model]
-                            : currentModels.filter(m => m !== model)
-                          onUpdate({
-                            ...config,
-                            cross_provider_fallback: {
-                              ...config.cross_provider_fallback!,
-                              models: newModels
-                            }
-                          })
-                        }}
-                        className="rounded border-border text-primary focus:ring-primary"
-                      />
-                      <span className="text-sm text-foreground">{model}</span>
-                    </label>
-                  ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </Card>
+      {/* Unified Fallback Models */}
+      <UnifiedFallbackSection 
+        config={config} 
+        onUpdate={onUpdate} 
+        getAvailableModelsForProvider={getAvailableModelsForProvider} 
+      />
     </div>
   )
 }
 
 // OpenAI Section Component
-function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
+function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, onSaveAsConfig }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [newCustomModel, setNewCustomModel] = useState('')
+  
+  // Save as config state
+  const [showSaveConfigInput, setShowSaveConfigInput] = useState(false)
+  const [saveConfigName, setSaveConfigName] = useState('')
   
   const { availableOpenAIModels, customOpenAIModels, addCustomOpenAIModel, removeCustomOpenAIModel } = useLLMStore()
 
@@ -1194,6 +1360,14 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
   const handleAPIKeyChange = (newApiKey: string) => {
     setApiKey(newApiKey)
     onUpdate({ ...config, api_key: newApiKey })
+  }
+  
+  // Handle save as config
+  const handleSaveAsConfig = () => {
+    if (!saveConfigName.trim() || !config.model_id) return
+    onSaveAsConfig(saveConfigName.trim(), 'openai', config.model_id, config.options)
+    setSaveConfigName('')
+    setShowSaveConfigInput(false)
   }
 
   // Combine backend models, constant models, and custom models (deduplicated)
@@ -1312,6 +1486,58 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
         </div>
       </Card>
 
+      {/* Save as Configuration - Only show when API key is valid */}
+      {apiKeyStatus === 'valid' && config.model_id && (
+        <Card className="p-4 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Save className="w-4 h-4 text-green-600 dark:text-green-400" />
+              <h4 className="font-medium text-green-800 dark:text-green-200">Save as Configuration</h4>
+            </div>
+            <p className="text-sm text-green-700 dark:text-green-300">
+              API key validated! Save this configuration for use as primary or fallback.
+            </p>
+            {!showSaveConfigInput ? (
+              <Button
+                onClick={() => setShowSaveConfigInput(true)}
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Save Configuration
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={saveConfigName}
+                  onChange={(e) => setSaveConfigName(e.target.value)}
+                  placeholder="Enter config name (e.g., 'Production GPT-4o')"
+                  className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveAsConfig()
+                    if (e.key === 'Escape') {
+                      setShowSaveConfigInput(false)
+                      setSaveConfigName('')
+                    }
+                  }}
+                />
+                <Button onClick={handleSaveAsConfig} disabled={!saveConfigName.trim()} size="sm">
+                  Save
+                </Button>
+                <Button variant="outline" onClick={() => { setShowSaveConfigInput(false); setSaveConfigName('') }} size="sm">
+                  Cancel
+                </Button>
+              </div>
+            )}
+            <p className="text-xs text-green-600 dark:text-green-400">
+              Model: <span className="font-mono">{config.model_id}</span>
+            </p>
+          </div>
+        </Card>
+      )}
+
       {/* Model Selection */}
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-4">Model Selection</h4>
@@ -1385,110 +1611,25 @@ function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
         </div>
       </Card>
 
-      {/* Fallback Models */}
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Fallback Models</h4>
-        <div className="space-y-2 max-h-32 overflow-y-auto">
-          {allModels
-            .filter(model => model !== config.model_id)
-            .map((model) => (
-              <label key={model} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={config.fallback_models.includes(model)}
-                  onChange={(e) => {
-                    const newFallbacks = e.target.checked
-                      ? [...config.fallback_models, model]
-                      : config.fallback_models.filter(m => m !== model)
-                    onUpdate({ ...config, fallback_models: newFallbacks })
-                  }}
-                  className="rounded border-border text-primary focus:ring-primary"
-                />
-                <span className="text-sm text-foreground">{model}</span>
-              </label>
-            ))}
-        </div>
-      </Card>
-
-      {/* Cross-Provider Fallback */}
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Cross-Provider Fallback</h4>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-muted-foreground mb-2">
-              Fallback Provider
-            </label>
-            <select
-              value={config.cross_provider_fallback?.provider || ''}
-              onChange={(e) => {
-                const fallbackProvider = e.target.value as 'openai' | 'bedrock' | 'openrouter' | 'vertex'
-                if (fallbackProvider) {
-                  // Get available models for the fallback provider
-                  const fallbackModels = getAvailableModelsForProvider(fallbackProvider)
-                  onUpdate({
-                    ...config,
-                    cross_provider_fallback: {
-                      provider: fallbackProvider,
-                      models: fallbackModels.length > 0 ? [fallbackModels[0]] : []
-                    }
-                  })
-                } else {
-                  onUpdate({ ...config, cross_provider_fallback: undefined })
-                }
-              }}
-              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-            >
-              <option value="">No cross-provider fallback</option>
-              {currentProvider !== 'openai' && <option value="openai">OpenAI</option>}
-              {currentProvider !== 'bedrock' && <option value="bedrock">AWS Bedrock</option>}
-              {currentProvider !== 'openrouter' && <option value="openrouter">OpenRouter</option>}
-              {currentProvider !== 'vertex' && <option value="vertex">Vertex AI</option>}
-            </select>
-          </div>
-
-          {config.cross_provider_fallback && (
-            <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-2">
-                Fallback Models
-              </label>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {getAvailableModelsForProvider(config.cross_provider_fallback.provider)
-                  .map((model) => (
-                    <label key={model} className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={config.cross_provider_fallback?.models.includes(model) || false}
-                        onChange={(e) => {
-                          const currentModels = config.cross_provider_fallback?.models || []
-                          const newModels = e.target.checked
-                            ? [...currentModels, model]
-                            : currentModels.filter(m => m !== model)
-                          onUpdate({
-                            ...config,
-                            cross_provider_fallback: {
-                              ...config.cross_provider_fallback!,
-                              models: newModels
-                            }
-                          })
-                        }}
-                        className="rounded border-border text-primary focus:ring-primary"
-                      />
-                      <span className="text-sm text-foreground">{model}</span>
-                    </label>
-                  ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </Card>
+      {/* Unified Fallback Models */}
+      <UnifiedFallbackSection 
+        config={config} 
+        onUpdate={onUpdate} 
+        getAvailableModelsForProvider={getAvailableModelsForProvider} 
+      />
     </div>
   )
 }
 
 // Vertex Section Component
-function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, currentProvider }: ProviderSectionProps) {
+function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, getAvailableModelsForProvider, onSaveAsConfig }: ProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [newCustomModel, setNewCustomModel] = useState('')
+  
+  // Save as config state
+  const [showSaveConfigInput, setShowSaveConfigInput] = useState(false)
+  const [saveConfigName, setSaveConfigName] = useState('')
+  
   const { availableVertexModels, customVertexModels, addCustomVertexModel, removeCustomVertexModel } = useLLMStore()
 
   useEffect(() => {
@@ -1500,6 +1641,14 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
   const handleAPIKeyChange = (newApiKey: string) => {
     setApiKey(newApiKey)
     onUpdate({ ...config, api_key: newApiKey })
+  }
+  
+  // Handle save as config
+  const handleSaveAsConfig = () => {
+    if (!saveConfigName.trim() || !config.model_id) return
+    onSaveAsConfig(saveConfigName.trim(), 'vertex', config.model_id, config.options)
+    setSaveConfigName('')
+    setShowSaveConfigInput(false)
   }
 
   const allModels = [...(availableVertexModels.length > 0 ? availableVertexModels : ['gemini-2.5-flash', 'gemini-2.5-pro']), ...customVertexModels]
@@ -1617,6 +1766,59 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
           </div>
         </div>
       </Card>
+
+      {/* Save as Configuration - Only show when auth is valid */}
+      {apiKeyStatus === 'valid' && config.model_id && (
+        <Card className="p-4 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Save className="w-4 h-4 text-green-600 dark:text-green-400" />
+              <h4 className="font-medium text-green-800 dark:text-green-200">Save as Configuration</h4>
+            </div>
+            <p className="text-sm text-green-700 dark:text-green-300">
+              Authentication successful! Save this configuration for use as primary or fallback.
+            </p>
+            {!showSaveConfigInput ? (
+              <Button
+                onClick={() => setShowSaveConfigInput(true)}
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Save Configuration
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={saveConfigName}
+                  onChange={(e) => setSaveConfigName(e.target.value)}
+                  placeholder="Enter config name (e.g., 'Production Gemini')"
+                  className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveAsConfig()
+                    if (e.key === 'Escape') {
+                      setShowSaveConfigInput(false)
+                      setSaveConfigName('')
+                    }
+                  }}
+                />
+                <Button onClick={handleSaveAsConfig} disabled={!saveConfigName.trim()} size="sm">
+                  Save
+                </Button>
+                <Button variant="outline" onClick={() => { setShowSaveConfigInput(false); setSaveConfigName('') }} size="sm">
+                  Cancel
+                </Button>
+              </div>
+            )}
+            <p className="text-xs text-green-600 dark:text-green-400">
+              Model: <span className="font-mono">{config.model_id}</span>
+            </p>
+          </div>
+        </Card>
+      )}
+
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-4">Model Selection</h4>
         <div className="space-y-3">
@@ -1682,60 +1884,12 @@ function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyErr
           )}
         </div>
       </Card>
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Fallback Models</h4>
-        <div className="space-y-2 max-h-32 overflow-y-auto">
-          {allModels.filter(model => model !== config.model_id).map((model) => (
-            <label key={model} className="flex items-center gap-2">
-              <input type="checkbox" checked={config.fallback_models.includes(model)} onChange={(e) => {
-                const newFallbacks = e.target.checked ? [...config.fallback_models, model] : config.fallback_models.filter(m => m !== model)
-                onUpdate({ ...config, fallback_models: newFallbacks })
-              }} className="rounded border-border text-primary focus:ring-primary" />
-              <span className="text-sm text-foreground">{model}</span>
-            </label>
-          ))}
-        </div>
-      </Card>
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Cross-Provider Fallback</h4>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-muted-foreground mb-2">Fallback Provider</label>
-            <select value={config.cross_provider_fallback?.provider || ''} onChange={(e) => {
-              const fallbackProvider = e.target.value as 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
-              if (fallbackProvider) {
-                const fallbackModels = getAvailableModelsForProvider(fallbackProvider)
-                onUpdate({ ...config, cross_provider_fallback: { provider: fallbackProvider, models: fallbackModels.length > 0 ? [fallbackModels[0]] : [] } })
-              } else {
-                onUpdate({ ...config, cross_provider_fallback: undefined })
-              }
-            }} className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary">
-              <option value="">No cross-provider fallback</option>
-              {currentProvider !== 'openai' && <option value="openai">OpenAI</option>}
-              {currentProvider !== 'bedrock' && <option value="bedrock">AWS Bedrock</option>}
-              {currentProvider !== 'openrouter' && <option value="openrouter">OpenRouter</option>}
-              {currentProvider !== 'vertex' && <option value="vertex">Vertex AI</option>}
-            </select>
-          </div>
-          {config.cross_provider_fallback && (
-            <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-2">Fallback Models</label>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {getAvailableModelsForProvider(config.cross_provider_fallback.provider).map((model) => (
-                  <label key={model} className="flex items-center gap-2">
-                    <input type="checkbox" checked={config.cross_provider_fallback?.models.includes(model) || false} onChange={(e) => {
-                      const currentModels = config.cross_provider_fallback?.models || []
-                      const newModels = e.target.checked ? [...currentModels, model] : currentModels.filter(m => m !== model)
-                      onUpdate({ ...config, cross_provider_fallback: { ...config.cross_provider_fallback!, models: newModels } })
-                    }} className="rounded border-border text-primary focus:ring-primary" />
-                    <span className="text-sm text-foreground">{model}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </Card>
+      {/* Unified Fallback Models */}
+      <UnifiedFallbackSection 
+        config={config} 
+        onUpdate={onUpdate} 
+        getAvailableModelsForProvider={getAvailableModelsForProvider} 
+      />
     </div>
   )
 }

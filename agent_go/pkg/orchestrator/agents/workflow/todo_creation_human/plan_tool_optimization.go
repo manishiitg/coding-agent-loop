@@ -290,11 +290,11 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	if ptom.presetPlanToolOptimizationLLM != nil && ptom.presetPlanToolOptimizationLLM.Provider != "" && ptom.presetPlanToolOptimizationLLM.ModelID != "" {
 		// Use preset LLM config
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              ptom.presetPlanToolOptimizationLLM.Provider,
-			ModelID:               ptom.presetPlanToolOptimizationLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
+			Provider:       ptom.presetPlanToolOptimizationLLM.Provider,
+			ModelID:        ptom.presetPlanToolOptimizationLLM.ModelID,
+			FallbackModels: orchestratorLLMConfig.FallbackModels,
+			APIKeys:        orchestratorLLMConfig.APIKeys,
+			Options:        orchestratorLLMConfig.Options,
 		}
 		ptom.GetLogger().Infof("🔧 Using preset plan tool optimization LLM: %s/%s", ptom.presetPlanToolOptimizationLLM.Provider, ptom.presetPlanToolOptimizationLLM.ModelID)
 	} else {

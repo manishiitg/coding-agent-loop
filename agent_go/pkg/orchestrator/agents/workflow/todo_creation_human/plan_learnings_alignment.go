@@ -8,13 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerPlanLearningsAlignmentTemplate holds template variables for alignment prompts
@@ -94,11 +95,11 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	if plam.presetPlanLearningsAlignmentLLM != nil && plam.presetPlanLearningsAlignmentLLM.Provider != "" && plam.presetPlanLearningsAlignmentLLM.ModelID != "" {
 		// Use preset LLM config
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              plam.presetPlanLearningsAlignmentLLM.Provider,
-			ModelID:               plam.presetPlanLearningsAlignmentLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
+			Provider:       plam.presetPlanLearningsAlignmentLLM.Provider,
+			ModelID:        plam.presetPlanLearningsAlignmentLLM.ModelID,
+			FallbackModels: orchestratorLLMConfig.FallbackModels,
+			APIKeys:        orchestratorLLMConfig.APIKeys,
+			Options:        orchestratorLLMConfig.Options,
 		}
 		plam.GetLogger().Infof("🔧 Using preset plan learnings alignment LLM: %s/%s", plam.presetPlanLearningsAlignmentLLM.Provider, plam.presetPlanLearningsAlignmentLLM.ModelID)
 	} else {

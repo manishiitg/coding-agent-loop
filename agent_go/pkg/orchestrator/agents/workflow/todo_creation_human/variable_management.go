@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
@@ -16,6 +15,8 @@ import (
 	"mcpagent/events"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // VariablesExtractedEvent represents the event when variables are extracted from objective
@@ -260,11 +261,11 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 	orchestratorLLMConfig := vm.GetLLMConfig()
 	if vm.presetVariableExtractionLLM != nil && vm.presetVariableExtractionLLM.Provider != "" && vm.presetVariableExtractionLLM.ModelID != "" {
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              vm.presetVariableExtractionLLM.Provider,
-			ModelID:               vm.presetVariableExtractionLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
-			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
+			Provider:       vm.presetVariableExtractionLLM.Provider,
+			ModelID:        vm.presetVariableExtractionLLM.ModelID,
+			FallbackModels: orchestratorLLMConfig.FallbackModels, // Preserve fallback models from orchestrator
+			APIKeys:        orchestratorLLMConfig.APIKeys,        // Preserve API keys from orchestrator
+			Options:        orchestratorLLMConfig.Options,        // Preserve LLM options from orchestrator
 		}
 		vm.GetLogger().Infof("🔧 Using preset default variable extraction LLM: %s/%s", vm.presetVariableExtractionLLM.Provider, vm.presetVariableExtractionLLM.ModelID)
 	} else {

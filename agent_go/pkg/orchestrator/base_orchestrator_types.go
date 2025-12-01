@@ -6,11 +6,11 @@ import (
 
 // LLMConfig represents the LLM configuration from frontend
 type LLMConfig struct {
-	Provider              string                        `json:"provider"`
-	ModelID               string                        `json:"model_id"`
-	FallbackModels        []string                      `json:"fallback_models"`
-	CrossProviderFallback *agents.CrossProviderFallback `json:"cross_provider_fallback,omitempty"`
-	APIKeys               *APIKeys                      `json:"api_keys,omitempty"`
+	Provider       string                 `json:"provider"`
+	ModelID        string                 `json:"model_id"`
+	FallbackModels []agents.FallbackModel `json:"fallback_models"` // Unified fallback models with provider info
+	APIKeys        *APIKeys               `json:"api_keys,omitempty"`
+	Options        *agents.LLMOptions     `json:"options,omitempty"` // LLM options (common + provider-specific)
 }
 
 // APIKeys represents API keys for different providers

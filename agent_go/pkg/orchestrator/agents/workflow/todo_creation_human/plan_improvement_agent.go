@@ -96,24 +96,24 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := pim.GetLLMConfig()
 	if pim.presetPlanImprovementLLM != nil && pim.presetPlanImprovementLLM.Provider != "" && pim.presetPlanImprovementLLM.ModelID != "" {
-		// Initialize fallback/cpf/apiKeys with safe defaults
-		var fallbackModels []string
-		var crossProviderFallback *agents.CrossProviderFallback
+		// Initialize fallback/cpf/apiKeys/options with safe defaults
+		var fallbackModels []agents.FallbackModel
 		var apiKeys *orchestrator.APIKeys
+		var options *agents.LLMOptions
 
 		// Only copy from orchestratorLLMConfig if it's not nil
 		if orchestratorLLMConfig != nil {
 			fallbackModels = orchestratorLLMConfig.FallbackModels
-			crossProviderFallback = orchestratorLLMConfig.CrossProviderFallback
 			apiKeys = orchestratorLLMConfig.APIKeys
+			options = orchestratorLLMConfig.Options
 		}
 
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              pim.presetPlanImprovementLLM.Provider,
-			ModelID:               pim.presetPlanImprovementLLM.ModelID,
-			FallbackModels:        fallbackModels,        // Preserve fallback models from orchestrator (or nil if orchestrator config is nil)
-			CrossProviderFallback: crossProviderFallback, // Preserve cross-provider fallback (or nil if orchestrator config is nil)
-			APIKeys:               apiKeys,               // Preserve API keys from orchestrator (or nil if orchestrator config is nil)
+			Provider:       pim.presetPlanImprovementLLM.Provider,
+			ModelID:        pim.presetPlanImprovementLLM.ModelID,
+			FallbackModels: fallbackModels, // Preserve fallback models from orchestrator (or nil if orchestrator config is nil)
+			APIKeys:        apiKeys,        // Preserve API keys from orchestrator (or nil if orchestrator config is nil)
+			Options:        options,        // Preserve LLM options from orchestrator (or nil if orchestrator config is nil)
 		}
 		pim.GetLogger().Infof("🔧 Using preset default plan improvement LLM: %s/%s", pim.presetPlanImprovementLLM.Provider, pim.presetPlanImprovementLLM.ModelID)
 	} else {

@@ -25,8 +25,6 @@ import type {
   HumanFeedbackResponse,
   RunFoldersResponse,
   ProgressResponse,
-  ExecutionOptions,
-  StepProgress,
 } from './api-types'
 
 // Re-export types for other components to use

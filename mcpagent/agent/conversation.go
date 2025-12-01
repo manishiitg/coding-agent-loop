@@ -405,6 +405,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		}
 		opts = append(opts, llmtypes.WithMaxTokens(maxTokens))
 
+		// Apply provider-specific LLM options from a.Options
+		opts = append(opts, applyLLMOptions(a.Options, a.provider)...)
+
 		// Use proper LLM function calling via llmtypes.WithTools()
 		// Use the pre-filtered tools that were determined at conversation start
 		if len(a.filteredTools) > 0 {
@@ -1453,4 +1456,60 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 	}
 
 	return finalChoice.Content, messages, nil
+}
+
+// applyLLMOptions converts LLMOptions to llmtypes.CallOption based on the provider
+// This function handles common options and provider-specific options
+func applyLLMOptions(options *LLMOptions, provider llm.Provider) []llmtypes.CallOption {
+	if options == nil {
+		return nil
+	}
+
+	var opts []llmtypes.CallOption
+
+	// Common options (override Temperature/MaxTokens if set in options)
+	// Note: Temperature and MaxTokens are already set above, these would override
+	// We skip them here since they're handled above with env var fallbacks
+
+	// Provider-specific options
+	switch provider {
+	case llm.ProviderOpenAI:
+		if options.OpenAI != nil {
+			if options.OpenAI.ReasoningEffort != nil && *options.OpenAI.ReasoningEffort != "" {
+				opts = append(opts, llmtypes.WithReasoningEffort(*options.OpenAI.ReasoningEffort))
+			}
+			// Note: FrequencyPenalty, PresencePenalty, Seed, ResponseFormat would need
+			// corresponding WithXxx functions in llmtypes to be supported
+		}
+
+	case llm.ProviderVertex:
+		if options.Vertex != nil {
+			if options.Vertex.ThinkingLevel != nil && *options.Vertex.ThinkingLevel != "" {
+				opts = append(opts, llmtypes.WithThinkingLevel(*options.Vertex.ThinkingLevel))
+			}
+			// Note: SafetySettings and GroundingConfig would need additional support
+		}
+
+	case llm.ProviderOpenRouter:
+		// OpenRouter options (Transforms, Route, Models) are handled at the provider level
+		// Not as call options - these would be part of request metadata
+		if options.OpenRouter != nil {
+			// Currently no direct llmtypes options for OpenRouter-specific features
+		}
+
+	case llm.ProviderBedrock:
+		// Bedrock options (GuardrailIdentifier, InferenceProfile) are provider-level config
+		if options.Bedrock != nil {
+			// Currently no direct llmtypes options for Bedrock-specific features
+		}
+
+	case llm.ProviderAnthropic:
+		// Anthropic's extended_thinking would require special handling
+		// as it affects the response format and token budget
+		if options.Anthropic != nil {
+			// Currently no direct llmtypes options for Anthropic-specific features
+		}
+	}
+
+	return opts
 }

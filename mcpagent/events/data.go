@@ -1480,21 +1480,28 @@ func (e *ToolExecutionEvent) GetEventType() EventType {
 	return ToolExecution
 }
 
+// FallbackModelInfo represents a fallback model in events
+type FallbackModelInfo struct {
+	ModelID  string `json:"model_id"`
+	Provider string `json:"provider"`
+	Priority int    `json:"priority"`
+}
+
 // LLMGenerationWithRetryEvent represents LLM generation with retry logic
 type LLMGenerationWithRetryEvent struct {
 	BaseEventData
-	Turn                   int                    `json:"turn"`
-	MaxRetries             int                    `json:"max_retries"`
-	PrimaryModel           string                 `json:"primary_model"`
-	CurrentLLM             string                 `json:"current_llm"`
-	SameProviderFallbacks  []string               `json:"same_provider_fallbacks"`
-	CrossProviderFallbacks []string               `json:"cross_provider_fallbacks"`
-	Provider               string                 `json:"provider"`
-	Operation              string                 `json:"operation"`
-	FinalError             string                 `json:"final_error,omitempty"`
-	Usage                  map[string]interface{} `json:"usage,omitempty"`
-	Status                 string                 `json:"status,omitempty"`
-	Metadata               map[string]interface{} `json:"metadata,omitempty"`
+	Turn                int                    `json:"turn"`
+	MaxRetries          int                    `json:"max_retries"`
+	PrimaryModel        string                 `json:"primary_model"`
+	CurrentLLM          string                 `json:"current_llm"`
+	FallbackModels      []FallbackModelInfo    `json:"fallback_models"`       // Unified fallback models with provider info
+	FallbackModelsCount int                    `json:"fallback_models_count"` // Count for quick reference
+	Provider            string                 `json:"provider"`
+	Operation           string                 `json:"operation"`
+	FinalError          string                 `json:"final_error,omitempty"`
+	Usage               map[string]interface{} `json:"usage,omitempty"`
+	Status              string                 `json:"status,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (e *LLMGenerationWithRetryEvent) GetEventType() EventType {

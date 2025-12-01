@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
-import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest } from '../services/api-types'
+import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, FallbackModel, LLMProvider } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
 import { getAllAvailableLLMs, getAvailableModels } from '../utils/llmConfig'
@@ -63,10 +63,13 @@ interface LLMState extends StoreActions {
   removeCustomVertexModel: (model: string) => void
   
   // Legacy actions (for backward compatibility)
-  updateProvider: (provider: 'openrouter' | 'bedrock') => void
+  updateProvider: (provider: LLMProvider) => void
   updateModel: (modelId: string) => void
-  updateFallbacks: (fallbacks: string[]) => void
-  updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
+  updateFallbacks: (fallbacks: FallbackModel[]) => void
+  // Fallback management actions
+  addFallbackModel: (model: FallbackModel) => void
+  removeFallbackModel: (modelId: string) => void
+  reorderFallbackModels: (newOrder: FallbackModel[]) => void
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
@@ -85,8 +88,7 @@ export const useLLMStore = create<LLMState>()(
         primaryConfig: {
           provider: 'openrouter',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined
+          fallback_models: []  // Unified FallbackModel array
         },
         
         // Provider-specific configurations - will be loaded from backend
@@ -94,35 +96,30 @@ export const useLLMStore = create<LLMState>()(
           provider: 'openrouter',
           model_id: '',
           fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         bedrockConfig: {
           provider: 'bedrock',
           model_id: '',
           fallback_models: [],
-          cross_provider_fallback: undefined,
           region: 'us-east-1'
         },
         openaiConfig: {
           provider: 'openai',
           model_id: '',
           fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         vertexConfig: {
           provider: 'vertex',
           model_id: '',
           fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         anthropicConfig: {
           provider: 'anthropic',
           model_id: '',
           fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         
@@ -251,10 +248,8 @@ export const useLLMStore = create<LLMState>()(
                 // Preserve model_id from saved config (including custom models) if it exists
                 // Otherwise use default
                 model_id: hasSavedModel ? savedConfig.model_id : (defaultConfig?.model_id || ''),
-                // Preserve fallback_models from saved config if they exist
+                // Preserve fallback_models from saved config if they exist (now FallbackModel[])
                 fallback_models: hasSavedFallbacks ? savedConfig.fallback_models : (defaultConfig?.fallback_models || []),
-                // Preserve cross_provider_fallback from saved config if it exists
-                cross_provider_fallback: savedConfig?.cross_provider_fallback || defaultConfig?.cross_provider_fallback,
                 // Preserve API key if it exists in saved config
                 api_key: savedConfig?.api_key || defaultConfig?.api_key || '',
                 // Preserve region for Bedrock
@@ -277,7 +272,6 @@ export const useLLMStore = create<LLMState>()(
                 provider: 'vertex',
                 model_id: '',
                 fallback_models: [],
-                cross_provider_fallback: undefined,
                 api_key: ''
                 }
               ),
@@ -287,7 +281,6 @@ export const useLLMStore = create<LLMState>()(
                 provider: 'anthropic',
                 model_id: '',
                 fallback_models: [],
-                cross_provider_fallback: undefined,
                 api_key: ''
                 }
               ),
@@ -357,25 +350,36 @@ export const useLLMStore = create<LLMState>()(
           const state = get()
           const availableModels = getAvailableModels(provider)
           
-          // Set appropriate fallback models based on provider
-          let fallbackModels: string[] = []
-          let crossProviderFallback: LLMConfiguration['cross_provider_fallback']
+          // Set appropriate fallback models based on provider (unified FallbackModel format)
+          let fallbackModels: FallbackModel[] = []
           
           if (provider === 'openrouter') {
-            fallbackModels = ['z-ai/glm-4.5', 'openai/gpt-4o-mini']
-            crossProviderFallback = {
-              provider: 'openai',
-              models: ['gpt-4o-mini']
-            }
+            fallbackModels = [
+              { model_id: 'x-ai/grok-code-fast-1', provider: 'openrouter', priority: 1 },
+              { model_id: 'openai/gpt-4o-mini', provider: 'openrouter', priority: 2 },
+              { model_id: 'gpt-4o-mini', provider: 'openai', priority: 3 }  // Cross-provider fallback
+            ]
           } else if (provider === 'bedrock') {
             fallbackModels = [
-              'us.anthropic.claude-sonnet-4-20250514-v1:0',
-              'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
+              { model_id: 'us.anthropic.claude-sonnet-4-20250514-v1:0', provider: 'bedrock', priority: 1 },
+              { model_id: 'us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider: 'bedrock', priority: 2 },
+              { model_id: 'x-ai/grok-code-fast-1', provider: 'openrouter', priority: 3 }  // Cross-provider fallback
             ]
-            crossProviderFallback = {
-              provider: 'openrouter',
-              models: ['x-ai/grok-code-fast-1', 'openai/gpt-4o-mini']
-            }
+          } else if (provider === 'openai') {
+            fallbackModels = [
+              { model_id: 'gpt-4o-mini', provider: 'openai', priority: 1 },
+              { model_id: 'gpt-4o', provider: 'openai', priority: 2 }
+            ]
+          } else if (provider === 'vertex') {
+            fallbackModels = [
+              { model_id: 'gemini-2.0-flash-001', provider: 'vertex', priority: 1 },
+              { model_id: 'gemini-1.5-flash', provider: 'vertex', priority: 2 }
+            ]
+          } else if (provider === 'anthropic') {
+            fallbackModels = [
+              { model_id: 'claude-3-5-sonnet-20241022', provider: 'anthropic', priority: 1 },
+              { model_id: 'claude-3-haiku-20240307', provider: 'anthropic', priority: 2 }
+            ]
           }
 
           set({
@@ -383,8 +387,7 @@ export const useLLMStore = create<LLMState>()(
               ...state.primaryConfig,
               provider,
               model_id: availableModels[0] || '',
-              fallback_models: fallbackModels,
-              cross_provider_fallback: crossProviderFallback
+              fallback_models: fallbackModels
             },
             error: null
           })
@@ -410,11 +413,45 @@ export const useLLMStore = create<LLMState>()(
           }))
         },
 
-        updateCrossProviderFallback: (fallback) => {
+        // Add a single fallback model
+        addFallbackModel: (model) => {
+          set((state) => {
+            const existingModels = state.primaryConfig.fallback_models
+            // Auto-assign priority based on position
+            const newPriority = existingModels.length + 1
+            const newModel = { ...model, priority: newPriority }
+            return {
+              primaryConfig: {
+                ...state.primaryConfig,
+                fallback_models: [...existingModels, newModel]
+              },
+              error: null
+            }
+          })
+        },
+
+        // Remove a fallback model and re-order priorities
+        removeFallbackModel: (modelId) => {
+          set((state) => {
+            const filteredModels = state.primaryConfig.fallback_models
+              .filter(m => m.model_id !== modelId)
+              .map((m, idx) => ({ ...m, priority: idx + 1 }))  // Re-assign priorities
+            return {
+              primaryConfig: {
+                ...state.primaryConfig,
+                fallback_models: filteredModels
+              },
+              error: null
+            }
+          })
+        },
+
+        // Reorder fallback models (for drag-and-drop)
+        reorderFallbackModels: (newOrder) => {
           set((state) => ({
             primaryConfig: {
               ...state.primaryConfig,
-              cross_provider_fallback: fallback
+              fallback_models: newOrder.map((m, idx) => ({ ...m, priority: idx + 1 }))
             },
             error: null
           }))
@@ -488,35 +525,36 @@ export const useLLMStore = create<LLMState>()(
             primaryConfig: {
               provider: 'openrouter',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined
+              fallback_models: []
             },
             openrouterConfig: {
               provider: 'openrouter',
               model_id: '',
               fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: ''
             },
             bedrockConfig: {
               provider: 'bedrock',
               model_id: '',
               fallback_models: [],
-              cross_provider_fallback: undefined,
               region: 'us-east-1'
             },
             openaiConfig: {
               provider: 'openai',
               model_id: '',
               fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: ''
             },
             vertexConfig: {
               provider: 'vertex',
               model_id: '',
               fallback_models: [],
-              cross_provider_fallback: undefined,
+              api_key: ''
+            },
+            anthropicConfig: {
+              provider: 'anthropic',
+              model_id: '',
+              fallback_models: [],
               api_key: ''
             },
             showLLMModal: false,

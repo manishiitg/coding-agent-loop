@@ -9,12 +9,13 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	"mcpagent/llm"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // NonStructuredResponseError represents a case where the agent returned a text response
@@ -507,28 +508,20 @@ func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llmtypes.Model
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%d", boa.agentType, time.Now().UnixNano()))
 
 	// Build fallback models list
-	var fallbackModels []string
+	// Build fallback models list (extract model IDs from FallbackModel for llm.Config)
+	// Note: Full FallbackModel with provider/priority is used in agent's unified fallback logic (llm_generation.go)
+	var fallbackModelIDs []string
 
 	// Add custom fallback models from frontend if provided
 	if len(boa.config.FallbackModels) > 0 {
-		fallbackModels = append(fallbackModels, boa.config.FallbackModels...)
+		for _, fb := range boa.config.FallbackModels {
+			fallbackModelIDs = append(fallbackModelIDs, fb.ModelID)
+		}
 		// Using custom fallback models from frontend
 	} else {
 		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(boa.config.Provider))...)
+		fallbackModelIDs = append(fallbackModelIDs, llm.GetDefaultFallbackModels(llm.Provider(boa.config.Provider))...)
 		// Using default fallback models for provider
-	}
-
-	// Add cross-provider fallback models if configured
-	if boa.config.CrossProviderFallback != nil && len(boa.config.CrossProviderFallback.Models) > 0 {
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.config.CrossProviderFallback.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		// Added cross-provider fallback models
-	} else {
-		// Add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.config.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		// Added default cross-provider fallback models
 	}
 
 	// Convert API keys from agent config to LLM config format
@@ -554,7 +547,7 @@ func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llmtypes.Model
 		Temperature:    boa.config.Temperature,
 		Tracers:        nil, // Tracers will be set later if needed
 		TraceID:        traceID,
-		FallbackModels: fallbackModels,
+		FallbackModels: fallbackModelIDs,
 		MaxRetries:     boa.config.MaxRetries,
 		Logger:         boa.logger,
 		APIKeys:        llmAPIKeys,

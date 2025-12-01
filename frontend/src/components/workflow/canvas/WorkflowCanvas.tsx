@@ -16,6 +16,7 @@ import { StepSidebar } from './StepSidebar'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { usePlanToFlow, type WorkflowNode } from '../hooks/usePlanToFlow'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
+import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 
 // Duration to show highlights before clearing (in ms)
@@ -94,6 +95,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Refs for callbacks that need to be defined early
   const handleRunFromStepRef = React.useRef<((stepIndex: number, stepId: string) => void) | null>(null)
 
+  // Get selected run folder from workflow store
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
     showDependencyEdges,
@@ -105,7 +109,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
     },
     isExecuting,
-    completedStepIndices  // Pass completed steps for enabling/disabling run buttons
+    completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
+    workspacePath,  // Pass workspace path for file opening
+    selectedRunFolder  // Pass selected run folder for file opening
   })
 
   // React Flow state
@@ -157,6 +163,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const handleRunFromStep = useCallback((stepIndex: number, stepId: string) => {
     console.log('[WorkflowCanvas] Run single step clicked:', stepIndex, stepId)
     console.log('[WorkflowCanvas] onStartPhase available:', !!onStartPhase)
+    console.log('[WorkflowCanvas] globalExecutionOptions:', globalExecutionOptions)
     
     // Highlight the step node before running
     highlightStepNode(stepId)
@@ -164,9 +171,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (onStartPhase) {
       // Create execution options to run only this single step
       // Use global execution options from toolbar (iteration, execution mode)
+      // If globalExecutionOptions is null, default to 'new' run folder
+      const runFolder = globalExecutionOptions?.selectedRunFolder || 'new'
       const executionOptions: ExecutionOptions = {
-        run_mode: globalExecutionOptions?.selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
-        selected_run_folder: globalExecutionOptions?.selectedRunFolder === 'new' ? undefined : globalExecutionOptions?.selectedRunFolder,
+        run_mode: runFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
+        selected_run_folder: runFolder === 'new' ? undefined : runFolder,
         execution_strategy: 'run_single_step',
         resume_from_step: stepIndex + 1  // 1-based step number (target step)
       }

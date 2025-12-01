@@ -335,7 +335,63 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) saveStepProgress(ctx context
 	}
 
 	hcpo.GetLogger().Infof("✅ Saved step progress to %s", progressPath)
+
+	// Emit step progress updated event for frontend dynamic updates
+	hcpo.emitStepProgressUpdatedEvent(ctx, progress)
+
 	return nil
+}
+
+// emitStepProgressUpdatedEvent emits an event when step progress is updated
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent(ctx context.Context, progress *StepProgress) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		return
+	}
+
+	// Determine the last completed step (highest index in the completed list)
+	lastCompletedStep := -1
+	if len(progress.CompletedStepIndices) > 0 {
+		for _, idx := range progress.CompletedStepIndices {
+			if idx > lastCompletedStep {
+				lastCompletedStep = idx
+			}
+		}
+	}
+
+	// Convert BranchStepProgress to events.BranchStepProgress
+	branchSteps := make(map[int]events.BranchStepProgress)
+	for k, v := range progress.BranchSteps {
+		branchSteps[k] = events.BranchStepProgress{
+			BranchExecuted: v.BranchExecuted,
+			CompletedSteps: v.CompletedSteps,
+		}
+	}
+
+	eventData := &events.StepProgressUpdatedEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		CompletedStepIndices: progress.CompletedStepIndices,
+		TotalSteps:           progress.TotalSteps,
+		WorkspacePath:        hcpo.GetWorkspacePath(),
+		RunFolder:            hcpo.selectedRunFolder,
+		LastCompletedStep:    lastCompletedStep,
+		BranchSteps:          branchSteps,
+	}
+
+	// Create unified event wrapper
+	unifiedEvent := &events.AgentEvent{
+		Type:      events.StepProgressUpdated,
+		Timestamp: time.Now(),
+		Data:      eventData,
+	}
+
+	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to emit step progress updated event: %v", err)
+	} else {
+		hcpo.GetLogger().Infof("📊 Emitted step progress updated event: %d/%d steps completed", len(progress.CompletedStepIndices), progress.TotalSteps)
+	}
 }
 
 // deleteStepProgress deletes steps_done.json file

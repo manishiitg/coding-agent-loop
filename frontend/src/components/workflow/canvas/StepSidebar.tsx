@@ -1,13 +1,14 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { X, Trash2, Edit2, Save, ChevronDown, Settings, CheckCircle2, BookOpen, Play } from 'lucide-react'
+import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { ExecutionStrategy } from '../../../services/api-types'
 import { StepEditPanel } from '../../events/orchestrator/StepEditPanel'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
-import { getWorkflowPhases } from '../../../constants/workflow'
-import type { PollingEvent, WorkflowPhase } from '../../../services/api-types'
+import { useWorkflowStore } from '../../../stores/useWorkflowStore'
+import type { PollingEvent } from '../../../services/api-types'
 import { VariablesModal } from '../VariablesModal'
 import { agentApi } from '../../../services/api'
 import LLMSelectionDropdown from '../../LLMSelectionDropdown'
@@ -60,7 +61,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   completedStepIndices = []
 }) => {
   const { availableLLMs } = useLLMStore()
-  const [phases, setPhases] = useState<WorkflowPhase[]>([])
+  
+  // Get step-specific phases from workflow store (already filtered)
+  const { getStepSpecificPhases, loadPhases } = useWorkflowStore()
+  const phases = getStepSpecificPhases()
+  
   const [isPhaseDropdownOpen, setIsPhaseDropdownOpen] = useState(false)
   const phaseDropdownRef = useRef<HTMLDivElement>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -68,26 +73,12 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const [editedTitle, setEditedTitle] = useState('')
   const [editedDescription, setEditedDescription] = useState('')
   const [editedSuccessCriteria, setEditedSuccessCriteria] = useState('')
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
-  // Load workflow phases
+  // Ensure phases are loaded (store handles deduplication)
   useEffect(() => {
-    const loadPhases = async () => {
-      try {
-        const loadedPhases = await getWorkflowPhases()
-        // Filter to only show phases that can work on individual steps (like plan-tool-optimization)
-        // For now, include plan-tool-optimization and other analysis phases
-        const stepSpecificPhases = loadedPhases.filter(p => 
-          p.id === 'plan-tool-optimization' || 
-          p.id === 'plan-improvement' ||
-          p.id === 'plan-learnings-alignment'
-        )
-        setPhases(stepSpecificPhases)
-      } catch (error) {
-        console.error('[StepSidebar] Failed to load phases:', error)
-      }
-    }
     loadPhases()
-  }, [])
+  }, [loadPhases])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -746,7 +737,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 <Edit2 className="w-4 h-4" />
               </button>
               <button
-                onClick={() => onDeleteStep(node.id)}
+                onClick={() => setShowDeleteConfirm(true)}
                 className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 dark:text-red-400 transition-colors"
                 title="Delete step"
               >
@@ -926,6 +917,32 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      {/* ESC key closes the dialog and cancels the delete (treats as false/not confirmed) */}
+      <ConfirmationDialog
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={() => {
+          if (node) {
+            onDeleteStep(node.id)
+            setShowDeleteConfirm(false)
+          }
+        }}
+        title="Delete Step"
+        message={
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'loop')
+            ? (() => {
+                const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+                const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
+                return `Are you sure you want to delete "${stepTitle}"? This action cannot be undone. Any context dependencies referencing this step's output will be automatically removed.`
+              })()
+            : 'Are you sure you want to delete this step? This action cannot be undone.'
+        }
+        confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+      />
     </div>
   )
 }

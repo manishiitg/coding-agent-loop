@@ -875,6 +875,11 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 		logger.Infof("🔧 Plan tool optimization completed after %d iterations", iteration)
 	}
 
+	// Check if step_config modification tools were called and emit event if needed
+	// This ensures the frontend is notified of step_config.json changes
+	// The frontend merges plan.json + step_config.json, so any change should trigger refresh
+	CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, currentConversationHistory, workspacePath, agent.baseOrchestrator.ReadWorkspaceFile)
+
 	return currentResult, currentConversationHistory, nil
 }
 

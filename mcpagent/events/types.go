@@ -161,8 +161,9 @@ const (
 	IndependentStepsSelected EventType = "independent_steps_selected"
 
 	// Todo planning events
-	TodoStepsExtracted EventType = "todo_steps_extracted"
-	VariablesExtracted EventType = "variables_extracted"
+	TodoStepsExtracted  EventType = "todo_steps_extracted"
+	VariablesExtracted  EventType = "variables_extracted"
+	StepProgressUpdated EventType = "step_progress_updated"
 
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"
@@ -233,7 +234,7 @@ func GetComponentFromEventType(eventType EventType) string {
 		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
 		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
 		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted || eventType == VariablesExtracted ||
-		eventType == StepTokenUsage:
+		eventType == StepTokenUsage || eventType == StepProgressUpdated:
 		return "orchestrator"
 	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
 		return "agent"

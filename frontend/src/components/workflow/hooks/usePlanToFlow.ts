@@ -22,6 +22,8 @@ export interface StepNodeData extends Record<string, unknown> {
   onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
   isExecuting?: boolean  // Whether execution is in progress
   canRun?: boolean  // Whether this step can be run (all previous steps completed)
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
 }
 
 export interface ConditionalNodeData extends Record<string, unknown> {
@@ -36,6 +38,8 @@ export interface ConditionalNodeData extends Record<string, unknown> {
   onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
   isExecuting?: boolean  // Whether execution is in progress
   canRun?: boolean  // Whether this step can be run (all previous steps completed)
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
 }
 
 export interface LoopNodeData extends Record<string, unknown> {
@@ -51,6 +55,8 @@ export interface LoopNodeData extends Record<string, unknown> {
   onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
   isExecuting?: boolean  // Whether execution is in progress
   canRun?: boolean  // Whether this step can be run (all previous steps completed)
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
 }
 
 export interface ValidationNodeData extends Record<string, unknown> {
@@ -88,6 +94,8 @@ interface UsePlanToFlowOptions {
   onRunFromStep?: OnRunFromStepCallback  // Callback for "run from step" button
   isExecuting?: boolean  // Whether execution is currently in progress
   completedStepIndices?: number[]  // 0-based indices of completed steps (from steps_done.json)
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
 }
 
 // Dagre layout configuration
@@ -169,7 +177,9 @@ function stepToNode(
   parentId?: string, 
   branchType?: 'true' | 'false',
   changes?: PlanChanges | null,
-  completedStepIndices: number[] = []
+  completedStepIndices: number[] = [],
+  workspacePath?: string | null,
+  selectedRunFolder?: string
 ): WorkflowNode {
   const nodeId = parentId 
     ? `${parentId}-${branchType}-${stepIndex}`
@@ -192,7 +202,9 @@ function stepToNode(
     status,
     stepIndex,
     step,
-    changeType
+    changeType,
+    workspacePath,
+    selectedRunFolder
   }
 
   if (step.has_condition) {
@@ -203,8 +215,8 @@ function stepToNode(
       data: {
         ...baseData,
         condition_question: step.condition_question,
-        condition_context: step.condition_context,
-        status: 'pending' as const
+        condition_context: step.condition_context
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as ConditionalNodeData
     }
   }
@@ -217,8 +229,8 @@ function stepToNode(
       data: {
         ...baseData,
         loop_condition: step.loop_condition,
-        max_iterations: step.max_iterations,
-        status: 'pending' as const
+        max_iterations: step.max_iterations
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as LoopNodeData
     }
   }
@@ -401,7 +413,9 @@ function processSteps(
   presetValidationLLM: AgentLLMConfig | undefined,
   presetLearningLLM: AgentLLMConfig | undefined,
   availableLLMs: Array<{ provider: string; model: string; label: string }>,
-  completedStepIndices: number[] = []
+  completedStepIndices: number[] = [],
+  workspacePath?: string | null,
+  selectedRunFolder?: string
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   const nodes: WorkflowNode[] = []
   const edges: WorkflowEdge[] = []
@@ -410,7 +424,7 @@ function processSteps(
   let lastExitNodeId: string | null = null
 
   steps.forEach((step, index) => {
-    const node = stepToNode(step, index, parentId, branchType, changes, completedStepIndices)
+    const node = stepToNode(step, index, parentId, branchType, changes, completedStepIndices, workspacePath, selectedRunFolder)
     nodes.push(node)
 
     // Create edge from previous step's exit node (sequential flow)
@@ -458,7 +472,9 @@ function processSteps(
           presetValidationLLM,
           presetLearningLLM,
           availableLLMs,
-          completedStepIndices
+          completedStepIndices,
+          workspacePath,
+          selectedRunFolder
         )
         nodes.push(...trueBranch.nodes)
         edges.push(...trueBranch.edges)
@@ -493,7 +509,9 @@ function processSteps(
           presetValidationLLM,
           presetLearningLLM,
           availableLLMs,
-          completedStepIndices
+          completedStepIndices,
+          workspacePath,
+          selectedRunFolder
         )
         nodes.push(...falseBranch.nodes)
         edges.push(...falseBranch.edges)
@@ -631,7 +649,9 @@ export function usePlanToFlow(
       presetValidationLLM,
       presetLearningLLM,
       availableLLMs,
-      completedStepIndices
+      completedStepIndices,
+      options.workspacePath,
+      options.selectedRunFolder
     )
 
     // Add start node
@@ -725,7 +745,7 @@ export function usePlanToFlow(
       return true
     }
     
-    // Inject onRunFromStep callback, isExecuting state, and canRun into step-type nodes
+    // Inject onRunFromStep callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
       if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop') {
         const stepIndex = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData).stepIndex
@@ -736,7 +756,9 @@ export function usePlanToFlow(
             ...node.data,
             onRunFromStep,
             isExecuting,
-            canRun
+            canRun,
+            workspacePath: options.workspacePath,
+            selectedRunFolder: options.selectedRunFolder
           }
         }
       }
@@ -744,7 +766,7 @@ export function usePlanToFlow(
     })
     
     return layoutedResult
-  }, [plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, isExecuting, completedStepIndices])
+  }, [plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, isExecuting, completedStepIndices, options.workspacePath, options.selectedRunFolder])
 }
 
 export default usePlanToFlow

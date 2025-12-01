@@ -14,7 +14,7 @@ import { Edit, Save, X, Loader2 } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
 import { EventModeProvider } from "./components/events";
-import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore } from "./stores";
+import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
@@ -340,6 +340,9 @@ function App() {
     
     // Initialize global preset store
     useGlobalPresetStore.getState().refreshPresets()
+    
+    // Initialize workflow store (load phases)
+    useWorkflowStore.getState().loadPhases()
   }, [])
 
   // Restore active presets after stores are initialized

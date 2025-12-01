@@ -12,6 +12,9 @@ Replace the current workflow mode UI with a React Flow-based canvas that serves 
 - ✅ Custom nodes: StepNode, ConditionalNode, LoopNode, StartNode, EndNode
 - ✅ Dynamic phase selector dropdown in toolbar (loads all phases from backend)
 - ✅ Phase descriptions shown in dropdown
+- ✅ **Zustand store architecture** - Centralized workflow state management
+- ✅ **Single API call for phases** - Promise-based deduplication prevents redundant calls
+- ✅ **Phase dropdown fix** - Works correctly even when in execution phase
 - ✅ Step sidebar for editing individual steps (replaces popup panel)
 - ✅ StepEditPanel integration for advanced step configuration
 - ✅ Theme-aware colors (light, dark, dark-plus support)
@@ -29,6 +32,7 @@ Replace the current workflow mode UI with a React Flow-based canvas that serves 
 - ✅ **Progress-based step enabling** - Run buttons disabled if previous steps incomplete
 - ✅ **Run from step button** - Direct play button on each step node
 - ✅ **Compact toolbar** - Reduced font and button sizes for better space usage
+- ✅ **Clickable file names** - Click context input/output files to open in workspace
 
 ### Remaining Work
 - 🔲 Test full workflow execution flow end-to-end
@@ -118,6 +122,13 @@ frontend/src/components/workflow/
 ├── WorkflowLayout.tsx            ✅ Main layout with ChatArea integration
 ├── WorkflowPhaseHandler.tsx      (deprecated - phases now in toolbar)
 └── index.ts                      ✅ Exports
+
+frontend/src/stores/
+├── useWorkflowStore.ts           ✅ Centralized workflow state (phases, progress, execution options)
+└── index.ts                      ✅ Store initialization & exports
+
+frontend/src/constants/
+└── workflow.ts                   ✅ Static constants only (WORKFLOW_MESSAGES, EXECUTION_PHASE_ID)
 ```
 
 ---
@@ -126,14 +137,23 @@ frontend/src/components/workflow/
 
 ### 1. Phase Selector (WorkflowToolbar.tsx)
 
-**Dynamic Phase Loading:**
-- Loads ALL phases from backend via `getWorkflowPhases()`
+**Dynamic Phase Loading via Zustand Store:**
+- Phases loaded once on app initialization via `useWorkflowStore`
+- Centralized state management in `stores/useWorkflowStore.ts`
+- Promise-based deduplication prevents multiple API calls
 - Shows dropdown with phase titles AND descriptions
 - Numbered badges (1, 2, 3, etc.)
 - Current phase highlighted with checkmark
 - Disabled during execution (shows spinner)
+- **Fixed:** Dropdown now works even when `currentPhase === 'execution'` (users can switch phases)
 
+**State Management:**
 ```typescript
+// Zustand store manages all workflow state
+useWorkflowStore.getState().loadPhases()  // Loads from API once
+const phases = useWorkflowStore(state => state.phases)
+const isLoadingPhases = useWorkflowStore(state => state.isLoadingPhases)
+
 // Phases loaded from: GET /api/workflow/constants
 interface WorkflowPhase {
   id: string           // e.g., "variable-extraction"
@@ -142,6 +162,12 @@ interface WorkflowPhase {
   options?: WorkflowPhaseOption[]
 }
 ```
+
+**Store Architecture:**
+- `useWorkflowStore` - Centralized Zustand store for all workflow state
+- Phases loaded on app initialization (`App.tsx` calls `initializeStores()`)
+- Components use individual selectors for proper reactivity
+- Removed deprecated functions from `constants/workflow.ts`
 
 ### 1.1. Execution Controls (WorkflowToolbar.tsx)
 
@@ -227,6 +253,13 @@ const DAGRE_CONFIG = {
   - Disabled if previous steps not completed (`canRun` prop)
   - Tooltip shows "Run step X only" or "Complete previous steps first"
   - Disabled during execution (`isExecuting` prop)
+- **Clickable file names** - Context input/output files are clickable
+  - Click to open file in workspace (same mechanism as workspace sidebar)
+  - File path: `{workspacePath}/runs/{selectedRunFolder}/execution/{filename}`
+  - Only enabled when valid iteration folder is selected (not 'new')
+  - Visual feedback: hover effects (underline, background color change, cursor pointer)
+  - Handles file not found errors gracefully with user-friendly messages
+  - Processes file content (JSON formatting, image support, escaped characters)
 
 **ConditionalNode:**
 - Hexagon shape using CSS clip-path
@@ -240,8 +273,42 @@ const DAGRE_CONFIG = {
 - Iteration counter badge (top-right): "2/10" or "×10"
 - Progress bar during execution
 - Full dark mode support
+- **Clickable file names** - Same file opening functionality as StepNode
+  - Context input/output files are clickable
+  - Opens files in workspace with same processing as workspace sidebar
 
-### 4. Step Sidebar (StepSidebar.tsx)
+### 4. File Opening from Nodes
+
+**Clickable Context Files:**
+- Context input/output file names displayed in StepNode and LoopNode are clickable
+- Clicking a file name opens it in the workspace panel (same as clicking in workspace sidebar)
+- **File Path Construction:**
+  - Full path: `{workspacePath}/runs/{selectedRunFolder}/execution/{filename}`
+  - Uses `workspacePath` and `selectedRunFolder` from workflow store
+  - Only enabled when valid iteration folder is selected (not 'new')
+
+**File Opening Process:**
+1. Constructs full file path from workspace path, selected run folder, and filename
+2. Fetches file content using `agentApi.getPlannerFileContent(filePath)`
+3. Processes content (handles JSON formatting, images, escaped characters)
+4. Opens file in workspace panel with proper formatting
+5. Highlights file in workspace sidebar
+6. Shows error message if file doesn't exist (user-friendly with file path)
+
+**Error Handling:**
+- Clears previous errors before attempting to load
+- Shows user-friendly error messages: "File not found: {filename}"
+- Includes full file path for debugging
+- Doesn't open file panel if file doesn't exist
+- Errors displayed in workspace panel (consistent with workspace sidebar)
+
+**Visual Feedback:**
+- Hover effects: underline, background color change
+- Cursor changes to pointer on hover
+- Tooltip shows "Click to open: {full path}" when enabled
+- Disabled state when no valid iteration folder selected
+
+### 5. Step Sidebar (StepSidebar.tsx)
 
 **Replaces the old popup NodeDetailPanel:**
 - Fixed position on right side (600px width)
@@ -253,7 +320,7 @@ const DAGRE_CONFIG = {
   - LLM settings
 - Run/Edit/Delete actions
 
-### 5. ChatArea Integration
+### 6. ChatArea Integration
 
 **ChatArea provides execution infrastructure:**
 - Hidden in workflow mode (`<div className="hidden">`)
@@ -270,12 +337,13 @@ const handleStartPhase = async (phaseId: string) => {
 }
 ```
 
-### 6. Auto-Refresh & Change Highlighting
+### 7. Auto-Refresh & Change Highlighting
 
 **Plan Change Detection (`usePlanData.ts`):**
-- Tracks previous plan state for comparison
+- Tracks previous plan state for comparison (merged plan.json + step_config.json)
 - Detects added, updated, and deleted steps by ID
 - Returns `PlanChanges` object with change metadata
+- Compares merged states to detect changes in both files
 
 ```typescript
 interface PlanChanges {
@@ -292,13 +360,27 @@ interface PlanChanges {
 - Deleted steps: Red ring + shadow + reduced opacity
 - Badge showing change type (top-right of node)
 
+**Backend Event Emission (`planning_management.go`):**
+All agents that modify `plan.json` or `step_config.json` emit `todo_steps_extracted` event:
+- **Planning Agent**: Emits when plan is created/updated in planning phase
+- **Plan Improvement Agent**: Uses `CheckAndEmitPlanUpdateEvent()` helper after execution
+- **Plan Tool Optimization Agent**: Uses `CheckAndEmitPlanUpdateEvent()` helper after execution
+
+The shared helper `CheckAndEmitPlanUpdateEvent()`:
+1. Extracts tool calls from conversation history
+2. Checks for plan modification tools (`update_plan_steps`, `delete_plan_steps`, `add_plan_steps`, etc.)
+3. Checks for step_config modification tools (`update_step_config_tools`)
+4. If any modification tool was called, reads plan.json and emits event
+5. Frontend then fetches and merges both plan.json and step_config.json
+
 **Auto-Refresh Flow:**
 1. WorkflowLayout listens for `todo_steps_extracted` events
 2. On detection, calls `canvasRef.current.refresh()`
-3. `usePlanData` compares old vs new plan
-4. `usePlanToFlow` applies `changeType` to nodes
-5. Node components render highlights
-6. Highlights auto-clear after 4 seconds via `clearChanges()`
+3. `usePlanData` fetches plan.json + step_config.json and merges them
+4. Compares old vs new merged plan
+5. `usePlanToFlow` applies `changeType` to nodes
+6. Node components render highlights
+7. Highlights auto-clear after 4 seconds via `clearChanges()`
 
 **Minimized TodoStepsExtractedEvent:**
 - In workflow mode, shows collapsed summary by default
@@ -306,13 +388,41 @@ interface PlanChanges {
 - Click to expand for full step list
 - Hint: "(view in React Flow canvas)"
 
-### 7. Execution Progress & Step Enabling
+### 8. Execution Progress & Step Enabling
 
 **Progress Tracking:**
 - Reads `steps_done.json` from selected iteration folder
 - Tracks completed step indices (0-based)
 - Progress badge shown in toolbar when existing run selected
 - Progress data passed to `usePlanToFlow` hook
+
+**Real-Time Progress Updates (`step_progress_updated` event):**
+Backend emits `step_progress_updated` event whenever `steps_done.json` is updated:
+- Triggered after each step completion (regular, branch, or conditional steps)
+- Triggered during fast→normal mode transitions
+- Contains full progress state (completed indices, branch steps, total steps)
+
+```typescript
+// Event payload
+interface StepProgressUpdatedEvent {
+  completed_step_indices: number[]  // 0-based indices of completed steps
+  total_steps: number               // Total steps in plan
+  workspace_path: string            // For file operations
+  run_folder: string                // e.g., "iteration-1"
+  last_completed_step: number       // Most recently completed step (-1 if unknown)
+  branch_steps?: {                  // Branch progress for conditional steps
+    [stepIndex: number]: {
+      branch_executed: string       // "if_true" or "if_false"
+      completed_steps: string[]     // e.g., ["step-3-if-true-0"]
+    }
+  }
+}
+```
+
+Frontend can listen for this event to dynamically update:
+- Step completion status in dropdown and node UI
+- Progress badges in toolbar
+- "Completed" visual styling on step nodes
 
 **Step Enabling Logic:**
 - Each step node receives `canRun` prop based on completion status
@@ -441,6 +551,8 @@ All components use CSS variables for theme-aware colors:
 1. Test phase execution flow end-to-end
 2. Verify events stream correctly in ChatArea panel
 3. Add phase options support (some phases have configurable options)
+4. ✅ **Completed:** Zustand store refactoring for workflow state management
+5. ✅ **Completed:** Fixed phase dropdown loading and reactivity issues
 
 ### Future Enhancements
 1. Drag-and-drop step reordering
@@ -462,6 +574,10 @@ All components use CSS variables for theme-aware colors:
 5. **Execution Phase ID** - Changed from `'pre-verification'` to `'execution'` (frontend & backend)
 6. **Iteration Folders** - Removed `'iteration-same'` option, now uses numbered iterations only
 7. **Backend Prompts** - All execution prompts moved to frontend UI, backend uses `ExecutionOptions` struct
+8. **State Management** - Migrated from scattered local state to centralized `useWorkflowStore` (Zustand)
+9. **Phase Loading** - Removed deprecated `getWorkflowPhases()` and `getDefaultWorkflowPhase()` functions
+10. **Constants Cleanup** - `constants/workflow.ts` now only contains static constants, no API calls
+11. **Component Refactoring** - All workflow components now use Zustand selectors for proper reactivity
 
 ---
 
@@ -493,3 +609,10 @@ All components use CSS variables for theme-aware colors:
 | Progress badge in toolbar | ✅ |
 | Compact toolbar design | ✅ |
 | No backend interactive prompts | ✅ |
+| Zustand store for workflow state | ✅ |
+| Single API call for phases (deduplication) | ✅ |
+| Phase dropdown works in execution phase | ✅ |
+| Removed deprecated phase functions | ✅ |
+| Clickable file names in nodes | ✅ |
+| File opening from workflow nodes | ✅ |
+| Error handling for missing files | ✅ |

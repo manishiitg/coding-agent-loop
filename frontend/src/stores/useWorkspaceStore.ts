@@ -686,34 +686,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               if (currentLevel <= maxLevel) {
                 // Use filepath (which is adjusted in workflow mode) to match rendering
                 foldersToExpand.add(file.filepath)
-                console.log(`[WorkspaceStore] Adding folder at level ${currentLevel} (maxLevel=${maxLevel}):`, file.filepath, {
-                  hasChildren: !!file.children,
-                  childrenCount: file.children?.length || 0
-                })
-              } else {
-                console.log(`[WorkspaceStore] Skipping folder at level ${currentLevel} (exceeds maxLevel=${maxLevel}):`, file.filepath)
               }
               // Always recurse into children to check deeper levels, even if we don't expand this folder
               // This ensures we can expand nested folders even if their parent isn't expanded
               if (file.children && file.children.length > 0) {
                 collectFoldersAtLevel(file.children, currentLevel + 1)
-              } else {
-                console.log(`[WorkspaceStore] Folder at level ${currentLevel} has no children:`, file.filepath)
               }
             }
           })
         }
         
         collectFoldersAtLevel(files, 0)
-        
-        console.log('[WorkspaceStore] expandFoldersToLevel:', {
-          maxLevel,
-          filesCount: files.length,
-          previousExpandedCount: currentExpanded.size,
-          foldersToExpandCount: foldersToExpand.size,
-          newFoldersAdded: foldersToExpand.size - currentExpanded.size,
-          foldersToExpand: Array.from(foldersToExpand).slice(0, 20) // First 20 for debugging
-        })
         
         set({ expandedFolders: foldersToExpand })
       },

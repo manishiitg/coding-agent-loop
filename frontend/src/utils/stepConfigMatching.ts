@@ -17,7 +17,7 @@ export interface AgentConfigs {
   disable_validation?: boolean;
   disable_learning?: boolean;
   learning_after_loop_iteration?: boolean;
-  learning_detail_level?: 'exact' | 'general' | 'none';
+  learning_detail_level?: 'exact' | 'general';
   selected_servers?: string[];
   selected_tools?: string[];
   enabled_custom_tools?: string[]; // Format: "category:tool" or "category:*" (e.g., "workspace_tools:*", "human_tools:human_feedback")

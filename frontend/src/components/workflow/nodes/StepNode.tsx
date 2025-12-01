@@ -3,6 +3,10 @@ import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Play } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
+import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
+import { useAppStore } from '../../../stores'
+import { agentApi } from '../../../services/api'
+import { isValidJSON } from '../../../utils/event-helpers'
 import type { StepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getToolsByCategory } from '../../../utils/customToolNames'
@@ -70,8 +74,10 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, isExecuting, canRun = true } = data
+  const { title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, isExecuting, canRun = true, workspacePath, selectedRunFolder } = data
   const { availableLLMs } = useLLMStore()
+  const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
+  const { setWorkspaceMinimized } = useAppStore()
 
   // Button is disabled if executing, can't run (previous steps not done), or no callback
   const isRunDisabled = isExecuting || !canRun || !onRunFromStep
@@ -172,6 +178,105 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
   const hasConfig = executionLLM || effectiveServers.length > 0 || effectiveTools.length > 0 || hasWorkspaceTools || hasHumanTools || hasLargeOutput
 
+  // Handle file click - open file in workspace (same as workspace sidebar)
+  const handleFileClick = useCallback(async (filename: string, e: MouseEvent) => {
+    e.stopPropagation() // Prevent node selection
+    
+    // Don't open if no workspace path or run folder selected
+    if (!workspacePath || !selectedRunFolder || selectedRunFolder === 'new') {
+      console.warn('[StepNode] Cannot open file: missing workspacePath or selectedRunFolder')
+      return
+    }
+    
+    // Construct file path: {workspacePath}/runs/{selectedRunFolder}/execution/{filename}
+    const filePath = `${workspacePath}/runs/${selectedRunFolder}/execution/${filename}`
+    
+    try {
+      // Ensure workspace is visible
+      setWorkspaceMinimized(false)
+      
+      // Clear any previous errors
+      setError(null)
+      
+      // Set loading state
+      setLoadingFileContent(true)
+      
+      // Set selected file
+      const fileName = filePath.split('/').pop() || filePath
+      setSelectedFile({ name: fileName, path: filePath })
+      
+      // Fetch file content (same as workspace sidebar)
+      const response = await agentApi.getPlannerFileContent(filePath)
+      
+      if (response.success && response.data) {
+        let processedContent = response.data.content
+        let isJsonFile = false
+        let formattedJson = null
+        
+        // Check if this is an image file
+        if (response.data.is_image && processedContent.startsWith('data:image/')) {
+          // For images, the content is already base64 encoded data URL
+          // No processing needed for images
+        } else {
+          // Process the content to convert escaped newlines to actual newlines
+          processedContent = processedContent
+            .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+            .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+            .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
+          
+          // Check if this is a JSON file (by extension OR content)
+          const extensionIsJson = filePath.toLowerCase().endsWith('.json')
+          const contentIsJson = isValidJSON(processedContent)
+          isJsonFile = extensionIsJson || contentIsJson
+          
+          // If it's a JSON file, try to parse and format it
+          if (isJsonFile) {
+            try {
+              const parsed = JSON.parse(processedContent)
+              formattedJson = JSON.stringify(parsed, null, 2)
+            } catch (parseError) {
+              // If JSON parsing fails, keep the original content
+              console.warn('Failed to parse JSON file:', parseError)
+              formattedJson = null
+            }
+          }
+        }
+        
+        // Store both original content and formatted JSON (if applicable)
+        setFileContent(processedContent)
+        if (formattedJson) {
+          setFileContent(formattedJson)
+        }
+        
+        // Refresh file tree to ensure file is available and highlight it
+        await fetchFiles()
+        setTimeout(() => {
+          highlightFile(filePath)
+        }, 200)
+        
+        setShowFileContent(true)
+      } else {
+        // File doesn't exist or failed to load
+        const errorMessage = response.message || 'File not found'
+        setError(`File not found: ${fileName}\n${errorMessage}\n\nPath: ${filePath}`)
+        // Don't show file content panel if file doesn't exist
+        setShowFileContent(false)
+        // Clear selected file since it doesn't exist
+        setSelectedFile(null)
+      }
+    } catch (error) {
+      console.error('[StepNode] Error opening file:', error)
+      const fileName = filePath.split('/').pop() || filePath
+      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch file content'
+      setError(`Failed to open file: ${fileName}\n${errorMessage}\n\nPath: ${filePath}`)
+      // Don't show file content panel on error
+      setShowFileContent(false)
+      setSelectedFile(null)
+    } finally {
+      setLoadingFileContent(false)
+    }
+  }, [workspacePath, selectedRunFolder, highlightFile, setShowFileContent, fetchFiles, setWorkspaceMinimized, setSelectedFile, setFileContent, setLoadingFileContent, setError])
+
   return (
     <div className={`
       relative w-[340px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-hidden
@@ -267,11 +372,23 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               <div className="flex items-start gap-2">
                 <ArrowDownToLine className="w-3.5 h-3.5 text-blue-500 mt-0.5 flex-shrink-0" />
                 <div className="flex flex-wrap gap-1">
-                  {contextInputs.map((f, i) => (
-                    <span key={i} className="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300" title={f}>
-                      {getFileName(f)}
-                    </span>
-                  ))}
+                  {contextInputs.map((f, i) => {
+                    const fileName = getFileName(f)
+                    const canOpen = workspacePath && selectedRunFolder && selectedRunFolder !== 'new'
+                    return (
+                      <span
+                        key={i}
+                        onClick={canOpen ? (e) => handleFileClick(f, e) : undefined}
+                        className={`
+                          px-1.5 py-0.5 rounded text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300
+                          ${canOpen ? 'cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-900/50 hover:underline' : ''}
+                        `}
+                        title={canOpen ? `Click to open: ${f}` : f}
+                      >
+                        {fileName}
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -279,11 +396,23 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               <div className="flex items-start gap-2">
                 <ArrowUpFromLine className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
                 <div className="flex flex-wrap gap-1">
-                  {contextOutputs.map((f, i) => (
-                    <span key={i} className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300" title={f}>
-                      {getFileName(f)}
-                    </span>
-                  ))}
+                  {contextOutputs.map((f, i) => {
+                    const fileName = getFileName(f)
+                    const canOpen = workspacePath && selectedRunFolder && selectedRunFolder !== 'new'
+                    return (
+                      <span
+                        key={i}
+                        onClick={canOpen ? (e) => handleFileClick(f, e) : undefined}
+                        className={`
+                          px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300
+                          ${canOpen ? 'cursor-pointer hover:bg-emerald-200 dark:hover:bg-emerald-900/50 hover:underline' : ''}
+                        `}
+                        title={canOpen ? `Click to open: ${f}` : f}
+                      >
+                        {fileName}
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
             )}

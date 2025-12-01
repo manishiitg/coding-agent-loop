@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import React, { useEffect, useRef, useMemo, useCallback } from 'react'
 import { 
   Play, 
   Square, 
@@ -20,18 +20,15 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
-import type { PlannerFile } from '../../../services/api-types'
+import { useWorkflowStore, type ExecutionModeType, type RunFolder } from '../../../stores/useWorkflowStore'
+import type { PlannerFile, WorkflowPhase } from '../../../services/api-types'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
-import { getWorkflowPhases } from '../../../constants/workflow'
-import { agentApi } from '../../../services/api'
-import type { WorkflowPhase, ExecutionOptions, StepProgress } from '../../../services/api-types'
-import { ExecutionStrategy } from '../../../services/api-types'
+import type { ExecutionOptions } from '../../../services/api-types'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 
 // Execution Mode options - how to run (human feedback, learning, etc.)
-type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
 const EXECUTION_MODE_OPTIONS: { id: ExecutionModeType; label: string; icon: typeof Play; description: string }[] = [
   { id: 'human_approval', label: 'With Human Approval', icon: Play, description: 'Pause for feedback at each step' },
   { id: 'fast_execution', label: 'Fast Execution', icon: Zap, description: 'Execute all without pausing' },
@@ -64,14 +61,9 @@ interface WorkflowToolbarProps {
   showDependencyEdges?: boolean
   onToggleDependencyEdges?: () => void
   onProgressChange?: (completedStepIndices: number[]) => void  // Callback when step progress changes
-  onExecutionOptionsChange?: (options: { selectedRunFolder: string; selectedExecutionMode: 'human_approval' | 'fast_execution' | 'with_learning' }) => void  // Callback when execution options change
+  onExecutionOptionsChange?: (options: { selectedRunFolder: string; selectedExecutionMode: ExecutionModeType }) => void  // Callback when execution options change
   className?: string
 }
-
-// LocalStorage keys for persisting workflow settings
-const STORAGE_KEY_PREFIX = 'workflow_settings_'
-const getStorageKey = (presetId: string, setting: 'iteration' | 'execution_mode' | 'start_point') => 
-  `${STORAGE_KEY_PREFIX}${presetId}_${setting}`
 
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
@@ -97,6 +89,27 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // App store for toggling workspace visibility
   const { setWorkspaceMinimized } = useAppStore()
   
+  // Workflow store - use selectors to ensure proper reactivity
+  const phases = useWorkflowStore(state => state.phases)
+  const isLoadingPhases = useWorkflowStore(state => state.isLoadingPhases)
+  const phasesInitialized = useWorkflowStore(state => state.phasesInitialized)
+  const loadPhases = useWorkflowStore(state => state.loadPhases)
+  const runFolders = useWorkflowStore(state => state.runFolders)
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const isLoadingRunFolders = useWorkflowStore(state => state.isLoadingRunFolders)
+  const loadRunFolders = useWorkflowStore(state => state.loadRunFolders)
+  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
+  const stepProgress = useWorkflowStore(state => state.stepProgress)
+  const loadProgress = useWorkflowStore(state => state.loadProgress)
+  const getCompletedStepIndices = useWorkflowStore(state => state.getCompletedStepIndices)
+  const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
+  const selectedStartPoint = useWorkflowStore(state => state.selectedStartPoint)
+  const setExecutionMode = useWorkflowStore(state => state.setExecutionMode)
+  const setStartPoint = useWorkflowStore(state => state.setStartPoint)
+  const buildExecutionOptions = useWorkflowStore(state => state.buildExecutionOptions)
+  const loadSavedSettings = useWorkflowStore(state => state.loadSavedSettings)
+  const saveSettings = useWorkflowStore(state => state.saveSettings)
+  
   // Helper function to find a folder in the file tree
   const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
     for (const file of fileList) {
@@ -119,252 +132,74 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
     return null
   }
-  const [phases, setPhases] = useState<WorkflowPhase[]>([])
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-  const [loadingPhases, setLoadingPhases] = useState(true)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const isRunning = status === 'running'
-
-  // Execution options state
-  const [runFolders, setRunFolders] = useState<Array<{ name: string; progress?: StepProgress }>>([])
-  const [selectedRunFolder, setSelectedRunFolder] = useState<string>('new')
-  const [stepProgress, setStepProgress] = useState<StepProgress | null>(null)
-  const [loadingRunFolders, setLoadingRunFolders] = useState(false)
   
-  // Dropdown visibility states
-  const [isIterationDropdownOpen, setIsIterationDropdownOpen] = useState(false)
-  const [isExecutionModeDropdownOpen, setIsExecutionModeDropdownOpen] = useState(false)
-  const [isStartPointDropdownOpen, setIsStartPointDropdownOpen] = useState(false)
-  
-  // Selected values
-  const [selectedExecutionMode, setSelectedExecutionMode] = useState<ExecutionModeType>('human_approval')
-  const [selectedStartPoint, setSelectedStartPoint] = useState<number>(0) // 0 = from beginning, >0 = resume from step N
+  // Local UI state (dropdowns)
+  const [isDropdownOpen, setIsDropdownOpen] = React.useState(false)
+  const [isIterationDropdownOpen, setIsIterationDropdownOpen] = React.useState(false)
+  const [isExecutionModeDropdownOpen, setIsExecutionModeDropdownOpen] = React.useState(false)
+  const [isStartPointDropdownOpen, setIsStartPointDropdownOpen] = React.useState(false)
   
   // Refs for dropdown click-outside detection
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const iterationDropdownRef = useRef<HTMLDivElement>(null)
   const executionModeDropdownRef = useRef<HTMLDivElement>(null)
   const startPointDropdownRef = useRef<HTMLDivElement>(null)
   
-  // Track if we've loaded from localStorage to avoid overwriting with defaults
-  const [hasLoadedFromStorage, setHasLoadedFromStorage] = useState(false)
+  const isRunning = status === 'running'
 
-  // Load saved settings from localStorage when workflow changes
+  // Load phases on mount (store handles deduplication)
+  // Only load if not already initialized
   useEffect(() => {
-    if (!presetQueryId) {
-      setHasLoadedFromStorage(false)
-      return
+    if (!phasesInitialized && !isLoadingPhases) {
+      loadPhases()
     }
-    
-    try {
-      // Load saved iteration folder
-      const savedIteration = localStorage.getItem(getStorageKey(presetQueryId, 'iteration'))
-      if (savedIteration) {
-        setSelectedRunFolder(savedIteration)
-      }
-      
-      // Load saved execution mode
-      const savedMode = localStorage.getItem(getStorageKey(presetQueryId, 'execution_mode'))
-      if (savedMode && ['human_approval', 'fast_execution', 'with_learning'].includes(savedMode)) {
-        setSelectedExecutionMode(savedMode as ExecutionModeType)
-      }
-      
-      // Load saved start point
-      const savedStartPoint = localStorage.getItem(getStorageKey(presetQueryId, 'start_point'))
-      if (savedStartPoint) {
-        const parsed = parseInt(savedStartPoint, 10)
-        if (!isNaN(parsed)) {
-          setSelectedStartPoint(parsed)
-        }
-      }
-      
-      setHasLoadedFromStorage(true)
-    } catch (error) {
-      console.error('[WorkflowToolbar] Failed to load settings from localStorage:', error)
-      setHasLoadedFromStorage(true)
-    }
-  }, [presetQueryId])
+  }, [loadPhases, phasesInitialized, isLoadingPhases])
 
-  // Save iteration folder to localStorage when it changes
+  // Load saved settings when preset changes
   useEffect(() => {
-    if (!presetQueryId || !hasLoadedFromStorage) return
-    
-    try {
-      localStorage.setItem(getStorageKey(presetQueryId, 'iteration'), selectedRunFolder)
-    } catch (error) {
-      console.error('[WorkflowToolbar] Failed to save iteration to localStorage:', error)
+    if (presetQueryId) {
+      loadSavedSettings(presetQueryId)
     }
-  }, [presetQueryId, selectedRunFolder, hasLoadedFromStorage])
+  }, [presetQueryId, loadSavedSettings])
 
-  // Save execution mode to localStorage when it changes
+  // Save settings when they change
   useEffect(() => {
-    if (!presetQueryId || !hasLoadedFromStorage) return
-    
-    try {
-      localStorage.setItem(getStorageKey(presetQueryId, 'execution_mode'), selectedExecutionMode)
-    } catch (error) {
-      console.error('[WorkflowToolbar] Failed to save execution mode to localStorage:', error)
+    if (presetQueryId) {
+      saveSettings(presetQueryId)
     }
-  }, [presetQueryId, selectedExecutionMode, hasLoadedFromStorage])
+  }, [presetQueryId, selectedRunFolder, selectedExecutionMode, selectedStartPoint, saveSettings])
 
-  // Save start point to localStorage when it changes
+  // Load run folders when workspace path changes
   useEffect(() => {
-    if (!presetQueryId || !hasLoadedFromStorage) return
-    
-    try {
-      localStorage.setItem(getStorageKey(presetQueryId, 'start_point'), String(selectedStartPoint))
-    } catch (error) {
-      console.error('[WorkflowToolbar] Failed to save start point to localStorage:', error)
+    if (workspacePath) {
+      loadRunFolders(workspacePath)
     }
-  }, [presetQueryId, selectedStartPoint, hasLoadedFromStorage])
+  }, [workspacePath, loadRunFolders])
 
-  // Notify parent when execution options change (for use in step run actions)
+  // Load progress when selected run folder changes
   useEffect(() => {
-    if (onExecutionOptionsChange && hasLoadedFromStorage) {
+    if (workspacePath && selectedRunFolder !== 'new') {
+      loadProgress(workspacePath, selectedRunFolder)
+    }
+  }, [workspacePath, selectedRunFolder, loadProgress])
+
+  // Notify parent when step progress changes
+  useEffect(() => {
+    if (onProgressChange) {
+      const completedIndices = getCompletedStepIndices()
+      onProgressChange(completedIndices)
+    }
+  }, [stepProgress, onProgressChange, getCompletedStepIndices])
+
+  // Notify parent when execution options change
+  useEffect(() => {
+    if (onExecutionOptionsChange) {
       onExecutionOptionsChange({
         selectedRunFolder,
         selectedExecutionMode
       })
     }
-  }, [selectedRunFolder, selectedExecutionMode, onExecutionOptionsChange, hasLoadedFromStorage])
-
-  // Load phases from backend
-  useEffect(() => {
-    const loadPhases = async () => {
-      try {
-        setLoadingPhases(true)
-        const loadedPhases = await getWorkflowPhases()
-        setPhases(loadedPhases)
-      } catch (error) {
-        console.error('[WorkflowToolbar] Failed to load phases:', error)
-      } finally {
-        setLoadingPhases(false)
-      }
-    }
-    loadPhases()
-  }, [])
-
-  // Load run folders when workspace path changes
-  useEffect(() => {
-    const loadRunFolders = async () => {
-      if (!workspacePath) {
-        setRunFolders([])
-        return
-      }
-      
-      try {
-        setLoadingRunFolders(true)
-        const response = await agentApi.getRunFolders(workspacePath)
-        
-        // Handle null or missing folders array
-        if (!response) {
-          setRunFolders([])
-          return
-        }
-        
-        // Handle null folders (backend should return [] but handle null gracefully)
-        let folders = response.folders
-        if (folders === null || folders === undefined) {
-          folders = []
-        }
-        
-        if (!Array.isArray(folders)) {
-          console.warn('[WorkflowToolbar] response.folders is not an array. Type:', typeof folders)
-          setRunFolders([])
-          return
-        }
-        
-        // Sort folders by iteration number (descending - newest first)
-        const sorted = [...folders].sort((a, b) => {
-          const numA = parseInt(a.name.replace('iteration-', '')) || 0
-          const numB = parseInt(b.name.replace('iteration-', '')) || 0
-          return numB - numA
-        })
-        
-        setRunFolders(sorted)
-        
-        // Check if current selection is valid (either 'new' or exists in folders)
-        // Only change selection if:
-        // 1. Current selection is not 'new' AND
-        // 2. Current selection doesn't exist in the loaded folders
-        setSelectedRunFolder(prev => {
-          let newSelection = prev
-          if (prev !== 'new' && !sorted.some(f => f.name === prev)) {
-            // Saved folder no longer exists, default to newest or 'new'
-            if (sorted.length > 0) {
-              newSelection = sorted[0].name
-            } else {
-              newSelection = 'new'
-            }
-          }
-          
-          // If a folder is selected and it has progress, set it immediately
-          if (newSelection !== 'new') {
-            const selectedFolder = sorted.find(f => f.name === newSelection)
-            if (selectedFolder?.progress) {
-              setStepProgress(selectedFolder.progress)
-            }
-          }
-          
-          return newSelection
-        })
-      } catch (error) {
-        console.error('[WorkflowToolbar] Failed to load run folders:', error)
-        setRunFolders([])
-        // Reset to 'new' if there was an error and we had a folder selected
-        setSelectedRunFolder(prev => {
-          if (prev !== 'new') {
-            return 'new'
-          }
-          return prev
-        })
-      } finally {
-        setLoadingRunFolders(false)
-      }
-    }
-    loadRunFolders()
-  }, [workspacePath]) // Removed selectedRunFolder from dependencies to avoid infinite loops
-
-  // Load step progress when selected run folder changes
-  // Always fetch via API to ensure we have the latest progress for the selected iteration
-  useEffect(() => {
-    const loadProgress = async () => {
-      if (!workspacePath || selectedRunFolder === 'new') {
-        setStepProgress(null)
-        return
-      }
-      
-      // Always fetch progress via API when an iteration is selected
-      // This ensures we have the latest data and works for all iterations (not just latest ones)
-      try {
-        const response = await agentApi.getProgress(workspacePath, selectedRunFolder)
-        if (response.exists && response.progress) {
-          setStepProgress(response.progress)
-          
-          // Update the folder info in state so we can show progress in the dropdown
-          setRunFolders(prev => prev.map(f => 
-            f.name === selectedRunFolder 
-              ? { ...f, progress: response.progress || undefined }
-              : f
-          ))
-        } else {
-          setStepProgress(null)
-        }
-      } catch (error) {
-        console.error('[WorkflowToolbar] Failed to load progress:', error)
-        setStepProgress(null)
-      }
-    }
-    
-    loadProgress()
-  }, [workspacePath, selectedRunFolder])
-
-  // Notify parent when step progress changes
-  useEffect(() => {
-    if (onProgressChange) {
-      const completedIndices = stepProgress?.completed_step_indices || []
-      onProgressChange(completedIndices)
-    }
-  }, [stepProgress, onProgressChange])
+  }, [selectedRunFolder, selectedExecutionMode, onExecutionOptionsChange])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -387,19 +222,34 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [])
 
   // Separate execution phase from other phases
+  // Only calculate when phases are actually loaded (not empty and not loading)
   const { executionPhase, otherPhases } = useMemo(() => {
-    const execPhase = phases.find(p => p.id === EXECUTION_PHASE_ID)
-    const others = phases.filter(p => p.id !== EXECUTION_PHASE_ID)
+    // Don't calculate if phases aren't loaded yet
+    if (isLoadingPhases || phases.length === 0) {
+      return {
+        executionPhase: undefined,
+        otherPhases: []
+      }
+    }
+    const execPhase = phases.find((p: WorkflowPhase) => p.id === EXECUTION_PHASE_ID)
+    const others = phases.filter((p: WorkflowPhase) => p.id !== EXECUTION_PHASE_ID)
     return {
       executionPhase: execPhase,
       otherPhases: others
     }
-  }, [phases])
+  }, [phases, isLoadingPhases])
+
+  // Close dropdown if phases become unavailable
+  useEffect(() => {
+    if (isDropdownOpen && (isLoadingPhases || otherPhases.length === 0)) {
+      setIsDropdownOpen(false)
+    }
+  }, [isDropdownOpen, isLoadingPhases, otherPhases.length])
 
   // Calculate progress info
-  const hasExistingProgress = stepProgress !== null && stepProgress.completed_step_indices.length > 0
-  const completedStepCount = stepProgress?.completed_step_indices.length || 0
-  const completedStepIndices = stepProgress?.completed_step_indices || []
+  const completedStepIndices = getCompletedStepIndices()
+  const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
+  const completedStepCount = completedStepIndices.length
 
   // Get current execution mode info
   const currentModeInfo = EXECUTION_MODE_OPTIONS.find(m => m.id === selectedExecutionMode) || EXECUTION_MODE_OPTIONS[0]
@@ -455,8 +305,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [selectedStartPoint, startPointOptions])
 
   // Get current phase details
-  const currentPhaseDetails = phases.find(p => p.id === currentPhase)
+  const currentPhaseDetails = phases.find((p: WorkflowPhase) => p.id === currentPhase)
+  // Only consider it execution phase if currentPhase is explicitly set to 'execution'
+  // If currentPhase is undefined/null, allow dropdown to be enabled
   const isExecutionPhase = currentPhase === EXECUTION_PHASE_ID
+
+  // Allow dropdown even when in execution phase - user should be able to switch to other phases
+  const dropdownDisabled = isRunning || isLoadingPhases || otherPhases.length === 0
 
   // Handle phase selection
   const handleSelectPhase = (phaseId: string) => {
@@ -468,54 +323,29 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Handle selecting execution mode from dropdown
   const handleSelectExecutionMode = useCallback((modeId: ExecutionModeType) => {
-    setSelectedExecutionMode(modeId)
+    setExecutionMode(modeId)
     setIsExecutionModeDropdownOpen(false)
-  }, [])
+  }, [setExecutionMode])
   
   // Handle selecting start point from dropdown
   const handleSelectStartPoint = useCallback((stepNumber: number) => {
-    setSelectedStartPoint(stepNumber)
+    setStartPoint(stepNumber)
     setIsStartPointDropdownOpen(false)
-  }, [])
+  }, [setStartPoint])
+
+  // Handle selecting run folder
+  const handleSelectRunFolder = useCallback((folder: string) => {
+    setSelectedRunFolder(folder)
+    setIsIterationDropdownOpen(false)
+  }, [setSelectedRunFolder])
 
   // Handle execution button click
   const handleExecute = useCallback(() => {
     if (!isRunning && executionPhase) {
-      // Convert UI selections to backend ExecutionStrategy
-      let executionStrategy: string
-      const isResuming = selectedStartPoint > 0
-      
-      if (selectedExecutionMode === 'fast_execution') {
-        // Fast execution - no human feedback
-        executionStrategy = isResuming 
-          ? ExecutionStrategy.FAST_RESUME_FROM_STEP 
-          : ExecutionStrategy.FAST_EXECUTE_ALL
-      } else if (selectedExecutionMode === 'with_learning') {
-        // With learning - human feedback but captures learnings
-        executionStrategy = isResuming 
-          ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN  // TODO: Need a "with_learning" strategy
-          : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
-      } else {
-        // Human approval (default) - pause for feedback
-        executionStrategy = isResuming 
-          ? ExecutionStrategy.RESUME_FROM_STEP 
-          : ExecutionStrategy.START_FROM_BEGINNING
-      }
-      
-      const options: ExecutionOptions = {
-        run_mode: selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
-        selected_run_folder: selectedRunFolder === 'new' ? undefined : selectedRunFolder,
-        execution_strategy: executionStrategy,
-      }
-      
-      // For resume, set which step to resume from
-      if (isResuming) {
-        options.resume_from_step = selectedStartPoint
-      }
-      
+      const options = buildExecutionOptions()
       onStartPhase(executionPhase.id, options)
     }
-  }, [isRunning, executionPhase, selectedRunFolder, selectedStartPoint, selectedExecutionMode, onStartPhase])
+  }, [isRunning, executionPhase, buildExecutionOptions, onStartPhase])
 
   return (
     <div className={`
@@ -543,7 +373,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <div className="relative" ref={iterationDropdownRef}>
                   <button
                     onClick={() => !isRunning && setIsIterationDropdownOpen(!isIterationDropdownOpen)}
-                    disabled={isRunning || loadingRunFolders}
+                    disabled={isRunning || isLoadingRunFolders}
                     className={`
                       flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all text-xs font-medium
                       ${isRunning
@@ -555,7 +385,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   >
                     <FolderOpen className="w-3.5 h-3.5" />
                     <span className="max-w-[80px] truncate">
-                      {loadingRunFolders ? 'Loading...' : selectedRunFolder === 'new' ? 'New Run' : selectedRunFolder}
+                      {isLoadingRunFolders ? 'Loading...' : selectedRunFolder === 'new' ? 'New Run' : selectedRunFolder}
                     </span>
                     <ChevronDown className={`w-3 h-3 transition-transform ${isIterationDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
@@ -566,10 +396,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       <div className="p-1">
                         {/* New Run option */}
                         <button
-                          onClick={() => {
-                            setSelectedRunFolder('new')
-                            setIsIterationDropdownOpen(false)
-                          }}
+                          onClick={() => handleSelectRunFolder('new')}
                           className={`
                             w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
                             ${selectedRunFolder === 'new' 
@@ -589,23 +416,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-1">
                               Existing Runs ({runFolders.length})
                             </div>
-                            {runFolders.map((folder) => {
+                            {runFolders.map((folder: RunFolder) => {
                               const progress = folder.progress
-                              const completedCount = progress?.completed_step_indices.length || 0
-                              const totalSteps = progress?.total_steps || 0
-                              const hasProgress = progress && completedCount > 0
+                              const folderCompletedCount = progress?.completed_step_indices.length || 0
+                              const folderTotalSteps = progress?.total_steps || 0
+                              const hasProgress = progress && folderCompletedCount > 0
                               
                               return (
                                 <button
                                   key={folder.name}
-                                  onClick={() => {
-                                    setSelectedRunFolder(folder.name)
-                                    // Immediately set progress from cached folder data for instant UI update
-                                    if (folder.progress) {
-                                      setStepProgress(folder.progress)
-                                    }
-                                    setIsIterationDropdownOpen(false)
-                                  }}
+                                  onClick={() => handleSelectRunFolder(folder.name)}
                                   className={`
                                     w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
                                     ${selectedRunFolder === folder.name 
@@ -618,7 +438,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                   <span className="flex-1">{folder.name}</span>
                                   {hasProgress && (
                                     <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      {completedCount}/{totalSteps}
+                                      {folderCompletedCount}/{folderTotalSteps}
                                     </span>
                                   )}
                                   {selectedRunFolder === folder.name && <Check className="w-4 h-4 ml-auto" />}
@@ -626,7 +446,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                               )
                             })}
                           </>
-                        ) : !loadingRunFolders && workspacePath ? (
+                        ) : !isLoadingRunFolders && workspacePath ? (
                           <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
                             No existing runs found
                           </div>
@@ -737,7 +557,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
                           Start Point
                         </div>
-                        {startPointOptions.map((option, idx) => {
+                        {startPointOptions.map((option: StartPointOption, idx: number) => {
                           const Icon = option.icon
                           const isSelected = option.id === 'from_beginning' 
                             ? selectedStartPoint === 0 
@@ -774,25 +594,23 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   )}
                 </div>
 
-                {/* Execute Button - Simple button */}
+                {/* Execute/Stop Button - Changes to Stop when running */}
                 <button
-                  onClick={handleExecute}
-                  disabled={isRunning && !isExecutionPhase}
+                  onClick={isRunning ? onStop : handleExecute}
+                  disabled={false}
                   className={`
                     flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
-                    ${isExecutionPhase && isRunning
-                      ? 'bg-purple-600 dark:bg-purple-700 text-white cursor-not-allowed opacity-75'
-                      : isRunning
-                      ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                    ${isRunning
+                      ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
                       : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
                     }
                   `}
-                  title={`Execute: ${currentModeInfo.label}`}
+                  title={isRunning ? 'Stop execution' : `Execute: ${currentModeInfo.label}`}
                 >
-                  {isExecutionPhase && isRunning ? (
+                  {isRunning ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Executing...</span>
+                      <Square className="w-3.5 h-3.5" />
+                      <span>Stop</span>
                     </>
                   ) : (
                     <>
@@ -809,17 +627,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* Regular Phases Dropdown Selector */}
             <div className="relative" ref={dropdownRef}>
               <button
-                onClick={() => !isRunning && !isExecutionPhase && setIsDropdownOpen(!isDropdownOpen)}
-                disabled={isRunning || loadingPhases || isExecutionPhase}
+                onClick={() => {
+                  if (!isRunning && !isLoadingPhases && otherPhases.length > 0) {
+                    setIsDropdownOpen(!isDropdownOpen)
+                  }
+                }}
+                disabled={dropdownDisabled}
                 className={`
                   flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-medium min-w-[160px]
-                  ${isRunning || isExecutionPhase
+                  ${dropdownDisabled
                     ? 'bg-muted text-muted-foreground cursor-not-allowed' 
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600'
                   }
                 `}
               >
-                {loadingPhases ? (
+                {isLoadingPhases ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     <span>Loading phases...</span>
@@ -843,13 +665,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </button>
 
               {/* Dropdown Menu - Only show non-execution phases */}
-              {isDropdownOpen && !isRunning && !isExecutionPhase && (
+              {isDropdownOpen && !isRunning && !isLoadingPhases && otherPhases.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[400px] overflow-y-auto">
                   <div className="p-2">
                     <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
                       Workflow Phases
                     </div>
-                    {otherPhases.map((phase) => {
+                    {otherPhases.length === 0 ? (
+                      <div className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400 text-center">
+                        {isLoadingPhases ? 'Loading phases...' : 'No phases available'}
+                      </div>
+                    ) : (
+                      otherPhases.map((phase: WorkflowPhase) => {
                       const isActive = currentPhase === phase.id
                       return (
                         <button
@@ -892,22 +719,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           </div>
                         </button>
                       )
-                    })}
+                    }))}
                   </div>
-              </div>
-            )}
+                </div>
+              )}
             </div>
 
-            {/* Stop button when running */}
-            {isRunning && (
-              <button
-                onClick={onStop}
-                className="flex items-center gap-1.5 px-3 py-2 bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300 rounded-lg transition-colors text-sm"
-              >
-                <Square className="w-4 h-4" />
-                <span>Stop</span>
-              </button>
-            )}
           </>
         )}
       </div>

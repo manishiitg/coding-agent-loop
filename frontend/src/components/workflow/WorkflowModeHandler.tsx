@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { agentApi } from '../../services/api'
-import { type WorkflowPhase, getDefaultWorkflowPhase, getWorkflowPhases } from '../../constants/workflow'
+import { type WorkflowPhase } from '../../constants/workflow'
 import { useAppStore, useChatStore } from '../../stores'
 import { usePresetApplication } from '../../stores/useGlobalPresetStore'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
 
 interface Preset {
   id: string
@@ -82,9 +83,8 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
       onPresetCleared()
       setHasAttemptedLoad(false)
       setAvailablePresets([])
-      getDefaultWorkflowPhase().then(defaultPhase => {
-        onWorkflowPhaseChange?.(defaultPhase)
-      })
+      const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
+      onWorkflowPhaseChange?.(defaultPhase)
     }
   }, [agentMode, onPresetCleared, onWorkflowPhaseChange])
 
@@ -95,15 +95,14 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
       const selectedPreset = availablePresets.find(p => p.id === selectedWorkflowPreset)
       if (selectedPreset) {
         onPresetSelected(selectedWorkflowPreset, selectedPreset.description)
-        getDefaultWorkflowPhase().then(defaultPhase => {
-          onWorkflowPhaseChange?.(defaultPhase)
-        })
+        const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
+        onWorkflowPhaseChange?.(defaultPhase)
       } else {
         // If preset not found, load presets first
         if (!hasAttemptedLoad) {
           setHasAttemptedLoad(true)
           
-          const loadPresets = async () => {
+          const loadPresetsAndSelect = async () => {
             try {
               const response = await agentApi.getPresetQueries(50, 0)
               const presets = response.presets.map((preset: {id: string, label: string, query: string}) => ({
@@ -117,7 +116,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
               const foundPreset = presets.find(p => p.id === selectedWorkflowPreset)
               if (foundPreset) {
                 onPresetSelected(selectedWorkflowPreset, foundPreset.description)
-                const defaultPhase = await getDefaultWorkflowPhase()
+                const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
                 onWorkflowPhaseChange?.(defaultPhase)
               }
             } catch (error) {
@@ -125,7 +124,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
             }
           }
           
-          loadPresets()
+          loadPresetsAndSelect()
         }
       }
     }
@@ -145,7 +144,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
         // The backend will handle the workflow Deep Search execution
         // We'll return the objective so ChatArea can submit it as a normal query
         // Workflow created, transitioning to planning phase (second phase)
-        const phases = await getWorkflowPhases()
+        const phases = useWorkflowStore.getState().phases
         const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
         onWorkflowPhaseChange?.(planningPhase)
 
@@ -155,7 +154,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
     } catch (error) {
       console.error('[WORKFLOW] Error creating workflow:', error)
       // Reset to default phase on error
-      const defaultPhase = await getDefaultWorkflowPhase()
+      const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
       onWorkflowPhaseChange?.(defaultPhase)
     }
   }, [selectedWorkflowPreset, onWorkflowPhaseChange])
@@ -166,7 +165,7 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
     // handleChatSubmit called
 
     // Get phases to determine planning phase (second phase)
-    const phases = await getWorkflowPhases()
+    const phases = useWorkflowStore.getState().phases
     const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
     
     if (currentPhase === planningPhase) {

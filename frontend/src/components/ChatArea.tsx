@@ -8,7 +8,7 @@ import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { getWorkflowPhases, getDefaultWorkflowPhase } from '../constants/workflow'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
@@ -421,10 +421,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setCurrentWorkflowQueryId(presetId) // Store the preset query ID for workflow approval
     
     try {
-      // Get available phases from backend to validate status
-      const phases = await getWorkflowPhases()
+      // Ensure phases are loaded and get them from store
+      const workflowStore = useWorkflowStore.getState()
+      if (!workflowStore.phasesInitialized) {
+        await workflowStore.loadPhases()
+      }
+      const phases = workflowStore.phases
       const phaseIds = phases.map(p => p.id)
-      const defaultPhase = phases.length > 0 ? phases[0].id : 'variable-extraction'
+      const defaultPhase = workflowStore.getDefaultPhase()
       
       // Check if workflow already exists for this preset
       const workflowStatus = await agentApi.getWorkflowStatus(presetId)
@@ -452,25 +456,25 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     } catch (error) {
       console.error('[WORKFLOW] Error checking workflow status:', error)
       // Fallback to default phase on error
-      const defaultPhase = await getDefaultWorkflowPhase()
+      const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
       setCurrentWorkflowPhase(defaultPhase)
       setCurrentQuery(presetContent)
     }
   }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId, clearFileContext])
 
-  const handleWorkflowPresetCleared = useCallback(async () => {
+  const handleWorkflowPresetCleared = useCallback(() => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null) // Clear the stored preset query ID
-    const defaultPhase = await getDefaultWorkflowPhase()
+    const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
     setCurrentWorkflowPhase(defaultPhase) // Reset to default phase
     setCurrentQuery('')
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase, setCurrentQuery])
   
   // Clear workflow state when starting a new chat
-  const clearWorkflowState = useCallback(async () => {
+  const clearWorkflowState = useCallback(() => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null)
-    const defaultPhase = await getDefaultWorkflowPhase()
+    const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
     setCurrentWorkflowPhase(defaultPhase)
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase])
 
@@ -494,7 +498,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // If next_phase is provided, use it; otherwise get the second phase (planning) as default
       let nextPhase = eventData?.next_phase
       if (!nextPhase) {
-        const phases = await getWorkflowPhases()
+        const phases = useWorkflowStore.getState().phases
         // Use second phase (planning) if available, otherwise first phase
         nextPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
       }
@@ -702,8 +706,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             return event.type !== 'user_message'
           })
           
-        // Process workflow-specific events asynchronously (after filtering)
+        // Process workflow-specific events (after filtering)
         if (agentMode === 'workflow') {
+          const phases = useWorkflowStore.getState().phases
           for (const event of response.events) {
             // Handle todo list generation from workflow agent
             // Note: orchestrator events removed, using agent_end events instead
@@ -712,8 +717,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               if (agentEvent && (agentEvent as { agent_type?: string })?.agent_type === 'todo_planner') {
                 const result = (agentEvent as { result?: string })?.result || ''
                 if (result) {
-                  // Get phases to determine planning phase
-                  const phases = await getWorkflowPhases()
+                  // Get planning phase (second phase if available)
                   const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
                   
                   // Only reset to planning phase if workflow hasn't been approved yet
@@ -729,8 +733,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
             // Handle workflow completion events
             if (event.type === 'workflow_end') {
-              // Get phases to determine completion phase (second phase = planning/execution)
-              const phases = await getWorkflowPhases()
+              // Get completion phase (second phase = planning/execution)
               const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
               setCurrentWorkflowPhase(completionPhase)
             }
@@ -1380,9 +1383,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // For workflow mode, preserve the selected preset but reset workflow phase
     if (agentMode === 'workflow' && selectedWorkflowPreset) {
       // Keep the preset selected, just reset the workflow phase to default
-      getDefaultWorkflowPhase().then(defaultPhase => {
-        setCurrentWorkflowPhase(defaultPhase)
-      })
+      const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
+      setCurrentWorkflowPhase(defaultPhase)
       // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
     } else {
       // For other modes, clear workflow state completely

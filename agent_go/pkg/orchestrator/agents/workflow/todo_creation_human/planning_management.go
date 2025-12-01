@@ -8,11 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	"mcpagent/events"
 	"mcpagent/mcpclient"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // EnhancedPlanWithMetadata stores enhanced plan with caching metadata
@@ -687,6 +688,120 @@ func EmitTodoStepsExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrche
 func (hcpo *HumanControlledTodoPlannerOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []TodoStep, planSource string) {
 	// Use default extraction method and workspace path from orchestrator
 	EmitTodoStepsExtractedEvent(ctx, hcpo.BaseOrchestrator, extractedSteps, planSource, "structured_breakdown_agent", "", hcpo.GetWorkspacePath())
+}
+
+// IsPlanModificationTool checks if a tool name is a plan modification tool
+func IsPlanModificationTool(name string) bool {
+	return name == "update_plan_steps" || name == "delete_plan_steps" || name == "add_plan_steps" ||
+		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
+		name == "delete_branch_steps" || name == "update_conditional_step" || name == "convert_conditional_to_regular"
+}
+
+// IsStepConfigModificationTool checks if a tool name is a step_config modification tool
+func IsStepConfigModificationTool(name string) bool {
+	return name == "update_step_config_tools"
+}
+
+// ExtractToolCallsFromMessages scans messages for tool calls and returns the tool names that were called
+// This is a public version of extractToolCallsFromMessages for use by other agents
+func ExtractToolCallsFromMessages(messages []llmtypes.MessageContent) []string {
+	toolNames := make(map[string]bool)
+	for _, msg := range messages {
+		if msg.Role != llmtypes.ChatMessageTypeAI {
+			continue
+		}
+		for _, part := range msg.Parts {
+			if toolCall, ok := part.(llmtypes.ToolCall); ok {
+				if toolCall.FunctionCall != nil {
+					toolNames[toolCall.FunctionCall.Name] = true
+				}
+			}
+		}
+	}
+	result := make([]string, 0, len(toolNames))
+	for name := range toolNames {
+		result = append(result, name)
+	}
+	return result
+}
+
+// CheckAndEmitPlanUpdateEvent checks if plan/step_config modification tools were called
+// and emits todo_steps_extracted event if so. This helper can be used by any agent
+// that modifies plan.json or step_config.json to ensure the frontend is notified.
+//
+// Parameters:
+//   - ctx: context for the operation
+//   - bo: BaseOrchestrator for event emission and logging
+//   - conversationHistory: messages from the agent execution to check for tool calls
+//   - workspacePath: workspace path for reading plan.json
+//   - readFile: function to read files from workspace
+func CheckAndEmitPlanUpdateEvent(
+	ctx context.Context,
+	bo *orchestrator.BaseOrchestrator,
+	conversationHistory []llmtypes.MessageContent,
+	workspacePath string,
+	readFile func(context.Context, string) (string, error),
+) {
+	if bo == nil {
+		return
+	}
+
+	// Extract tool calls from conversation history
+	toolCalls := ExtractToolCallsFromMessages(conversationHistory)
+
+	// Check if any plan or step_config modification tool was called
+	needsEvent := false
+	for _, name := range toolCalls {
+		if IsPlanModificationTool(name) || IsStepConfigModificationTool(name) {
+			needsEvent = true
+			break
+		}
+	}
+
+	if !needsEvent {
+		bo.GetLogger().Debugf("📋 No plan/step_config modification tools called, skipping event emission")
+		return
+	}
+
+	bo.GetLogger().Infof("📋 Plan/step_config modification detected, emitting update event...")
+
+	// Read current plan
+	plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+	if err != nil {
+		bo.GetLogger().Warnf("⚠️ Failed to read plan for event emission: %v", err)
+		return
+	}
+
+	if plan == nil || len(plan.Steps) == 0 {
+		bo.GetLogger().Warnf("⚠️ Plan is empty, skipping event emission")
+		return
+	}
+
+	// Convert plan steps to TodoStep format for the event
+	// Note: We use a simplified conversion here since we don't have access to step_config.json
+	// The frontend will merge step_config.json when it receives the event and refreshes
+	todoSteps := make([]TodoStep, len(plan.Steps))
+	for i, step := range plan.Steps {
+		todoSteps[i] = TodoStep{
+			ID:                  step.ID,
+			Title:               step.Title,
+			Description:         step.Description,
+			SuccessCriteria:     step.SuccessCriteria,
+			ContextDependencies: step.ContextDependencies,
+			ContextOutput:       string(step.ContextOutput), // Cast FlexibleContextOutput to string
+			HasLoop:             step.HasLoop,
+			LoopCondition:       step.LoopCondition,
+			MaxIterations:       step.MaxIterations,
+			LoopDescription:     step.LoopDescription,
+			HasCondition:        step.HasCondition,
+			ConditionQuestion:   step.ConditionQuestion,
+			ConditionContext:    step.ConditionContext,
+		}
+	}
+
+	// Emit the event
+	EmitTodoStepsExtractedEvent(ctx, bo, todoSteps, "updated_plan", "agent_tool_modification", "", workspacePath)
+	bo.GetLogger().Infof("✅ Emitted plan update event: %d steps", len(todoSteps))
 }
 
 // CreatePlanOnly runs only the planning phase (standalone, independent from CreateTodoList)

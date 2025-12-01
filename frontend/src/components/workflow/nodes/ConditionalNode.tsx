@@ -13,7 +13,8 @@ const statusBorderColors: Record<string, string> = {
   pending: 'border-purple-400 dark:border-purple-500',
   evaluating: 'border-purple-500 dark:border-purple-400',
   decided_true: 'border-green-500 dark:border-green-400',
-  decided_false: 'border-red-500 dark:border-red-400'
+  decided_false: 'border-red-500 dark:border-red-400',
+  completed: 'border-green-500 dark:border-green-400'
 }
 
 const changeHighlightStyles: Record<ChangeType, string> = {
@@ -32,7 +33,8 @@ const statusIcons: Record<string, ReactElement | null> = {
   pending: null,
   evaluating: <Loader2 className="w-4 h-4 text-purple-500 animate-spin" />,
   decided_true: <CheckCircle className="w-4 h-4 text-green-500" />,
-  decided_false: <XCircle className="w-4 h-4 text-red-500" />
+  decided_false: <XCircle className="w-4 h-4 text-red-500" />,
+  completed: <CheckCircle className="w-4 h-4 text-green-500" />
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {

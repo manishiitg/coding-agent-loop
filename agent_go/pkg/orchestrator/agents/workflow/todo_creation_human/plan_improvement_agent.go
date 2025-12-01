@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerPlanImprovementTemplate holds template variables for plan improvement prompts
@@ -410,6 +411,10 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	if logger != nil {
 		logger.Infof("📊 Plan improvement completed after %d iterations", iteration)
 	}
+
+	// Check if plan modification tools were called and emit event if needed
+	// This ensures the frontend is notified of plan changes
+	CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, currentConversationHistory, workspacePath, readFile)
 
 	return currentResult, currentConversationHistory, nil
 }

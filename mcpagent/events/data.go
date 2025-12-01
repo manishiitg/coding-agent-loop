@@ -1873,3 +1873,24 @@ type TodoStepsExtractedEvent struct {
 func (e *TodoStepsExtractedEvent) GetEventType() EventType {
 	return TodoStepsExtracted
 }
+
+// BranchStepProgress tracks branch execution progress for conditional steps
+type BranchStepProgress struct {
+	BranchExecuted string   `json:"branch_executed"` // "if_true" or "if_false"
+	CompletedSteps []string `json:"completed_steps"` // e.g., ["step-3-if-true-0", "step-3-if-true-1"]
+}
+
+// StepProgressUpdatedEvent represents the event when step progress is updated (steps_done.json changes)
+type StepProgressUpdatedEvent struct {
+	BaseEventData
+	CompletedStepIndices []int                      `json:"completed_step_indices"` // 0-based indices of completed steps
+	TotalSteps           int                        `json:"total_steps"`            // Total number of steps in the plan
+	WorkspacePath        string                     `json:"workspace_path"`         // Workspace path for file operations
+	RunFolder            string                     `json:"run_folder"`             // Run folder name (e.g., "iteration-1")
+	LastCompletedStep    int                        `json:"last_completed_step"`    // Most recently completed step index (-1 if unknown)
+	BranchSteps          map[int]BranchStepProgress `json:"branch_steps,omitempty"` // Branch step progress for conditional steps
+}
+
+func (e *StepProgressUpdatedEvent) GetEventType() EventType {
+	return StepProgressUpdated
+}

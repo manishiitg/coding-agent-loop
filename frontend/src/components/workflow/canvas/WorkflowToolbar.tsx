@@ -16,7 +16,8 @@ import {
   SkipForward,
   RefreshCw,
   BookOpen,
-  FolderTree
+  FolderTree,
+  Trash2
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -24,6 +25,8 @@ import { useWorkflowStore, type ExecutionModeType, type RunFolder } from '../../
 import type { PlannerFile, WorkflowPhase } from '../../../services/api-types'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
+import { agentApi } from '../../../services/api'
+import ConfirmationDialog from '../../ui/ConfirmationDialog'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -101,6 +104,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const stepProgress = useWorkflowStore(state => state.stepProgress)
   const loadProgress = useWorkflowStore(state => state.loadProgress)
+  const loadFolderProgressOnDemand = useWorkflowStore(state => state.loadFolderProgressOnDemand)
   const getCompletedStepIndices = useWorkflowStore(state => state.getCompletedStepIndices)
   const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
   const selectedStartPoint = useWorkflowStore(state => state.selectedStartPoint)
@@ -138,6 +142,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [isIterationDropdownOpen, setIsIterationDropdownOpen] = React.useState(false)
   const [isExecutionModeDropdownOpen, setIsExecutionModeDropdownOpen] = React.useState(false)
   const [isStartPointDropdownOpen, setIsStartPointDropdownOpen] = React.useState(false)
+  
+  // Delete confirmation dialog state
+  const [deleteDialog, setDeleteDialog] = React.useState<{
+    isOpen: boolean
+    folderName: string | null
+    isLoading: boolean
+  }>({
+    isOpen: false,
+    folderName: null,
+    isLoading: false
+  })
   
   // Refs for dropdown click-outside detection
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -339,6 +354,59 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setIsIterationDropdownOpen(false)
   }, [setSelectedRunFolder])
 
+  // Handle delete folder confirmation
+  const handleDeleteFolderClick = useCallback((e: React.MouseEvent, folderName: string) => {
+    e.stopPropagation() // Prevent selecting the folder when clicking delete
+    setDeleteDialog({
+      isOpen: true,
+      folderName,
+      isLoading: false
+    })
+  }, [])
+
+  // Handle delete folder confirmation
+  const handleDeleteFolderConfirm = useCallback(async () => {
+    if (!deleteDialog.folderName || !workspacePath) return
+
+    setDeleteDialog(prev => ({ ...prev, isLoading: true }))
+
+    try {
+      await agentApi.deleteRunFolder(workspacePath, deleteDialog.folderName)
+      
+      // Refresh workspace files to reflect deletion
+      await fetchFiles()
+      
+      // Refresh folder list
+      await loadRunFolders(workspacePath)
+      
+      // Get updated folders after refresh (folders are sorted descending by iteration number)
+      const updatedFolders = useWorkflowStore.getState().runFolders
+      
+      // If deleted folder was selected, or we want to show next highest iteration
+      // Select the highest remaining iteration (first in sorted array)
+      if (selectedRunFolder === deleteDialog.folderName || updatedFolders.length > 0) {
+        const nextHighest = updatedFolders.length > 0 ? updatedFolders[0].name : 'new'
+        setSelectedRunFolder(nextHighest)
+        
+        // Load progress for the selected iteration if it's not 'new'
+        if (nextHighest !== 'new') {
+          await loadProgress(workspacePath, nextHighest)
+        }
+      }
+      
+      // Close dialog
+      setDeleteDialog({
+        isOpen: false,
+        folderName: null,
+        isLoading: false
+      })
+    } catch (error) {
+      console.error('[WorkflowToolbar] Failed to delete folder:', error)
+      // Keep dialog open on error so user can retry
+      setDeleteDialog(prev => ({ ...prev, isLoading: false }))
+    }
+  }, [deleteDialog.folderName, workspacePath, selectedRunFolder, setSelectedRunFolder, loadRunFolders, loadProgress, fetchFiles])
+
   // Handle execution button click
   const handleExecute = useCallback(() => {
     if (!isRunning && executionPhase) {
@@ -348,6 +416,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [isRunning, executionPhase, buildExecutionOptions, onStartPhase])
 
   return (
+    <>
     <div className={`
       flex items-center justify-between gap-2 px-3 py-1.5 
       bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700
@@ -423,26 +492,52 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                               const hasProgress = progress && folderCompletedCount > 0
                               
                               return (
-                                <button
+                                <div
                                   key={folder.name}
-                                  onClick={() => handleSelectRunFolder(folder.name)}
                                   className={`
-                                    w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                    group flex items-center gap-1 px-1
                                     ${selectedRunFolder === folder.name 
-                                      ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
-                                      : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                      ? 'bg-purple-100 dark:bg-purple-900/30' 
+                                      : ''
                                     }
                                   `}
+                                  onMouseEnter={() => {
+                                    // Load progress on-demand if not already loaded
+                                    if (!folder.progress && workspacePath) {
+                                      loadFolderProgressOnDemand(workspacePath, folder.name)
+                                    }
+                                  }}
                                 >
-                                  <FolderOpen className="w-4 h-4" />
-                                  <span className="flex-1">{folder.name}</span>
-                                  {hasProgress && (
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      {folderCompletedCount}/{folderTotalSteps}
-                                    </span>
-                                  )}
-                                  {selectedRunFolder === folder.name && <Check className="w-4 h-4 ml-auto" />}
-                                </button>
+                                  <button
+                                    onClick={() => handleSelectRunFolder(folder.name)}
+                                    className={`
+                                      flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                      ${selectedRunFolder === folder.name 
+                                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
+                                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                      }
+                                    `}
+                                  >
+                                    <FolderOpen className="w-4 h-4" />
+                                    <span className="flex-1">{folder.name}</span>
+                                    {hasProgress && (
+                                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                                        {folderCompletedCount}/{folderTotalSteps}
+                                      </span>
+                                    )}
+                                    {selectedRunFolder === folder.name && <Check className="w-4 h-4 ml-auto" />}
+                                  </button>
+                                  <button
+                                    onClick={(e) => handleDeleteFolderClick(e, folder.name)}
+                                    className={`
+                                      p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20
+                                      opacity-0 group-hover:opacity-100 transition-opacity
+                                    `}
+                                    title={`Delete ${folder.name}`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               )
                             })}
                           </>
@@ -867,6 +962,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         </button>
       </div>
     </div>
+    {/* Delete Confirmation Dialog */}
+    <ConfirmationDialog
+      isOpen={deleteDialog.isOpen}
+      onClose={() => setDeleteDialog({ isOpen: false, folderName: null, isLoading: false })}
+      onConfirm={handleDeleteFolderConfirm}
+      title="Delete Iteration Folder"
+      message={`Are you sure you want to delete "${deleteDialog.folderName}"? This will permanently delete the folder and all its contents (execution results, validation outputs, etc.). This action cannot be undone.`}
+      confirmText="Delete"
+      cancelText="Cancel"
+      type="danger"
+      isLoading={deleteDialog.isLoading}
+    />
+    </>
   )
 }
 

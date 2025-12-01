@@ -57,6 +57,7 @@ interface WorkflowStore {
 
   // Progress
   loadProgress: (workspacePath: string, runFolder: string) => Promise<void>
+  loadFolderProgressOnDemand: (workspacePath: string, folderName: string) => Promise<void>
   getCompletedStepIndices: () => number[]
 
   // Execution options
@@ -260,6 +261,33 @@ export const useWorkflowStore = create<WorkflowStore>()(
         } catch (error) {
           console.error('[WorkflowStore] Failed to load progress:', error)
           set({ stepProgress: null, isLoadingProgress: false })
+        }
+      },
+
+      // Load progress on-demand for a folder (for dropdown display)
+      // Only loads if folder doesn't have progress data yet
+      loadFolderProgressOnDemand: async (workspacePath: string, folderName: string) => {
+        if (!workspacePath || folderName === 'new') return
+
+        // Check if folder already has progress
+        const folder = get().runFolders.find(f => f.name === folderName)
+        if (folder?.progress) return // Already has progress, no need to load
+
+        try {
+          const response = await agentApi.getProgress(workspacePath, folderName)
+          if (response.exists && response.progress) {
+            // Update folder info with loaded progress
+            set(state => ({
+              runFolders: state.runFolders.map(f =>
+                f.name === folderName
+                  ? { ...f, progress: response.progress || undefined }
+                  : f
+              )
+            }))
+          }
+        } catch (error) {
+          // Silent fail - this is on-demand loading for display purposes
+          console.debug('[WorkflowStore] On-demand progress load failed for', folderName, error)
         }
       },
 

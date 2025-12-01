@@ -814,6 +814,27 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 		currentResult = result
 		currentConversationHistory = updatedConversationHistory
 
+		// Check if plan/step_config modification tools were called in this iteration and emit event immediately
+		// This ensures the frontend is notified of plan changes right away, not waiting for agent completion
+		if agent.baseOrchestrator != nil {
+			// Extract tool calls from this iteration's conversation history
+			toolCalls := ExtractToolCallsFromMessages(updatedConversationHistory)
+			planUpdateToolCalled := false
+			for _, toolName := range toolCalls {
+				if IsPlanModificationTool(toolName) || IsStepConfigModificationTool(toolName) {
+					planUpdateToolCalled = true
+					break
+				}
+			}
+
+			if planUpdateToolCalled {
+				if logger != nil {
+					logger.Infof("🔍 [PlanToolOptimizationAgent] Plan/step_config modification tool detected in iteration %d, emitting event immediately", iteration)
+				}
+				CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, updatedConversationHistory, workspacePath, agent.baseOrchestrator.ReadWorkspaceFile)
+			}
+		}
+
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {

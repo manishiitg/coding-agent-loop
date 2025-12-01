@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
@@ -1135,7 +1136,8 @@ func registerPlanModificationTools(
 
 // ExecuteStructuredUpdate executes the planning agent in UPDATE mode using 3 custom tools that directly update plan.json
 // readFile and writeFile are BaseOrchestrator's ReadWorkspaceFile and WriteWorkspaceFile methods
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) (*PlanningResponse, []llmtypes.MessageContent, error) {
+// baseOrchestrator is used to emit events when plan is updated
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, baseOrchestrator *orchestrator.BaseOrchestrator) (*PlanningResponse, []llmtypes.MessageContent, error) {
 	// Get workspace path from template vars
 	workspacePath := templateVars["WorkspacePath"]
 	if workspacePath == "" {
@@ -1197,6 +1199,12 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 
 	// Tools were called - plan.json was updated
 	logger.Infof("✅ Plan updated via tools (%d steps)", len(currentPlan.Steps))
+
+	// Emit event to notify frontend that plan was updated
+	if baseOrchestrator != nil {
+		CheckAndEmitPlanUpdateEvent(ctx, baseOrchestrator, updatedHistory, workspacePath, readFile)
+	}
+
 	return currentPlan, updatedHistory, nil
 }
 

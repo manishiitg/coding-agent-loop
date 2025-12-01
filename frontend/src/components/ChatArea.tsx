@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import debounce from 'lodash.debounce'
-import { agentApi } from '../services/api'
+import { agentApi, setCurrentObserverId } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput, type ChatInputRef } from './ChatInput'
@@ -573,6 +573,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           console.log(`[INIT] Observer registered successfully: ${response.observer_id}`)
           setObserverId(response.observer_id)
           
+          // Sync observer ID to API module for request interceptor
+          setCurrentObserverId(response.observer_id)
+          
           // Clear the requiresNewChat flag after successful initialization
           useAppStore.getState().clearRequiresNewChat()
           console.log('[INIT] Cleared requiresNewChat flag after successful observer registration')
@@ -659,12 +662,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     const currentObserverId = useChatStore.getState().observerId || observerId
     
     if (!currentObserverId) {
+      console.log('[WorkflowPlanUpdate] Polling skipped - no observerId available')
       return
     }
 
-    
+    console.log(`[WorkflowPlanUpdate] Polling events with observerId: ${currentObserverId}, sinceIndex: ${currentLastEventIndex}`)
     try {
       const response = await agentApi.getEvents(currentObserverId, currentLastEventIndex)
+      console.log(`[WorkflowPlanUpdate] Poll response: ${response.events.length} events, lastEventIndex: ${response.last_event_index}, observerId: ${response.observer_id}`)
 
       if (response.events.length > 0) {
         

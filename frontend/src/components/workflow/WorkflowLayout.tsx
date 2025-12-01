@@ -1,8 +1,9 @@
-import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
+import React, { useMemo, useCallback, useRef, useEffect } from 'react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { useChatStore } from '../../stores/useChatStore'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { ChatHeader } from '../ChatHeader'
 import { MessageSquare, X } from 'lucide-react'
@@ -18,6 +19,7 @@ interface WorkflowLayoutProps {
 /**
  * Main layout component for workflow mode
  * Shows React Flow canvas as the main area with ChatArea appearing when a phase is started
+ * Uses useWorkflowStore for activePhase and showChatArea state (single source of truth)
  */
 export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   className = '',
@@ -26,8 +28,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 }) => {
   const { selectedModeCategory, setModeCategory } = useModeStore()
   const { currentWorkflowPhase, setCurrentWorkflowPhase, events } = useChatStore()
-  const [activePhase, setActivePhase] = useState<string | null>(null) // Currently running phase
-  const [showChatArea, setShowChatArea] = useState(false) // Show ChatArea when phase is running
+  
+  // Use workflow store for UI state (single source of truth)
+  const activePhase = useWorkflowStore(state => state.activePhase)
+  const showChatArea = useWorkflowStore(state => state.showChatArea)
+  const setActivePhase = useWorkflowStore(state => state.setActivePhase)
+  const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
   
   // Ref for the ChatArea component
   const chatAreaRef = useRef<ChatAreaRef>(null)
@@ -64,13 +70,38 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   useEffect(() => {
     if (events.length === 0) return
     
+    console.log(`[WorkflowPlanUpdate] Processing events (total: ${events.length}, last processed: ${lastProcessedEventIndexRef.current})`)
+    
     // Find new todo_steps_extracted events that we haven't processed yet
     for (let i = lastProcessedEventIndexRef.current + 1; i < events.length; i++) {
       const event = events[i]
+      console.log(`[WorkflowPlanUpdate] Event ${i}: type=${event.type}, timestamp=${event.timestamp}`)
+      
       if (event.type === 'todo_steps_extracted') {
-        console.log('[WorkflowLayout] Detected plan update event, triggering canvas refresh')
+        const eventData = event.data as { extracted_steps?: unknown[], total_steps_extracted?: number, plan_source?: string, extraction_method?: string, workspace_path?: string }
+        const stepCount = (eventData?.extracted_steps?.length) || eventData?.total_steps_extracted || 0
+        const planSource = eventData?.plan_source || 'unknown'
+        const extractionMethod = eventData?.extraction_method || 'unknown'
+        
+        console.log(`[WorkflowPlanUpdate] Detected plan update event:`, {
+          stepCount,
+          planSource,
+          extractionMethod,
+          workspacePath: eventData?.workspace_path,
+          eventIndex: i
+        })
+        
         // Trigger canvas refresh with change detection
-        canvasRef.current?.refresh()
+        if (canvasRef.current) {
+          console.log('[WorkflowPlanUpdate] Calling canvasRef.current.refresh()')
+          canvasRef.current.refresh().then((changes) => {
+            console.log('[WorkflowPlanUpdate] Canvas refresh completed, changes:', changes)
+          }).catch((err) => {
+            console.error('[WorkflowPlanUpdate] Canvas refresh failed:', err)
+          })
+        } else {
+          console.warn('[WorkflowPlanUpdate] canvasRef.current is null, cannot refresh')
+        }
         lastProcessedEventIndexRef.current = i
       }
     }
@@ -119,13 +150,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
       await chatAreaRef.current.submitQuery(query, executionOptions)
     }
-  }, [activePresetId, setCurrentWorkflowPhase])
+  }, [activePresetId, setCurrentWorkflowPhase, setActivePhase, setShowChatArea])
 
   // Handle closing ChatArea
   const handleCloseChatArea = useCallback(() => {
     setShowChatArea(false)
     setActivePhase(null)
-  }, [])
+  }, [setShowChatArea, setActivePhase])
 
   // No preset selected state
   if (!activeWorkflowPreset) {

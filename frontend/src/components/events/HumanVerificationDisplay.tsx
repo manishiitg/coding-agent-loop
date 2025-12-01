@@ -21,12 +21,14 @@ interface HumanVerificationDisplayProps {
     timestamp: string
   }
   onApprove: (requestId: string, eventData?: RequestHumanFeedbackEvent) => void
+  onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state
 }
 
 export const HumanVerificationDisplay: React.FC<HumanVerificationDisplayProps> = ({
   event,
   onApprove,
+  onFeedbackSubmitted,
   isApproving = false
 }) => {
   // Use backend-provided content directly
@@ -38,6 +40,14 @@ export const HumanVerificationDisplay: React.FC<HumanVerificationDisplayProps> =
     if (event.data.request_id) {
       // Call onApprove to update workflow status and phase
       await onApprove(event.data.request_id, event.data)
+      
+      // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
+      if (onFeedbackSubmitted) {
+        // Use setTimeout to ensure the UI has updated before scrolling
+        setTimeout(() => {
+          onFeedbackSubmitted()
+        }, 100)
+      }
     }
   }
 

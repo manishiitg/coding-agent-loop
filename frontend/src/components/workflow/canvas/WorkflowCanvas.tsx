@@ -14,7 +14,7 @@ import { nodeTypes } from '../nodes'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { StepSidebar } from './StepSidebar'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
-import { usePlanToFlow, type WorkflowNode } from '../hooks/usePlanToFlow'
+import { usePlanToFlow, type WorkflowNode, type StepNodeData, type ConditionalNodeData, type LoopNodeData } from '../hooks/usePlanToFlow'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
@@ -194,7 +194,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     refresh: async () => {
+      console.log('[WorkflowPlanUpdate] refresh() called via ref')
+      console.log('[WorkflowPlanUpdate] Current plan state:', { 
+        hasPlan: !!plan, 
+        stepCount: plan?.steps?.length || 0,
+        planSteps: plan?.steps?.map(s => ({ id: s.id, title: s.title })) || []
+      })
       const detectedChanges = await refresh()
+      console.log('[WorkflowPlanUpdate] refresh() completed, changes:', detectedChanges)
+      console.log('[WorkflowPlanUpdate] Plan state after refresh:', { 
+        hasPlan: !!plan, 
+        stepCount: plan?.steps?.length || 0 
+      })
       return detectedChanges
     },
     getStepCount: () => {
@@ -233,13 +244,22 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
+    console.log('[WorkflowPlanUpdate] Checking for node/edge changes', {
+      prevNodesLength: prevNodesRef.current.length,
+      newNodesLength: initialNodes.length,
+      prevEdgesLength: prevEdgesRef.current.length,
+      newEdgesLength: initialEdges.length
+    })
+    
     // Compare by reference first (fast path)
     if (prevNodesRef.current === initialNodes && prevEdgesRef.current === initialEdges) {
+      console.log('[WorkflowPlanUpdate] No change detected (reference comparison)')
       return // No change
     }
     
-    // Compare by length, IDs, and node data (status) to detect actual changes
+    // Compare by length, IDs, node data (status), and step configs to detect actual changes
     // This ensures nodes update when completedStepIndices changes (which updates status)
+    // and when agent_configs are updated (e.g., when saving config in side panel)
     const nodesChanged = 
       prevNodesRef.current.length !== initialNodes.length ||
       prevNodesRef.current.some((node, i) => {
@@ -249,6 +269,32 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         if (node?.id !== newNode.id) return true
         // Check if status changed (important for completed steps highlighting)
         if (node?.data?.status !== newNode.data?.status) return true
+        // Check if step data changed (especially agent_configs)
+        // This is important when saving config in the side panel
+        const oldData = node?.data as StepNodeData | ConditionalNodeData | LoopNodeData | undefined
+        const newData = newNode?.data as StepNodeData | ConditionalNodeData | LoopNodeData | undefined
+        const oldStep = oldData?.step
+        const newStep = newData?.step
+        if (oldStep && newStep) {
+          // Compare agent_configs by JSON stringify (handles nested objects)
+          const oldConfigs = JSON.stringify(oldStep.agent_configs || {})
+          const newConfigs = JSON.stringify(newStep.agent_configs || {})
+          if (oldConfigs !== newConfigs) {
+            console.log(`[WorkflowPlanUpdate] Node ${node.id} agent_configs changed`)
+            return true
+          }
+          // Also check if other step fields changed
+          const oldStepStr = JSON.stringify(oldStep)
+          const newStepStr = JSON.stringify(newStep)
+          if (oldStepStr !== newStepStr) {
+            console.log(`[WorkflowPlanUpdate] Node ${node.id} step data changed`)
+            return true
+          }
+        } else if (oldStep !== newStep) {
+          // One has step data and the other doesn't
+          console.log(`[WorkflowPlanUpdate] Node ${node.id} step data presence changed`)
+          return true
+        }
         return false
       })
     
@@ -257,17 +303,102 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       prevEdgesRef.current.some((edge, i) => edge?.id !== initialEdges[i]?.id)
     
     if (nodesChanged) {
+      console.log('[WorkflowPlanUpdate] Nodes changed, updating state', {
+        prevCount: prevNodesRef.current.length,
+        newCount: initialNodes.length
+      })
       setNodes(initialNodes)
       // Reset view initialization flag when nodes actually change
       hasInitializedView.current = false
       prevNodesRef.current = initialNodes
+    } else {
+      console.log('[WorkflowPlanUpdate] No node changes detected')
     }
     
     if (edgesChanged) {
+      console.log('[WorkflowPlanUpdate] Edges changed, updating state', {
+        prevCount: prevEdgesRef.current.length,
+        newCount: initialEdges.length
+      })
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
+    } else {
+      console.log('[WorkflowPlanUpdate] No edge changes detected')
     }
   }, [initialNodes, initialEdges, setNodes, setEdges])
+
+  // Store selected node ID in ref to track which node is selected
+  const selectedNodeIdRef = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (selectedNode) {
+      selectedNodeIdRef.current = selectedNode.id
+    } else {
+      selectedNodeIdRef.current = null
+    }
+  }, [selectedNode])
+
+  // Update selectedNode when nodes change (e.g., when plan is refreshed from backend)
+  // This ensures the side panel shows updated step data when plan changes
+  React.useEffect(() => {
+    const selectedId = selectedNodeIdRef.current
+    console.log('[WorkflowPlanUpdate] Checking selectedNode update', {
+      selectedId,
+      nodesLength: nodes.length,
+      hasSelectedNode: !!selectedNode
+    })
+    
+    if (!selectedId || nodes.length === 0) {
+      console.log('[WorkflowPlanUpdate] No selected node or no nodes, skipping update')
+      return
+    }
+
+    // Find the corresponding node in the new nodes array by ID
+    const updatedNode = nodes.find(n => n.id === selectedId) as WorkflowNode | undefined
+    if (!updatedNode) {
+      // Selected node no longer exists (was deleted)
+      console.log('[WorkflowPlanUpdate] Selected node no longer exists, clearing selection')
+      setSelectedNode(null)
+      return
+    }
+
+    // Check if we need to update selectedNode by comparing with current selection
+    // Use a ref to get the current selectedNode without causing dependency issues
+    const currentSelected = selectedNode
+    if (!currentSelected || currentSelected.id !== selectedId) {
+      // Selection changed or was cleared - don't update
+      console.log('[WorkflowPlanUpdate] Selection changed or cleared, skipping update')
+      return
+    }
+
+    // Compare step data to see if it changed
+    const oldData = currentSelected.data as StepNodeData | ConditionalNodeData | LoopNodeData | undefined
+    const newData = updatedNode.data as StepNodeData | ConditionalNodeData | LoopNodeData | undefined
+    const oldStep = oldData?.step
+    const newStep = newData?.step
+    
+    if (oldStep && newStep) {
+      // Compare by JSON stringify to detect any changes
+      const oldStepStr = JSON.stringify(oldStep)
+      const newStepStr = JSON.stringify(newStep)
+      if (oldStepStr !== newStepStr) {
+        console.log('[WorkflowPlanUpdate] Updating selectedNode with new step data from plan refresh', {
+          nodeId: selectedId,
+          oldStepKeys: Object.keys(oldStep),
+          newStepKeys: Object.keys(newStep),
+          agentConfigsChanged: JSON.stringify(oldStep.agent_configs || {}) !== JSON.stringify(newStep.agent_configs || {})
+        })
+        setSelectedNode(updatedNode)
+      } else {
+        console.log('[WorkflowPlanUpdate] Selected node step data unchanged')
+      }
+    } else if (updatedNode !== currentSelected) {
+      // Node structure changed (e.g., type changed)
+      console.log('[WorkflowPlanUpdate] Node structure changed, updating selectedNode')
+      setSelectedNode(updatedNode)
+    } else {
+      console.log('[WorkflowPlanUpdate] Selected node unchanged')
+    }
+  }, [nodes, selectedNode]) // Include selectedNode to compare, but logic prevents loops
 
   // Set initial view to show start node (left side) on first load
   React.useEffect(() => {

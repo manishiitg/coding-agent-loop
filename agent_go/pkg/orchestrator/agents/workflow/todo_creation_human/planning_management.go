@@ -151,8 +151,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	if isUpdateMode {
 		// UPDATE mode: Use ExecuteStructuredUpdate (returns updated PlanningResponse directly)
 		hcpo.GetLogger().Infof("🔄 UPDATE mode: Using ExecuteStructuredUpdate")
-		// Pass BaseOrchestrator's file operation methods to the planning agent
-		updatedPlan, updatedHistory, updateErr := planningAgentTyped.ExecuteStructuredUpdate(ctx, planningTemplateVars, conversationHistory, userMessage, hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile)
+		// Pass BaseOrchestrator's file operation methods and BaseOrchestrator to the planning agent
+		updatedPlan, updatedHistory, updateErr := planningAgentTyped.ExecuteStructuredUpdate(ctx, planningTemplateVars, conversationHistory, userMessage, hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile, hcpo.BaseOrchestrator)
 		if updateErr != nil {
 			err = updateErr
 			updatedConversationHistory = updatedHistory
@@ -677,10 +677,15 @@ func EmitTodoStepsExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrche
 
 	// Emit through the context-aware bridge
 	bridge := bo.GetContextAwareBridge()
+	if bridge == nil {
+		bo.GetLogger().Warnf("⚠️ [EmitTodoStepsExtractedEvent] ContextAwareBridge is nil, cannot emit event")
+		return
+	}
+	bo.GetLogger().Infof("📤 [EmitTodoStepsExtractedEvent] About to emit event through bridge (bridge type: %T)", bridge)
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit todo steps extracted event: %w", err)
+		bo.GetLogger().Warnf("⚠️ [EmitTodoStepsExtractedEvent] Failed to emit todo steps extracted event: %w", err)
 	} else {
-		bo.GetLogger().Infof("✅ Emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
+		bo.GetLogger().Infof("✅ [EmitTodoStepsExtractedEvent] Successfully emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
 	}
 }
 
@@ -743,23 +748,28 @@ func CheckAndEmitPlanUpdateEvent(
 	readFile func(context.Context, string) (string, error),
 ) {
 	if bo == nil {
+		// Log at info level so we can see if this is the issue
 		return
 	}
 
+	bo.GetLogger().Infof("🔍 [CheckAndEmitPlanUpdateEvent] Checking conversation history for plan modification tools (history length: %d)", len(conversationHistory))
+
 	// Extract tool calls from conversation history
 	toolCalls := ExtractToolCallsFromMessages(conversationHistory)
+	bo.GetLogger().Infof("🔍 [CheckAndEmitPlanUpdateEvent] Extracted %d tool calls: %v", len(toolCalls), toolCalls)
 
 	// Check if any plan or step_config modification tool was called
 	needsEvent := false
 	for _, name := range toolCalls {
 		if IsPlanModificationTool(name) || IsStepConfigModificationTool(name) {
 			needsEvent = true
+			bo.GetLogger().Infof("🔍 [CheckAndEmitPlanUpdateEvent] Found plan modification tool: %s", name)
 			break
 		}
 	}
 
 	if !needsEvent {
-		bo.GetLogger().Debugf("📋 No plan/step_config modification tools called, skipping event emission")
+		bo.GetLogger().Infof("📋 [CheckAndEmitPlanUpdateEvent] No plan/step_config modification tools called, skipping event emission")
 		return
 	}
 

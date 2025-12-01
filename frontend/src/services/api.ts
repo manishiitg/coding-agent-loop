@@ -96,13 +96,17 @@ export function setSessionId(sessionId: string): void {
 }
 
 // --- Observer ID Management ---
+// Module-level observer ID (synced from useChatStore via setCurrentObserverId)
+let currentObserverIdRef = ''
+
+// Called by ChatArea to sync observer ID from useChatStore
+export function setCurrentObserverId(observerId: string): void {
+  currentObserverIdRef = observerId
+  console.log(`[API] Observer ID set: ${observerId}`)
+}
+
 function getObserverId(): string {
-  const observerId = localStorage.getItem('agent_observer_id')
-  if (!observerId) {
-    // We'll get this from the server when we register
-    return ''
-  }
-  return observerId
+  return currentObserverIdRef
 }
 
 // --- Axios request interceptor to inject session ID ---
@@ -127,11 +131,9 @@ export const agentApi = {
     })
     const data = response.data
 
-    // Store observer ID for future requests
-    if (data.observer_id) {
-      localStorage.setItem('agent_observer_id', data.observer_id)
-      // Observer registered successfully
-    } else {
+    // Note: Observer ID is now managed by useChatStore, not localStorage
+    // The caller (ChatArea) should call setCurrentObserverId after this
+    if (!data.observer_id) {
       console.error('[API] No observer_id received from server')
     }
 
@@ -154,7 +156,7 @@ export const agentApi = {
   // Remove observer
   removeObserver: async (observerId: string): Promise<void> => {
     await api.delete(`/api/observer/${observerId}`)
-    localStorage.removeItem('agent_observer_id')
+    // Note: Observer ID is managed by useChatStore, caller should clear it there
   },
 
   // Stop session/agent execution (preserves conversation history)
@@ -192,14 +194,14 @@ export const agentApi = {
 
   // Start a new agent query
   startQuery: async (request: AgentQueryRequest): Promise<AgentQueryResponse> => {
-    // Get the current observer ID from localStorage
-    const observerId = localStorage.getItem('agent_observer_id')
+    // Get the current observer ID (managed via setCurrentObserverId)
+    const observerId = getObserverId()
 
     // Create headers with observer ID if available
     const headers: Record<string, string> = {}
     if (observerId) {
       headers['X-Observer-ID'] = observerId
-      // Starting query with observer ID
+      console.log(`[API] Starting query with observer ID: ${observerId}`)
     } else {
       console.warn('[API] No observer ID available for query')
     }
@@ -571,6 +573,14 @@ export const agentApi = {
   // Get execution progress for a run folder
   getProgress: async (workspacePath: string, runFolder: string): Promise<ProgressResponse> => {
     const response = await api.get('/api/workflow/progress', {
+      params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
+    return response.data
+  },
+
+  // Delete a run folder (iteration)
+  deleteRunFolder: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete('/api/workflow/run-folder', {
       params: { workspace_path: workspacePath, run_folder: runFolder }
     })
     return response.data

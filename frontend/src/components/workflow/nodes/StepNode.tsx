@@ -209,12 +209,22 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       const response = await agentApi.getPlannerFileContent(filePath)
       
       if (response.success && response.data) {
-        let processedContent = response.data.content
+        // Ensure content exists and is a string before processing
+        const rawContent = response.data.content
+        if (rawContent === undefined || rawContent === null) {
+          setError(`File content is empty or unavailable: ${fileName}\n\nPath: ${filePath}`)
+          setShowFileContent(false)
+          setSelectedFile(null)
+          setLoadingFileContent(false)
+          return
+        }
+        
+        let processedContent = typeof rawContent === 'string' ? rawContent : String(rawContent)
         let isJsonFile = false
         let formattedJson = null
         
         // Check if this is an image file
-        if (response.data.is_image && processedContent.startsWith('data:image/')) {
+        if (response.data.is_image && processedContent && processedContent.startsWith('data:image/')) {
           // For images, the content is already base64 encoded data URL
           // No processing needed for images
         } else {
@@ -284,9 +294,9 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       ${selected ? 'ring-2 ring-blue-500/40' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
-      {/* Change badge */}
+      {/* Change badge - positioned at top-right edge */}
       {changeType && (
-        <div className={`absolute -top-2 -right-2 z-10 flex items-center gap-1 px-2 py-0.5 rounded-full ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
+        <div className={`absolute top-0 right-0 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
           {changeBadgeStyles[changeType].icon}
           <span className="capitalize">{changeType}</span>
         </div>

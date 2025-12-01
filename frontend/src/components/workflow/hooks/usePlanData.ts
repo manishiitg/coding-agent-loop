@@ -224,43 +224,51 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       return null
     }
 
+    console.log('[WorkflowPlanUpdate] loadPlan called', { planPath, stepConfigPath, workspacePath })
+
     // Check if workspace changed - if so, this is an initial load (no animations)
     const isWorkspaceChange = currentWorkspaceRef.current !== workspacePath
     if (isWorkspaceChange) {
       currentWorkspaceRef.current = workspacePath
       isInitialLoadRef.current = true
       previousPlanRef.current = null
-      console.log('[usePlanData] Workspace changed, resetting for initial load')
+      console.log('[WorkflowPlanUpdate] Workspace changed, resetting for initial load')
     }
 
     setLoading(true)
     setError(null)
 
     try {
+      console.log('[WorkflowPlanUpdate] Fetching plan from:', planPath)
       const response = await agentApi.getPlannerFileContent(planPath)
+      console.log('[WorkflowPlanUpdate] Plan fetch response:', { success: response.success, hasData: !!response.data })
       
       if (response.success && response.data) {
         let planData: PlanningResponse = JSON.parse(response.data.content)
+        console.log('[WorkflowPlanUpdate] Plan loaded:', { stepCount: planData.steps?.length || 0, hasSteps: !!planData.steps })
         
         // Also load step_config.json to merge agent_configs
         if (stepConfigPath) {
           try {
+            console.log('[WorkflowPlanUpdate] Fetching step_config from:', stepConfigPath)
             const stepConfigResponse = await agentApi.getPlannerFileContent(stepConfigPath)
             if (stepConfigResponse.success && stepConfigResponse.data) {
               const stepConfigFile: StepConfigFile = JSON.parse(stepConfigResponse.data.content)
               // Merge agent_configs into plan steps
               planData = mergeStepConfigs(planData, stepConfigFile)
-              console.log('[usePlanData] Merged step_config.json into plan')
+              console.log('[WorkflowPlanUpdate] Merged step_config.json into plan', { 
+                stepConfigCount: Object.keys(stepConfigFile).length 
+              })
             }
-          } catch {
+          } catch (err) {
             // step_config.json doesn't exist or couldn't be loaded - that's okay
-            console.log('[usePlanData] No step_config.json found, using plan without agent configs')
+            console.log('[WorkflowPlanUpdate] No step_config.json found, using plan without agent configs', err)
           }
         }
         
         // Only detect changes if NOT initial load (don't animate on workflow switch/first load)
         if (isInitialLoadRef.current) {
-          console.log('[usePlanData] Initial load - skipping change detection')
+          console.log('[WorkflowPlanUpdate] Initial load - skipping change detection, setting plan')
           setPlan(planData)
           previousPlanRef.current = planData
           isInitialLoadRef.current = false
@@ -268,16 +276,60 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
         }
         
         // Detect changes between previous and new plan
+        console.log('[WorkflowPlanUpdate] Detecting changes between previous and new plan')
+        console.log('[WorkflowPlanUpdate] Previous plan:', {
+          hasPrevious: !!previousPlanRef.current,
+          previousStepCount: previousPlanRef.current?.steps?.length || 0,
+          previousStepIds: previousPlanRef.current?.steps?.map(s => s.id) || []
+        })
+        console.log('[WorkflowPlanUpdate] New plan:', {
+          hasNew: !!planData,
+          newStepCount: planData.steps?.length || 0,
+          newStepIds: planData.steps?.map(s => s.id) || []
+        })
+        
+        // Compare specific step that was updated (if we can identify it)
+        if (previousPlanRef.current && planData.steps) {
+          const updatedStepId = 'cleanup-data-and-delete-sensitive-data-from-workspace-files-yob6og'
+          const prevStep = previousPlanRef.current.steps.find(s => s.id === updatedStepId)
+          const newStep = planData.steps.find(s => s.id === updatedStepId)
+          if (prevStep && newStep) {
+            console.log('[WorkflowPlanUpdate] Comparing updated step:', {
+              stepId: updatedStepId,
+              prevSuccessCriteria: prevStep.success_criteria,
+              newSuccessCriteria: newStep.success_criteria,
+              successCriteriaChanged: prevStep.success_criteria !== newStep.success_criteria,
+              prevStepStr: JSON.stringify(prevStep),
+              newStepStr: JSON.stringify(newStep),
+              stepChanged: JSON.stringify(prevStep) !== JSON.stringify(newStep)
+            })
+          }
+        }
+        
         const detectedChanges = detectPlanChanges(previousPlanRef.current, planData)
+        console.log('[WorkflowPlanUpdate] Change detection result:', {
+          hasChanges: detectedChanges.hasChanges,
+          added: detectedChanges.added?.length || 0,
+          updated: detectedChanges.updated?.length || 0,
+          deleted: detectedChanges.deleted?.length || 0,
+          addedIds: detectedChanges.added,
+          updatedIds: detectedChanges.updated,
+          deletedIds: detectedChanges.deleted
+        })
         
         // Update state
+        console.log('[WorkflowPlanUpdate] Updating plan state')
         setPlan(planData)
         previousPlanRef.current = planData
         
         if (detectedChanges.hasChanges) {
           setChanges(detectedChanges)
-          console.log('[usePlanData] Plan changes detected:', detectedChanges)
+          console.log('[WorkflowPlanUpdate] Plan changes detected and set:', detectedChanges)
           return detectedChanges
+        } else {
+          console.log('[WorkflowPlanUpdate] No changes detected, plan is the same')
+          // Even if no changes detected, return null to indicate refresh completed
+          return null
         }
       } else {
         // Plan doesn't exist yet - that's okay

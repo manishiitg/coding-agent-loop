@@ -320,10 +320,46 @@ const DAGRE_CONFIG = {
   - LLM settings
 - Run/Edit/Delete actions
 
-### 6. ChatArea Integration
+### 6. ChatArea Integration & Observer ID Management
+
+**Single Source of Truth for Observer ID:**
+- `useChatStore.observerId` is the single source of truth
+- ChatArea registers observer on mount → stores in `useChatStore` + syncs to API module
+- `useWorkflowExecution` uses `useChatStore` selectors (no local state)
+- No localStorage for observer ID - uses module-level variable in `api.ts`
+
+**Observer ID Flow:**
+```
+ChatArea mounts
+  └── Registers observer via agentApi.registerObserver()
+  └── Stores in useChatStore.observerId
+  └── Calls setCurrentObserverId() to sync to API module
+  └── Polls with useChatStore.observerId → events to useChatStore.events
+
+useWorkflowExecution (on Execute)
+  └── Gets observerId from useChatStore (same as ChatArea's)
+  └── agentApi.startQuery uses same observerId in X-Observer-ID header
+  └── Backend stores events with SAME observer ID
+  └── ChatArea polling receives events → useChatStore.events
+  └── WorkflowLayout detects 'todo_steps_extracted' events
+```
+
+**useWorkflowExecution - Single Source of Truth:**
+- Uses `useChatStore` selectors: `observerId`, `events`, `isStreaming`, `isCompleted`
+- No local polling - relies on ChatArea's polling
+- Derives `status` directly from store states (no redundant event scanning):
+  - `isStreaming` → `'running'` (source of truth for all execution paths)
+  - `isCompleted` → `'completed'`
+  - `manualStatus` → for stop/pause overrides
+- Works for ALL execution paths: toolbar Execute, run-from-step button, any agent
+
+**WorkflowLayout - Uses useWorkflowStore:**
+- `activePhase` and `showChatArea` from `useWorkflowStore` (not local state)
+- Single source of truth for workflow UI state
 
 **ChatArea provides execution infrastructure:**
 - Hidden in workflow mode (`<div className="hidden">`)
+- Manages observer registration and event polling
 - Exposes methods via ref:
   - `submitQuery(query)` - Start phase execution
   - `getEvents()` - Get event stream
@@ -578,6 +614,10 @@ All components use CSS variables for theme-aware colors:
 9. **Phase Loading** - Removed deprecated `getWorkflowPhases()` and `getDefaultWorkflowPhase()` functions
 10. **Constants Cleanup** - `constants/workflow.ts` now only contains static constants, no API calls
 11. **Component Refactoring** - All workflow components now use Zustand selectors for proper reactivity
+12. **Observer ID Management** - Removed localStorage, uses `useChatStore.observerId` as single source of truth
+13. **useWorkflowExecution Refactor** - Uses `useChatStore` selectors (`isStreaming`, `isCompleted`), no redundant event scanning
+14. **WorkflowLayout Refactor** - Uses `useWorkflowStore` for `activePhase`/`showChatArea` (removed local state)
+15. **Execution Status** - `isStreaming` from ChatArea is source of truth for all execution paths
 
 ---
 
@@ -616,3 +656,7 @@ All components use CSS variables for theme-aware colors:
 | Clickable file names in nodes | ✅ |
 | File opening from workflow nodes | ✅ |
 | Error handling for missing files | ✅ |
+| Single observer ID (useChatStore) | ✅ |
+| No localStorage for observer ID | ✅ |
+| Stop button works for all execution paths | ✅ |
+| No redundant state (single source of truth) | ✅ |

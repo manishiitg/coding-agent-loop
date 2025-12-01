@@ -351,6 +351,27 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 		currentResult = result
 		currentConversationHistory = updatedConversationHistory
 
+		// Check if plan modification tools were called in this iteration and emit event immediately
+		// This ensures the frontend is notified of plan changes right away, not waiting for agent completion
+		if agent.baseOrchestrator != nil {
+			// Extract tool calls from this iteration's conversation history
+			toolCalls := ExtractToolCallsFromMessages(updatedConversationHistory)
+			planUpdateToolCalled := false
+			for _, toolName := range toolCalls {
+				if IsPlanModificationTool(toolName) || IsStepConfigModificationTool(toolName) {
+					planUpdateToolCalled = true
+					break
+				}
+			}
+
+			if planUpdateToolCalled {
+				if logger != nil {
+					logger.Infof("🔍 [PlanImprovementAgent] Plan modification tool detected in iteration %d, emitting event immediately", iteration)
+				}
+				CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, updatedConversationHistory, workspacePath, readFile)
+			}
+		}
+
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {
@@ -414,7 +435,13 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 
 	// Check if plan modification tools were called and emit event if needed
 	// This ensures the frontend is notified of plan changes
+	if logger != nil {
+		logger.Infof("🔍 [PlanImprovementAgent] Calling CheckAndEmitPlanUpdateEvent (baseOrchestrator: %v, conversationHistory length: %d)", agent.baseOrchestrator != nil, len(currentConversationHistory))
+	}
 	CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, currentConversationHistory, workspacePath, readFile)
+	if logger != nil {
+		logger.Infof("🔍 [PlanImprovementAgent] CheckAndEmitPlanUpdateEvent call completed")
+	}
 
 	return currentResult, currentConversationHistory, nil
 }

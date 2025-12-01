@@ -638,9 +638,9 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 
 	fmt.Printf("[handleGetRunFolders] Extracted %d iteration folders: %v\n", len(existingFolders), existingFolders)
 
-	// Build folder info - only read progress for latest 3 iterations (most likely to be viewed)
+	// Build folder info - read progress for all displayed iterations (max 10)
 	folderInfos := make([]RunFolderInfo, 0, len(existingFolders))
-	maxFoldersWithProgress := 3 // Only read progress for latest 3 iterations
+	maxFoldersWithProgress := 10 // Read progress for all displayed iterations
 
 	for i, folderName := range existingFolders {
 		folderInfo := RunFolderInfo{
@@ -830,5 +830,113 @@ func (api *StreamingAPI) handleGetProgress(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleDeleteRunFolder handles deleting a run folder (iteration)
+func (api *StreamingAPI) handleDeleteRunFolder(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "DELETE" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	runFolder := r.URL.Query().Get("run_folder")
+	if runFolder == "" {
+		http.Error(w, "run_folder parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate run folder name (security: prevent path traversal)
+	if strings.Contains(runFolder, "..") || strings.Contains(runFolder, "/") || strings.Contains(runFolder, "\\") {
+		http.Error(w, "Invalid run folder name", http.StatusBadRequest)
+		return
+	}
+
+	// Construct folder path: {workspacePath}/runs/{runFolder}
+	folderPath := workspacePath + "/runs/" + runFolder
+
+	// URL-encode the folder path segments
+	pathSegments := strings.Split(folderPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Delete folder via workspace API
+	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
+	req, err := http.NewRequestWithContext(r.Context(), "DELETE", apiURL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		// Folder doesn't exist - return success (idempotent)
+		response := map[string]interface{}{
+			"success": true,
+			"message": "Folder does not exist (already deleted)",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("Workspace API returned status %d: %s", resp.StatusCode, string(body)), http.StatusInternalServerError)
+		return
+	}
+
+	// Parse workspace API response
+	var apiResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse API response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if !apiResp.Success {
+		http.Error(w, fmt.Sprintf("Failed to delete folder: %s", apiResp.Error), http.StatusInternalServerError)
+		return
+	}
+
+	// Success response
+	response := map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Successfully deleted iteration folder: %s", runFolder),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }

@@ -49,8 +49,9 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
       </div>
 
       {/* Change badge */}
+      {/* Change badge - positioned at top-right edge */}
       {changeType && (
-        <div className={`absolute -top-2 -right-2 z-10 flex items-center gap-1 px-2 py-0.5 rounded-full ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
+        <div className={`absolute top-0 right-0 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
           {changeBadgeStyles[changeType].icon}
           <span className="capitalize">{changeType}</span>
         </div>

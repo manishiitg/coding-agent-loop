@@ -25,12 +25,6 @@ import type {
 import type { PlanStep, PlanningResponse, AgentConfigs } from '../../../utils/stepConfigMatching'
 import type { TodoStepWithConfigs } from '../../../utils/stepConfigMatching'
 
-// Helper function to truncate text with ellipsis
-const truncateText = (text: string, maxLength: number = 150): string => {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength).trim() + '...'
-}
-
 interface StepSidebarProps {
   node: WorkflowNode | null
   onClose: () => void
@@ -824,8 +818,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                     {step.title}
                   </h3>
                   {step.description && (
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      {truncateText(step.description)}
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-wrap">
+                      {step.description}
                     </p>
                   )}
                 </div>
@@ -835,8 +829,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                     <span className="text-xs font-medium text-green-600 dark:text-green-400">
                       Success Criteria:
                     </span>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      {truncateText(step.success_criteria)}
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-wrap">
+                      {step.success_criteria}
                     </p>
                   </div>
                 )}

@@ -21,15 +21,16 @@ import { EventWithOrchestratorContext } from './common/EventWithOrchestratorCont
 
 // Helper function to wrap any event component with Deep Search context
 function wrapWithOrchestratorContext<T extends { metadata?: { [k: string]: unknown } }>(
-  Component: React.ComponentType<{ event: T }>,
-  eventData: T
+  Component: React.ComponentType<{ event: T; compact?: boolean }>,
+  eventData: T,
+  compact?: boolean
 ) {
   // Get metadata from the extracted event data
   const metadata = eventData.metadata;
   
   return (
     <EventWithOrchestratorContext metadata={metadata}>
-      <Component event={eventData} />
+      <Component event={eventData} compact={compact} />
     </EventWithOrchestratorContext>
   )
 }
@@ -166,7 +167,16 @@ import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay, type BlockingHumanFeedbackEvent } from './BlockingHumanFeedbackDisplay'
 import type { RequestHumanFeedbackEvent } from '../../generated/events'
-import type { TodoStepsExtractedEvent } from '../../generated/events-bridge'
+// Import TodoStepsExtractedEvent type from the component that uses it
+type TodoStepsExtractedEvent = {
+  timestamp?: string;
+  total_steps_extracted?: number;
+  extracted_steps?: unknown[];
+  extraction_method?: string;
+  plan_source?: string;
+  workspace_path?: string;
+  [key: string]: unknown;
+}
 
 
 interface EventDispatcherProps {
@@ -184,10 +194,16 @@ interface EventDispatcherProps {
 
 export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ event, mode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, isCollapsed, eventCount, onToggleCollapse, compact = false }) => {
   
+  // Wrapper component to apply compact styling to events that don't support compact prop
+  const CompactWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    if (!compact) return <>{children}</>
+    return <div className="text-xs [&>*]:text-xs [&_h1]:!text-sm [&_h2]:!text-xs [&_h3]:!text-[11px] [&_p]:!text-xs [&_code]:!text-[10px] [&_span]:!text-xs [&_div]:!text-xs">{children}</div>
+  }
+  
   if (!event.type || !event.data) {
     return (
-      <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-        <div className="text-sm text-yellow-700 dark:text-yellow-300">
+      <div className={`bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
+        <div className={`${compact ? 'text-xs' : 'text-sm'} text-yellow-700 dark:text-yellow-300`}>
           Invalid event: missing type or data
         </div>
       </div>
@@ -197,94 +213,97 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
   switch (event.type) {
     // Agent Events
     case 'agent_error':
-      return <AgentErrorEventDisplay event={extractEventData<AgentErrorEvent>(event.data)} />
+      return <CompactWrapper><AgentErrorEventDisplay event={extractEventData<AgentErrorEvent>(event.data)} /></CompactWrapper>
     case 'llm_generation_with_retry':
-      return <LLMGenerationWithRetryEventDisplay event={extractEventData<LLMGenerationWithRetryEvent>(event.data)} />
+      return <CompactWrapper><LLMGenerationWithRetryEventDisplay event={extractEventData<LLMGenerationWithRetryEvent>(event.data)} /></CompactWrapper>
 
     // MCP Server Events
           case 'mcp_server_selection':
-        return wrapWithOrchestratorContext(MCPServerSelectionEventDisplay, extractEventData<MCPServerSelectionEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(MCPServerSelectionEventDisplay, extractEventData<MCPServerSelectionEvent>(event.data), compact)}</CompactWrapper>
       case 'mcp_server_discovery':
-        return wrapWithOrchestratorContext(MCPServerDiscoveryEventDisplay, extractEventData<MCPServerDiscoveryEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(MCPServerDiscoveryEventDisplay, extractEventData<MCPServerDiscoveryEvent>(event.data), compact)}</CompactWrapper>
       case 'mcp_server_connection':
-        return wrapWithOrchestratorContext(MCPServerConnectionEventDisplay, extractEventData<MCPServerConnectionEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(MCPServerConnectionEventDisplay, extractEventData<MCPServerConnectionEvent>(event.data), compact)}</CompactWrapper>
       case 'mcp_server_connection_error':
-        return wrapWithOrchestratorContext(MCPServerConnectionEventDisplay, extractEventData<MCPServerConnectionEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(MCPServerConnectionEventDisplay, extractEventData<MCPServerConnectionEvent>(event.data), compact)}</CompactWrapper>
 
     // Conversation Events
           case 'conversation_start':
-        return wrapWithOrchestratorContext(ConversationStartEventDisplay, extractEventData<ConversationStartEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(ConversationStartEventDisplay, extractEventData<ConversationStartEvent>(event.data), compact)}</CompactWrapper>
       case 'conversation_end':
-        return wrapWithOrchestratorContext(ConversationEndEventDisplay, extractEventData<ConversationEndEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(ConversationEndEventDisplay, extractEventData<ConversationEndEvent>(event.data), compact)}</CompactWrapper>
       case 'conversation_error':
-        return wrapWithOrchestratorContext(ConversationErrorEventDisplay, extractEventData<ConversationErrorEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(ConversationErrorEventDisplay, extractEventData<ConversationErrorEvent>(event.data), compact)}</CompactWrapper>
       case 'conversation_turn':
-        return wrapWithOrchestratorContext(
-          (props) => <ConversationTurnEventDisplay {...props} compact={true} />, 
-          extractEventData<ConversationTurnEvent>(event.data)
-        )
+        return <CompactWrapper>{wrapWithOrchestratorContext(
+          (props) => <ConversationTurnEventDisplay {...props} compact={compact} />, 
+          extractEventData<ConversationTurnEvent>(event.data),
+          compact
+        )}</CompactWrapper>
 
 
     // Agent Events
     case 'agent_start':
-      return wrapWithOrchestratorContext(AgentStartEventComponent, extractEventData<AgentStartEvent>(event.data))
+      return <CompactWrapper>{wrapWithOrchestratorContext(AgentStartEventComponent, extractEventData<AgentStartEvent>(event.data), compact)}</CompactWrapper>
     case 'agent_end':
-      return wrapWithOrchestratorContext(AgentEndEventComponent, extractEventData<AgentEndEvent>(event.data))
+      return <CompactWrapper>{wrapWithOrchestratorContext(AgentEndEventComponent, extractEventData<AgentEndEvent>(event.data), compact)}</CompactWrapper>
 
     // LLM Events
           case 'llm_generation_start':
-        return wrapWithOrchestratorContext(
-          (props) => <LLMGenerationStartEventDisplay {...props} mode={mode} />, 
-          extractEventData<LLMGenerationStartEvent>(event.data)
-        )
+        return <CompactWrapper>{wrapWithOrchestratorContext(
+          (props) => <LLMGenerationStartEventDisplay {...props} mode={compact ? 'compact' : mode} />, 
+          extractEventData<LLMGenerationStartEvent>(event.data),
+          compact
+        )}</CompactWrapper>
       case 'llm_generation_end':
-        return wrapWithOrchestratorContext(LLMGenerationEndEventDisplay, extractEventData<LLMGenerationEndEvent>(event.data))
+        return <CompactWrapper>{wrapWithOrchestratorContext(LLMGenerationEndEventDisplay, extractEventData<LLMGenerationEndEvent>(event.data), compact)}</CompactWrapper>
       case 'llm_generation_error':
-        return wrapWithOrchestratorContext(
-          (props) => <LLMGenerationErrorEventDisplay {...props} mode={mode} />, 
-          extractEventData<LLMGenerationErrorEvent>(event.data)
-        )
+        return <CompactWrapper>{wrapWithOrchestratorContext(
+          (props) => <LLMGenerationErrorEventDisplay {...props} mode={compact ? 'compact' : mode} />, 
+          extractEventData<LLMGenerationErrorEvent>(event.data),
+          compact
+        )}</CompactWrapper>
 
 
     // Tool Events
     case 'tool_call_start':
-      return wrapWithOrchestratorContext(ToolCallStartEventDisplay, extractEventData<ToolCallStartEvent>(event.data))
+      return <CompactWrapper>{wrapWithOrchestratorContext(ToolCallStartEventDisplay, extractEventData<ToolCallStartEvent>(event.data), compact)}</CompactWrapper>
     case 'tool_call_end':
-      return wrapWithOrchestratorContext(ToolCallEndEventDisplay, extractEventData<ToolCallEndEvent>(event.data))
+      return <CompactWrapper>{wrapWithOrchestratorContext(ToolCallEndEventDisplay, extractEventData<ToolCallEndEvent>(event.data), compact)}</CompactWrapper>
     case 'tool_call_error':
-      return wrapWithOrchestratorContext(ToolCallErrorEventDisplay, extractEventData<ToolCallErrorEvent>(event.data))
+      return <CompactWrapper>{wrapWithOrchestratorContext(ToolCallErrorEventDisplay, extractEventData<ToolCallErrorEvent>(event.data), compact)}</CompactWrapper>
 
     // System Events
     case 'system_prompt':
-      return wrapWithOrchestratorContext(SystemPromptEventDisplay, extractEventData<SystemPromptEvent>(event.data))
+      return <CompactWrapper>{wrapWithOrchestratorContext(SystemPromptEventDisplay, extractEventData<SystemPromptEvent>(event.data), compact)}</CompactWrapper>
     case 'user_message': {
       const userMessageData = event.data?.user_message
       if (!userMessageData) {
         console.error('USERMSG_DEBUG - EventDispatcher - no user_message data found')
         return null
       }
-      return wrapWithOrchestratorContext(UserMessageEventDisplay, userMessageData)
+      return <CompactWrapper>{wrapWithOrchestratorContext(UserMessageEventDisplay, userMessageData, compact)}</CompactWrapper>
     }
 
     // Step Events (Deep Search step execution)
     // Deep Search Events (individual agent events for debugging)
     case 'orchestrator_start':
-      return <OrchestratorStartEventDisplay event={extractEventData<OrchestratorStartEvent>(event.data)} />
+      return <CompactWrapper><OrchestratorStartEventDisplay event={extractEventData<OrchestratorStartEvent>(event.data)} /></CompactWrapper>
     case 'orchestrator_end':
-      return <OrchestratorEndEventDisplay event={extractEventData<OrchestratorEndEvent>(event.data)} />
+      return <CompactWrapper><OrchestratorEndEventDisplay event={extractEventData<OrchestratorEndEvent>(event.data)} /></CompactWrapper>
     case 'orchestrator_error':
-      return <OrchestratorErrorEventDisplay event={extractEventData<OrchestratorErrorEvent>(event.data)} />
+      return <CompactWrapper><OrchestratorErrorEventDisplay event={extractEventData<OrchestratorErrorEvent>(event.data)} /></CompactWrapper>
     case 'orchestrator_agent_start':
-      return <OrchestratorAgentStartEventDisplay 
+      return <CompactWrapper><OrchestratorAgentStartEventDisplay 
         event={extractEventData<OrchestratorAgentStartEvent>(event.data)} 
         isCollapsed={isCollapsed}
         eventCount={eventCount}
         onToggleCollapse={onToggleCollapse}
-      />
+      /></CompactWrapper>
     case 'orchestrator_agent_end':
-      return <OrchestratorAgentEndEventDisplay event={extractEventData<OrchestratorAgentEndEvent>(event.data)} />
+      return <CompactWrapper><OrchestratorAgentEndEventDisplay event={extractEventData<OrchestratorAgentEndEvent>(event.data)} /></CompactWrapper>
     case 'orchestrator_agent_error':
-      return <OrchestratorAgentErrorEventDisplay event={extractEventData<OrchestratorAgentErrorEvent>(event.data)} />
+      return <CompactWrapper><OrchestratorAgentErrorEventDisplay event={extractEventData<OrchestratorAgentErrorEvent>(event.data)} /></CompactWrapper>
 
     // Human Verification Events
     case 'request_human_feedback':
@@ -305,6 +324,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
           timestamp: event.timestamp || new Date().toISOString()
         }} 
         onApprove={onApproveWorkflow || (() => {})}
+        onFeedbackSubmitted={onFeedbackSubmitted}
         isApproving={isApproving}
       />
 
@@ -331,73 +351,73 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
 
     // Workflow Events
     case 'workflow_start':
-      return <WorkflowStartEvent event={extractEventData<{workflow_id?: string, objective?: string, message?: string, timestamp?: number}>(event.data)} />
+      return <CompactWrapper><WorkflowStartEvent event={extractEventData<{workflow_id?: string, objective?: string, message?: string, timestamp?: number}>(event.data)} /></CompactWrapper>
 
     case 'workflow_progress':
-      return <WorkflowProgressEvent event={extractEventData<{phase?: string, message?: string, timestamp?: number}>(event.data)} />
+      return <CompactWrapper><WorkflowProgressEvent event={extractEventData<{phase?: string, message?: string, timestamp?: number}>(event.data)} /></CompactWrapper>
 
     case 'workflow_end':
-      return <WorkflowEndEvent event={extractEventData<{workflow_id?: string, result?: string, status?: string, message?: string, timestamp?: number}>(event.data)} />
+      return <CompactWrapper><WorkflowEndEvent event={extractEventData<{workflow_id?: string, result?: string, status?: string, message?: string, timestamp?: number}>(event.data)} /></CompactWrapper>
 
     // Debug Events
     case 'token_usage':
-      return <TokenUsageEventDisplay event={extractEventData<TokenUsageEvent>(event.data)} />
+      return <CompactWrapper><TokenUsageEventDisplay event={extractEventData<TokenUsageEvent>(event.data)} /></CompactWrapper>
     case 'throttling_detected':
-      return <ThrottlingDetectedEventDisplay event={extractEventData<ThrottlingDetectedEvent>(event.data)} />
+      return <CompactWrapper><ThrottlingDetectedEventDisplay event={extractEventData<ThrottlingDetectedEvent>(event.data)} /></CompactWrapper>
     case 'fallback_model_used':
-      return <FallbackModelUsedEventDisplay event={extractEventData<FallbackModelUsedEvent>(event.data)} />
+      return <CompactWrapper><FallbackModelUsedEventDisplay event={extractEventData<FallbackModelUsedEvent>(event.data)} /></CompactWrapper>
     case 'fallback_attempt':
-      return <FallbackAttemptEventDisplay event={extractEventData<FallbackAttemptEvent>(event.data)} />
+      return <CompactWrapper><FallbackAttemptEventDisplay event={extractEventData<FallbackAttemptEvent>(event.data)} /></CompactWrapper>
     case 'token_limit_exceeded':
-      return <TokenLimitExceededEventDisplay event={extractEventData<TokenLimitExceededEvent>(event.data)} />
+      return <CompactWrapper><TokenLimitExceededEventDisplay event={extractEventData<TokenLimitExceededEvent>(event.data)} /></CompactWrapper>
     case 'large_tool_output_detected':
-      return <LargeToolOutputDetectedEventDisplay event={extractEventData<LargeToolOutputDetectedEvent>(event.data)} />
+      return <CompactWrapper><LargeToolOutputDetectedEventDisplay event={extractEventData<LargeToolOutputDetectedEvent>(event.data)} /></CompactWrapper>
     case 'large_tool_output_file_written':
-      return <LargeToolOutputFileWrittenEventDisplay event={extractEventData<LargeToolOutputFileWrittenEvent>(event.data)} />
+      return <CompactWrapper><LargeToolOutputFileWrittenEventDisplay event={extractEventData<LargeToolOutputFileWrittenEvent>(event.data)} /></CompactWrapper>
     case 'model_change':
-      return <ModelChangeEventDisplay event={extractEventData<ModelChangeEvent>(event.data)} />
+      return <CompactWrapper><ModelChangeEventDisplay event={extractEventData<ModelChangeEvent>(event.data)} /></CompactWrapper>
     case 'max_turns_reached':
-      return <MaxTurnsReachedEventDisplay event={extractEventData<MaxTurnsReachedEvent>(event.data)} />
+      return <CompactWrapper><MaxTurnsReachedEventDisplay event={extractEventData<MaxTurnsReachedEvent>(event.data)} /></CompactWrapper>
     case 'context_cancelled':
-      return <ContextCancelledEventDisplay event={extractEventData<ContextCancelledEvent>(event.data)} />
+      return <CompactWrapper><ContextCancelledEventDisplay event={extractEventData<ContextCancelledEvent>(event.data)} /></CompactWrapper>
 
     // Cache Events - Only comprehensive cache events
     case 'cache_event':
-      return <CacheEventDisplay event={extractEventData<CacheEvent>(event.data)} />
+      return <CompactWrapper><CacheEventDisplay event={extractEventData<CacheEvent>(event.data)} /></CompactWrapper>
     case 'comprehensive_cache_event':
-      return <ComprehensiveCacheEventDisplay event={extractEventData<ComprehensiveCacheEvent>(event.data)} />
+      return <CompactWrapper><ComprehensiveCacheEventDisplay event={extractEventData<ComprehensiveCacheEvent>(event.data)} /></CompactWrapper>
 
     // Smart Routing Events
     case 'smart_routing_start':
-      return <SmartRoutingStartEventDisplay event={extractEventData<SmartRoutingStartEvent>(event.data)} />
+      return <CompactWrapper><SmartRoutingStartEventDisplay event={extractEventData<SmartRoutingStartEvent>(event.data)} /></CompactWrapper>
     case 'smart_routing_end':
-      return <SmartRoutingEndEventDisplay event={extractEventData<SmartRoutingEndEvent>(event.data)} />
+      return <CompactWrapper><SmartRoutingEndEventDisplay event={extractEventData<SmartRoutingEndEvent>(event.data)} /></CompactWrapper>
 
     // Unified Completion Events
     case 'unified_completion':
-      return <UnifiedCompletionEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+      return <CompactWrapper><UnifiedCompletionEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} /></CompactWrapper>
 
     // Structured Output Events
     case 'structured_output_start':
-      return <StructuredOutputStartEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+      return <CompactWrapper><StructuredOutputStartEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} /></CompactWrapper>
     case 'structured_output_end':
-      return <StructuredOutputEndEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+      return <CompactWrapper><StructuredOutputEndEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} /></CompactWrapper>
 
     // Independent Steps Events
     case 'independent_steps_selected':
-      return <IndependentStepsSelectedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+      return <CompactWrapper><IndependentStepsSelectedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} /></CompactWrapper>
 
     // Todo Steps Events
     case 'todo_steps_extracted':
-      return <TodoStepsExtractedEventDisplay event={extractEventData<TodoStepsExtractedEvent>(event.data)} />
+      return <CompactWrapper><TodoStepsExtractedEventDisplay event={extractEventData<TodoStepsExtractedEvent>(event.data)} /></CompactWrapper>
 
     // Variables Events
     case 'variables_extracted':
-      return <VariablesExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} />
+      return <CompactWrapper><VariablesExtractedEventDisplay event={extractEventData<Record<string, unknown>>(event.data)} /></CompactWrapper>
 
     // Step Token Usage Events
     case 'step_token_usage':
-      return <StepTokenUsageEventDisplay event={extractEventData<{
+      return <CompactWrapper><StepTokenUsageEventDisplay event={extractEventData<{
         timestamp?: string
         phase: string
         step: number
@@ -410,15 +430,15 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
         llm_call_count: number
         cache_enabled_call_count: number
         average_cache_discount: number
-      }>(event.data)} />
+      }>(event.data)} /></CompactWrapper>
 
     // Default case for unknown event types
     default:
       return (
-        <div className="bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-md p-3">
-          <div className="text-sm text-gray-700 dark:text-gray-300">
+        <div className={`bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
+          <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-700 dark:text-gray-300`}>
             <div className="font-medium">Unknown Event Type: {event.type}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-500 dark:text-gray-400 mt-1`}>
               Event data: {JSON.stringify(event.data, null, 2)}
             </div>
           </div>

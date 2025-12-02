@@ -126,6 +126,7 @@ const (
 	LLMGenerationWithRetry EventType = "llm_generation_with_retry"
 	StepExecutionStart     EventType = "step_execution_start"
 	StepExecutionEnd       EventType = "step_execution_end"
+	StepExecutionFailed    EventType = "step_execution_failed"
 
 	// Additional event types from mcpagent
 	AgentProcessing                  EventType = "agent_processing"
@@ -234,7 +235,8 @@ func GetComponentFromEventType(eventType EventType) string {
 		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
 		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
 		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted || eventType == VariablesExtracted ||
-		eventType == StepTokenUsage || eventType == StepProgressUpdated:
+		eventType == StepTokenUsage || eventType == StepProgressUpdated ||
+		eventType == StepExecutionStart || eventType == StepExecutionEnd || eventType == StepExecutionFailed:
 		return "orchestrator"
 	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
 		return "agent"

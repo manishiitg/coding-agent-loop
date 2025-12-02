@@ -9,6 +9,9 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 // Callback type for running from a specific step
 export type OnRunFromStepCallback = (stepIndex: number, stepId: string) => void
 
+// Callback type for opening the sidebar for a specific node
+export type OnOpenSidebarCallback = (nodeId: string) => void
+
 // Node data types for our custom nodes
 export interface StepNodeData extends Record<string, unknown> {
   id: string
@@ -36,6 +39,7 @@ export interface ConditionalNodeData extends Record<string, unknown> {
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
   onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
+  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
   isExecuting?: boolean  // Whether execution is in progress
   canRun?: boolean  // Whether this step can be run (all previous steps completed)
   workspacePath?: string | null  // Workspace path for file opening
@@ -92,8 +96,10 @@ interface UsePlanToFlowOptions {
   showDependencyEdges?: boolean // Default: false (hide dependency edges for cleaner view)
   changes?: PlanChanges | null  // Optional: highlight changes on nodes
   onRunFromStep?: OnRunFromStepCallback  // Callback for "run from step" button
+  onOpenSidebar?: OnOpenSidebarCallback  // Callback for opening sidebar when settings icon is clicked
   isExecuting?: boolean  // Whether execution is currently in progress
   completedStepIndices?: number[]  // 0-based indices of completed steps (from steps_done.json)
+  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>  // Step status from events
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
 }
@@ -178,6 +184,7 @@ function stepToNode(
   branchType?: 'true' | 'false',
   changes?: PlanChanges | null,
   completedStepIndices: number[] = [],
+  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
   selectedRunFolder?: string
 ): WorkflowNode {
@@ -188,11 +195,20 @@ function stepToNode(
   // Determine change type for highlighting
   const changeType = getChangeType(step.id || nodeId, changes)
 
-  // Check if this step is completed (only for main plan steps, not nested branches)
-  // For main plan steps, stepIndex matches the global index
-  // For nested steps, we don't check completion status (they're tracked differently)
-  const isCompleted = !parentId && completedStepIndices.includes(stepIndex)
-  const status = isCompleted ? 'completed' as const : 'pending' as const
+  // Determine status: priority is stepStatusMap (from events) > completedStepIndices > pending
+  let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
+  const stepId = step.id || nodeId
+  
+  // First check stepStatusMap (from events) - this is the most up-to-date
+  if (stepStatusMap && stepStatusMap.has(stepId)) {
+    status = stepStatusMap.get(stepId)!
+  } else {
+    // Fall back to completedStepIndices (only for main plan steps, not nested branches)
+    // For main plan steps, stepIndex matches the global index
+    // For nested steps, we don't check completion status (they're tracked differently)
+    const isCompleted = !parentId && completedStepIndices.includes(stepIndex)
+    status = isCompleted ? 'completed' as const : 'pending' as const
+  }
 
   const baseData = {
     id: nodeId,
@@ -414,6 +430,7 @@ function processSteps(
   presetLearningLLM: AgentLLMConfig | undefined,
   availableLLMs: Array<{ provider: string; model: string; label: string }>,
   completedStepIndices: number[] = [],
+  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
   selectedRunFolder?: string
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
@@ -424,7 +441,7 @@ function processSteps(
   let lastExitNodeId: string | null = null
 
   steps.forEach((step, index) => {
-    const node = stepToNode(step, index, parentId, branchType, changes, completedStepIndices, workspacePath, selectedRunFolder)
+    const node = stepToNode(step, index, parentId, branchType, changes, completedStepIndices, stepStatusMap, workspacePath, selectedRunFolder)
     nodes.push(node)
 
     // Create edge from previous step's exit node (sequential flow)
@@ -473,6 +490,7 @@ function processSteps(
           presetLearningLLM,
           availableLLMs,
           completedStepIndices,
+          stepStatusMap,
           workspacePath,
           selectedRunFolder
         )
@@ -510,6 +528,7 @@ function processSteps(
           presetLearningLLM,
           availableLLMs,
           completedStepIndices,
+          stepStatusMap,
           workspacePath,
           selectedRunFolder
         )
@@ -606,7 +625,7 @@ export function usePlanToFlow(
   plan: PlanningResponse | null, 
   options: UsePlanToFlowOptions = {}
 ): UsePlanToFlowResult {
-  const { showDependencyEdges = false, changes = null, onRunFromStep, isExecuting = false, completedStepIndices = [] } = options
+  const { showDependencyEdges = false, changes = null, onRunFromStep, onOpenSidebar, isExecuting = false, completedStepIndices = [], stepStatusMap } = options
   
   // Get preset for code execution mode default
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -650,6 +669,7 @@ export function usePlanToFlow(
       presetLearningLLM,
       availableLLMs,
       completedStepIndices,
+      stepStatusMap,
       options.workspacePath,
       options.selectedRunFolder
     )
@@ -745,7 +765,7 @@ export function usePlanToFlow(
       return true
     }
     
-    // Inject onRunFromStep callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
+    // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
       if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop') {
         const stepIndex = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData).stepIndex
@@ -755,6 +775,7 @@ export function usePlanToFlow(
           data: {
             ...node.data,
             onRunFromStep,
+            onOpenSidebar,
             isExecuting,
             canRun,
             workspacePath: options.workspacePath,
@@ -766,7 +787,7 @@ export function usePlanToFlow(
     })
     
     return layoutedResult
-  }, [plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, isExecuting, completedStepIndices, options.workspacePath, options.selectedRunFolder])
+  }, [plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMap, options.workspacePath, options.selectedRunFolder])
 }
 
 export default usePlanToFlow

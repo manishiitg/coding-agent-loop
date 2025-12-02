@@ -529,12 +529,6 @@ function App() {
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
             <WorkspaceSidebar
-              onPresetAdded={() => {
-                // Refresh workflow presets when a new preset is added
-                if (chatAreaRef.current) {
-                  chatAreaRef.current.refreshWorkflowPresets()
-                }
-              }}
               onChatSessionSelect={handleChatSessionSelect}
               minimized={sidebarMinimized}
               onToggleMinimize={toggleSidebarMinimize}

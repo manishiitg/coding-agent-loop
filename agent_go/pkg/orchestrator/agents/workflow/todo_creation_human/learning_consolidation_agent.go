@@ -55,6 +55,8 @@ type LearningConsolidationManager struct {
 
 	// Preset LLM config for learning consolidation agent
 	presetLearningConsolidationLLM *AgentLLMConfig
+	// Learning LLM config (fallback for learning consolidation if presetLearningConsolidationLLM not set)
+	presetLearningLLM *AgentLLMConfig
 }
 
 // NewLearningConsolidationManager creates a new LearningConsolidationManager
@@ -63,12 +65,14 @@ func NewLearningConsolidationManager(
 	sessionID string,
 	workflowID string,
 	presetLearningConsolidationLLM *AgentLLMConfig,
+	presetLearningLLM *AgentLLMConfig,
 ) *LearningConsolidationManager {
 	return &LearningConsolidationManager{
 		BaseOrchestrator:               baseOrchestrator,
 		sessionID:                      sessionID,
 		workflowID:                     workflowID,
 		presetLearningConsolidationLLM: presetLearningConsolidationLLM,
+		presetLearningLLM:              presetLearningLLM,
 	}
 }
 
@@ -92,7 +96,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	lcm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	lcm.GetLogger().Infof("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to %s folder only)", readPaths, writePaths, selectedFolder)
 
-	// Use preset LLM config if available, otherwise fall back to orchestrator default
+	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := lcm.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
 	if lcm.presetLearningConsolidationLLM != nil && lcm.presetLearningConsolidationLLM.Provider != "" && lcm.presetLearningConsolidationLLM.ModelID != "" {
@@ -105,6 +109,16 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
 		lcm.GetLogger().Infof("🔧 Using preset learning consolidation LLM: %s/%s", lcm.presetLearningConsolidationLLM.Provider, lcm.presetLearningConsolidationLLM.ModelID)
+	} else if lcm.presetLearningLLM != nil && lcm.presetLearningLLM.Provider != "" && lcm.presetLearningLLM.ModelID != "" {
+		// Fallback to learning LLM if learning consolidation LLM not set
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:              lcm.presetLearningLLM.Provider,
+			ModelID:               lcm.presetLearningLLM.ModelID,
+			FallbackModels:        orchestratorLLMConfig.FallbackModels,
+			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
+			APIKeys:               orchestratorLLMConfig.APIKeys,
+		}
+		lcm.GetLogger().Infof("🔧 Using preset learning LLM as fallback for learning consolidation: %s/%s", lcm.presetLearningLLM.Provider, lcm.presetLearningLLM.ModelID)
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
@@ -430,12 +444,13 @@ Your main goal is to analyze all learning files, identify consolidation opportun
      - Example: Pattern with [Runs: 2 | Success: 33%] that has a better alternative with [Runs: 10 | Success: 90%]
    - **Redundant Patterns**: Patterns that are essentially the same but documented differently
      - Example: Two patterns that achieve the same goal using the same tools but written differently
-   - **Files to Merge**: Multiple learning files that should be merged into a single file
+   - **Files to Merge**: Multiple learning files that should be merged into a single existing step-specific file
      - **CRITICAL**: Only merge files within the SAME folder (learnings/ or learning_code_exec/)
      - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
-     - Example: Files with >70% similar patterns within the same folder
-     - Example: Multiple files with overlapping content in the same folder that would benefit from consolidation
-     - Example: General patterns that appear across multiple step files in the same folder (can be extracted to a shared file)
+     - **CRITICAL**: When merging files, merge patterns into an EXISTING step-specific file (e.g., Step1_learning.md), NOT into a new general or consolidated file
+     - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
+     - Example: Files with >70% similar patterns within the same folder should be merged into one of the existing step files
+     - Example: Multiple files with overlapping content in the same folder should be consolidated into the most relevant existing step file
 
 4. **Analyze Pattern Relationships**:
    - **Cross-Step Patterns**: Identify patterns that appear across multiple steps (may indicate general best practices)
@@ -445,6 +460,8 @@ Your main goal is to analyze all learning files, identify consolidation opportun
    - **Merge Candidates**: Identify files that should be merged (>70% similar patterns within the SAME folder)
      - **CRITICAL**: Only consider files in the same folder for merging (learnings/ or learning_code_exec/)
      - **NEVER merge across folders**: learnings/ and learning_code_exec/ are separate and should remain separate
+     - **CRITICAL**: When merging, consolidate patterns into an EXISTING step-specific file, NOT a new general/consolidated file
+     - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
 
 5. **Calculate Consolidation Impact**:
    - **Before Consolidation**: Count total patterns, duplicates, similar patterns, outdated patterns
@@ -476,13 +493,15 @@ Your main goal is to analyze all learning files, identify consolidation opportun
    - **Merge Files**: When files should be merged:
      - **CRITICAL FOLDER RULE**: Only merge files within the SAME folder (learnings/ or learning_code_exec/)
      - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
-     - **Create Consolidated File**: Use 'write_workspace_file' to create a new consolidated file with merged content (in the same folder as source files)
-     - **Merge All Patterns**: Combine all unique patterns from source files into the consolidated file
+     - **CRITICAL**: Merge patterns into an EXISTING step-specific file (e.g., Step1_learning.md), NOT into a new general or consolidated file
+     - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
+     - **Merge All Patterns**: Combine all unique patterns from source files into the selected existing step file
      - **Combine Scores**: Merge run counts and recalculate success rates for all patterns
      - **Preserve Best Content**: Keep the best descriptions, most detailed patterns, and highest quality content
-     - **File Naming**: Use descriptive names like "consolidated_patterns_learning.md" or merge into the most relevant existing file (in the same folder)
+     - **File Selection**: Choose the most relevant existing step-specific file (based on step title/context) to merge patterns into
+     - **Update Existing File**: Use 'update_workspace_file' to update the selected existing step file with merged patterns
      - **Delete Original Files**: After successful merge, use 'delete_workspace_file' to remove original files (ONLY after user explicitly approves deletion)
-     - **Cross-Step Patterns**: If patterns appear across multiple steps in the same folder, consider creating a "general_patterns_learning.md" file (in that same folder)
+     - **Cross-Step Patterns**: If patterns appear across multiple steps, merge them into the most relevant existing step file (do NOT create a general file)
    - **Update Pattern Scores**: When consolidating, properly combine run counts and recalculate success percentages
    - **Preserve Best Patterns**: Always keep the pattern with highest success rate and most runs when consolidating
    - Only modify files that the user explicitly approved for consolidation/merging
@@ -491,6 +510,7 @@ Your main goal is to analyze all learning files, identify consolidation opportun
 ## ⚠️ IMPORTANT RULES
 - **MANDATORY HUMAN CONFIRMATION**: You MUST use 'human_feedback' tool to get user approval BEFORE any write/update/delete operations. Never call write tools (update_workspace_file, write_workspace_file, delete_workspace_file, etc.) without first getting explicit confirmation via 'human_feedback'. The 'human_feedback' tool is available in your tool list - use it to pause execution and get user input.
 - **Write Access**: You have write access to learnings/ folders and can consolidate learning files, but ONLY after user approval via 'human_feedback'.
+- **CRITICAL FILE CREATION RULE**: NEVER create general_patterns_learning.md, consolidated_patterns_learning.md, or any other general/consolidated learning files. Only work with existing step-specific files (format: {StepTitle}_learning.md). When consolidating, merge patterns into existing step files only.
 - **Restricted Access**: You ONLY have access to these subdirectories: ` + templateVars["AllowedPaths"] + `
    - You CANNOT list the root workspace (folder=".").
    - Always start listing from the allowed subdirectories (e.g., folder="learnings", folder="learning_code_exec").
@@ -517,9 +537,9 @@ Your main goal is to analyze all learning files, identify consolidation opportun
   - Files with >70% similar patterns within the SAME folder should be considered for merging
   - **CRITICAL**: Only merge files within the same folder (learnings/ or learning_code_exec/)
   - **NEVER merge across folders**: learnings/ and learning_code_exec/ are separate and must remain separate
-  - Files with mostly duplicate content in the same folder (can merge into single file)
-  - Multiple small files in the same folder that could be consolidated into one larger file
-  - General patterns appearing in 3+ files in the same folder (extract to shared file in that folder)
+   - Files with mostly duplicate content in the same folder (can merge into single existing step file)
+   - Multiple small files in the same folder that could be consolidated into one existing step file
+   - General patterns appearing in 3+ files in the same folder (merge into the most relevant existing step file, do NOT create a general file)
 
 ## 📊 CONSOLIDATION EXAMPLES
 
@@ -540,26 +560,26 @@ Your main goal is to analyze all learning files, identify consolidation opportun
 
 **Example 4 - File Merging (Within Same Folder):**
 - Files in learnings/: Step1_learning.md, Step2_learning.md, Step3_learning.md all have 80% similar patterns (same AWS tools, same approach)
-- **Action**: Merge all three files into learnings/consolidated_aws_patterns_learning.md with:
+- **Action**: Merge all three files into the most relevant existing step file (e.g., Step1_learning.md) with:
   - All unique patterns from all three files
   - Combined scores (merge run counts, recalculate success rates)
   - Best descriptions from each file
   - Delete original files after successful merge (with user approval)
-- **Note**: Only merge files within the same folder. Do NOT merge learnings/ files with learning_code_exec/ files.
+- **Note**: Only merge files within the same folder. Do NOT merge learnings/ files with learning_code_exec/ files. Do NOT create consolidated_patterns_learning.md.
 
-**Example 5 - Cross-Step Pattern Extraction:**
+**Example 5 - Cross-Step Pattern Consolidation:**
 - Pattern "kubernetes.kubectl_apply" appears in 5 different step learning files with similar arguments
-- **Action**: Extract to general_patterns_learning.md, remove from individual files, reference in individual files
+- **Action**: Merge the pattern into the most relevant existing step file (e.g., Step1_learning.md), remove duplicate entries from other files. Do NOT create general_patterns_learning.md.
 
 ## 📝 OUTPUT FORMAT
 After consolidation, provide a summary of:
 - Number of patterns consolidated
 - Number of patterns removed
-- Number of files merged
-- Number of files created (consolidated files)
+- Number of files merged (patterns consolidated into existing step files)
 - Number of files deleted (after merging)
 - Number of files updated
 - Overall impact on learning structure
+- **Note**: No new general or consolidated files should be created - all consolidation happens within existing step-specific files
 `
 }
 
@@ -596,6 +616,8 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidation
    - **Files to merge**: Files with >70% similar patterns within the SAME folder
      - **CRITICAL**: Only merge files within the same folder (learnings/ or learning_code_exec/)
      - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
+     - **CRITICAL**: When merging, consolidate patterns into an EXISTING step-specific file, NOT a new general/consolidated file
+     - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
 
 4. **Calculate consolidation impact**:
    - Count total patterns before consolidation
@@ -626,11 +648,13 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidation
    - **Merge files**: When files should be merged:
      - **CRITICAL FOLDER RULE**: Only merge files within the SAME folder (learnings/ or learning_code_exec/)
      - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
-     - **Create consolidated file**: Use 'write_workspace_file' to create new file with merged content (in the same folder as source files)
-     - **Combine all patterns**: Merge all unique patterns from source files, combine scores
+     - **CRITICAL**: Merge patterns into an EXISTING step-specific file (e.g., Step1_learning.md), NOT into a new general or consolidated file
+     - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
+     - **Combine all patterns**: Merge all unique patterns from source files into the selected existing step file, combine scores
      - **Preserve best content**: Keep best descriptions, most detailed patterns, highest quality content
-     - **File naming**: Use descriptive names (e.g., "consolidated_patterns_learning.md" or merge into most relevant existing file) in the same folder
-     - **Cross-step patterns**: If patterns appear in 3+ files in the same folder, consider creating "general_patterns_learning.md" in that folder
+     - **File selection**: Choose the most relevant existing step-specific file (based on step title/context) to merge patterns into
+     - **Update existing file**: Use 'update_workspace_file' to update the selected existing step file with merged patterns
+     - **Cross-step patterns**: If patterns appear in 3+ files in the same folder, merge them into the most relevant existing step file (do NOT create a general file)
      - **Delete originals**: After successful merge, use 'delete_workspace_file' to remove original files (ONLY if user explicitly approved deletion)
    - **Update pattern scores**: When consolidating, properly combine run counts and recalculate success percentages
    - **Preserve best patterns**: Always keep the pattern with highest success rate and most runs when consolidating
@@ -640,6 +664,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidation
 **CRITICAL WORKFLOW RULES**: 
 - **MANDATORY**: Always use 'human_feedback' tool BEFORE any write/update/delete operations
 - **NEVER** call 'update_workspace_file', 'write_workspace_file', or 'delete_workspace_file' without first getting user approval via 'human_feedback'
+- **CRITICAL FILE CREATION RULE**: NEVER create general_patterns_learning.md, consolidated_patterns_learning.md, or any other general/consolidated learning files. Only work with existing step-specific files (format: {StepTitle}_learning.md). When consolidating, merge patterns into existing step files only.
 - **Preserve valuable learnings**: Only consolidate truly duplicate/redundant/outdated patterns
 - **Score merging**: When consolidating, combine run counts and recalculate success rates properly
 - **Workflow**: Analyze → Present with 'human_feedback' → Wait for approval → Then consolidate (if approved)

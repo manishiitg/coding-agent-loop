@@ -131,7 +131,9 @@ import {
   OrchestratorAgentEndEventDisplay,
   OrchestratorAgentErrorEventDisplay,
   IndependentStepsSelectedEventDisplay,
-  TodoStepsExtractedEventDisplay
+  TodoStepsExtractedEventDisplay,
+  StepExecutionEventDisplay,
+  StepProgressUpdatedEventDisplay
 } from './orchestrator'
 import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
@@ -431,6 +433,54 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ eve
         cache_enabled_call_count: number
         average_cache_discount: number
       }>(event.data)} /></CompactWrapper>
+
+    // Step Execution Events
+    case 'step_execution_start':
+    case 'step_execution_end':
+    case 'step_execution_failed': {
+      const stepData = extractEventData<{
+        step_id?: string
+        step_index?: number
+        step_title?: string
+        step_path?: string
+        is_branch_step?: boolean
+        error?: string
+      }>(event.data)
+      return (
+        <CompactWrapper>
+          <StepExecutionEventDisplay 
+            event={stepData} 
+            eventType={event.type as 'step_execution_start' | 'step_execution_end' | 'step_execution_failed'}
+            compact={compact}
+          />
+        </CompactWrapper>
+      )
+    }
+
+    // Step Progress Updated Event
+    case 'step_progress_updated': {
+      const progressData = extractEventData<{
+        completed_step_indices?: number[]
+        total_steps?: number
+        last_completed_step?: number
+        workspace_path?: string
+        run_folder?: string
+        metadata?: {
+          orchestrator_agent_name?: string
+          orchestrator_iteration?: number
+          orchestrator_phase?: string
+          orchestrator_step?: number
+        }
+      }>(event.data)
+      return (
+        <CompactWrapper>
+          <StepProgressUpdatedEventDisplay 
+            event={progressData} 
+            compact={compact}
+          />
+        </CompactWrapper>
+      )
+    }
 
     // Default case for unknown event types
     default:

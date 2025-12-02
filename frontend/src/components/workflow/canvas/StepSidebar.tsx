@@ -668,11 +668,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-gray-900 dark:text-gray-100">
+          <span className="text-base font-semibold text-gray-900 dark:text-gray-100">
             {isEditing ? 'Edit Step' : `Step ${stepIndex + 1}`}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {!isEditing && (
             <>
               {/* Phase Dropdown */}
@@ -681,10 +681,10 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   <button
                     onClick={() => !isRunning && setIsPhaseDropdownOpen(!isPhaseDropdownOpen)}
                     disabled={isRunning}
-                    className="flex items-center gap-1 px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Run phase for this step"
                   >
-                    <Settings className="w-3 h-3" />
+                    <Settings className="w-3.5 h-3.5" />
                     Phase
                     <ChevronDown className={`w-3 h-3 transition-transform ${isPhaseDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
@@ -720,7 +720,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 <button
                   onClick={handleRunStep}
                   disabled={isRunning || !canRunStep}
-                  className="flex items-center gap-1 px-2 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title={
                     isRunning 
                       ? 'Execution in progress...' 
@@ -729,20 +729,20 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                         : 'Run this step only'
                   }
                 >
-                  <Play className="w-3 h-3" />
+                  <Play className="w-3.5 h-3.5" />
                   Run
                 </button>
               )}
               <button
                 onClick={handleStartEdit}
-                className="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors"
+                className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors"
                 title="Edit step"
               >
                 <Edit2 className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setShowDeleteConfirm(true)}
-                className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 dark:text-red-400 transition-colors"
+                className="p-1.5 rounded-md hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 dark:text-red-400 transition-colors"
                 title="Delete step"
               >
                 <Trash2 className="w-4 h-4" />
@@ -770,7 +770,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           )}
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
+            className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"
             title="Close sidebar"
           >
             <X className="w-4 h-4" />
@@ -780,9 +780,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
       {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-5">
           {/* Step Information */}
-          <div className="space-y-3">
+          <div className="space-y-4">
             {isEditing ? (
               // Edit mode
               <div className="space-y-3">
@@ -823,23 +823,23 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
             ) : (
               // View mode
               <>
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                <div className="space-y-2">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
                     {step.title}
                   </h3>
                   {step.description && (
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-wrap">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-wrap">
                       {step.description}
                     </p>
                   )}
                 </div>
 
                 {step.success_criteria && (
-                  <div>
-                    <span className="text-xs font-medium text-green-600 dark:text-green-400">
+                  <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800/50">
+                    <span className="text-xs font-semibold text-green-700 dark:text-green-300 uppercase tracking-wide">
                       Success Criteria:
                     </span>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-wrap">
+                    <p className="text-sm text-gray-700 dark:text-gray-300 mt-2 whitespace-pre-wrap">
                       {step.success_criteria}
                     </p>
                   </div>
@@ -859,18 +859,21 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
             )}
 
             {step.has_loop && (
-              <div className="p-2 bg-cyan-50 dark:bg-cyan-900/20 rounded">
-                <span className="text-xs font-medium text-cyan-600 dark:text-cyan-400">
+              <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
                   Loop:
                 </span>
                 {step.loop_condition && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300 mt-1">
-                    Until: {step.loop_condition}
-                  </p>
+                  <div className="mt-2">
+                    <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Until: </span>
+                    <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap">
+                      {step.loop_condition}
+                    </p>
+                  </div>
                 )}
                 {step.max_iterations && (
-                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                    Max iterations: {step.max_iterations}
+                  <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mt-2">
+                    Max iterations: <span className="text-gray-700 dark:text-gray-300">{step.max_iterations}</span>
                   </p>
                 )}
               </div>
@@ -878,14 +881,14 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
             {/* Dependencies */}
             {(step.context_dependencies?.length || step.context_output) && (
-              <div>
-                <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+              <div className="space-y-2">
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
                   Dependencies:
                 </span>
-                <div className="mt-1 space-y-1 text-xs">
+                <div className="space-y-2 text-sm">
                   {step.context_dependencies && step.context_dependencies.length > 0 && (
                     <div>
-                      <span className="text-purple-600 dark:text-purple-400">Inputs: </span>
+                      <span className="font-medium text-blue-600 dark:text-blue-400">Inputs: </span>
                       <span className="text-gray-600 dark:text-gray-400">
                         {step.context_dependencies.join(', ')}
                       </span>
@@ -893,7 +896,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   )}
                   {step.context_output && (
                     <div>
-                      <span className="text-orange-600 dark:text-orange-400">Output: </span>
+                      <span className="font-medium text-emerald-600 dark:text-emerald-400">Output: </span>
                       <span className="text-gray-600 dark:text-gray-400">
                         {Array.isArray(step.context_output) ? step.context_output.join(', ') : step.context_output}
                       </span>

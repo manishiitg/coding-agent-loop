@@ -5,6 +5,8 @@ export { OrchestratorErrorEventDisplay } from './OrchestratorErrorEvent'
 export { IndependentStepsSelectedEventDisplay } from './IndependentStepsSelectedEvent'
 export { TodoStepsExtractedEventDisplay } from './TodoStepsExtractedEvent'
 export { StepEditPanel } from './StepEditPanel'
+export { StepExecutionEventDisplay } from './StepExecutionEvent'
+export { StepProgressUpdatedEventDisplay } from './StepProgressUpdatedEvent'
 
 // Unified Orchestrator Agent Event Components
 export { OrchestratorAgentStartEventDisplay } from '../system/OrchestratorAgentStartEvent'

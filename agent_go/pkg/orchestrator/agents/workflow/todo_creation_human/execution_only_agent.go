@@ -129,11 +129,26 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 - **Don't hardcode values** - reference them from the step context
 {{end}}
 
-## 📚 Learning Context (Pre-Discovered)
+## 🎯 PRIMARY: Step Requirements (SOURCE OF TRUTH)
+The step description, success criteria, and context dependencies define WHAT you must accomplish.
+**Always prioritize step requirements over learnings.**
+
+## 📚 SECONDARY: Learning Context (BEST PRACTICE GUIDANCE)
 {{.LearningHistory}}
 
-**Note**: Learning files have been read. Use insights above as **guidance**, not strict rules.
-Many times learnings might get outdated, and you need to relearn again and solve the issues you face.
+**HOW TO USE LEARNINGS:**
+- Learnings are **guidance for HOW to accomplish the step**, not WHAT to accomplish
+- **Step description is PRIMARY** - learnings help you execute it better
+- If learnings conflict with step requirements → **follow step requirements**
+- If learnings are outdated or don't apply → **ignore them and solve the step directly**
+
+**LEARNING APPLICATION:**
+- **EXECUTION WORKFLOW exists**: Use as a proven approach to accomplish the step
+  - Adapt tool calls and arguments to match current step requirements
+  - Follow the sequence as a guideline, but verify each step applies
+  - Use error recovery strategies when encountering similar issues
+- **Only tool patterns exist**: Use as hints for which tools work well
+- **Learnings don't match step**: Ignore learnings, solve step directly using available tools
 
 ## 📁 File Permissions
 **READ**: Context files ({{.WorkspacePath}}/step_X_results.md), workspace files (relative paths only)  
@@ -141,24 +156,32 @@ Many times learnings might get outdated, and you need to relearn again and solve
 
 ## 🎯 Execution Approach
 
-**Simple 3-Step Process:**
+**ALWAYS START WITH STEP REQUIREMENTS (Primary):**
 
-1. **Read Step Requirements** (PRIMARY SOURCE OF TRUTH)
-   - Step description, success criteria, context dependencies
-   - These requirements are already resolved with actual variable values
+1. **Understand the Step** (WHAT you must accomplish)
+   - Read step description carefully - this is your PRIMARY goal
+   - Understand success criteria - this defines when you're DONE
+   - Check context dependencies - what inputs do you have?
 
-2. **Review Learning Context** (GUIDANCE ONLY)
-   - Success patterns from above learning section
-   - Failure patterns to avoid
-   - {{if .IsCodeExecutionMode}}Code{{else}}Script{{end}} examples to adapt
-   - **Important**: Learnings are guidance, not strict rules. The step description is PRIMARY.
+2. **Apply Learnings as Best Practice** (HOW to accomplish it)
+   - If EXECUTION WORKFLOW exists: Use as a proven approach
+     - Adapt the workflow steps to match current step requirements
+     - Use similar tool calls and arguments where applicable
+     - Apply error recovery strategies for known failure modes
+   - If only tool patterns exist: Use as hints for which tools work
+   - If learnings don't apply: Ignore them and solve directly
 
-3. **Execute & Document**
+3. **Execute & Verify**
    - Read context dependencies from {{.WorkspacePath}}
-   - Execute step using MCP tools{{if .IsCodeExecutionMode}} or Go code{{end}}
-   - Adapt learning patterns to match current step requirements
+   - Execute using MCP tools{{if .IsCodeExecutionMode}} or Go code{{end}}
    - Verify success criteria met (collect evidence)
    - Create context output file{{if .HasLoop}} (update/append after each iteration){{end}}
+
+**KEY PRINCIPLE:**
+- **Step requirements** = WHAT to accomplish (mandatory)
+- **Learnings** = HOW to accomplish it efficiently (optional guidance)
+- If learnings conflict with step → **step wins**
+- If learnings are outdated → **ignore and solve directly**
 
 {{if .IsCodeExecutionMode}}## 💻 Code Execution Rules
 - **Variables**: Pass via write_code 'args' parameter (e.g., args=["value1", "value2"])  
@@ -173,6 +196,7 @@ Many times learnings might get outdated, and you need to relearn again and solve
 **Actions**: Tools used + quantitative results  
 **Evidence**: Specific outputs proving completion (e.g., "grep found 15 matches")  
 **Context Output**: File path if created
+**Workflow Deviations**: Note any deviations from learned workflow (if applicable)
 
 Validation agent will verify your work - focus on execution and evidence.`
 
@@ -266,18 +290,28 @@ Address the issues above and improve your approach.
 **Context Output**: {{.StepContextOutput}}
 
 ## ✅ Execution Checklist
-1. ✓ Read step requirements (description, success criteria) ← PRIMARY SOURCE
-2. ✓ Review learning context (system prompt above) ← GUIDANCE
-3. ✓ Read context dependencies (if any) from {{.WorkspacePath}}
-4. ✓ Execute:
+
+**ALWAYS (Step Requirements are PRIMARY):**
+1. ✓ **Understand step description** ← THIS IS YOUR GOAL
+2. ✓ **Know success criteria** ← THIS DEFINES DONE
+3. ✓ Read context dependencies from {{.WorkspacePath}}
+
+**THEN Apply Learnings (Best Practice Guidance):**
+4. ✓ Check if learnings apply to this step
+   - If WORKFLOW exists: Use as proven approach, adapt to current step
+   - If only patterns exist: Use as hints for which tools work
+   - If learnings don't match: Ignore and solve directly
+5. ✓ Execute using MCP tools{{if eq .IsCodeExecutionMode "true"}} or Go code{{end}}:
 {{if eq .IsCodeExecutionMode "true"}}   - discover_code_files (see available packages)
    - write_code (pass vars via args, access via os.Args[1,2,...])
-   - Adapt code patterns from learnings to match current step
-{{else}}   - Use MCP tools to accomplish step
-   - Adapt learnings to match current step
-{{end}}5. ✓ Verify success criteria met (collect evidence)
-6. ✓ Create context output file{{if eq .HasLoop "true"}} (update/append after each iteration){{end}}
-7. ✓ Document results with quantitative evidence`
+{{else}}   - Use appropriate MCP tools to accomplish step
+{{end}}6. ✓ **Verify success criteria met** (collect evidence)
+7. ✓ Create context output file{{if eq .HasLoop "true"}} (update/append after each iteration){{end}}
+
+**REMEMBER:**
+- Step description = WHAT to do (mandatory)
+- Learnings = HOW to do it efficiently (optional guidance)
+- If learnings conflict with step → **step wins**`
 
 	// Parse and execute the template
 	tmpl, err := template.New("executionOnlyUserMessage").Parse(templateStr)

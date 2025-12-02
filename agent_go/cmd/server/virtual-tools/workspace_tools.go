@@ -668,15 +668,31 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Check if folder doesn't exist (API returns Success: true but with error message)
+	if strings.Contains(apiResp.Message, "Folder does not exist") ||
+		strings.Contains(apiResp.Error, "Folder not found") {
+		if folder == "" {
+			return "", fmt.Errorf("folder is empty or does not exist")
+		}
+		return "", fmt.Errorf("folder does not exist: %s", folder)
+	}
+
 	// Debug logging for troubleshooting
 	if apiResp.Data == nil {
 		fmt.Printf("[DEBUG] Workspace API returned nil data for folder: %s, maxDepth: %d\n", folder, maxDepth)
 	}
 
-	// Return the raw API response directly
+	// Marshal the response data
 	responseData, err := json.Marshal(apiResp.Data)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
+	}
+
+	// Check if data is an empty array (folder exists but is empty)
+	// Only check if we didn't already detect a non-existent folder
+	if string(responseData) == "[]" && apiResp.Error == "" && !strings.Contains(apiResp.Message, "Folder does not exist") {
+		// Folder exists but is empty - return a message indicating this
+		return fmt.Sprintf("Folder '%s' exists but contains no files or subfolders.", folder), nil
 	}
 
 	// Emit workspace file operation event for list operation
@@ -756,6 +772,12 @@ func handleReadWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 			return "", fmt.Errorf("workspace API error: %s. Use the 'list_workspace_files' tool to find the correct file path", apiResp.Error)
 		}
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Check if file doesn't exist (API returns Success: true but with error message)
+	if strings.Contains(apiResp.Message, "File does not exist") ||
+		strings.Contains(apiResp.Error, "File not found") {
+		return "", fmt.Errorf("file does not exist: %s. Use the 'list_workspace_files' tool to find the correct file path", filepathStr)
 	}
 
 	// Check if file is an image - if so, inform LLM to use read_image tool
@@ -856,6 +878,12 @@ func handleReadImage(ctx context.Context, args map[string]interface{}) (string, 
 			return "", fmt.Errorf("workspace API error: %s. Use the 'list_workspace_files' tool to find the correct file path", apiResp.Error)
 		}
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Check if file doesn't exist (API returns Success: true but with error message)
+	if strings.Contains(apiResp.Message, "File does not exist") ||
+		strings.Contains(apiResp.Error, "File not found") {
+		return "", fmt.Errorf("file does not exist: %s. Use the 'list_workspace_files' tool to find the correct file path", filepathStr)
 	}
 
 	// Parse workspace file data

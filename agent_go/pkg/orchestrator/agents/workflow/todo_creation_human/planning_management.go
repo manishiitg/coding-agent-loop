@@ -273,7 +273,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Infof("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths)
 
-	// Determine LLM config: Priority: preset default > orchestrator default
+	// Determine LLM config: Priority: presetPlanningLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if hcpo.presetPlanningLLM != nil && hcpo.presetPlanningLLM.Provider != "" && hcpo.presetPlanningLLM.ModelID != "" {
@@ -284,6 +284,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Infof("🔧 Using preset default planning LLM: %s/%s", hcpo.presetPlanningLLM.Provider, hcpo.presetPlanningLLM.ModelID)
+	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
+		// Fallback to learning LLM if planning LLM not set
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:       hcpo.presetLearningLLM.Provider,
+			ModelID:        hcpo.presetLearningLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Infof("🔧 Using preset learning LLM as fallback for planning: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID)
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		hcpo.GetLogger().Infof("🔧 Using orchestrator default planning LLM: %s/%s", hcpo.GetProvider(), hcpo.GetModel())

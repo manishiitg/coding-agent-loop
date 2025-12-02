@@ -466,6 +466,7 @@ func (wo *WorkflowOrchestrator) runVariableExtraction(ctx context.Context, objec
 	variableManager := todo_creation_human.NewVariableManager(
 		wo.BaseOrchestrator,
 		wo.presetVariableExtractionLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 	)
@@ -535,6 +536,7 @@ func (wo *WorkflowOrchestrator) runAnonymization(ctx context.Context, objective 
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetAnonymizationLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 	)
 
 	// Run only anonymization
@@ -555,6 +557,7 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 	planImprovementManager := todo_creation_human.NewPlanImprovementManager(
 		wo.BaseOrchestrator,
 		wo.presetPlanImprovementLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 	)
@@ -579,6 +582,7 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetPlanLearningsAlignmentLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 	)
 
 	// Run only alignment check
@@ -601,6 +605,7 @@ func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, ob
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetLearningConsolidationLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 	)
 
 	// Run only consolidation
@@ -626,6 +631,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetPlanToolOptimizationLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 	)
 
 	// Run only tool optimization (with optional step ID for step-specific execution)

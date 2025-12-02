@@ -12,9 +12,12 @@ export type WorkflowExecutionStatus =
   | 'failed'
   | 'waiting_feedback'
 
+export type StepStatus = 'pending' | 'running' | 'completed' | 'failed'
+
 export interface UseWorkflowExecutionReturn {
   status: WorkflowExecutionStatus
   currentStepId: string | null
+  stepStatusMap: Map<string, StepStatus> // Map of stepId -> status
   events: PollingEvent[]
   observerId: string
   error: string | null
@@ -48,6 +51,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
   const [currentStepId, setCurrentStepId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [manualStatus, setManualStatus] = useState<WorkflowExecutionStatus | null>(null)
+  const [stepStatusMap, setStepStatusMap] = useState<Map<string, StepStatus>>(new Map())
   
   // Ref for tracking processed events (for step tracking only)
   const lastProcessedEventIndexRef = useRef<number>(-1)
@@ -98,18 +102,133 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     return 'idle'
   }, [isStreaming, isCompleted, events, manualStatus])
 
-  // Track current step from events (only step tracking, no completion handling)
+  // Track current step and step status from events
   useEffect(() => {
     if (events.length === 0) return
     
-    // Only process new events for step tracking
+    // Only process new events for step tracking and status updates
     for (let i = lastProcessedEventIndexRef.current + 1; i < events.length; i++) {
       const event = events[i]
       
+      // Debug: Log all step execution events (only in development)
+      if (process.env.NODE_ENV === 'development' && (event.type?.includes('step_execution') || event.type?.includes('step_'))) {
+        console.log('[useWorkflowExecution] Received step event:', {
+          type: event.type,
+          data: event.data,
+          dataType: typeof event.data,
+          dataKeys: event.data && typeof event.data === 'object' ? Object.keys(event.data) : 'not an object',
+          hasStepId: event.data && typeof event.data === 'object' ? 'step_id' in (event.data as Record<string, unknown>) : false,
+          stepIdValue: event.data && typeof event.data === 'object' ? (event.data as Record<string, unknown>).step_id : undefined
+        })
+      }
+      
+      // Handle step_started event
+      if (event.type === 'step_execution_start') {
+        // Access step_id - event.data might be the actual event data object directly
+        // or it might be wrapped in EventData type (which doesn't include step execution events)
+        const rawData = event.data as Record<string, unknown> | undefined
+        let stepId: string | undefined
+        
+        if (rawData && typeof rawData === 'object') {
+          // Try direct access first (most common case - step_id is directly in event.data)
+          stepId = rawData.step_id as string | undefined
+          
+          // If not found, try accessing through 'data' property (nested structure)
+          if (!stepId && rawData.data && typeof rawData.data === 'object') {
+            const nestedData = rawData.data as Record<string, unknown>
+            stepId = nestedData.step_id as string | undefined
+          }
+        }
+        
+        if (stepId) {
+          setCurrentStepId(stepId)
+          setStepStatusMap(prev => {
+            const newMap = new Map(prev)
+            newMap.set(stepId!, 'running')
+            return newMap
+          })
+        } else {
+          console.warn('[useWorkflowExecution] step_execution_start event missing step_id:', {
+            rawData,
+            dataType: typeof rawData,
+            keys: rawData && typeof rawData === 'object' ? Object.keys(rawData) : []
+          })
+        }
+      }
+      
+      // Handle step_finished event
+      if (event.type === 'step_execution_end') {
+        // Access step_id - event.data is the actual event data object
+        const rawData = event.data as Record<string, unknown> | undefined
+        let stepId: string | undefined
+        
+        if (rawData && typeof rawData === 'object') {
+          // Try direct access first
+          stepId = rawData.step_id as string | undefined
+          
+          // If not found, try accessing through 'data' property
+          if (!stepId && rawData.data && typeof rawData.data === 'object') {
+            const nestedData = rawData.data as Record<string, unknown>
+            stepId = nestedData.step_id as string | undefined
+          }
+        }
+        
+        if (stepId) {
+          setStepStatusMap(prev => {
+            const newMap = new Map(prev)
+            newMap.set(stepId!, 'completed')
+            return newMap
+          })
+        } else {
+          console.warn('[useWorkflowExecution] step_execution_end event missing step_id:', rawData)
+        }
+      }
+      
+      // Handle step_failed event
+      if (event.type === 'step_execution_failed') {
+        // Access step_id - event.data is the actual event data object
+        const rawData = event.data as Record<string, unknown> | undefined
+        let stepId: string | undefined
+        let errorMessage: string | undefined
+        
+        if (rawData && typeof rawData === 'object') {
+          // Try direct access first
+          stepId = rawData.step_id as string | undefined
+          errorMessage = rawData.error as string | undefined
+          
+          // If not found, try accessing through 'data' property
+          if (!stepId && rawData.data && typeof rawData.data === 'object') {
+            const nestedData = rawData.data as Record<string, unknown>
+            stepId = nestedData.step_id as string | undefined
+            errorMessage = nestedData.error as string | undefined
+          }
+        }
+        
+        if (stepId) {
+          setStepStatusMap(prev => {
+            const newMap = new Map(prev)
+            newMap.set(stepId!, 'failed')
+            return newMap
+          })
+          // Log error message for debugging
+          if (errorMessage) {
+            console.error(`[useWorkflowExecution] Step ${stepId} failed:`, errorMessage)
+          }
+        } else {
+          console.warn('[useWorkflowExecution] step_execution_failed event missing step_id:', rawData)
+        }
+      }
+      
+      // Legacy event types for backward compatibility
       if (event.type === 'orchestrator_step_start' || event.type === 'step_start') {
         const stepId = (event.data as { step_id?: string })?.step_id
         if (stepId) {
           setCurrentStepId(stepId)
+          setStepStatusMap(prev => {
+            const newMap = new Map(prev)
+            newMap.set(stepId, 'running')
+            return newMap
+          })
         }
       }
     }
@@ -228,16 +347,31 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
   // Stop workflow
   const stopWorkflow = useCallback(async () => {
-    const currentObserverId = useChatStore.getState().observerId
+    const storeState = useChatStore.getState()
+    const currentObserverId = storeState.observerId
+    const pollingInterval = storeState.pollingInterval
     
-    setManualStatus('idle')
+    // Stop ChatArea's polling (same logic as ChatArea.stopStreaming)
+    if (pollingInterval) {
+      clearInterval(pollingInterval)
+      useChatStore.getState().setPollingInterval(null)
+    }
+    
+    // Set streaming to false (this will update the button back to "Execute")
+    useChatStore.getState().setIsStreaming(false)
+    
+    // Reset event polling index so next workflow/chat starts fresh
+    useChatStore.getState().setLastEventIndex(-1)
+    useChatStore.getState().setLastEventCount(0)
+    
+    // Clear current step tracking
     setCurrentStepId(null)
     
     // Call backend to stop the session
     if (currentObserverId) {
       try {
         await agentApi.stopSession(currentObserverId)
-        console.log('[useWorkflowExecution] Session stopped')
+        console.log('[useWorkflowExecution] Session stopped and polling cleared')
       } catch (err) {
         console.error('[useWorkflowExecution] Failed to stop session:', err)
       }
@@ -261,6 +395,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
   return {
     status: derivedStatus,
     currentStepId,
+    stepStatusMap,
     events,
     observerId,
     error,

@@ -61,7 +61,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   // Ensure validation is enabled for loop steps (required to check loop conditions)
   const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>(() => {
     const configs = step.agent_configs || {};
-    console.log('[StepEditPanel] Initializing agentConfigs from step:', {
+    console.log('[StepConfigDebug] Initializing agentConfigs from step:', {
       stepTitle: step.title,
       stepId: step.id,
       step_agent_configs: step.agent_configs,
@@ -92,9 +92,21 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   const [selectedTools, setSelectedTools] = useState<string[]>(() => {
     // If step config has explicit selection, use it
     if (agentConfigs.selected_tools && agentConfigs.selected_tools.length > 0) {
+      console.log('[StepConfigDebug] ⚠️ CRITICAL: Initializing selectedTools from agentConfigs:', {
+        stepId: step.id,
+        agentConfigs_selected_tools: agentConfigs.selected_tools,
+        using: agentConfigs.selected_tools
+      });
       return agentConfigs.selected_tools;
     }
     // Otherwise, use preset defaults for display
+    console.log('[StepConfigDebug] ⚠️ CRITICAL: Initializing selectedTools from preset (no step config):', {
+      stepId: step.id,
+      step_agent_configs: step.agent_configs,
+      agentConfigs_selected_tools: agentConfigs.selected_tools,
+      currentPresetTools,
+      using: currentPresetTools || []
+    });
     return currentPresetTools || [];
   });
 
@@ -176,14 +188,15 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     // Sync if it's a different step OR if agent_configs has changed (e.g., after save)
     // We need to sync when agent_configs changes to reflect saved changes
     if (isDifferentStep || configsChanged) {
-      console.log('[StepEditPanel] Syncing state from step config:', {
-        isDifferentStep,
-        configsChanged,
-        stepTitle: step.title,
+      // Critical log - always show this to track the issue
+      console.log('[StepConfigDebug] ⚠️ CRITICAL: Syncing state from step config:', {
         stepId: step.id,
-        currentConfigs,
-        disable_learning: currentConfigs.disable_learning,
-        disable_validation: currentConfigs.disable_validation,
+        stepTitle: step.title,
+        currentConfigs_selected_tools: currentConfigs.selected_tools,
+        currentConfigs_selected_servers: currentConfigs.selected_servers,
+        step_agent_configs_selected_tools: step.agent_configs?.selected_tools,
+        step_agent_configs_selected_servers: step.agent_configs?.selected_servers,
+        fullStepAgentConfigs: step.agent_configs,
       });
       
       // Reset agentConfigs state from step's config
@@ -203,8 +216,18 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
       // Update tools: use step config if available, otherwise preset defaults
       if (currentConfigs.selected_tools && currentConfigs.selected_tools.length > 0) {
+        console.log('[StepConfigDebug] ⚠️ CRITICAL: Setting selectedTools from step config:', {
+          stepId: step.id,
+          from: currentConfigs.selected_tools,
+          settingTo: currentConfigs.selected_tools
+        });
         setSelectedTools(currentConfigs.selected_tools);
       } else {
+        console.log('[StepConfigDebug] ⚠️ CRITICAL: No step config tools, using preset:', {
+          stepId: step.id,
+          currentPresetTools,
+          settingTo: currentPresetTools || []
+        });
         setSelectedTools(currentPresetTools || []);
       }
 
@@ -1268,6 +1291,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         setSelectedServers(servers.filter(s => s !== "NO_SERVERS"));
                       }}
                       onToolChange={setSelectedTools}
+                      stepId={step.id}
                     />
                   )}
                 </div>

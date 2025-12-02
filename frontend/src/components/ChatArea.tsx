@@ -666,10 +666,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       return
     }
 
-    console.log(`[WorkflowPlanUpdate] Polling events with observerId: ${currentObserverId}, sinceIndex: ${currentLastEventIndex}`)
     try {
       const response = await agentApi.getEvents(currentObserverId, currentLastEventIndex)
-      console.log(`[WorkflowPlanUpdate] Poll response: ${response.events.length} events, lastEventIndex: ${response.last_event_index}, observerId: ${response.observer_id}`)
 
       if (response.events.length > 0) {
         

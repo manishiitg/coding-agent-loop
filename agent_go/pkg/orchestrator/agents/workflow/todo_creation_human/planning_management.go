@@ -400,9 +400,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestPlanApproval(
 // Merges agent configs from step_config.json by step index matching
 // convertBranchSteps converts a slice of PlanStep to TodoStep (helper for recursive conversion)
 // stepConfigs: step configs file for matching branch step configs by ID
-func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) []TodoStep {
+func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) ([]TodoStep, error) {
 	if len(planSteps) == 0 {
-		return nil
+		return nil, nil
 	}
 	todoSteps := make([]TodoStep, len(planSteps))
 	for i := range planSteps {
@@ -410,9 +410,13 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) []Tod
 		// Steps always have IDs from backend - match config by step ID
 		var agentConfigs *AgentConfigs
 		if step.ID == "" {
-			// Log warning for steps without IDs (they won't be able to match configs)
-			// This can happen with old plans or if IDs weren't properly set
-			// Note: This is a warning, not an error - step will use default configs
+			// This should never happen - steps always have IDs from backend
+			// Throw error to match frontend behavior and catch bugs early
+			stepTitle := "unknown"
+			if step.Title != "" {
+				stepTitle = step.Title
+			}
+			return nil, fmt.Errorf("branch step at index %d is missing required ID field. Step title: %q", i, stepTitle)
 		} else if stepConfigs != nil {
 			// Debug: Log what we're searching for
 			// Note: Can't use logger here, but we can add debug info later if needed
@@ -436,12 +440,20 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) []Tod
 		// Recursively convert nested branch steps
 		var ifTrueSteps []TodoStep
 		if len(step.IfTrueSteps) > 0 {
-			ifTrueSteps = convertBranchSteps(step.IfTrueSteps, stepConfigs)
+			var err error
+			ifTrueSteps, err = convertBranchSteps(step.IfTrueSteps, stepConfigs)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert if_true branch steps: %w", err)
+			}
 		}
 
 		var ifFalseSteps []TodoStep
 		if len(step.IfFalseSteps) > 0 {
-			ifFalseSteps = convertBranchSteps(step.IfFalseSteps, stepConfigs)
+			var err error
+			ifFalseSteps, err = convertBranchSteps(step.IfFalseSteps, stepConfigs)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert if_false branch steps: %w", err)
+			}
 		}
 
 		todoSteps[i] = TodoStep{
@@ -463,10 +475,10 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) []Tod
 			AgentConfigs:        agentConfigs, // Matched from step_config.json by ID
 		}
 	}
-	return todoSteps
+	return todoSteps, nil
 }
 
-func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(ctx context.Context, planSteps []PlanStep) []TodoStep {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(ctx context.Context, planSteps []PlanStep) ([]TodoStep, error) {
 	// Read step configs from step_config.json
 	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 	if err != nil {
@@ -488,7 +500,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 	}
 
 	// Match configs by step index (0-based)
-	matchedConfigs := MatchStepConfigs(planSteps, stepConfigs)
+	matchedConfigs, err := MatchStepConfigs(planSteps, stepConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to match step configs: %w", err)
+	}
 	hcpo.GetLogger().Infof("📋 Matched %d/%d step configs from step_config.json", len(matchedConfigs), len(planSteps))
 
 	todoSteps := make([]TodoStep, len(planSteps))
@@ -522,7 +537,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 		var ifTrueSteps []TodoStep
 		if len(step.IfTrueSteps) > 0 {
 			hcpo.GetLogger().Infof("🔍 Converting %d if_true branch steps for step '%s' (ID: %s)", len(step.IfTrueSteps), step.Title, step.ID)
-			ifTrueSteps = convertBranchSteps(step.IfTrueSteps, stepConfigs)
+			var err error
+			ifTrueSteps, err = convertBranchSteps(step.IfTrueSteps, stepConfigs)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert if_true branch steps for step '%s': %w", step.Title, err)
+			}
 			// Log config matching results for branch steps
 			for _, branchStep := range ifTrueSteps {
 				if branchStep.AgentConfigs != nil {
@@ -536,7 +555,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 		var ifFalseSteps []TodoStep
 		if len(step.IfFalseSteps) > 0 {
 			hcpo.GetLogger().Infof("🔍 Converting %d if_false branch steps for step '%s' (ID: %s)", len(step.IfFalseSteps), step.Title, step.ID)
-			ifFalseSteps = convertBranchSteps(step.IfFalseSteps, stepConfigs)
+			var err error
+			ifFalseSteps, err = convertBranchSteps(step.IfFalseSteps, stepConfigs)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert if_false branch steps for step '%s': %w", step.Title, err)
+			}
 			// Log config matching results for branch steps
 			for _, branchStep := range ifFalseSteps {
 				if branchStep.AgentConfigs != nil {
@@ -567,7 +590,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			AgentConfigs:        agentConfigs, // Merged from step_config.json (validation enforced for loops)
 		}
 	}
-	return todoSteps
+	return todoSteps, nil
 }
 
 // cleanupExistingPlanArtifacts deletes existing plan.json, steps_done.json, and all files in learnings/, execution/, and validation/ directories
@@ -872,7 +895,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 
 	// If plan exists, emit event immediately so UI can display it while user decides what to do
 	if planExists {
-		breakdownSteps := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
+		breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
+		if err != nil {
+			return "", fmt.Errorf("failed to convert existing plan steps: %w", err)
+		}
 		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
 		eventEmitted = true
 		planSource = "existing_plan"
@@ -1015,7 +1041,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			}
 
 			// Convert approved plan steps to TodoStep format
-			breakdownSteps := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
+			breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
+			if err != nil {
+				return "", fmt.Errorf("failed to convert approved plan steps: %w", err)
+			}
 			hcpo.GetLogger().Infof("✅ Converted new plan: %d steps extracted", len(breakdownSteps))
 
 			// Emit todo steps extracted event
@@ -1048,7 +1077,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	// Ensure event is emitted at the end if we have an approved plan
 	// This ensures the UI always sees the plan, even if event was emitted earlier
 	if approvedPlan != nil && !eventEmitted {
-		breakdownSteps := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
+		breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
+		if err != nil {
+			return "", fmt.Errorf("failed to convert approved plan steps: %w", err)
+		}
 		// Determine correct source if not already set
 		if planSource == "" {
 			// If we haven't emitted yet, determine source based on context

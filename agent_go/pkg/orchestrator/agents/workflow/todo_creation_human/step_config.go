@@ -61,8 +61,20 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 }
 
 // ReadStepConfigs is a private wrapper that uses receiver fields (for backward compatibility)
+// Uses run folder path if available, otherwise falls back to base workspace path
 func (hcpo *HumanControlledTodoPlannerOrchestrator) ReadStepConfigs(ctx context.Context) (*StepConfigFile, error) {
-	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
+	workspacePath := hcpo.GetWorkspacePath()
+	// Build run folder path if selectedRunFolder is set
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = filepath.Join(workspacePath, "runs", hcpo.selectedRunFolder)
+		hcpo.GetLogger().Infof("📁 Reading step_config.json - will try run folder first: %s/planning/step_config.json", runWorkspacePath)
+	} else {
+		// No run folder selected yet - use base workspace path
+		runWorkspacePath = workspacePath
+		hcpo.GetLogger().Infof("📁 Reading step_config.json - no run folder selected, using base workspace: %s/planning/step_config.json", workspacePath)
+	}
+	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath)
 }
 
 // WriteStepConfigs writes step_config.json to the workspace
@@ -119,6 +131,18 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*
 		config := idConfigMap[stepID]
 		if config != nil {
 			result[i] = config
+		} else {
+			// Log when step ID doesn't match - helps debug matching issues
+			// Only log if there are configs available (to avoid noise when no configs exist)
+			if len(idConfigMap) > 0 {
+				// Get available IDs for debugging
+				availableIDs := make([]string, 0, len(idConfigMap))
+				for id := range idConfigMap {
+					availableIDs = append(availableIDs, id)
+				}
+				// Note: Can't use logger here as this is a pure function
+				// Logging will be done in the caller
+			}
 		}
 		// If not found, result[i] will be nil (no config for this step)
 	}

@@ -64,7 +64,6 @@ interface WorkflowToolbarProps {
   showDependencyEdges?: boolean
   onToggleDependencyEdges?: () => void
   onProgressChange?: (completedStepIndices: number[]) => void  // Callback when step progress changes
-  onExecutionOptionsChange?: (options: { selectedRunFolder: string; selectedExecutionMode: ExecutionModeType }) => void  // Callback when execution options change
   className?: string
 }
 
@@ -84,7 +83,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   showDependencyEdges = false,
   onToggleDependencyEdges,
   onProgressChange,
-  onExecutionOptionsChange,
   className = ''
 }) => {
   // Workspace store for opening folders
@@ -205,16 +203,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onProgressChange(completedIndices)
     }
   }, [stepProgress, onProgressChange, getCompletedStepIndices])
-
-  // Notify parent when execution options change
-  useEffect(() => {
-    if (onExecutionOptionsChange) {
-      onExecutionOptionsChange({
-        selectedRunFolder,
-        selectedExecutionMode
-      })
-    }
-  }, [selectedRunFolder, selectedExecutionMode, onExecutionOptionsChange])
 
   // Close dropdowns when clicking outside
   useEffect(() => {

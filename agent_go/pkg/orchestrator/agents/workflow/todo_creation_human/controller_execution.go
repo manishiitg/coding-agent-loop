@@ -1084,14 +1084,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		}
 
 		// Check if step is in completed list
+		// BUT: If we're in single-step mode and this is the target step, force execution even if completed
 		isCompleted := false
-		for _, completedIdx := range progress.CompletedStepIndices {
-			if completedIdx == i {
-				isCompleted = true
-				break
+		forceExecution := false
+		if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+			// Force execution of target step even if completed
+			forceExecution = true
+			hcpo.GetLogger().Infof("🎯 Single-step mode: forcing execution of target step %d even if previously completed", i+1)
+		} else {
+			for _, completedIdx := range progress.CompletedStepIndices {
+				if completedIdx == i {
+					isCompleted = true
+					break
+				}
 			}
 		}
-		if isCompleted {
+		if isCompleted && !forceExecution {
 			hcpo.GetLogger().Infof("⏭️ Skipping step %d/%d (marked as completed): %s",
 				i+1, len(breakdownSteps), step.Title)
 			continue

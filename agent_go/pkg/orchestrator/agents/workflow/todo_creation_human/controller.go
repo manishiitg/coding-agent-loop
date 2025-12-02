@@ -565,9 +565,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				if targetStep <= 0 {
 					targetStep = 1 // Default to first step
 				}
-				hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only", targetStep)
+				hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only (from resume_from_step: %d)", targetStep, execOpts.ResumeFromStep)
 				startFromStep = targetStep - 1 // Convert to 0-based
 				hcpo.SetRunSingleStepMode(true, startFromStep)
+				// Remove target step from completed list to force re-execution
+				if existingProgress != nil {
+					var newCompletedIndices []int
+					for _, idx := range existingProgress.CompletedStepIndices {
+						if idx != startFromStep {
+							newCompletedIndices = append(newCompletedIndices, idx)
+						}
+					}
+					existingProgress.CompletedStepIndices = newCompletedIndices
+					hcpo.GetLogger().Infof("🔄 Removed step %d from completed list to force re-execution", targetStep)
+				}
 			default:
 				hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to normal execution", execOpts.ExecutionStrategy)
 			}
@@ -907,12 +918,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						skipHumanInput = true
 					case ExecutionStrategyRunSingleStep:
 						targetStep := execOpts.ResumeFromStep
+						// Always use the step number sent from frontend (don't default to nextIncompleteStep)
 						if targetStep <= 0 {
 							targetStep = nextIncompleteStep
+							hcpo.GetLogger().Warnf("⚠️ resume_from_step was <= 0, defaulting to nextIncompleteStep: %d", targetStep)
+						} else {
+							hcpo.GetLogger().Infof("🎯 Using exact step number from frontend: %d", targetStep)
 						}
-						hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only", targetStep)
+						hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only (from resume_from_step: %d)", targetStep, execOpts.ResumeFromStep)
 						startFromStep = targetStep - 1 // Convert to 0-based
 						hcpo.SetRunSingleStepMode(true, startFromStep)
+						// Remove target step from completed list to force re-execution
+						if existingProgress != nil {
+							var newCompletedIndices []int
+							for _, idx := range existingProgress.CompletedStepIndices {
+								if idx != startFromStep {
+									newCompletedIndices = append(newCompletedIndices, idx)
+								}
+							}
+							existingProgress.CompletedStepIndices = newCompletedIndices
+							hcpo.GetLogger().Infof("🔄 Removed step %d from completed list to force re-execution", targetStep)
+						}
 					default:
 						hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to resume", execOpts.ExecutionStrategy)
 						startFromStep = nextIncompleteStep - 1

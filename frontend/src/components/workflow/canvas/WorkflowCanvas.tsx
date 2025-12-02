@@ -61,23 +61,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Track completed step indices from selected iteration (for enabling/disabling run buttons)
   const [completedStepIndices, setCompletedStepIndices] = React.useState<number[]>([])
   
-  // Track global execution options from toolbar (iteration, execution mode, etc.)
-  const [globalExecutionOptions, setGlobalExecutionOptions] = React.useState<{
-    selectedRunFolder: string
-    selectedExecutionMode: 'human_approval' | 'fast_execution' | 'with_learning'
-  } | null>(null)
-  
   // Callback for when progress changes in toolbar
   const handleProgressChange = useCallback((indices: number[]) => {
     setCompletedStepIndices(indices)
-  }, [])
-  
-  // Callback for when execution options change in toolbar
-  const handleExecutionOptionsChange = useCallback((options: {
-    selectedRunFolder: string
-    selectedExecutionMode: 'human_approval' | 'fast_execution' | 'with_learning'
-  }) => {
-    setGlobalExecutionOptions(options)
   }, [])
 
   // Load plan data with change detection
@@ -136,11 +122,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         // Use ref to get latest nodes without causing dependency issues
         const node = nodesRef.current.find(n => n.id === stepId) as WorkflowNode | undefined
         if (node) {
-          // Center viewport on the node
+          // Position step on the left side with padding (same as initial view)
+          const padding = 150 // Padding from left edge
+          const canvasHeight = window.innerHeight || 800
           setViewport(
             {
-              x: -flowNode.position.x + window.innerWidth / 2 - 200, // Offset for sidebar
-              y: -flowNode.position.y + window.innerHeight / 2,
+              x: padding - flowNode.position.x, // Position on left with padding
+              y: (canvasHeight / 2) - flowNode.position.y - ((flowNode.height || 100) / 2), // Center vertically
               zoom: 1.0
             },
             { duration: 500 }
@@ -160,22 +148,38 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [getNode, setViewport])
 
   // Handle "run from step" button click on nodes - runs only the single step
+  // Uses workflow store directly for execution options (single source of truth)
   const handleRunFromStep = useCallback((stepIndex: number, stepId: string) => {
     console.log('[WorkflowCanvas] Run single step clicked:', stepIndex, stepId)
     console.log('[WorkflowCanvas] onStartPhase available:', !!onStartPhase)
-    console.log('[WorkflowCanvas] globalExecutionOptions:', globalExecutionOptions)
+    console.log('[WorkflowCanvas] selectedRunFolder:', selectedRunFolder)
     
-    // Highlight the step node before running
-    highlightStepNode(stepId)
+    // Position viewport to show step on the left side (but don't open sidebar)
+    // Use a small timeout to ensure nodes are updated
+    setTimeout(() => {
+      const flowNode = getNode(stepId)
+      if (flowNode) {
+        // Position step on the left side with padding (same as initial view)
+        const padding = 150 // Padding from left edge
+        const canvasHeight = window.innerHeight || 800
+        setViewport(
+          {
+            x: padding - flowNode.position.x, // Position on left with padding
+            y: (canvasHeight / 2) - flowNode.position.y - ((flowNode.height || 100) / 2), // Center vertically
+            zoom: 1.0
+          },
+          { duration: 500 }
+        )
+        console.log('[WorkflowCanvas] Positioned viewport to show step on left:', stepId)
+      }
+    }, 100)
     
     if (onStartPhase) {
       // Create execution options to run only this single step
-      // Use global execution options from toolbar (iteration, execution mode)
-      // If globalExecutionOptions is null, default to 'new' run folder
-      const runFolder = globalExecutionOptions?.selectedRunFolder || 'new'
+      // Read from workflow store directly (single source of truth)
       const executionOptions: ExecutionOptions = {
-        run_mode: runFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
-        selected_run_folder: runFolder === 'new' ? undefined : runFolder,
+        run_mode: selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
+        selected_run_folder: selectedRunFolder === 'new' ? undefined : selectedRunFolder,
         execution_strategy: 'run_single_step',
         resume_from_step: stepIndex + 1  // 1-based step number (target step)
       }
@@ -184,7 +188,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     } else {
       console.error('[WorkflowCanvas] onStartPhase is not available!')
     }
-  }, [onStartPhase, highlightStepNode, globalExecutionOptions])
+  }, [onStartPhase, getNode, setViewport, selectedRunFolder])
 
   // Store handleRunFromStep in ref for early access
   React.useEffect(() => {
@@ -597,7 +601,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           showDependencyEdges={showDependencyEdges}
           onToggleDependencyEdges={handleToggleDependencyEdges}
           onProgressChange={handleProgressChange}
-          onExecutionOptionsChange={handleExecutionOptionsChange}
         />
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center gap-4 text-center">
@@ -679,19 +682,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Step Sidebar */}
         {selectedNode && (
           <StepSidebar
-          node={selectedNode}
-          onClose={() => setSelectedNode(null)}
-          onEditStep={handleEditStep}
-          onDeleteStep={handleDeleteStep}
-          isRunning={status === 'running'}
+            node={selectedNode}
+            onClose={() => setSelectedNode(null)}
+            onEditStep={handleEditStep}
+            onDeleteStep={handleDeleteStep}
+            isRunning={status === 'running'}
             stepIndex={'stepIndex' in selectedNode.data && typeof selectedNode.data.stepIndex === 'number' ? selectedNode.data.stepIndex : 0}
             workspacePath={workspacePath}
             presetQueryId={presetQueryId}
             onStartPhase={handleStartPhaseForStep}
             plan={plan}
-            globalExecutionOptions={globalExecutionOptions}
             completedStepIndices={completedStepIndices}
-        />
+          />
         )}
       </div>
     </div>

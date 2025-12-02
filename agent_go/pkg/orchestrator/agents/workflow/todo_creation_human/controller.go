@@ -248,7 +248,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.variableManager.emitVariablesExtractedEvent(ctx, existingVariablesManifest.Variables, existingVariablesManifest.Objective)
 
 	// Convert existing plan to TodoStep format and emit TodoStepsExtractedEvent
-	breakdownSteps := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
+	breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert existing plan steps: %w", err)
+	}
 	hcpo.GetLogger().Infof("✅ Converted existing plan: %d steps extracted", len(breakdownSteps))
 	hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
 

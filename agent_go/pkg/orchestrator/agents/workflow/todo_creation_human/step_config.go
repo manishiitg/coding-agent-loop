@@ -103,7 +103,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 
 // MatchStepConfigs matches new plan steps with existing configs by ID only
 // Returns a map of step index -> matched AgentConfigs
-func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*AgentConfigs {
+// Returns an error if any step is missing a required ID field
+func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) (map[int]*AgentConfigs, error) {
 	result := make(map[int]*AgentConfigs)
 
 	// Create lookup map: ID -> config
@@ -122,9 +123,12 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*
 		stepID := newSteps[i].ID
 		if stepID == "" {
 			// This should never happen - steps always have IDs from backend
-			// Log error but don't crash - just skip matching for this step
-			// In production, this indicates a bug in plan generation
-			continue
+			// Throw error to match frontend behavior and catch bugs early
+			stepTitle := "unknown"
+			if newSteps[i].Title != "" {
+				stepTitle = newSteps[i].Title
+			}
+			return nil, fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, stepTitle)
 		}
 
 		// Match config by ID
@@ -147,7 +151,7 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) map[int]*
 		// If not found, result[i] will be nil (no config for this step)
 	}
 
-	return result
+	return result, nil
 }
 
 // MatchStepConfigByID matches a step config by ID (for branch steps)

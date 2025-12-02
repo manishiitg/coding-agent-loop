@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { X, Trash2, Edit2, Save, ChevronDown, Settings, CheckCircle2, BookOpen, Play } from 'lucide-react'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import type { ExecutionOptions } from '../../../services/api-types'
@@ -36,7 +36,6 @@ interface StepSidebarProps {
   presetQueryId?: string | null
   onStartPhase?: (phaseId: string, stepId?: string | ExecutionOptions) => void
   plan?: PlanningResponse | null
-  globalExecutionOptions?: { selectedRunFolder: string; selectedExecutionMode: 'human_approval' | 'fast_execution' | 'with_learning' } | null
   completedStepIndices?: number[]  // 0-based indices of completed steps (for enabling/disabling run button)
 }
 
@@ -51,7 +50,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   presetQueryId,
   onStartPhase,
   plan,
-  globalExecutionOptions,
   completedStepIndices = []
 }) => {
   const { availableLLMs } = useLLMStore()
@@ -59,6 +57,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   // Get step-specific phases from workflow store (already filtered)
   const { getStepSpecificPhases, loadPhases } = useWorkflowStore()
   const phases = getStepSpecificPhases()
+  
+  // Get execution options directly from workflow store (single source of truth)
+  // This fixes the issue where globalExecutionOptions prop might be null/stale
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
   
   const [isPhaseDropdownOpen, setIsPhaseDropdownOpen] = useState(false)
   const phaseDropdownRef = useRef<HTMLDivElement>(null)
@@ -117,22 +120,29 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   }, [stepIndex, completedStepIndices])
 
   // Handle run single step
-  const handleRunStep = () => {
+  // Uses workflow store directly for execution options (single source of truth)
+  const handleRunStep = useCallback(() => {
     if (!onStartPhase || !node || !canRunStep) return
     
     // Create execution options to run only this single step
-    // Use global execution options from toolbar (iteration, execution mode)
+    // Read from workflow store directly (not from props which might be null/stale)
     const executionOptions: ExecutionOptions = {
-      run_mode: globalExecutionOptions?.selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
-      selected_run_folder: globalExecutionOptions?.selectedRunFolder === 'new' ? undefined : globalExecutionOptions?.selectedRunFolder,
+      run_mode: selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
+      selected_run_folder: selectedRunFolder === 'new' ? undefined : selectedRunFolder,
       execution_strategy: ExecutionStrategy.RUN_SINGLE_STEP,
       resume_from_step: stepIndex + 1  // 1-based step number (target step)
     }
     
+    console.log('[StepSidebar] Running single step with options:', {
+      selectedRunFolder,
+      selectedExecutionMode,
+      executionOptions
+    })
+    
     // Start execution phase with single step options
     // The adapter in WorkflowCanvas will handle highlighting the node
     onStartPhase('execution', executionOptions)
-  }
+  }, [onStartPhase, node, canRunStep, selectedRunFolder, selectedExecutionMode, stepIndex])
   
   // Get preset information
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)

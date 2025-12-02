@@ -84,7 +84,8 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
-    e.stopPropagation() // Prevent node selection
+    e.stopPropagation() // Prevent node selection and sidebar opening
+    e.preventDefault() // Prevent any default behavior
     console.log('[StepNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, canRun, isRunDisabled })
     if (onRunFromStep && !isExecuting && canRun) {
       console.log('[StepNode] Calling onRunFromStep with:', stepIndex, step.id || `step-${stepIndex}`)

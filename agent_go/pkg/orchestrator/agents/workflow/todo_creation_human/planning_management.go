@@ -497,6 +497,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 		var agentConfigs *AgentConfigs
 		if config, found := matchedConfigs[i]; found {
 			agentConfigs = config
+			// Log code execution mode for debugging
+			if agentConfigs.UseCodeExecutionMode != nil {
+				hcpo.GetLogger().Infof("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: %v", step.Title, step.ID, *agentConfigs.UseCodeExecutionMode)
+			} else {
+				hcpo.GetLogger().Infof("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: nil (will use preset default)", step.Title, step.ID)
+			}
+		} else {
+			hcpo.GetLogger().Infof("⚠️ Step '%s' (ID: %s) has NO config match in step_config.json - will use preset defaults", step.Title, step.ID)
 		}
 
 		// Validation is required for loop steps to check loop conditions

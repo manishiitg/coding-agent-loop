@@ -34,14 +34,11 @@ h) should we conditional llm, manually to change flow? like during scrapping. if
 
 the prompts we have, have variable issue which we get to know later when we run. 
 
-
 2. variable looping agent or variable injection agent
 3. step deciding agent
 4. chain builder?
 6. have a different knowledge tools and a different directly fully for knowledge/ which will index data
 i) prompt tempaltes, need to check variables on compile time
-
-j) refractor todo human create code structure
 
 k) also fix logging in this process
 
@@ -52,3 +49,5 @@ h) check if external package is even required
 i) check where the generated/ folder should be. if we independely use mcpagent. and also write examples for both llmprovider/mcpagent
 
 k) check if we emit specific emivents from backend so that we can highligh proper file in workspace
+
+56) we should have a option in validation agent to migrate to another step

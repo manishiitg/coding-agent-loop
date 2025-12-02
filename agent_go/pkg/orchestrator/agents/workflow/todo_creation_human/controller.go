@@ -175,6 +175,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	hcpo.variableManager = NewVariableManager(
 		baseOrchestrator,
 		presetVariableExtractionLLM,
+		presetLearningLLM, // Pass learning LLM for fallback
 		hcpo.sessionID,
 		hcpo.workflowID,
 	)
@@ -260,7 +261,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 
 	// Note: Learning integration phase removed - execution agent now auto-discovers learning files and scripts
 
-	// Check if execution options are provided from frontend
+	// Check if execution options are provided from chfrontend
 	execOpts := hcpo.executionOptions
 	var selectedRunMode string
 	var selectedRunFolder string
@@ -571,17 +572,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only (from resume_from_step: %d)", targetStep, execOpts.ResumeFromStep)
 				startFromStep = targetStep - 1 // Convert to 0-based
 				hcpo.SetRunSingleStepMode(true, startFromStep)
-				// Remove target step from completed list to force re-execution
-				if existingProgress != nil {
-					var newCompletedIndices []int
-					for _, idx := range existingProgress.CompletedStepIndices {
-						if idx != startFromStep {
-							newCompletedIndices = append(newCompletedIndices, idx)
-						}
-					}
-					existingProgress.CompletedStepIndices = newCompletedIndices
-					hcpo.GetLogger().Infof("🔄 Removed step %d from completed list to force re-execution", targetStep)
-				}
+				// Note: For run_single_step, we don't modify steps_done.json - it's a one-off execution that doesn't affect progress tracking
 			default:
 				hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to normal execution", execOpts.ExecutionStrategy)
 			}
@@ -837,11 +828,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 					hcpo.GetLogger().Infof("📋 Using frontend-provided execution strategy: %s", execOpts.ExecutionStrategy)
 					switch execOpts.ExecutionStrategy {
 					case ExecutionStrategyResumeFromStep:
-						resumeStep := execOpts.ResumeFromStep
-						if resumeStep <= 0 {
-							resumeStep = nextIncompleteStep
-						}
-						startFromStep = resumeStep - 1 // Convert to 0-based
+						isExplicit := execOpts.ResumeFromStep > 0
+						startFromStep = hcpo.handleResumeStrategy(ctx, execOpts.ResumeFromStep, nextIncompleteStep, existingProgress, isExplicit)
+						resumeStep := startFromStep + 1 // Convert back to 1-based for logging
 						hcpo.GetLogger().Infof("✅ Frontend chose to resume from step %d", resumeStep)
 					case ExecutionStrategyStartFromBeginning:
 						hcpo.GetLogger().Infof("🔄 Frontend chose to start from beginning")
@@ -888,20 +877,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						startFromStep = 0
 						existingProgress.CompletedStepIndices = []int{}
 					case ExecutionStrategyFastResumeFromStep:
-						resumeStep := execOpts.ResumeFromStep
-						if resumeStep <= 0 {
-							resumeStep = nextIncompleteStep
-						}
+						isExplicit := execOpts.ResumeFromStep > 0
+						startFromStep = hcpo.handleResumeStrategy(ctx, execOpts.ResumeFromStep, nextIncompleteStep, existingProgress, isExplicit)
+						resumeStep := startFromStep + 1 // Convert back to 1-based for logging
 						hcpo.GetLogger().Infof("⚡ Frontend chose fast resume mode from step %d", resumeStep)
 						fastExecuteMode = true
 						fastExecuteEndStep = len(breakdownSteps) - 1
-						startFromStep = resumeStep - 1
 					case ExecutionStrategyResumeFromStepNoHuman:
-						resumeStep := execOpts.ResumeFromStep
-						if resumeStep <= 0 {
-							resumeStep = nextIncompleteStep
-						}
-						startFromStep = resumeStep - 1
+						isExplicit := execOpts.ResumeFromStep > 0
+						startFromStep = hcpo.handleResumeStrategy(ctx, execOpts.ResumeFromStep, nextIncompleteStep, existingProgress, isExplicit)
+						resumeStep := startFromStep + 1 // Convert back to 1-based for logging
 						skipHumanInput = true
 						hcpo.GetLogger().Infof("✅ Frontend chose to resume from step %d without human input", resumeStep)
 					case ExecutionStrategyStartFromBeginningNoHuman:
@@ -931,17 +916,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only (from resume_from_step: %d)", targetStep, execOpts.ResumeFromStep)
 						startFromStep = targetStep - 1 // Convert to 0-based
 						hcpo.SetRunSingleStepMode(true, startFromStep)
-						// Remove target step from completed list to force re-execution
-						if existingProgress != nil {
-							var newCompletedIndices []int
-							for _, idx := range existingProgress.CompletedStepIndices {
-								if idx != startFromStep {
-									newCompletedIndices = append(newCompletedIndices, idx)
-								}
-							}
-							existingProgress.CompletedStepIndices = newCompletedIndices
-							hcpo.GetLogger().Infof("🔄 Removed step %d from completed list to force re-execution", targetStep)
-						}
+						// Note: For run_single_step, we don't modify steps_done.json - it's a one-off execution that doesn't affect progress tracking
 					default:
 						hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to resume", execOpts.ExecutionStrategy)
 						startFromStep = nextIncompleteStep - 1
@@ -1241,6 +1216,51 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetFastExecuteMode(enabled b
 func (hcpo *HumanControlledTodoPlannerOrchestrator) SetRunSingleStepMode(enabled bool, stepIndex int) {
 	hcpo.runSingleStepOnly = enabled
 	hcpo.singleStepTarget = stepIndex
+}
+
+// handleResumeStrategy handles resume strategy logic consistently across all resume strategies.
+// If the user explicitly selected a step (isExplicitSelection=true), updates completed list
+// to only include steps before the resume step, ensuring all steps from resume step onwards
+// will be re-executed. This matches the behavior of run_single_step.
+// Returns the 0-based startFromStep index.
+func (hcpo *HumanControlledTodoPlannerOrchestrator) handleResumeStrategy(
+	ctx context.Context,
+	resumeStep int,
+	nextIncompleteStep int,
+	existingProgress *StepProgress,
+	isExplicitSelection bool,
+) int {
+	// Default to next incomplete step if not explicitly provided
+	if resumeStep <= 0 {
+		resumeStep = nextIncompleteStep
+		isExplicitSelection = false
+	}
+
+	startFromStep := resumeStep - 1 // Convert to 0-based
+
+	// If user explicitly selected a step, update completed list to only include steps before resume step
+	// This ensures that step X and all subsequent steps will be executed
+	if isExplicitSelection && existingProgress != nil {
+		var newCompletedIndices []int
+		// Only keep steps that are before the resume step (0-based index < startFromStep)
+		// This means if resuming from step 3 (1-based), only steps 0 and 1 (steps 1 and 2 in 1-based) remain completed
+		for _, idx := range existingProgress.CompletedStepIndices {
+			if idx < startFromStep {
+				newCompletedIndices = append(newCompletedIndices, idx)
+			}
+		}
+		existingProgress.CompletedStepIndices = newCompletedIndices
+		hcpo.GetLogger().Infof("🔄 Updated completed list: only steps before step %d remain completed (removed step %d and all subsequent steps)", resumeStep, resumeStep)
+
+		// Save the updated progress to steps_done.json
+		if err := hcpo.saveStepProgress(ctx, existingProgress); err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to save updated step progress: %w", err)
+		} else {
+			hcpo.GetLogger().Infof("✅ Saved updated step progress: %d steps now marked as completed", len(newCompletedIndices))
+		}
+	}
+
+	return startFromStep
 }
 
 // GetLearningDetailLevel returns the stored learning detail level preference

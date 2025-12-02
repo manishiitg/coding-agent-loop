@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Play } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -10,6 +10,7 @@ import { isValidJSON } from '../../../utils/event-helpers'
 import type { StepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getToolsByCategory } from '../../../utils/customToolNames'
+import { NodeConfigFooter } from './NodeConfigFooter'
 
 interface StepNodeProps {
   data: StepNodeData
@@ -74,7 +75,7 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, isExecuting, canRun = true, workspacePath, selectedRunFolder } = data
+  const { title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun = true, workspacePath, selectedRunFolder } = data
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
@@ -100,6 +101,20 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     }
   }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id, isRunDisabled])
 
+  // Handle settings icon click - opens the sidebar
+  const handleSettingsClick = useCallback((e: MouseEvent) => {
+    e.stopPropagation() // Prevent node selection
+    e.preventDefault() // Prevent any default behavior
+    console.log('[StepNode] Settings button clicked:', { stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
+    if (onOpenSidebar && typeof onOpenSidebar === 'function') {
+      const nodeId = step.id || `step-${stepIndex}`
+      console.log('[StepNode] Calling onOpenSidebar with:', nodeId)
+      onOpenSidebar(nodeId)
+    } else {
+      console.warn('[StepNode] onOpenSidebar callback not available')
+    }
+  }, [onOpenSidebar, stepIndex, step.id])
+
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
   const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
@@ -111,6 +126,10 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const stepConfig = step as { agent_configs?: { 
     use_code_execution_mode?: boolean
     execution_llm?: { provider?: string; model_id?: string }
+    execution_max_turns?: number
+    learning_llm?: { provider?: string; model_id?: string }
+    disable_learning?: boolean
+    learning_detail_level?: 'exact' | 'general'
     selected_servers?: string[]
     selected_tools?: string[]
     enabled_custom_tools?: string[]
@@ -148,6 +167,48 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
+  // Learning LLM: step config > preset learning_llm > preset default (or execution LLM in code exec mode)
+  const learningLLM = useMemo(() => {
+    // In code execution mode, learning uses execution LLM
+    if (useCodeExecutionMode) {
+      return executionLLM
+    }
+    
+    // Check if learning is disabled
+    if (stepConfig?.agent_configs?.disable_learning === true) {
+      return null
+    }
+    
+    const presetLLMConfig = activePreset?.llmConfig
+    const stepLLMConfig = stepConfig?.agent_configs?.learning_llm
+    const presetLearningLLM = presetLLMConfig?.learning_llm
+    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+      ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
+    
+    const llmConfig = stepLLMConfig || presetLearningLLM || presetDefaultLLM
+    if (!llmConfig?.provider || !llmConfig?.model_id) return null
+    
+    const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
+    return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
+  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs, useCodeExecutionMode, executionLLM])
+
+  // Learning detail level (defaults to 'general', but 'exact' in code exec mode)
+  const learningDetailLevel = useMemo(() => {
+    if (stepConfig?.agent_configs?.disable_learning === true) {
+      return null
+    }
+    // In code execution mode, learning is always 'exact'
+    if (useCodeExecutionMode) {
+      return 'exact'
+    }
+    return stepConfig?.agent_configs?.learning_detail_level || 'general'
+  }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
+
+  // Execution max turns (defaults to 25)
+  const executionMaxTurns = useMemo(() => {
+    return stepConfig?.agent_configs?.execution_max_turns || 25
+  }, [stepConfig?.agent_configs?.execution_max_turns])
+
   const presetServers = useMemo(() => activePreset?.selectedServers || [], [activePreset?.selectedServers])
   const stepServers = stepConfig?.agent_configs?.selected_servers
   const effectiveServers = useMemo(() => {
@@ -158,6 +219,35 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const presetTools = useMemo(() => activePreset?.selectedTools || [], [activePreset?.selectedTools])
   const effectiveTools = stepConfig?.agent_configs?.selected_tools?.length 
     ? stepConfig.agent_configs.selected_tools : presetTools
+
+  // Group tools by server and detect "all tools" (*) entries
+  const toolsDisplayInfo = useMemo(() => {
+    const serverMap = new Map<string, { hasAllTools: boolean; specificTools: number }>()
+    
+    effectiveTools.forEach(tool => {
+      const [server, toolName] = tool.split(':')
+      if (!server) return
+      
+      if (!serverMap.has(server)) {
+        serverMap.set(server, { hasAllTools: false, specificTools: 0 })
+      }
+      
+      const info = serverMap.get(server)!
+      if (toolName === '*') {
+        // If server has "*", it means all tools - reset specific tools count
+        info.hasAllTools = true
+        info.specificTools = 0
+      } else if (!info.hasAllTools) {
+        // Only count specific tools if we don't already have "all tools"
+        info.specificTools++
+      }
+    })
+    
+    return Array.from(serverMap.entries()).map(([server, info]) => ({
+      server,
+      ...info
+    }))
+  }, [effectiveTools])
 
   // Parse custom tools (workspace_tools, human_tools)
   const enabledCustomTools = useMemo(() => stepConfig?.agent_configs?.enabled_custom_tools || [], [stepConfig?.agent_configs?.enabled_custom_tools])
@@ -177,7 +267,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
 
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
-  const hasConfig = executionLLM || effectiveServers.length > 0 || effectiveTools.length > 0 || hasWorkspaceTools || hasHumanTools || hasLargeOutput
 
   // Handle file click - open file in workspace (same as workspace sidebar)
   const handleFileClick = useCallback(async (filename: string, e: MouseEvent) => {
@@ -295,9 +384,23 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       ${selected ? 'ring-2 ring-blue-500/40' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
-      {/* Change badge - positioned at top-right edge */}
+      {/* Status badge - positioned at top-right edge (shows for running/failed status) */}
+      {status === 'running' && (
+        <div className="absolute top-0 right-0 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl bg-blue-500 text-white text-[10px] font-medium shadow-lg">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          <span>Running</span>
+        </div>
+      )}
+      {status === 'failed' && (
+        <div className="absolute top-0 right-0 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl bg-red-500 text-white text-[10px] font-medium shadow-lg">
+          <XCircle className="w-3 h-3" />
+          <span>Failed</span>
+        </div>
+      )}
+      
+      {/* Change badge - positioned below status badge (or top-right if no status badge) */}
       {changeType && (
-        <div className={`absolute top-0 right-0 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
+        <div className={`absolute ${status === 'running' || status === 'failed' ? 'top-6 right-0' : 'top-0 right-0'} z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
           {changeBadgeStyles[changeType].icon}
           <span className="capitalize">{changeType}</span>
         </div>
@@ -343,6 +446,16 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               ⚠️
             </div>
           )}
+          {/* Settings icon button - opens sidebar */}
+          {onOpenSidebar ? (
+            <button
+              onClick={handleSettingsClick}
+              className="flex items-center justify-center w-7 h-7 rounded-lg transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
+              title="Open step settings"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          ) : null}
           {/* Agent Mode Badge */}
           {useCodeExecutionMode ? (
             <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold">
@@ -429,45 +542,23 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             )}
           </div>
         )}
+
       </div>
 
       {/* Config Footer */}
-      {hasConfig && (
-        <div className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700">
-          <div className="flex flex-wrap gap-1.5">
-            {executionLLM && (
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
-                {executionLLM}
-              </span>
-            )}
-            {effectiveServers.map((s, i) => (
-              <span key={i} className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-                {s}
-              </span>
-            ))}
-            {effectiveTools.length > 0 && (
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                {effectiveTools.length} tools
-              </span>
-            )}
-            {hasWorkspaceTools && (
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300" title={`Workspace tools: ${workspaceToolsInfo.enabled}/${workspaceToolsInfo.total}`}>
-                WS: {workspaceToolsInfo.enabled}/{workspaceToolsInfo.total}
-              </span>
-            )}
-            {hasHumanTools && (
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300" title={`Human tools: ${humanToolsInfo.enabled}/${humanToolsInfo.total}`}>
-                Human: {humanToolsInfo.enabled}/{humanToolsInfo.total}
-              </span>
-            )}
-            {hasLargeOutput && (
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" title="Large output virtual tools enabled">
-                Large Output
-              </span>
-            )}
-          </div>
-        </div>
-      )}
+      <NodeConfigFooter
+        executionLLM={executionLLM}
+        executionMaxTurns={executionMaxTurns}
+        learningLLM={learningLLM}
+        learningDetailLevel={learningDetailLevel}
+        effectiveServers={effectiveServers}
+        toolsDisplayInfo={toolsDisplayInfo}
+        workspaceToolsInfo={workspaceToolsInfo}
+        hasWorkspaceTools={hasWorkspaceTools}
+        humanToolsInfo={humanToolsInfo}
+        hasHumanTools={hasHumanTools}
+        hasLargeOutput={hasLargeOutput}
+      />
 
       <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
       

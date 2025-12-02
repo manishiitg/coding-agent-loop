@@ -142,6 +142,81 @@ function hasStepChanged(oldStep: PlanStep, newStep: PlanStep): boolean {
 }
 
 /**
+ * Normalize step_config.json content to canonical format
+ * Handles multiple input formats and converts to: { steps: [{ id, agent_configs: {...} }] }
+ */
+function normalizeStepConfigFile(rawContent: unknown): StepConfigFile {
+  // If already in canonical format
+  if (rawContent && typeof rawContent === 'object' && 'steps' in rawContent && Array.isArray((rawContent as StepConfigFile).steps)) {
+    return rawContent as StepConfigFile
+  }
+
+  // If array format: [{ step_id, selected_servers, ... }, ...] OR [{ id, agent_configs, ... }, ...]
+  if (Array.isArray(rawContent)) {
+    const isFlatArray = rawContent.length > 0 && 
+      (rawContent[0] && typeof rawContent[0] === 'object' && 
+       (('step_id' in rawContent[0]) || ('id' in rawContent[0])) &&
+       (('selected_servers' in rawContent[0]) || ('selected_tools' in rawContent[0])))
+    
+    if (isFlatArray) {
+      // Convert flat array format to canonical format
+      const convertedSteps: StepConfig[] = (rawContent as Array<Record<string, unknown>>)
+        .map((item) => {
+          const stepId = (item.step_id || item.id) as string | undefined
+          if (!stepId) {
+            console.warn('[normalizeStepConfigFile] Array item missing step_id/id:', item)
+            return null
+          }
+          
+          // Convert flat structure to nested agent_configs
+          const agentConfigs: AgentConfigs = {
+            ...((item.agent_configs as AgentConfigs | undefined) || {}),
+            selected_servers: item.selected_servers as string[] | undefined,
+            selected_tools: item.selected_tools as string[] | undefined,
+            enabled_custom_tools: item.enabled_custom_tools as string[] | undefined,
+          }
+          
+          return {
+            id: stepId,
+            agent_configs: agentConfigs
+          } as StepConfig
+        })
+        .filter((item): item is StepConfig => item !== null)
+      
+      return { steps: convertedSteps }
+    } else {
+      // Array format: [{ id, agent_configs: {...} }, ...]
+      return { steps: rawContent as StepConfig[] }
+    }
+  }
+
+  // If flat object format: { step_id, selected_servers, selected_tools, ... }
+  if (rawContent && typeof rawContent === 'object' && !Array.isArray(rawContent)) {
+    const flatConfig = rawContent as Record<string, unknown>
+    const stepId = (flatConfig.step_id || flatConfig.id) as string | undefined
+    
+    if (stepId) {
+      const agentConfigs: AgentConfigs = {
+        ...((flatConfig.agent_configs as AgentConfigs | undefined) || {}),
+        selected_servers: flatConfig.selected_servers as string[] | undefined,
+        selected_tools: flatConfig.selected_tools as string[] | undefined,
+        enabled_custom_tools: flatConfig.enabled_custom_tools as string[] | undefined,
+      }
+      
+      return {
+        steps: [{
+          id: stepId,
+          agent_configs: agentConfigs
+        }]
+      }
+    }
+  }
+
+  // Default: empty structure
+  return { steps: [] }
+}
+
+/**
  * Merge agent_configs from step_config.json into plan steps
  * This adds the agent_configs (including use_code_execution_mode) to each step
  */
@@ -252,12 +327,49 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
           try {
             console.log('[WorkflowPlanUpdate] Fetching step_config from:', stepConfigPath)
             const stepConfigResponse = await agentApi.getPlannerFileContent(stepConfigPath)
+            console.log('[StepConfigDebug] ⚠️ CRITICAL: step_config.json API response:', {
+              success: stepConfigResponse.success,
+              hasData: !!stepConfigResponse.data,
+              dataKeys: stepConfigResponse.data ? Object.keys(stepConfigResponse.data) : [],
+              responseStructure: stepConfigResponse
+            })
             if (stepConfigResponse.success && stepConfigResponse.data) {
-              const stepConfigFile: StepConfigFile = JSON.parse(stepConfigResponse.data.content)
+              console.log('[StepConfigDebug] ⚠️ CRITICAL: Raw file content BEFORE parsing:', {
+                contentLength: stepConfigResponse.data.content?.length || 0,
+                contentPreview: stepConfigResponse.data.content?.substring(0, 500) || 'NO CONTENT',
+                fullContent: stepConfigResponse.data.content || 'NO CONTENT'
+              })
+              const rawStepConfig = JSON.parse(stepConfigResponse.data.content)
+              console.log('[StepConfigDebug] ⚠️ CRITICAL: Raw step_config.json structure AFTER parsing:', {
+                hasSteps: !Array.isArray(rawStepConfig) && 'steps' in rawStepConfig,
+                isArray: Array.isArray(rawStepConfig),
+                keys: Array.isArray(rawStepConfig) ? `Array[${rawStepConfig.length}]` : Object.keys(rawStepConfig),
+                firstItem: Array.isArray(rawStepConfig) && rawStepConfig.length > 0 ? rawStepConfig[0] : null,
+                rawContent: rawStepConfig
+              })
+              
+              // Normalize to canonical format (handles all input formats)
+              const stepConfigFile = normalizeStepConfigFile(rawStepConfig)
+              console.log('[StepConfigDebug] Normalized step_config.json:', {
+                stepCount: stepConfigFile.steps.length,
+                format: 'canonical',
+                steps: stepConfigFile.steps.map(s => ({
+                  id: s.id,
+                  hasAgentConfigs: !!s.agent_configs,
+                  selectedTools: s.agent_configs?.selected_tools
+                }))
+              })
+              
               // Merge agent_configs into plan steps
               planData = mergeStepConfigs(planData, stepConfigFile)
-              console.log('[WorkflowPlanUpdate] Merged step_config.json into plan', { 
-                stepConfigCount: Object.keys(stepConfigFile).length 
+              console.log('[StepConfigDebug] Merged step_config.json into plan', { 
+                stepConfigCount: stepConfigFile.steps.length,
+                mergedSteps: planData.steps.map(s => ({
+                  id: s.id,
+                  hasAgentConfigs: !!s.agent_configs,
+                  selectedTools: s.agent_configs?.selected_tools,
+                  selectedServers: s.agent_configs?.selected_servers
+                }))
               })
             }
           } catch (err) {
@@ -425,7 +537,9 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       try {
         const response = await agentApi.getPlannerFileContent(stepConfigPath)
         if (response.success && response.data) {
-          stepConfigFile = JSON.parse(response.data.content)
+          const rawContent = JSON.parse(response.data.content)
+          // Normalize to canonical format (handles array, flat, or canonical formats)
+          stepConfigFile = normalizeStepConfigFile(rawContent)
         }
       } catch {
         // File doesn't exist yet - use empty structure

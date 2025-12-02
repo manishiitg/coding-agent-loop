@@ -72,6 +72,8 @@ type PlanToolOptimizationManager struct {
 
 	// Preset LLM config for plan tool optimization agent
 	presetPlanToolOptimizationLLM *AgentLLMConfig
+	// Learning LLM config (fallback for plan tool optimization if presetPlanToolOptimizationLLM not set)
+	presetLearningLLM *AgentLLMConfig
 }
 
 // NewPlanToolOptimizationManager creates a new PlanToolOptimizationManager
@@ -80,12 +82,14 @@ func NewPlanToolOptimizationManager(
 	sessionID string,
 	workflowID string,
 	presetPlanToolOptimizationLLM *AgentLLMConfig,
+	presetLearningLLM *AgentLLMConfig,
 ) *PlanToolOptimizationManager {
 	return &PlanToolOptimizationManager{
 		BaseOrchestrator:              baseOrchestrator,
 		sessionID:                     sessionID,
 		workflowID:                    workflowID,
 		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
+		presetLearningLLM:             presetLearningLLM,
 	}
 }
 
@@ -151,12 +155,12 @@ func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile 
 		return nil, fmt.Errorf("failed to read step_config.json: %w", err)
 	}
 
-	var configFile StepConfigFile
-	if err := json.Unmarshal([]byte(content), &configFile); err != nil {
+	configFile, err := ParseStepConfigContent(content)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
 	}
 
-	return &configFile, nil
+	return configFile, nil
 }
 
 // writeStepConfigToFile writes StepConfigFile to step_config.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
@@ -284,7 +288,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	ptom.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	ptom.GetLogger().Infof("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/ and both learnings folders, write access to planning/step_config.json)", readPaths, writePaths)
 
-	// Use preset LLM config if available, otherwise fall back to orchestrator default
+	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := ptom.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
 	if ptom.presetPlanToolOptimizationLLM != nil && ptom.presetPlanToolOptimizationLLM.Provider != "" && ptom.presetPlanToolOptimizationLLM.ModelID != "" {
@@ -297,6 +301,16 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
 		ptom.GetLogger().Infof("🔧 Using preset plan tool optimization LLM: %s/%s", ptom.presetPlanToolOptimizationLLM.Provider, ptom.presetPlanToolOptimizationLLM.ModelID)
+	} else if ptom.presetLearningLLM != nil && ptom.presetLearningLLM.Provider != "" && ptom.presetLearningLLM.ModelID != "" {
+		// Fallback to learning LLM if plan tool optimization LLM not set
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:              ptom.presetLearningLLM.Provider,
+			ModelID:               ptom.presetLearningLLM.ModelID,
+			FallbackModels:        orchestratorLLMConfig.FallbackModels,
+			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
+			APIKeys:               orchestratorLLMConfig.APIKeys,
+		}
+		ptom.GetLogger().Infof("🔧 Using preset learning LLM as fallback for plan tool optimization: %s/%s", ptom.presetLearningLLM.Provider, ptom.presetLearningLLM.ModelID)
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
@@ -911,231 +925,111 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) toolOptimizati
 	if variableNames := templateVars["VariableNames"]; variableNames != "" {
 		variablesSection = `
 ## 🔑 AVAILABLE VARIABLES
-
-The plan may contain variable placeholders ({{VARIABLE_NAME}}). Available variables:
 ` + variableNames + `
-**Note**: Variable placeholders in step descriptions help you understand what the step is about, but you don't need to resolve them for tool optimization.
-
 `
 	}
 
 	return `# Plan Tool Optimization Agent
 
-## 🤖 AGENT IDENTITY
-**PRIMARY PURPOSE**: Analyze successful tool usage from learnings folder and optimize tool selections in step_config.json. Only use tools from successful learnings (✅ success patterns) to suggest tool configurations.
+## PURPOSE
+Analyze successful tool usage from learnings and optimize step_config.json. Extract tools ONLY from ✅ SUCCESS patterns.
 
-Your main goal is to:
-1. Extract tools from SUCCESS patterns only (✅ marked sections in learning files)
-2. Compare with currently configured tools in step_config.json
-3. Update step_config.json to optimize tool selections (keep only tools from successful learnings, remove unused)
+` + variablesSection + `## WORKFLOW
 
-` + variablesSection + `## 🎯 TOOL OPTIMIZATION PROCESS
+1. **Ask User** - Use human_feedback to ask which step(s) to optimize
+   - Present ALL steps (Title, Tool count, Has config)
+   - Wait for response before proceeding
 
-1. **Ask User Which Steps to Optimize**: **FIRST ACTION - MANDATORY** - Use human_feedback tool to ask which step(s) to optimize:
-   - **CRITICAL**: Present ALL steps from the PlanJSON provided in the user message, regardless of whether they have existing configuration or not
-   - Use the "Current Plan" section in the user message to get the complete list of ALL steps
-   - For each step, show: Title, Current tool count, Has config (true/false)
-   - Steps without config (Has config: false) are still valid for optimization - they may need initial tool configuration
-   - Use step titles (not IDs) when presenting to user - IDs are for internal use only
-   - Wait for user response before proceeding
+2. **Extract Tools from Learnings**
+   - Use StepLearningsFolderMappingJSON: is_code_exec=true → learning_code_exec/, false → learnings/
+   - Extract ONLY from ✅ SUCCESS patterns, ignore ❌ failures
+   - Filter OUT: read_large_output, search_large_output, query_large_output (use enable_large_output_virtual_tools flag instead)
 
-2. **Understand the Plan**: Review plan.json for selected steps: IDs, titles, descriptions, success criteria, loop info
+3. **Prepare Proposal** - Compare learnings vs current config
 
-3. **Extract Tools from SUCCESS Learnings**: Find learning files in the correct learnings folder for each step:
-   - **CRITICAL**: Use StepLearningsFolderMappingJSON to determine which folder to search for each step:
-     - If step has is_code_exec: true → search in learning_code_exec/ folder
-     - If step has is_code_exec: false → search in learnings/ folder
-   - For each step being optimized, use the learnings path from the mapping (e.g., "learnings/" or "learning_code_exec/")
-   - Search file content to match steps (filenames may not match exactly)
-   - Extract tools ONLY from ✅ SUCCESS patterns, ignore ❌ failure patterns
-   - Format: MCP tools as "server:tool", workspace tools as "workspace_tools:tool", human tools as "human_tools:human_feedback"
-   - **CRITICAL**: Filter out large output virtual tools (read_large_output, search_large_output, query_large_output) when extracting for enabled_custom_tools - these are NOT configurable in enabled_custom_tools. However, if you see these tools used in learnings, suggest enabling enable_large_output_virtual_tools boolean flag (set to true) in the update
-   - Note: Workspace tools may be missing from learnings - infer from step description in Step 5
+4. **Present with Reasoning** - For each tool, explain source (learnings/config/inferred)
 
-4. **Map Current Configuration**: Use CurrentToolConfigsJSON to see what tools are already configured for each step in step_config.json
+5. **Update** - After approval, use update_step_config_tools
 
-5. **Optimize Tool Selections**: Compare current config vs learnings, prepare proposal:
-   - **Tool Sources**: Suggest tools from (1) successful learnings, (2) current config, or (3) workspace tools inferred from step description
-   - **Workspace Tools**: Often missing from learnings. Infer from step description:
-     - Reading files → workspace_tools:read_workspace_file
-     - Listing/searching → workspace_tools:list_workspace_files
-     - Executing commands → workspace_tools:execute_shell_command
-     - Updating/writing → workspace_tools:update_workspace_file
-     - Deleting → workspace_tools:delete_workspace_file
-   - **CRITICAL - Essential Workspace Tools**: When optimizing workspace tools, ALWAYS keep these essential tools (even if not in learnings):
-     - workspace_tools:list_workspace_files (essential for file discovery)
-     - workspace_tools:read_workspace_file (essential for reading files)
-     - workspace_tools:update_workspace_file (essential for writing/updating files)
-   - **MCP/Human Tools**: Only from learnings or current config (don't infer)
-   - **Strategy**: Remove only clearly unnecessary tools, keep useful tools from config, add tools from learnings, add inferred workspace tools, ALWAYS include essential workspace tools
-   - **Format**: MCP tools as "server:tool", workspace/human tools as "category:tool"
+## TOOL CATEGORIES
 
-6. **Present Proposal and Request Approval**: Show proposal with detailed reasoning:
-   - **For each suggested tool**, provide reasoning:
-     - **From Learnings**: List which learning file(s) contained this tool in ✅ success patterns, quote relevant excerpts
-     - **From Step Description**: Explain how step description/success criteria indicate this tool is needed (e.g., "Step description mentions 'reading configuration files' → workspace_tools:read_workspace_file")
-     - **From Current Config**: If keeping from current config, explain why it's still needed
-     - **Inferred Workspace Tools**: Explicitly state the inference (e.g., "Step involves file operations → workspace_tools:read_workspace_file, workspace_tools:update_workspace_file")
-   - Show current config, tools from learnings, and planned changes (add/remove/keep)
-   - **Format**: For each tool, show: Tool name → Source (Learning file X / Step description / Current config) → Reasoning
-   - Request approval before updating
+| Category | Source | Format |
+|----------|--------|--------|
+| **MCP Tools** | Learnings or current config only (don't infer) | server:tool |
+| **Workspace Tools** | Learnings, config, OR infer from step description | workspace_tools:tool |
+| **Human Tools** | Learnings, config, OR step requires approval/decision | human_tools:human_feedback |
 
-7. **Update step_config.json**: After approval, use update_step_config_tools with step_id and tool fields to update.
+### Workspace Tools Inference
+- Reading files → workspace_tools:read_workspace_file
+- Listing/searching → workspace_tools:list_workspace_files
+- Executing commands → workspace_tools:execute_shell_command
+- Updating/writing → workspace_tools:update_workspace_file
+- Deleting → workspace_tools:delete_workspace_file
 
-## ⚠️ IMPORTANT RULES
+### Essential Workspace Tools (ALWAYS include)
+- workspace_tools:list_workspace_files
+- workspace_tools:read_workspace_file
+- workspace_tools:update_workspace_file
 
-- **Always request approval** before updating step_config.json
-- **Access**: Only ` + templateVars["AllowedPaths"] + ` subdirectories
+### Human Tools Criteria
+Recommend human_tools:human_feedback when step:
+- Found in ✅ success patterns OR already configured
+- Requires approval/confirmation
+- Involves decision-making or judgment
+- Has sensitive operations (deletions, deployments)
+
+## RULES
+
+- **Request approval** before updating step_config.json
+- **Access**: Only ` + templateVars["AllowedPaths"] + `
 - **Preset**: Servers ` + templateVars["PresetServers"] + `, Tools ` + templateVars["PresetTools"] + `
-- **Essential Workspace Tools**: When optimizing workspace tools, ALWAYS include these essential tools:
-  - workspace_tools:list_workspace_files (essential for file discovery)
-  - workspace_tools:read_workspace_file (essential for reading files)
-  - workspace_tools:update_workspace_file (essential for writing/updating files)
-- **Edge Cases**: No learnings → preserve config. Only failures → preserve config. Multiple learnings → merge tools.
-
-## 🔍 TOOL EXTRACTION
-
-- **CRITICAL**: Use StepLearningsFolderMappingJSON to determine which learnings folder to search for each step:
-  - Steps with code execution mode enabled → search in learning_code_exec/ folder
-  - Steps with code execution mode disabled → search in learnings/ folder
-- Search learning file content to match steps (filenames may differ)
-- Extract only from ✅ SUCCESS patterns, ignore ❌ failures
-- **FILTER OUT from enabled_custom_tools**: read_large_output, search_large_output, query_large_output (large output virtual tools - not configurable in enabled_custom_tools)
-- **If detected in learnings**: Suggest setting enable_large_output_virtual_tools to true (these tools are managed via this boolean flag)
-
-## 📝 UPDATE FORMAT
-
-- Update only: selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools
-- Preserve other fields (execution_llm, validation_llm, max_turns, etc.)
-- **enable_large_output_virtual_tools**: If you see read_large_output, search_large_output, or query_large_output used in learnings, suggest enabling this flag (set to true)
-
-## 🚨 CRITICAL WORKFLOW
-
-1. **FIRST**: Use human_feedback to ask which steps to optimize
-2. **THEN**: Extract tools from learnings, map current config, prepare proposal
-3. **THEN**: Present proposal and request approval
-4. **THEN**: After approval, update step_config.json
+- **Edge Cases**: No learnings → preserve config. Only failures → preserve config.
+- **Update only**: selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools
+- **Be conservative** with removals
 `
 }
 
 // toolOptimizationUserMessageProcessor creates the user message for plan tool optimization
 func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) toolOptimizationUserMessageProcessor(templateVars map[string]string) string {
-	// Build variables section if available
-	variablesSection := ""
-	if variableNames := templateVars["VariableNames"]; variableNames != "" {
-		variablesSection = `
-**Available Variables** (for context - plan may contain {{VARIABLE_NAME}} placeholders):
-` + variableNames + `
-**Note**: Variable placeholders in step descriptions help you understand what the step is about, but you don't need to resolve them for tool optimization.
-
-`
-	}
-
 	// Build step-specific section if step ID is provided
 	stepSpecificSection := ""
 	if stepID := templateVars["StepID"]; stepID != "" {
 		stepSpecificSection = `
-**IMPORTANT - STEP-SPECIFIC EXECUTION**:
-You are optimizing tools for a SPECIFIC STEP ONLY: ` + stepID + `
-
-**CRITICAL INSTRUCTIONS FOR STEP-SPECIFIC EXECUTION**:
-1. **Focus ONLY on step with ID: ` + stepID + `** - Do NOT optimize other steps
-2. When asking which steps to optimize, you should ONLY present the step with ID ` + stepID + ` (or skip the question if you can identify it from the plan)
-3. Extract tools from learnings ONLY for step ` + stepID + `
-4. Update step_config.json ONLY for step ` + stepID + `
-5. Ignore all other steps in the plan - this is a focused optimization for one step only
+**⚠️ STEP-SPECIFIC MODE**: Optimize ONLY step ID: ` + stepID + ` (skip asking user, focus exclusively on this step)
 
 `
 	}
 
-	return `# Plan Tool Optimization Task
+	return `# Tool Optimization Task
 
-**PRIMARY GOAL**: ` + func() string {
-		if stepID := templateVars["StepID"]; stepID != "" {
-			return fmt.Sprintf("Optimize tools for SPECIFIC STEP ONLY (ID: %s). Focus exclusively on this step - do NOT optimize other steps.", stepID)
-		}
-		return "First ask the user which step(s) to optimize, then analyze successful tool usage from learnings folder for those steps and optimize tool selections in step_config.json."
-	}() + ` Only use tools from successful learnings (✅ success patterns) to suggest tool configurations.
+` + stepSpecificSection + `## DATA
 
-` + stepSpecificSection + `**Context**:
-- **Workspace Path**: ` + templateVars["WorkspacePath"] + `
-- **Allowed Paths**: ` + templateVars["AllowedPaths"] + `
-- **Preset Servers**: ` + templateVars["PresetServers"] + `
-- **Preset Tools**: ` + templateVars["PresetTools"] + `
+**Workspace**: ` + templateVars["WorkspacePath"] + `
 
-` + variablesSection + `**Current Plan** (contains step IDs, titles, descriptions, success criteria, and loop information):
+**Plan** (step IDs, titles, descriptions, success criteria):
 ` + func() string {
 		if templateVars["PlanJSON"] != "" {
 			return templateVars["PlanJSON"]
 		}
-		return "No plan JSON provided."
+		return "No plan provided."
 	}() + `
 
-**NOTE**: The plan above contains step IDs, titles, descriptions, success criteria, and loop information (if applicable). Use this information to better understand what each step does and what tools might be needed.
-
-**Current Tool Configurations** (pre-computed mapping from step_config.json - includes ALL steps from plan, even those without config):
+**Current Tool Configurations** (all steps, has_config=false means no config yet):
 ` + func() string {
 		if templateVars["CurrentToolConfigsJSON"] != "" {
 			return templateVars["CurrentToolConfigsJSON"]
 		}
-		return "No current tool configurations found."
+		return "No configurations found."
 	}() + `
 
-**IMPORTANT**: The Current Tool Configurations above includes ALL steps from the plan. Steps without existing configuration will have "has_config": false and empty tool arrays. You must still present ALL steps to the user when asking which steps to optimize.
-
-**Full step_config.json** (for reference):
-` + func() string {
-		if templateVars["StepConfigJSON"] != "" {
-			return templateVars["StepConfigJSON"]
-		}
-		return "No step_config.json provided (will be created if needed)."
-	}() + `
-
-**Step Learnings Folder Mapping** (CRITICAL - determines which learnings folder to search for each step):
+**Learnings Folder Mapping** (is_code_exec determines folder):
 ` + func() string {
 		if templateVars["StepLearningsFolderMappingJSON"] != "" {
 			return templateVars["StepLearningsFolderMappingJSON"]
 		}
-		return "No step learnings folder mapping provided."
+		return "No mapping provided."
 	}() + `
 
-**IMPORTANT**: Use the Step Learnings Folder Mapping above to determine which folder to search for each step:
-- Steps with is_code_exec: true → search in learning_code_exec/ folder
-- Steps with is_code_exec: false → search in learnings/ folder
-- The learnings_path field shows the exact folder path to use (e.g., "learnings/" or "learning_code_exec/")
-
-**YOUR TASKS**:
-
-1. **FIRST**: Use human_feedback to ask which steps to optimize
-2. Extract tools from ✅ SUCCESS patterns in learnings (note which learning files contain each tool):
-   - **CRITICAL**: For each step being optimized, check the Step Learnings Folder Mapping to determine which folder to search (learnings/ or learning_code_exec/)
-   - Use the correct folder path from the mapping for each step
-3. Map current config from step_config.json
-4. Prepare optimization proposal (tools from learnings + current config + inferred workspace tools)
-5. **Present proposal with detailed reasoning** - For each tool, explain:
-   - If from learnings: Which learning file(s) and relevant excerpts
-   - If from step description: How description/success criteria indicate need
-   - If from current config: Why it's still needed
-   - If inferred: The inference logic
-6. Request approval before updating
-7. After approval, update step_config.json
-
-**REMINDERS**:
-- **CRITICAL**: When asking user which steps to optimize, show ALL steps from the plan (including those without existing config)
-- **CRITICAL**: When presenting tool proposals, provide detailed reasoning for EACH tool:
-  - Reference specific learning files and quote relevant excerpts
-  - Reference step descriptions/success criteria for inferred tools
-  - Explain why tools from current config are being kept
-- **CRITICAL**: Use Step Learnings Folder Mapping to determine which folder to search for each step (learnings/ or learning_code_exec/)
-- **CRITICAL - Essential Workspace Tools**: When optimizing workspace tools, ALWAYS include these essential tools (even if not in learnings):
-  - workspace_tools:list_workspace_files (essential for file discovery)
-  - workspace_tools:read_workspace_file (essential for reading files)
-  - workspace_tools:update_workspace_file (essential for writing/updating files)
-- Search learning file content (filenames may not match)
-- MCP/Human tools: only from learnings or current config
-- Workspace tools: infer from step description if missing from learnings, but ALWAYS include essential tools above
-- **IGNORE**: read_large_output, search_large_output, query_large_output (large output virtual tools - not configurable)
-- Be conservative with removals
-- Always request approval before updating
+Follow the workflow in the system prompt. Present ALL steps when asking user which to optimize.
 `
 }

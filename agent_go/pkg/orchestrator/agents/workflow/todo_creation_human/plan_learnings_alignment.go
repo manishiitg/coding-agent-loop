@@ -8,13 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerPlanLearningsAlignmentTemplate holds template variables for alignment prompts
@@ -57,6 +58,8 @@ type PlanLearningsAlignmentManager struct {
 
 	// Preset LLM config for plan learnings alignment agent
 	presetPlanLearningsAlignmentLLM *AgentLLMConfig
+	// Learning LLM config (fallback for plan learnings alignment if presetPlanLearningsAlignmentLLM not set)
+	presetLearningLLM *AgentLLMConfig
 }
 
 // NewPlanLearningsAlignmentManager creates a new PlanLearningsAlignmentManager
@@ -65,12 +68,14 @@ func NewPlanLearningsAlignmentManager(
 	sessionID string,
 	workflowID string,
 	presetPlanLearningsAlignmentLLM *AgentLLMConfig,
+	presetLearningLLM *AgentLLMConfig,
 ) *PlanLearningsAlignmentManager {
 	return &PlanLearningsAlignmentManager{
 		BaseOrchestrator:                baseOrchestrator,
 		sessionID:                       sessionID,
 		workflowID:                      workflowID,
 		presetPlanLearningsAlignmentLLM: presetPlanLearningsAlignmentLLM,
+		presetLearningLLM:               presetLearningLLM,
 	}
 }
 
@@ -88,7 +93,7 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	plam.GetLogger().Infof("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/, write access to learnings/ folders)", readPaths, writePaths)
 
-	// Use preset LLM config if available, otherwise fall back to orchestrator default
+	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := plam.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
 	if plam.presetPlanLearningsAlignmentLLM != nil && plam.presetPlanLearningsAlignmentLLM.Provider != "" && plam.presetPlanLearningsAlignmentLLM.ModelID != "" {
@@ -101,6 +106,16 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
 		plam.GetLogger().Infof("🔧 Using preset plan learnings alignment LLM: %s/%s", plam.presetPlanLearningsAlignmentLLM.Provider, plam.presetPlanLearningsAlignmentLLM.ModelID)
+	} else if plam.presetLearningLLM != nil && plam.presetLearningLLM.Provider != "" && plam.presetLearningLLM.ModelID != "" {
+		// Fallback to learning LLM if plan learnings alignment LLM not set
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:              plam.presetLearningLLM.Provider,
+			ModelID:               plam.presetLearningLLM.ModelID,
+			FallbackModels:        orchestratorLLMConfig.FallbackModels,
+			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
+			APIKeys:               orchestratorLLMConfig.APIKeys,
+		}
+		plam.GetLogger().Infof("🔧 Using preset learning LLM as fallback for plan learnings alignment: %s/%s", plam.presetLearningLLM.Provider, plam.presetLearningLLM.ModelID)
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig

@@ -12,7 +12,8 @@ import (
 )
 
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse) (string, error) {
+// isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, error) {
 	// Use step-specific learning detail level, default to "general" if not set
 	learningDetailLevel := "general" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
@@ -24,7 +25,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 
 	// Skip learning if "none" is selected or learning is disabled
 	// CODE EXECUTION MODE: Force learning enabled regardless of step config
-	isCodeExecutionMode := hcpo.GetUseCodeExecutionMode()
+	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
 		hcpo.GetLogger().Infof("⏭️ Skipping success learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps)
@@ -38,6 +39,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		}
 	}
 
+	// Success learning agent ALWAYS runs - it writes learnings (creates folder if needed)
+	// Only the learning reading agent (which reads existing learnings) should check folder existence
 	hcpo.GetLogger().Infof("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
 
 	// Create success learning agent
@@ -50,7 +53,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		learningMode = "exact"
 	}
 	successLearningAgentName := fmt.Sprintf("step-%d-%s-%s", stepNumber, sanitizedTitle, learningMode)
-	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", stepNumber, 1, successLearningAgentName, step.AgentConfigs)
+	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", stepNumber, 1, successLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
 		return "", fmt.Errorf("failed to create success learning agent: %w", err)
 	}
@@ -97,7 +100,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 }
 
 // runFailureLearningPhase analyzes failed executions to provide refined task descriptions for retry
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse) (string, string, error) {
+// isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, string, error) {
 	// Use step-specific learning detail level, default to "general" if not set
 	learningDetailLevel := "general" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
@@ -109,7 +113,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 
 	// Skip learning if "none" is selected or learning is disabled
 	// CODE EXECUTION MODE: Force learning enabled regardless of step config
-	isCodeExecutionMode := hcpo.GetUseCodeExecutionMode()
+	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
 		hcpo.GetLogger().Infof("⏭️ Skipping failure learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps)
@@ -123,6 +127,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		}
 	}
 
+	// Failure learning agent ALWAYS runs - it writes learnings (creates folder if needed)
+	// Only the learning reading agent (which reads existing learnings) should check folder existence
 	hcpo.GetLogger().Infof("🧠 Starting failure learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
 
 	// Create failure learning agent
@@ -135,7 +141,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		learningMode = "exact"
 	}
 	failureLearningAgentName := fmt.Sprintf("step-%d-%s-%s", stepNumber, sanitizedTitle, learningMode)
-	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", stepNumber, 1, failureLearningAgentName, step.AgentConfigs)
+	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", stepNumber, 1, failureLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create failure learning agent: %w", err)
 	}
@@ -220,34 +226,103 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) extractRefinedTaskDescriptio
 }
 
 // formatLearningHistoryForExecution formats learning conversation history for inclusion in execution-only agent system prompt
-// Removes the first user message (learning discovery instruction) since execution-only agent doesn't need it
+// Extracts the most relevant content: learning file contents and agent's final analysis
 func (hcpo *HumanControlledTodoPlannerOrchestrator) formatLearningHistoryForExecution(learningHistory []llmtypes.MessageContent) string {
 	if len(learningHistory) == 0 {
 		return "No learning history available."
 	}
 
-	// Filter out the first user message (learning discovery instruction)
-	// The execution-only agent only needs the actual discoveries (tool calls and responses)
-	filteredHistory := make([]llmtypes.MessageContent, 0, len(learningHistory))
-	firstUserMessageSkipped := false
+	var result strings.Builder
+	var learningFileContents []string
+	var agentSummary string
 
-	for i, message := range learningHistory {
-		// Skip the first user message (typically the instruction to discover learnings)
-		if i == 0 && message.Role == llmtypes.ChatMessageTypeHuman && !firstUserMessageSkipped {
-			firstUserMessageSkipped = true
-			hcpo.GetLogger().Infof("🔍 Filtering out first user message from learning history (learning discovery instruction)")
+	// Extract relevant content from conversation history
+	for _, message := range learningHistory {
+		// Skip user messages (instructions)
+		if message.Role == llmtypes.ChatMessageTypeHuman {
 			continue
 		}
-		filteredHistory = append(filteredHistory, message)
+
+		for _, part := range message.Parts {
+			switch p := part.(type) {
+			case llmtypes.TextContent:
+				// Capture the last assistant text as the summary/analysis
+				if message.Role == llmtypes.ChatMessageTypeAI && p.Text != "" {
+					agentSummary = p.Text
+				}
+
+			case llmtypes.ToolCallResponse:
+				// Only capture read_workspace_file responses for learning files
+				if strings.Contains(p.Name, "read_workspace_file") || strings.Contains(p.Name, "read_file") {
+					content := p.Content
+					// Check if this is a learning file (contains workflow or patterns)
+					if strings.Contains(content, "_learning.md") ||
+						strings.Contains(content, "EXECUTION WORKFLOW") ||
+						strings.Contains(content, "SUCCESS TOOL") ||
+						strings.Contains(content, "SUCCESS CODE") ||
+						strings.Contains(content, "[Runs:") {
+						learningFileContents = append(learningFileContents, content)
+					}
+				}
+			}
+		}
 	}
 
-	if len(filteredHistory) == 0 {
-		return "No learning discoveries found (only instruction message was present)."
+	// Build the formatted output
+	result.WriteString("## 📚 Learning Context for Execution\n\n")
+
+	// Include learning file contents (the actual patterns/workflows)
+	if len(learningFileContents) > 0 {
+		result.WriteString("### 📄 Learning File Contents\n\n")
+		for i, content := range learningFileContents {
+			if i > 0 {
+				result.WriteString("\n---\n\n")
+			}
+			result.WriteString(content)
+			result.WriteString("\n")
+		}
+		result.WriteString("\n")
 	}
 
-	// Use shared formatter to format the filtered conversation history
-	formatted := shared.FormatConversationHistory(filteredHistory)
+	// Include agent's analysis/summary
+	if agentSummary != "" {
+		result.WriteString("### 🔍 Learning Agent Analysis\n\n")
+		result.WriteString(agentSummary)
+		result.WriteString("\n\n")
+	}
 
-	// Add a header to make it clear this is learning context
-	return fmt.Sprintf("## Learning Discovery Results\n\n%s\n\n**Note**: Use the insights above to inform your execution approach. Adapt patterns to match the current step requirements.", formatted)
+	// If no learning content found, indicate that
+	if len(learningFileContents) == 0 && agentSummary == "" {
+		result.WriteString("No learning patterns found for this step.\n")
+		result.WriteString("Execute based on step description and success criteria.\n\n")
+	}
+
+	// Add usage guidance based on content type
+	if len(learningFileContents) > 0 {
+		// Check if we have workflow-style learnings
+		hasWorkflow := false
+		for _, content := range learningFileContents {
+			if strings.Contains(content, "EXECUTION WORKFLOW") || strings.Contains(content, "Step 1:") {
+				hasWorkflow = true
+				break
+			}
+		}
+
+		if hasWorkflow {
+			result.WriteString("### ⚡ Execution Mode: WORKFLOW\n")
+			result.WriteString("**Follow the EXECUTION WORKFLOW steps in order.**\n")
+			result.WriteString("- Execute Step 1 → Step 2 → Step 3... exactly as documented\n")
+			result.WriteString("- Check prerequisites before each step\n")
+			result.WriteString("- Use exact tool calls and arguments (resolve variables)\n")
+			result.WriteString("- Apply error recovery if steps fail\n\n")
+		} else {
+			result.WriteString("### ⚡ Execution Mode: PATTERN-GUIDED\n")
+			result.WriteString("**Use the patterns above as guidance.**\n")
+			result.WriteString("- Adapt successful patterns to current step requirements\n")
+			result.WriteString("- Avoid documented failure patterns\n")
+			result.WriteString("- Step description is the primary source of truth\n\n")
+		}
+	}
+
+	return result.String()
 }

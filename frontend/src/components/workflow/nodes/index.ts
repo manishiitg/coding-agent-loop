@@ -11,6 +11,7 @@ export { LoopNode } from './LoopNode'
 export { ValidationNode } from './ValidationNode'
 export { LearningNode } from './LearningNode'
 export { StartNode, EndNode } from './StartEndNodes'
+export { NodeConfigFooter } from './NodeConfigFooter'
 
 // Node types map for React Flow
 export const nodeTypes = {

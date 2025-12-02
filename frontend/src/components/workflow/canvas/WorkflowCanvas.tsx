@@ -14,7 +14,7 @@ import { nodeTypes } from '../nodes'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { StepSidebar } from './StepSidebar'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
-import { usePlanToFlow, type WorkflowNode, type StepNodeData, type ConditionalNodeData, type LoopNodeData } from '../hooks/usePlanToFlow'
+import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData } from '../hooks/usePlanToFlow'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
@@ -72,7 +72,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Workflow execution
   const {
     status,
-    currentStepId,
+    stepStatusMap,
     stopWorkflow
   } = useWorkflowExecution()
   
@@ -80,10 +80,72 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Refs for callbacks that need to be defined early
   const handleRunFromStepRef = React.useRef<((stepIndex: number, stepId: string) => void) | null>(null)
+  const handleOpenSidebarRef = React.useRef<((nodeId: string) => void) | null>(null)
 
   // Get selected run folder from workflow store
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   
+  // React Flow state (need to define before usePlanToFlow to use in callbacks)
+  const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<WorkflowEdge>([])
+  const [selectedNode, setSelectedNode] = React.useState<WorkflowNode | null>(null)
+
+  // Store latest nodes in ref to avoid dependency issues
+  const nodesRef = React.useRef(nodes)
+  React.useEffect(() => {
+    nodesRef.current = nodes
+  }, [nodes])
+
+  // Single reusable function to focus/position a node at the top-left of the screen
+  const focusNode = useCallback((
+    nodeId: string, 
+    options?: {
+      topPadding?: number  // Vertical padding from top (default: 50)
+      selectNode?: boolean  // Whether to select the node (default: false)
+      delay?: number  // Delay before positioning (default: 100ms)
+    }
+  ) => {
+    const {
+      topPadding = 50,
+      selectNode = false,
+      delay = 100
+    } = options || {}
+
+    setTimeout(() => {
+      const flowNode = getNode(nodeId)
+      if (flowNode) {
+        const padding = 150 // Padding from left edge
+        setViewport(
+          {
+            x: padding - flowNode.position.x, // Position on left with padding
+            y: topPadding - flowNode.position.y, // Position at top with padding
+            zoom: 1.0
+          },
+          { duration: 500 }
+        )
+
+        // Optionally select the node (opens sidebar)
+        if (selectNode) {
+          const node = nodesRef.current.find(n => n.id === nodeId) as WorkflowNode | undefined
+          if (node) {
+            setSelectedNode(node)
+          }
+        }
+      }
+    }, delay)
+  }, [getNode, setViewport])
+
+  // Handle opening sidebar for a node
+  const handleOpenSidebar = useCallback((nodeId: string) => {
+    focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 100 })
+    console.log('[WorkflowCanvas] Opened sidebar and positioned viewport for node:', nodeId)
+  }, [focusNode])
+
+  // Store handleOpenSidebar in ref for early access
+  React.useEffect(() => {
+    handleOpenSidebarRef.current = handleOpenSidebar
+  }, [handleOpenSidebar])
+
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
     showDependencyEdges,
@@ -94,58 +156,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         handleRunFromStepRef.current(stepIndex, stepId)
       }
     },
+    onOpenSidebar: (nodeId: string) => {
+      // Call the ref function if it's available
+      if (handleOpenSidebarRef.current) {
+        handleOpenSidebarRef.current(nodeId)
+      }
+    },
     isExecuting,
     completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
+    stepStatusMap: stepStatusMap,  // Pass step status map from events
     workspacePath,  // Pass workspace path for file opening
     selectedRunFolder  // Pass selected run folder for file opening
   })
 
-  // React Flow state
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
-  const [selectedNode, setSelectedNode] = React.useState<WorkflowNode | null>(null)
-
-  // Store latest nodes in ref to avoid dependency issues
-  const nodesRef = React.useRef(nodes)
-  React.useEffect(() => {
-    nodesRef.current = nodes
-  }, [nodes])
-
-  // Helper function to highlight and center on a specific step node
+  // Helper function to highlight and position a specific step node
   const highlightStepNode = useCallback((stepId: string) => {
-    // Use a small timeout to ensure nodes are updated
-    setTimeout(() => {
-      // Use getNode to find the node position
-      const flowNode = getNode(stepId)
-      if (flowNode) {
-        // Find the node in our nodes state to get the proper WorkflowNode type for selection
-        // Use ref to get latest nodes without causing dependency issues
-        const node = nodesRef.current.find(n => n.id === stepId) as WorkflowNode | undefined
-        if (node) {
-          // Position step on the left side with padding (same as initial view)
-          const padding = 150 // Padding from left edge
-          const canvasHeight = window.innerHeight || 800
-          setViewport(
-            {
-              x: padding - flowNode.position.x, // Position on left with padding
-              y: (canvasHeight / 2) - flowNode.position.y - ((flowNode.height || 100) / 2), // Center vertically
-              zoom: 1.0
-            },
-            { duration: 500 }
-          )
-          
-          // Select the node (opens sidebar)
-          setSelectedNode(node)
-          
-          console.log('[WorkflowCanvas] Highlighted step node:', stepId)
-        } else {
-          console.warn('[WorkflowCanvas] Node not found in nodes array for stepId:', stepId)
-        }
-      } else {
-        console.warn('[WorkflowCanvas] Node not found for stepId:', stepId)
-      }
-    }, 100)
-  }, [getNode, setViewport])
+    focusNode(stepId, { topPadding: 50, selectNode: true, delay: 100 })
+    console.log('[WorkflowCanvas] Highlighted step node:', stepId)
+  }, [focusNode])
 
   // Handle "run from step" button click on nodes - runs only the single step
   // Uses workflow store directly for execution options (single source of truth)
@@ -154,25 +182,26 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     console.log('[WorkflowCanvas] onStartPhase available:', !!onStartPhase)
     console.log('[WorkflowCanvas] selectedRunFolder:', selectedRunFolder)
     
-    // Position viewport to show step on the left side (but don't open sidebar)
-    // Use a small timeout to ensure nodes are updated
-    setTimeout(() => {
-      const flowNode = getNode(stepId)
-      if (flowNode) {
-        // Position step on the left side with padding (same as initial view)
-        const padding = 150 // Padding from left edge
-        const canvasHeight = window.innerHeight || 800
-        setViewport(
-          {
-            x: padding - flowNode.position.x, // Position on left with padding
-            y: (canvasHeight / 2) - flowNode.position.y - ((flowNode.height || 100) / 2), // Center vertically
-            zoom: 1.0
-          },
-          { duration: 500 }
-        )
-        console.log('[WorkflowCanvas] Positioned viewport to show step on left:', stepId)
+    // Find the node that matches this stepId
+    // The node ID might be stepId, or it might be step-${stepIndex} if stepId doesn't exist
+    // We need to find the node by matching step.id in the node data
+    const nodeToFocus = nodesRef.current.find(node => {
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop') {
+        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+        const nodeStepId = nodeData?.step?.id || node.id
+        // Match by stepId or by stepIndex if stepId matches
+        return nodeStepId === stepId || (nodeData?.stepIndex === stepIndex && node.id === stepId)
       }
-    }, 100)
+      return false
+    })
+    
+    if (nodeToFocus) {
+      // Position viewport to show step at top-left (but don't open sidebar)
+      focusNode(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 100 })
+      console.log('[WorkflowCanvas] Positioned viewport to show step at top-left:', nodeToFocus.id, 'for stepId:', stepId)
+    } else {
+      console.warn('[WorkflowCanvas] Could not find node for stepId:', stepId, 'stepIndex:', stepIndex)
+    }
     
     if (onStartPhase) {
       // Create execution options to run only this single step
@@ -188,7 +217,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     } else {
       console.error('[WorkflowCanvas] onStartPhase is not available!')
     }
-  }, [onStartPhase, getNode, setViewport, selectedRunFolder])
+  }, [onStartPhase, focusNode, selectedRunFolder])
 
   // Store handleRunFromStep in ref for early access
   React.useEffect(() => {
@@ -248,16 +277,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
-    console.log('[WorkflowPlanUpdate] Checking for node/edge changes', {
-      prevNodesLength: prevNodesRef.current.length,
-      newNodesLength: initialNodes.length,
-      prevEdgesLength: prevEdgesRef.current.length,
-      newEdgesLength: initialEdges.length
-    })
-    
     // Compare by reference first (fast path)
     if (prevNodesRef.current === initialNodes && prevEdgesRef.current === initialEdges) {
-      console.log('[WorkflowPlanUpdate] No change detected (reference comparison)')
       return // No change
     }
     
@@ -315,8 +336,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Reset view initialization flag when nodes actually change
       hasInitializedView.current = false
       prevNodesRef.current = initialNodes
-    } else {
-      console.log('[WorkflowPlanUpdate] No node changes detected')
     }
     
     if (edgesChanged) {
@@ -326,8 +345,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       })
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
-    } else {
-      console.log('[WorkflowPlanUpdate] No edge changes detected')
     }
   }, [initialNodes, initialEdges, setNodes, setEdges])
 
@@ -442,29 +459,54 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [nodes, setViewport, getNode])
 
-  // Update node status based on current execution step
+  // Track previous status map to detect status changes
+  const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())
+
+  // Update node status based on step status map from events
   React.useEffect(() => {
-    if (currentStepId) {
+    if (stepStatusMap.size > 0) {
       setNodes(nds => 
         nds.map(node => {
-          if (node.id === currentStepId) {
-            return {
-              ...node,
-              data: { ...node.data, status: 'running' as const }
+          // Only update status for step-type nodes (step, conditional, loop)
+          // Validation and learning nodes have different status types
+          if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop') {
+            const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+            const stepId = nodeData?.step?.id || node.id
+            const stepStatus = stepStatusMap.get(stepId)
+            
+            if (stepStatus) {
+              if (node.type === 'step') {
+                return {
+                  ...node,
+                  data: { ...node.data, status: stepStatus } as StepNodeData
+                } as WorkflowNode
+              } else if (node.type === 'conditional') {
+                return {
+                  ...node,
+                  data: { ...node.data, status: stepStatus } as ConditionalNodeData
+                } as WorkflowNode
+              } else if (node.type === 'loop') {
+                return {
+                  ...node,
+                  data: { ...node.data, status: stepStatus } as LoopNodeData
+                } as WorkflowNode
+              }
             }
           }
           return node
         })
       )
+      
+      // Update previous status map (for tracking changes, but no auto-focus)
+      prevStepStatusMapRef.current = new Map(stepStatusMap)
     }
-  }, [currentStepId, setNodes])
+  }, [stepStatusMap, setNodes, nodes.length])
 
-
-  // Handle node selection
-  const onNodeClick = useCallback((_event: React.MouseEvent, node: WorkflowNode) => {
-    // For all nodes including start, open the sidepanel
-    // StepSidebar will handle showing variables for start node
-    setSelectedNode(node)
+  // Handle node selection - disabled: nodes no longer open sidebar on click
+  // Sidebar is now opened via settings icon button on nodes
+  const onNodeClick = useCallback(() => {
+    // Do nothing - clicking nodes no longer opens sidebar
+    // Sidebar is opened via settings icon button instead
   }, [])
 
   // Handle node deselection

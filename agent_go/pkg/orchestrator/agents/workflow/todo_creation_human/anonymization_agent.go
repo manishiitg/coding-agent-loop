@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerAnonymizationTemplate holds template variables for anonymization prompts
@@ -56,6 +57,8 @@ type AnonymizationManager struct {
 
 	// Anonymization LLM config (optional preset)
 	presetAnonymizationLLM *AgentLLMConfig
+	// Learning LLM config (fallback for anonymization if presetAnonymizationLLM not set)
+	presetLearningLLM *AgentLLMConfig
 }
 
 // NewAnonymizationManager creates a new AnonymizationManager
@@ -64,12 +67,14 @@ func NewAnonymizationManager(
 	sessionID string,
 	workflowID string,
 	presetAnonymizationLLM *AgentLLMConfig,
+	presetLearningLLM *AgentLLMConfig,
 ) *AnonymizationManager {
 	return &AnonymizationManager{
 		BaseOrchestrator:       baseOrchestrator,
 		sessionID:              sessionID,
 		workflowID:             workflowID,
 		presetAnonymizationLLM: presetAnonymizationLLM,
+		presetLearningLLM:      presetLearningLLM,
 	}
 }
 
@@ -86,7 +91,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	am.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	am.GetLogger().Infof("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (both learnings folders)", readPaths, writePaths)
 
-	// Determine LLM config: Priority: preset default > orchestrator default
+	// Determine LLM config: Priority: presetAnonymizationLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := am.GetLLMConfig()
 	if am.presetAnonymizationLLM != nil && am.presetAnonymizationLLM.Provider != "" && am.presetAnonymizationLLM.ModelID != "" {
@@ -98,6 +103,16 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
 		am.GetLogger().Infof("🔧 Using preset default anonymization LLM: %s/%s", am.presetAnonymizationLLM.Provider, am.presetAnonymizationLLM.ModelID)
+	} else if am.presetLearningLLM != nil && am.presetLearningLLM.Provider != "" && am.presetLearningLLM.ModelID != "" {
+		// Fallback to learning LLM if anonymization LLM not set
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:              am.presetLearningLLM.Provider,
+			ModelID:               am.presetLearningLLM.ModelID,
+			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
+			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
+			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
+		}
+		am.GetLogger().Infof("🔧 Using preset learning LLM as fallback for anonymization: %s/%s", am.presetLearningLLM.Provider, am.presetLearningLLM.ModelID)
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		am.GetLogger().Infof("🔧 Using orchestrator default anonymization LLM: %s/%s", am.GetProvider(), am.GetModel())

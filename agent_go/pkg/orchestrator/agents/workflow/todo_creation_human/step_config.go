@@ -22,6 +22,114 @@ type StepConfigFile struct {
 	Steps []StepConfig `json:"steps"`
 }
 
+// FlatStepConfig represents a flat step config format (array format with step_id and top-level fields)
+type FlatStepConfig struct {
+	StepID             string   `json:"step_id"`
+	ID                 string   `json:"id"` // Also support "id" field
+	SelectedServers    []string `json:"selected_servers,omitempty"`
+	SelectedTools      []string `json:"selected_tools,omitempty"`
+	EnabledCustomTools []string `json:"enabled_custom_tools,omitempty"`
+	HasConfig          *bool    `json:"has_config,omitempty"`
+	// Allow other fields to pass through
+	AgentConfigs *AgentConfigs `json:"agent_configs,omitempty"`
+}
+
+// ParseStepConfigContent parses step_config.json content and handles multiple formats:
+// 1. Expected format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
+// 2. Array format: [{ "step_id": "...", "selected_servers": [...], ... }]
+// 3. Flat object format: { "step_id": "...", "selected_servers": [...], ... }
+func ParseStepConfigContent(content string) (*StepConfigFile, error) {
+	// First, try to parse as expected format
+	var configFile StepConfigFile
+	if err := json.Unmarshal([]byte(content), &configFile); err == nil {
+		// Check if it's actually the expected format (has "steps" field)
+		// If content starts with "{" and contains "steps", it's likely the expected format
+		var testObj map[string]interface{}
+		if err := json.Unmarshal([]byte(content), &testObj); err == nil {
+			if _, hasSteps := testObj["steps"]; hasSteps {
+				return &configFile, nil
+			}
+		}
+	}
+
+	// Try parsing as array format
+	var flatArray []FlatStepConfig
+	if err := json.Unmarshal([]byte(content), &flatArray); err == nil && len(flatArray) > 0 {
+		// Convert array format to expected format
+		steps := make([]StepConfig, 0, len(flatArray))
+		for _, flat := range flatArray {
+			stepID := flat.StepID
+			if stepID == "" {
+				stepID = flat.ID
+			}
+			if stepID == "" {
+				continue // Skip items without step_id or id
+			}
+
+			// Convert flat structure to nested agent_configs
+			agentConfigs := &AgentConfigs{}
+			if flat.AgentConfigs != nil {
+				agentConfigs = flat.AgentConfigs
+			}
+			// Top-level fields take precedence (preserve even if empty arrays)
+			if flat.SelectedServers != nil {
+				agentConfigs.SelectedServers = flat.SelectedServers
+			}
+			if flat.SelectedTools != nil {
+				agentConfigs.SelectedTools = flat.SelectedTools
+			}
+			if flat.EnabledCustomTools != nil {
+				agentConfigs.EnabledCustomTools = flat.EnabledCustomTools
+			}
+
+			steps = append(steps, StepConfig{
+				ID:           stepID,
+				AgentConfigs: agentConfigs,
+			})
+		}
+		return &StepConfigFile{Steps: steps}, nil
+	}
+
+	// Try parsing as flat object format (single step)
+	var flatObj FlatStepConfig
+	if err := json.Unmarshal([]byte(content), &flatObj); err == nil {
+		stepID := flatObj.StepID
+		if stepID == "" {
+			stepID = flatObj.ID
+		}
+		if stepID == "" {
+			return nil, fmt.Errorf("flat format missing step_id or id field")
+		}
+
+		agentConfigs := &AgentConfigs{}
+		if flatObj.AgentConfigs != nil {
+			agentConfigs = flatObj.AgentConfigs
+		}
+		// Top-level fields take precedence (preserve even if empty arrays)
+		if flatObj.SelectedServers != nil {
+			agentConfigs.SelectedServers = flatObj.SelectedServers
+		}
+		if flatObj.SelectedTools != nil {
+			agentConfigs.SelectedTools = flatObj.SelectedTools
+		}
+		if flatObj.EnabledCustomTools != nil {
+			agentConfigs.EnabledCustomTools = flatObj.EnabledCustomTools
+		}
+
+		return &StepConfigFile{
+			Steps: []StepConfig{
+				{
+					ID:           stepID,
+					AgentConfigs: agentConfigs,
+				},
+			},
+		}, nil
+	}
+
+	// If all parsing attempts failed, return the original error
+	return nil, fmt.Errorf("failed to parse step_config.json: unsupported format")
+}
+
 // ReadStepConfigs reads step_config.json from the workspace
 // Public method that accepts BaseOrchestrator, workspacePath, and runWorkspacePath as parameters
 func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath string) (*StepConfigFile, error) {
@@ -30,12 +138,12 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 	content, err := bo.ReadWorkspaceFile(ctx, runConfigPath)
 	if err == nil {
 		// Run folder config exists - use it
-		var configFile StepConfigFile
-		if err := json.Unmarshal([]byte(content), &configFile); err != nil {
+		configFile, err := ParseStepConfigContent(content)
+		if err != nil {
 			return nil, fmt.Errorf("failed to parse run folder step_config.json: %w", err)
 		}
 		bo.GetLogger().Infof("📁 Using run-specific step_config.json from: %s", runConfigPath)
-		return &configFile, nil
+		return configFile, nil
 	}
 
 	// Fallback to workspace default config
@@ -51,13 +159,13 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 		return nil, fmt.Errorf("failed to read step_config.json: %w", err)
 	}
 
-	var configFile StepConfigFile
-	if err := json.Unmarshal([]byte(content), &configFile); err != nil {
+	configFile, err := ParseStepConfigContent(content)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
 	}
 
 	bo.GetLogger().Infof("📁 Using default step_config.json from: %s", configPath)
-	return &configFile, nil
+	return configFile, nil
 }
 
 // ReadStepConfigs is a private wrapper that uses receiver fields (for backward compatibility)

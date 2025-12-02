@@ -107,7 +107,7 @@ func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProg
 
 // extractIterationFoldersFromTypedChildren extracts iteration folder names from typed WorkspaceFolderItem array
 func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceFolderItem, existingFolders []string) []string {
-	for i, child := range children {
+	for _, child := range children {
 		// Check for is_directory or type field using typed struct
 		isDir := child.IsDirectory || child.IsDir || child.Type == "folder"
 
@@ -121,15 +121,10 @@ func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceF
 			}
 		}
 
-		fmt.Printf("[handleGetRunFolders] Child %d: name=%s, is_dir=%v, filepath=%s\n", i, name, isDir, child.Filepath)
-
 		if isDir && name != "" {
 			// Only include iteration folders (iteration-N pattern)
 			if strings.HasPrefix(name, "iteration-") {
-				fmt.Printf("[handleGetRunFolders] Adding iteration folder: %s\n", name)
 				existingFolders = append(existingFolders, name)
-			} else {
-				fmt.Printf("[handleGetRunFolders] Skipping non-iteration folder: %s\n", name)
 			}
 		}
 	}
@@ -138,11 +133,10 @@ func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceF
 
 // extractIterationFoldersFromInterfaceArray extracts from array of interface{} (backward compatibility)
 func extractIterationFoldersFromInterfaceArray(dataArray []interface{}, existingFolders []string) []string {
-	for i, elem := range dataArray {
+	for _, elem := range dataArray {
 		if elemMap, ok := elem.(map[string]interface{}); ok {
 			// Check if this element has children (the iteration folders)
 			if children, ok := elemMap["children"].([]interface{}); ok {
-				fmt.Printf("[handleGetRunFolders] Element %d has %d children\n", i, len(children))
 				existingFolders = extractIterationFoldersFromChildren(children, existingFolders)
 			}
 		}
@@ -152,7 +146,7 @@ func extractIterationFoldersFromInterfaceArray(dataArray []interface{}, existing
 
 // extractIterationFoldersFromChildren extracts iteration folder names from children array (interface{} version for backward compatibility)
 func extractIterationFoldersFromChildren(children []interface{}, existingFolders []string) []string {
-	for i, child := range children {
+	for _, child := range children {
 		if childMap, ok := child.(map[string]interface{}); ok {
 			// Check for is_directory or type field
 			isDir := false
@@ -176,19 +170,12 @@ func extractIterationFoldersFromChildren(children []interface{}, existingFolders
 				name = n
 			}
 
-			fmt.Printf("[handleGetRunFolders] Child %d: name=%s, is_dir=%v, filepath=%v\n", i, name, isDir, childMap["filepath"])
-
 			if isDir && name != "" {
 				// Only include iteration folders (iteration-N pattern)
 				if strings.HasPrefix(name, "iteration-") {
-					fmt.Printf("[handleGetRunFolders] Adding iteration folder: %s\n", name)
 					existingFolders = append(existingFolders, name)
-				} else {
-					fmt.Printf("[handleGetRunFolders] Skipping non-iteration folder: %s\n", name)
 				}
 			}
-		} else {
-			fmt.Printf("[handleGetRunFolders] Child %d is not a map, type: %T\n", i, child)
 		}
 	}
 	return existingFolders
@@ -507,9 +494,6 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 	// Build path to runs folder
 	runsPath := workspacePath + "/runs"
 
-	// Log the path being requested for debugging
-	fmt.Printf("[handleGetRunFolders] Requesting runs folder at path: %s\n", runsPath)
-
 	// List folders from workspace API
 	apiURL := getWorkspaceAPIURL() + "/api/documents"
 	req, err := http.NewRequestWithContext(r.Context(), "GET", apiURL, nil)
@@ -524,13 +508,9 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 	q.Add("max_depth", "1")
 	req.URL.RawQuery = q.Encode()
 
-	// Log the full URL being called
-	fmt.Printf("[handleGetRunFolders] Calling workspace API: %s\n", req.URL.String())
-
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("[handleGetRunFolders] Error calling workspace API: %v\n", err)
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -542,17 +522,9 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Log the response status and body (first 500 chars)
-	bodyPreview := string(body)
-	if len(bodyPreview) > 500 {
-		bodyPreview = bodyPreview[:500] + "..."
-	}
-	fmt.Printf("[handleGetRunFolders] Workspace API response - Status: %d, Body: %s\n", resp.StatusCode, bodyPreview)
-
 	// Check if runs folder doesn't exist (404)
 	if resp.StatusCode == http.StatusNotFound {
 		// No runs folder - return empty list
-		fmt.Printf("[handleGetRunFolders] Runs folder not found (404), returning empty list\n")
 		response := RunFoldersResponse{
 			Folders:      []RunFolderInfo{},
 			TotalCount:   0,
@@ -564,7 +536,6 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("[handleGetRunFolders] Workspace API returned error status %d: %s\n", resp.StatusCode, string(body))
 		http.Error(w, fmt.Sprintf("Workspace API returned status %d: %s", resp.StatusCode, string(body)), http.StatusInternalServerError)
 		return
 	}
@@ -572,16 +543,12 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 	// Parse workspace API response
 	var apiResp virtualtools.WorkspaceAPIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		fmt.Printf("[handleGetRunFolders] Failed to parse API response: %v\n", err)
 		http.Error(w, fmt.Sprintf("Failed to parse API response: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Printf("[handleGetRunFolders] Parsed API response - Success: %v, Message: %s\n", apiResp.Success, apiResp.Message)
-
 	if !apiResp.Success {
 		// Treat error as no folders
-		fmt.Printf("[handleGetRunFolders] API returned success=false, treating as no folders. Error: %s\n", apiResp.Error)
 		response := RunFoldersResponse{
 			Folders:      []RunFolderInfo{},
 			TotalCount:   0,
@@ -595,48 +562,26 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 	// Extract folder names from response data
 	existingFolders := []string{} // Initialize as empty slice, not nil
 
-	// Log the data structure for debugging
-	if apiResp.Data != nil {
-		if dataBytes, err := json.Marshal(apiResp.Data); err == nil {
-			dataPreview := string(dataBytes)
-			if len(dataPreview) > 1000 {
-				dataPreview = dataPreview[:1000] + "..."
-			}
-			fmt.Printf("[handleGetRunFolders] API response data: %s\n", dataPreview)
-		}
-	}
-
 	// Handle different response structures using typed structs
 	// Case 1: Data is a WorkspaceFolderListing (array of folder items)
 	var folderListing virtualtools.WorkspaceFolderListing
 	if dataBytes, err := json.Marshal(apiResp.Data); err == nil {
 		if err := json.Unmarshal(dataBytes, &folderListing); err == nil && len(folderListing) > 0 {
-			fmt.Printf("[handleGetRunFolders] Data is a WorkspaceFolderListing with %d top-level items\n", len(folderListing))
 			// Extract iteration folders from the first item's children (the runs folder)
 			if len(folderListing) > 0 && len(folderListing[0].Children) > 0 {
-				fmt.Printf("[handleGetRunFolders] First item has %d children\n", len(folderListing[0].Children))
 				existingFolders = extractIterationFoldersFromTypedChildren(folderListing[0].Children, existingFolders)
 			}
 		} else {
 			// Fallback: try to parse as array of interface{} (backward compatibility)
 			if dataArray, ok := apiResp.Data.([]interface{}); ok {
-				fmt.Printf("[handleGetRunFolders] Data is an array with %d elements (fallback parsing)\n", len(dataArray))
 				existingFolders = extractIterationFoldersFromInterfaceArray(dataArray, existingFolders)
 			} else if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
-				fmt.Printf("[handleGetRunFolders] Data is a map, checking for children (fallback parsing)...\n")
 				if children, ok := dataMap["children"].([]interface{}); ok {
-					fmt.Printf("[handleGetRunFolders] Found %d children in response\n", len(children))
 					existingFolders = extractIterationFoldersFromChildren(children, existingFolders)
-				} else {
-					fmt.Printf("[handleGetRunFolders] No 'children' array found in data map. Available keys: %v\n", getMapKeys(dataMap))
 				}
-			} else {
-				fmt.Printf("[handleGetRunFolders] Data is not a recognized format, type: %T\n", apiResp.Data)
 			}
 		}
 	}
-
-	fmt.Printf("[handleGetRunFolders] Extracted %d iteration folders: %v\n", len(existingFolders), existingFolders)
 
 	// Build folder info - read progress for all displayed iterations (max 10)
 	folderInfos := make([]RunFolderInfo, 0, len(existingFolders))
@@ -654,13 +599,7 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 			progress, err := readProgressForFolder(r.Context(), stepsFilePath)
 			if err == nil && progress != nil {
 				folderInfo.Progress = progress
-				fmt.Printf("[handleGetRunFolders] Loaded progress for %s: %d/%d steps completed\n",
-					folderName, len(progress.CompletedStepIndices), progress.TotalSteps)
-			} else {
-				fmt.Printf("[handleGetRunFolders] No progress found for %s (file may not exist yet)\n", folderName)
 			}
-		} else {
-			fmt.Printf("[handleGetRunFolders] Skipping progress read for %s (not in latest %d)\n", folderName, maxFoldersWithProgress)
 		}
 
 		folderInfos = append(folderInfos, folderInfo)

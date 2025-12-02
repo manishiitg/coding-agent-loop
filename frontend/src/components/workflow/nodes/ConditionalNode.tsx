@@ -1,6 +1,6 @@
-import { memo, type ReactElement } from 'react'
+import { memo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { HelpCircle, CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch } from 'lucide-react'
+import { HelpCircle, CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings } from 'lucide-react'
 import type { ConditionalNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -38,10 +38,86 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { title, condition_question, status, stepIndex, changeType } = data
+  const { title, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+
+  // Button is disabled if executing, can't run (previous steps not done), or no callback
+  const isRunDisabled = isExecuting || !canRun || !onRunFromStep
+
+  // Handle run from this step button click
+  const handleRunClick = useCallback((e: MouseEvent) => {
+    e.stopPropagation() // Prevent node selection
+    e.preventDefault() // Prevent any default behavior
+    console.log('[ConditionalNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, canRun, isRunDisabled })
+    if (onRunFromStep && !isExecuting && canRun) {
+      console.log('[ConditionalNode] Calling onRunFromStep with:', stepIndex, step.id || `step-${stepIndex}`)
+      onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
+    } else {
+      console.warn('[ConditionalNode] Cannot run step:', { 
+        hasCallback: !!onRunFromStep, 
+        isExecuting, 
+        canRun, 
+        isRunDisabled 
+      })
+    }
+  }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id, isRunDisabled])
+
+  // Handle settings icon click - opens the sidebar
+  const handleSettingsClick = useCallback((e: MouseEvent) => {
+    e.stopPropagation() // Prevent node selection
+    e.preventDefault() // Prevent any default behavior
+    console.log('[ConditionalNode] Settings button clicked:', { stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
+    if (onOpenSidebar && typeof onOpenSidebar === 'function') {
+      const nodeId = step.id || `step-${stepIndex}`
+      console.log('[ConditionalNode] Calling onOpenSidebar with:', nodeId)
+      onOpenSidebar(nodeId)
+    } else {
+      console.warn('[ConditionalNode] onOpenSidebar callback not available')
+    }
+  }, [onOpenSidebar, stepIndex, step.id])
 
   return (
     <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+      {/* Header with buttons - above the diamond */}
+      <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
+        {/* Run from this step button */}
+        {onRunFromStep ? (
+          <button
+            onClick={handleRunClick}
+            disabled={isRunDisabled}
+            className={`
+              flex items-center justify-center w-7 h-7 rounded-lg transition-all relative z-10
+              ${isRunDisabled
+                ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed opacity-50'
+                : 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/60 hover:scale-105 cursor-pointer'
+              }
+            `}
+            title={
+              isExecuting 
+                ? 'Execution in progress...' 
+                : !canRun 
+                  ? 'Complete previous steps first' 
+                  : `Run step ${stepIndex + 1} only`
+            }
+          >
+            <Play className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <div className="w-7 h-7 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
+            ⚠️
+          </div>
+        )}
+        {/* Settings icon button - opens sidebar */}
+        {onOpenSidebar ? (
+          <button
+            onClick={handleSettingsClick}
+            className="flex items-center justify-center w-7 h-7 rounded-lg transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
+            title="Open step settings"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+        ) : null}
+      </div>
+
       {/* Condition Badge - Top */}
       <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-600 dark:bg-purple-500 text-white text-[11px] font-semibold shadow-lg">
         <GitBranch className="w-3.5 h-3.5" />

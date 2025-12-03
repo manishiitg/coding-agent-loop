@@ -69,12 +69,10 @@ func NewToolFilter(
 	}
 
 	// Build MCP server name lookup (normalized)
-	if clients != nil {
-		for serverName := range clients {
-			normalized := tf.NormalizeServerName(serverName)
-			tf.mcpServerNames[normalized] = true
-			tf.mcpServerNames[serverName] = true // Keep original too
-		}
+	for serverName := range clients {
+		normalized := tf.NormalizeServerName(serverName)
+		tf.mcpServerNames[normalized] = true
+		tf.mcpServerNames[serverName] = true // Keep original too
 	}
 
 	// Pre-compute lookup maps from selectedTools

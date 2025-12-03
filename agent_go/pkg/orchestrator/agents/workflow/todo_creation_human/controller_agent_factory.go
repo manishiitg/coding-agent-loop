@@ -47,17 +47,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 		hcpo.GetLogger().Infof("🔧 Using step-specific learning reading max turns: %d", maxTurns)
 	}
 
-	// Determine LLM config: Priority: step config > preset default > orchestrator default
+	// Determine LLM config: Priority: preset learning reading default > preset execution default > orchestrator default
+	// Note: Learning reading agent does NOT use step-specific execution LLM config - it has its own preset default
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
+	if hcpo.presetLearningReadingLLM != nil && hcpo.presetLearningReadingLLM.Provider != "" && hcpo.presetLearningReadingLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
-			Provider:       stepConfig.ExecutionLLM.Provider,
-			ModelID:        stepConfig.ExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			Provider:       hcpo.presetLearningReadingLLM.Provider,
+			ModelID:        hcpo.presetLearningReadingLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using step-specific learning reading LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID)
+		hcpo.GetLogger().Infof("🔧 Using preset default learning reading LLM: %s/%s", hcpo.presetLearningReadingLLM.Provider, hcpo.presetLearningReadingLLM.ModelID)
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetExecutionLLM.Provider,
@@ -65,7 +66,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default learning reading LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID)
+		hcpo.GetLogger().Infof("🔧 Using preset execution LLM as fallback for learning reading: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID)
 	} else {
 		llmConfig = orchestratorLLMConfig
 		hcpo.GetLogger().Infof("🔧 Using orchestrator default learning reading LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
@@ -262,11 +263,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 		learningsPath = fmt.Sprintf("%s/learnings", baseWorkspacePath)
 	}
 
-	// Only specify learnings in readPaths - execution is automatically readable since it's in writePaths
-	readPaths := []string{learningsPath}
-	writePaths := []string{executionWorkspacePath}
+	// Set folder guard paths:
+	// READ: learnings folder + execution folder (to read previous step results)
+	// WRITE: only the specific step folder (execution/step_{X}/) to prevent writing to other steps
+	stepFolderPath := fmt.Sprintf("%s/step-%d", executionWorkspacePath, step+1) // step is 0-based, convert to 1-based
+	readPaths := []string{learningsPath, executionWorkspacePath}
+	writePaths := []string{stepFolderPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (execution automatically readable via writePaths)", readPaths, writePaths)
+	hcpo.GetLogger().Infof("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read execution/, can only write to step-%d/)", readPaths, writePaths, step+1)
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
@@ -445,15 +449,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 
 		hcpo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
 
-		// Update code execution registry with wrapped executors for folder guard to work
+		// Set folder guard paths on MCP agent (required for both code execution mode and simple mode)
+		// This ensures path validation works at the tool executor level
+		readPaths, writePaths := hcpo.GetFolderGuardPaths()
+		mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
+		hcpo.GetLogger().Infof("🔒 Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths)
+
+		// Update code execution registry with wrapped executors for folder guard to work (code execution mode only)
 		if isCodeExecutionMode {
-			// CRITICAL: Set folder guard paths BEFORE updating code execution registry
+			// CRITICAL: Folder guard paths already set above
 			// The registry generation uses these paths to create the path validation code
 			// This ensures LLM-generated Go code can only access paths within allowed boundaries
-			readPaths, writePaths := hcpo.GetFolderGuardPaths()
-			mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
-			hcpo.GetLogger().Infof("🔒 [CODE_EXECUTION] Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths)
-
 			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
 				hcpo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
 			} else {
@@ -671,7 +677,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from execution and learnings (read-only), writes only to learnings
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	executionPath := fmt.Sprintf("%s/execution", baseWorkspacePath)
+	// Use run folder if available, otherwise use base workspace (backward compatibility)
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
 
 	// Use the provided step-specific code execution mode (already computed with step-level priority) to ensure consistency
 	wasCodeExecutionMode := isCodeExecutionMode
@@ -889,7 +902,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from execution and learnings (read-only), writes only to learnings
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	executionPath := fmt.Sprintf("%s/execution", baseWorkspacePath)
+	// Use run folder if available, otherwise use base workspace (backward compatibility)
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
 
 	// Use the provided step-specific code execution mode (already computed with step-level priority) to ensure consistency
 	wasCodeExecutionMode := isCodeExecutionMode

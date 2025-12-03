@@ -114,10 +114,7 @@ func (st *streamingTracerImpl) forwardEvents() {
 func (st *streamingTracerImpl) EmitEvent(event observability.AgentEvent) error {
 	// Forward to base tracer
 	if st.baseTracer != nil {
-		if err := st.baseTracer.EmitEvent(event); err != nil {
-			// Log error but continue
-			// Note: We don't have access to logger here, so we'll just continue
-		}
+		_ = st.baseTracer.EmitEvent(event) // Ignore errors from base tracer
 	}
 
 	// Try to convert to our AgentEvent type for streaming

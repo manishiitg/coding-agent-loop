@@ -115,6 +115,7 @@ type PresetLLMConfig struct {
 	ExecutionLLM              *AgentLLMConfig `json:"execution_llm,omitempty"`                // Default for execution agents
 	ValidationLLM             *AgentLLMConfig `json:"validation_llm,omitempty"`               // Default for validation agents
 	LearningLLM               *AgentLLMConfig `json:"learning_llm,omitempty"`                 // Default for learning agents
+	LearningReadingLLM        *AgentLLMConfig `json:"learning_reading_llm,omitempty"`         // Default for learning reading agent
 	PlanningLLM               *AgentLLMConfig `json:"planning_llm,omitempty"`                 // Default for planning agent
 	VariableExtractionLLM     *AgentLLMConfig `json:"variable_extraction_llm,omitempty"`      // Default for variable extraction agent
 	AnonymizationLLM          *AgentLLMConfig `json:"anonymization_llm,omitempty"`            // Default for anonymization agent

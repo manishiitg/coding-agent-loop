@@ -559,7 +559,10 @@ func NewUserMessageEvent(turn int, content, role string) *UserMessageEvent {
 // GenerateEventID creates a unique event ID
 func GenerateEventID() string {
 	bytes := make([]byte, 16)
-	rand.Read(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to time-based ID if random read fails
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
 	return hex.EncodeToString(bytes)
 }
 
@@ -1898,11 +1901,13 @@ func (e *StepProgressUpdatedEvent) GetEventType() EventType {
 // StepStartedEvent represents the event when a step execution starts
 type StepStartedEvent struct {
 	BaseEventData
-	StepID       string `json:"step_id"`        // Step ID from plan
-	StepIndex    int    `json:"step_index"`    // 0-based step index
-	StepTitle    string `json:"step_title"`    // Step title
-	StepPath     string `json:"step_path"`     // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
+	StepID        string `json:"step_id"`        // Step ID from plan
+	StepIndex     int    `json:"step_index"`     // 0-based step index
+	StepTitle     string `json:"step_title"`     // Step title
+	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
+	IsBranchStep  bool   `json:"is_branch_step"` // Whether this is a branch step
+	RunFolder     string `json:"run_folder"`     // Run folder name (e.g., "iteration-1")
+	WorkspacePath string `json:"workspace_path"` // Workspace path for file operations
 }
 
 func (e *StepStartedEvent) GetEventType() EventType {
@@ -1913,9 +1918,9 @@ func (e *StepStartedEvent) GetEventType() EventType {
 type StepFinishedEvent struct {
 	BaseEventData
 	StepID       string `json:"step_id"`        // Step ID from plan
-	StepIndex    int    `json:"step_index"`    // 0-based step index
-	StepTitle    string `json:"step_title"`    // Step title
-	StepPath     string `json:"step_path"`     // Step path (e.g., "step-1" or "step-1-if-true-0")
+	StepIndex    int    `json:"step_index"`     // 0-based step index
+	StepTitle    string `json:"step_title"`     // Step title
+	StepPath     string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
 	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
 }
 
@@ -1927,9 +1932,9 @@ func (e *StepFinishedEvent) GetEventType() EventType {
 type StepFailedEvent struct {
 	BaseEventData
 	StepID       string `json:"step_id"`        // Step ID from plan
-	StepIndex    int    `json:"step_index"`    // 0-based step index
-	StepTitle    string `json:"step_title"`    // Step title
-	StepPath     string `json:"step_path"`     // Step path (e.g., "step-1" or "step-1-if-true-0")
+	StepIndex    int    `json:"step_index"`     // 0-based step index
+	StepTitle    string `json:"step_title"`     // Step title
+	StepPath     string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
 	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
 	Error        string `json:"error"`          // Error message
 }

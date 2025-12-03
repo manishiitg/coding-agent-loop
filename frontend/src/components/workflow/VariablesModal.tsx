@@ -16,6 +16,8 @@ interface VariablesModalProps {
   templatedObjective: string;
   workspacePath: string;
   inline?: boolean; // If true, render without fixed overlay (for sidebar use)
+  onExtractAgain?: () => void;
+  onUpdateVariables?: () => void;
 }
 
 export const VariablesModal: React.FC<VariablesModalProps> = ({
@@ -25,6 +27,8 @@ export const VariablesModal: React.FC<VariablesModalProps> = ({
   templatedObjective: initialTemplatedObjective,
   workspacePath,
   inline = false,
+  onExtractAgain: _onExtractAgain,
+  onUpdateVariables: _onUpdateVariables,
 }) => {
   const [variables, setVariables] = useState<Variable[]>(initialVariables);
   const [templatedObjective, setTemplatedObjective] = useState(initialTemplatedObjective);

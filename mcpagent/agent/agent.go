@@ -851,11 +851,10 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 		ticker := time.NewTicker(30 * time.Second) // Log every 30 seconds
 		defer ticker.Stop()
 
-		elapsed := time.Since(startTime)
 		for {
 			select {
 			case <-ticker.C:
-				elapsed = time.Since(startTime)
+				elapsed := time.Since(startTime)
 				remaining := connectTimeout - elapsed
 				if remaining > 0 {
 					logger.Infof("[ON-DEMAND CONNECTION] Still connecting to %s... (elapsed: %v, remaining: %v)",
@@ -1008,7 +1007,6 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 
 	var cacheTokens int
 	var reasoningTokens int
-	var thoughtsTokens int
 	var cacheDiscount float64
 	var generationInfo *llmtypes.GenerationInfo
 
@@ -1022,11 +1020,6 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		// Extract reasoning tokens from unified Usage
 		if resp.Usage.ReasoningTokens != nil {
 			reasoningTokens = *resp.Usage.ReasoningTokens
-		}
-
-		// Extract thoughts tokens from unified Usage
-		if resp.Usage.ThoughtsTokens != nil {
-			thoughtsTokens = *resp.Usage.ThoughtsTokens
 		}
 	}
 
@@ -1043,11 +1036,6 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 	// Extract reasoning tokens from GenerationInfo if not found in Usage
 	if reasoningTokens == 0 && generationInfo != nil && generationInfo.ReasoningTokens != nil {
 		reasoningTokens = *generationInfo.ReasoningTokens
-	}
-
-	// Extract thoughts tokens from GenerationInfo if not found in Usage
-	if thoughtsTokens == 0 && generationInfo != nil && generationInfo.ThoughtsTokens != nil {
-		thoughtsTokens = *generationInfo.ThoughtsTokens
 	}
 
 	// Extract cache discount (only available in GenerationInfo)
@@ -1117,7 +1105,6 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 	// Priority: Use unified Usage field, fall back to GenerationInfo
 	var cacheTokens int
 	var reasoningTokens int
-	var thoughtsTokens int
 
 	if resp != nil && resp.Usage != nil {
 		if resp.Usage.CacheTokens != nil {
@@ -1125,9 +1112,6 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 		}
 		if resp.Usage.ReasoningTokens != nil {
 			reasoningTokens = *resp.Usage.ReasoningTokens
-		}
-		if resp.Usage.ThoughtsTokens != nil {
-			thoughtsTokens = *resp.Usage.ThoughtsTokens
 		}
 	}
 
@@ -1139,9 +1123,6 @@ func (a *Agent) EndLLMGeneration(ctx context.Context, result string, turn int, t
 		}
 		if reasoningTokens == 0 && generationInfo.ReasoningTokens != nil {
 			reasoningTokens = *generationInfo.ReasoningTokens
-		}
-		if thoughtsTokens == 0 && generationInfo.ThoughtsTokens != nil {
-			thoughtsTokens = *generationInfo.ThoughtsTokens
 		}
 	}
 
@@ -1560,28 +1541,23 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 
 	if events.IsStartEvent(eventType) {
 		// ✅ SPECIAL HANDLING: conversation_turn should reset to level 2 (child of conversation_start)
-		if eventType == events.ConversationTurn {
+		switch eventType {
+		case events.ConversationTurn:
 			a.currentHierarchyLevel = 2 // Reset to level 2 for new conversation turn
 			a.currentParentEventID = event.SpanID
-		} else if eventType == events.ToolCallStart {
+		case events.ToolCallStart:
 			// ✅ SPECIAL HANDLING: tool_call_start should be sibling of llm_generation_end
 			// Don't increment level - use current level (same as llm_generation_end)
 			a.currentParentEventID = event.SpanID
-		} else {
+		default:
 			// ✅ FIX: Increment level FIRST, then use it for next event
 			a.currentHierarchyLevel++
 			a.currentParentEventID = event.SpanID
 		}
-	} else if events.IsEndEvent(eventType) {
-		if eventType == events.ToolCallEnd {
-			// ✅ SPECIAL HANDLING: tool_call_end should be sibling of tool_call_start
-			// Don't change level - use same level as tool_call_start
-			// Level remains unchanged
-		} else {
-			// ✅ FIX: Don't decrement level immediately - let the next start event handle it
-			// This allows token_usage and tool_call_start to be siblings of llm_generation_end
-			// Level remains unchanged
-		}
+		// ✅ For end events: Level remains unchanged
+		// SPECIAL HANDLING: tool_call_end should be sibling of tool_call_start
+		// FIX: Don't decrement level immediately - let the next start event handle it
+		// This allows token_usage and tool_call_start to be siblings of llm_generation_end
 	}
 
 	// Add correlation ID for start/end event pairs
@@ -1674,13 +1650,13 @@ func (a *Agent) Close() {
 	for serverName, client := range a.Clients {
 		if client != nil {
 			a.Logger.Info("🔌 Closing connection to %s", map[string]interface{}{"server_name": serverName})
-			client.Close()
+			_ = client.Close() // Ignore errors during cleanup
 		}
 	}
 
 	// Legacy single client cleanup (may be redundant but safe)
 	if a.Client != nil {
-		a.Client.Close()
+		_ = a.Client.Close() // Ignore errors during cleanup
 	}
 }
 
@@ -1828,7 +1804,10 @@ func AskWithHistoryStructuredViaTool[T any](
 	}
 
 	// Register with "structured_output" category so it's always available even in code execution mode
-	a.RegisterCustomTool(toolName, toolDescription, toolParams, executionFunc, "structured_output")
+	if err := a.RegisterCustomTool(toolName, toolDescription, toolParams, executionFunc, "structured_output"); err != nil {
+		var zero StructuredOutputResult[T]
+		return zero, fmt.Errorf("failed to register custom tool: %w", err)
+	}
 
 	// Call existing AskWithHistory - will break as soon as tool is called
 	textResponse, updatedMessages, err := a.AskWithHistory(toolCalledCtx, messages)

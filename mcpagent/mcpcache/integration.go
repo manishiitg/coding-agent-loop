@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/observability"
 	"mcpagent/logger"
 	"mcpagent/mcpclient"
+	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -1106,7 +1106,9 @@ func ValidateServerCache(serverName, configPath string, tracers []observability.
 			return true
 		} else {
 			// Cache expired - invalidate
-			cacheManager.InvalidateByServer(configPath, serverName)
+			if err := cacheManager.InvalidateByServer(configPath, serverName); err != nil {
+				logger.Warnf("Failed to invalidate cache for server %s: %v", serverName, err)
+			}
 			logger.Debugf("Cache validation: %s expired and invalidated", serverName)
 			return false
 		}

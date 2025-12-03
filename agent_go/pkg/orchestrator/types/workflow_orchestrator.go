@@ -147,6 +147,7 @@ type WorkflowOrchestrator struct {
 	presetExecutionLLM              *todo_creation_human.AgentLLMConfig // Default for execution agents
 	presetValidationLLM             *todo_creation_human.AgentLLMConfig // Default for validation agents
 	presetLearningLLM               *todo_creation_human.AgentLLMConfig // Default for learning agents
+	presetLearningReadingLLM        *todo_creation_human.AgentLLMConfig // Default for learning reading agent
 	presetPlanningLLM               *todo_creation_human.AgentLLMConfig // Default for planning agent
 	presetVariableExtractionLLM     *todo_creation_human.AgentLLMConfig // Default for variable extraction agent
 	presetAnonymizationLLM          *todo_creation_human.AgentLLMConfig // Default for anonymization agent
@@ -254,7 +255,7 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM, presetLearningConsolidationLLM *todo_creation_human.AgentLLMConfig
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetLearningReadingLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM, presetLearningConsolidationLLM *todo_creation_human.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
@@ -289,6 +290,24 @@ func NewWorkflowOrchestrator(
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for learning
 			presetLearningLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.LearningReadingLLM != nil && presetLLMConfig.LearningReadingLLM.Provider != "" && presetLLMConfig.LearningReadingLLM.ModelID != "" {
+			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.LearningReadingLLM.Provider,
+				ModelID:  presetLLMConfig.LearningReadingLLM.ModelID,
+			}
+		} else if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
+			// Fall back to execution LLM if learning reading LLM not set
+			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.ExecutionLLM.Provider,
+				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for learning reading
+			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
@@ -385,6 +404,7 @@ func NewWorkflowOrchestrator(
 		presetExecutionLLM:              presetExecutionLLM,
 		presetValidationLLM:             presetValidationLLM,
 		presetLearningLLM:               presetLearningLLM,
+		presetLearningReadingLLM:        presetLearningReadingLLM,
 		presetPlanningLLM:               presetPlanningLLM,
 		presetVariableExtractionLLM:     presetVariableExtractionLLM,
 		presetAnonymizationLLM:          presetAnonymizationLLM,
@@ -507,6 +527,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,
+		wo.presetLearningReadingLLM,
 		wo.presetPlanningLLM,
 		wo.presetVariableExtractionLLM,
 		wo.presetAnonymizationLLM,
@@ -679,6 +700,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,
+		wo.presetLearningReadingLLM,
 		wo.presetPlanningLLM,
 		wo.presetVariableExtractionLLM,
 		wo.presetAnonymizationLLM,

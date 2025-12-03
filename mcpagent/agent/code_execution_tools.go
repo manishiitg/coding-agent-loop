@@ -14,8 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcpagent/mcpcache/codegen"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // NOTE: shouldIncludeServerInDiscovery has been replaced by ToolFilter.ShouldIncludeServer()
@@ -334,19 +335,20 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 
 			// Use specific info structs for workspace and human (for backward compatibility with JSON structure)
 			// All other categories use CustomToolsInfo
-			if serverName == workspaceCategory {
+			switch serverName {
+			case workspaceCategory:
 				// Workspace tools directory
 				result.WorkspaceTools = &WorkspaceToolsInfo{
 					Package: dirName,
 					Tools:   tools,
 				}
-			} else if serverName == humanCategory {
+			case humanCategory:
 				// Human tools directory
 				result.HumanTools = &HumanToolsInfo{
 					Package: dirName,
 					Tools:   tools,
 				}
-			} else {
+			default:
 				// Any other category directories (memory, custom, tavily_search, or any future categories)
 				// Append to CustomTools array - supports multiple custom tool categories
 				result.CustomTools = append(result.CustomTools, CustomToolsInfo{
@@ -1067,7 +1069,10 @@ func (a *Agent) generateWorkspaceToolFunction(funcName string, tool llmtypes.Too
 	var schema map[string]interface{}
 	if tool.Function.Parameters != nil {
 		paramsBytes, _ := json.Marshal(tool.Function.Parameters)
-		json.Unmarshal(paramsBytes, &schema)
+		if err := json.Unmarshal(paramsBytes, &schema); err != nil {
+			// If unmarshaling fails, use empty schema
+			schema = map[string]interface{}{}
+		}
 	} else {
 		schema = map[string]interface{}{
 			"type":       "object",

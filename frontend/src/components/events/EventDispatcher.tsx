@@ -169,16 +169,7 @@ import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay, type BlockingHumanFeedbackEvent } from './BlockingHumanFeedbackDisplay'
 import type { RequestHumanFeedbackEvent } from '../../generated/events'
-// Import TodoStepsExtractedEvent type from the component that uses it
-type TodoStepsExtractedEvent = {
-  timestamp?: string;
-  total_steps_extracted?: number;
-  extracted_steps?: unknown[];
-  extraction_method?: string;
-  plan_source?: string;
-  workspace_path?: string;
-  [key: string]: unknown;
-}
+import type { TodoStepsExtractedEvent } from '../../generated/events-bridge'
 
 
 interface EventDispatcherProps {

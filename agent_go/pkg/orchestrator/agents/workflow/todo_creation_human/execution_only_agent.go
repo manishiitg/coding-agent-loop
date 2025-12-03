@@ -151,8 +151,13 @@ The step description, success criteria, and context dependencies define WHAT you
 - **Learnings don't match step**: Ignore learnings, solve step directly using available tools
 
 ## 📁 File Permissions
-**READ**: Context files ({{.WorkspacePath}}/step_X_results.md), workspace files (relative paths only)  
-**WRITE**: Only context output files in {{.WorkspacePath}}/ (no validation reports, no files outside workspace)
+**READ**: 
+- Learnings folder (for best practice guidance)
+- Execution folder (to read previous step results and context dependencies)
+**WRITE**: 
+- Only your current step folder ({{.WorkspacePath}}/step-{X}/) - you can only write to your own step's directory
+- Cannot write to other steps' folders or validation reports
+- Path validation is enforced at the code level - invalid paths will be rejected
 
 ## 🎯 Execution Approach
 

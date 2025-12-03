@@ -3,11 +3,12 @@ package todo_creation_human
 import (
 	"context"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerCodeExecutionLearningAgent analyzes code execution mode executions
@@ -151,6 +152,13 @@ The ExecutionHistory section contains the complete execution conversation. Parse
 - **Variable Usage**: How variables were used in the code
 - **Code Structure**: Overall code organization and patterns
 
+**Learn from Validation Failures:**
+- If ValidationResult shows failure: Analyze what went wrong in the code
+- Identify which function call or code section caused the failure
+- Root cause: Was it error handling? Data format? Missing prerequisite? Logic error?
+- Prevention: What code changes would prevent this failure?
+- Update code patterns: Add error handling, validation, or fixes to the code pattern
+
 **IMPORTANT - Code Patterns:**
 - **DO capture**: Complete Go code snippets that successfully achieved the step description
 - **DO capture**: Function calls to generated tool packages (e.g., aws_tools, workspace_tools, custom_tools)
@@ -176,41 +184,57 @@ The ExecutionHistory section contains the complete execution conversation. Parse
 8. **Rank in learning file**: Always list best code first, then other successful variations
 9. **Reference saved code**: In learning file, reference the saved code path(s) with ranking
 
-### **Failure Documentation (Keep It Brief):**
-For failed approaches, document concisely to help future executions avoid wasting time:
+### **Failure Documentation (Critical for Improvement):**
+**CRITICAL**: Every failure is a learning opportunity. Document what went wrong and how to prevent it.
 
-**Simple Failure Format:**
+**Enhanced Failure Format:**
 - **What failed**: Code pattern + approach (1 line)
-- **Why it failed**: Brief reason (1 sentence)
+- **Why it failed**: Root cause analysis (auth error, data format, timing, missing prerequisite, etc.)
+- **Error details**: Specific error message or validation failure reason
+- **Prevention**: What should future code do differently to AVOID this failure?
 - **Use instead**: Reference to successful code pattern
+- **Update code patterns**: If code failed, identify what needs to be fixed in the code pattern
 
-**Purpose**: Help future executions skip known failures and use the working code recipe immediately.
+**Learn from Validation Failures:**
+- If ValidationResult shows failure: Analyze what went wrong in the code
+- Compare expected vs actual outcome
+- Identify which part of the code caused the failure
+- Add to "❌ FAILURES TO AVOID" section with clear guidance
+- Update code patterns to prevent this failure in future runs
+
+**Purpose**: Help future executions skip known failures and use the working code recipe immediately. Each failure should improve the code patterns.
 
 ### **Learning Documentation Focus:**
 **Priority**: Document BEST code examples first (ranked by effectiveness), then other successful variations, then failures to avoid. Format optimized for future execution efficiency.
 
-**Example (Best Code First):**
+**Example (Best Code First with Optimal Path):**
 **✅ BEST CODE PATTERNS (Ranked by Effectiveness):**
 
-1. **BEST**: Complete AWS + Workspace Integration [Runs: 7 | Success: 87.5%] ✅
-   **Why Best**: Most efficient single-code approach, excellent error handling, handles all edge cases
+1. ⭐ **OPTIMAL**: Complete AWS + Workspace Integration [Runs: 15 | Success: 93%] ✅ - RECOMMENDED
+   **Why Optimal**: Most efficient single-code approach, excellent error handling, handles all edge cases
    **Code saved to**: code/{StepTitle}_code.go (complete runnable code)
    **Key features**: Combined AWS and workspace operations, comprehensive error handling, variable replacement
    
-2. **ALTERNATIVE**: Separate AWS and Workspace Calls [Runs: 5 | Success: 80%] ✅
+2. **ALTERNATIVE**: Separate AWS and Workspace Calls [Runs: 8 | Success: 75%] ✅
    **Why Alternative**: More modular but slightly less efficient
    **Code saved to**: code/{StepTitle}_code_v2.go (complete runnable code)
    **Key features**: Separate functions, easier to debug, good for complex workflows
 
-**Brief Context**: Best pattern (#1) combines operations efficiently with robust error handling. Alternative (#2) is more modular but requires multiple code executions.
+⚠️ **UNRELIABLE**: Direct HTTP calls without error handling [Runs: 5 | Success: 40%]
+   **Why Unreliable**: No error handling caused panics, low success rate
+   **Avoid**: Use optimal pattern (#1) instead
+
+**Brief Context**: Optimal pattern (#1) combines operations efficiently with robust error handling. Alternative (#2) is more modular but requires multiple code executions. Unreliable pattern should be avoided.
 
 **❌ FAILURES TO AVOID:**
 - Code Pattern: Direct HTTP calls without error handling [Failed: 3 times]
-  Why failed: No error handling caused panics
-  Use instead: Generated function calls with error handling (pattern #1 above)
+  Root cause: No error handling caused panics
+  Prevention: Always use generated function calls with error handling
+  Use instead: Optimal pattern (#1 above)
 - Code Pattern: Missing environment variable setup [Failed: 2 times]
-  Why failed: MCP_SERVER_NAME not set before calling AWS tools
-  Use instead: Set environment variables before function calls (pattern #1 above)
+  Root cause: MCP_SERVER_NAME not set before calling AWS tools
+  Prevention: Set environment variables before function calls
+  Use instead: Optimal pattern (#1 above)
 
 **Documentation Guidelines:**
 - **Priority 1**: Success code recipe (code patterns that achieved the goal)
@@ -233,6 +257,16 @@ For failed approaches, document concisely to help future executions avoid wastin
   - **Score format**: Always include [Runs: X | Success: Y%] ✅ after each success pattern
   - **Failure format**: Include [Failed: Z times] after failure patterns
   - **Purpose**: Higher Runs and Success % = more reliable patterns to use in future executions
+
+**🏆 OPTIMAL CODE PATH IDENTIFICATION (Critical for Long-Term Learning):**
+- **Track Multiple Approaches**: If different code patterns achieve the same goal, document ALL of them
+- **Compare & Rank**: After multiple runs, identify which code pattern has highest success rate
+- **Mark Optimal Path**: Add "⭐ OPTIMAL" tag to the code pattern with best [Runs + Success%] combination
+- **Deprecate Inferior Patterns**: Mark code patterns with <50% success as "⚠️ UNRELIABLE - prefer optimal code"
+- **Evolution Over Time**: As more runs complete, the optimal code pattern becomes clearer
+  - Run 1-3: Multiple code patterns may have similar scores
+  - Run 4-10: Clear winner emerges based on consistent success
+  - Run 10+: Optimal code pattern is well-established, alternatives are documented but de-prioritized
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
@@ -272,6 +306,10 @@ You have access to all MCP tools to examine workspace files and gather additiona
     - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 3 | Success: 75%] → [Runs: 4 | Success: 80%])
     - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs (e.g., [Runs: 3 | Success: 75%] → [Runs: 3 | Success: 60%])
     - This tracks which patterns are consistently reliable across multiple executions
+  - **UPDATE OPTIMAL PATH**: After updating scores, compare all patterns and mark the one with highest [Runs + Success%] as ⭐ OPTIMAL
+    - If current run used different code pattern: Compare with existing, update optimal if better
+    - If optimal pattern failed: Check if another pattern should become optimal
+    - Deprecate patterns with <50% success as ⚠️ UNRELIABLE
 
 `
 }
@@ -325,11 +363,29 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 **Follow the efficiency-focused code extraction process described in the system prompt.**
 
 **Remember**: 
-1. Success code recipe comes first (what worked)
+1. Success code recipe comes first (what worked) - rank by effectiveness
 2. **Replace actual values with variables**: When extracting code, check if values match known variables and replace them with variable placeholders (e.g., {{AWS_ACCOUNT_ID}} instead of "123456789012")
-3. Failures to avoid come second (save time)
-4. Keep it actionable for future executions
-5. **Write short, precise content**: Each entry should be 1-2 lines maximum. No verbose explanations.
+3. **Optimal Path Evolution**: Track multiple code patterns, identify the best one over time, mark as ⭐ OPTIMAL
+4. **Learn from Failures**: Analyze validation failures, identify root causes, update code patterns to prevent future failures
+5. Failures to avoid come second (save time)
+6. Keep it actionable for future executions
+7. **Write short, precise content**: Each entry should be 1-2 lines maximum. No verbose explanations.
+
+**🏆 OPTIMAL PATH EVOLUTION (Key for Long-Term Success):**
+- **First few runs**: Document all code patterns that work, even if different
+- **After 5+ runs**: Compare patterns, identify which has highest success rate
+- **Mark the winner**: Tag the best code pattern as "⭐ OPTIMAL"
+- **Keep alternatives**: Document other patterns but note they're less reliable
+- **Continuous improvement**: Each run refines scores and clarifies the optimal code pattern
+
+**🔴 LEARNING FROM FAILURES (Critical):**
+- **Analyze ValidationResult**: If validation failed, understand WHY
+- **Identify failing code**: Which part of the code caused the failure?
+- **Root cause analysis**: Was it error handling? Data format? Missing prerequisite?
+- **Update code patterns**: Add error handling, prerequisites, or fixes to PREVENT this failure
+- **Track failure count**: Increment [Failed: X times] for the failing code pattern
+- **Document fix**: What change would make this code succeed next time?
+- **Deprecate bad patterns**: If a code pattern fails >50% of the time, mark as ⚠️ UNRELIABLE
 
 **File to create/update:**
 ` + `- ` + templateVars["WorkspacePath"] + `/learning_code_exec/` + templateVars["StepTitle"] + `_learning.md

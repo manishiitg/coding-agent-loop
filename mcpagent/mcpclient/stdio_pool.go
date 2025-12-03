@@ -117,7 +117,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 		p.logger.Infof("🔧 [STDIO POOL] Another goroutine created connection for %s, using existing one", serverKey)
 		// Close our newly created connection and use the existing one
 		if conn.client != nil {
-			conn.client.Close()
+			_ = conn.client.Close() // Ignore errors during cleanup
 		}
 		return existingConn.client, nil
 	}
@@ -132,7 +132,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey string, command string, args []string, env []string) (*StdioConnection, error) {
 	startTime := time.Now()
 	p.logger.Infof("🔧 [STDIO POOL] Creating new stdio connection: %s %v", command, args)
-	
+
 	// Debug: Log environment variables (but mask sensitive values)
 	if p.logger != nil {
 		envCount := len(env)
@@ -220,7 +220,7 @@ func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey
 	progressDone <- true
 
 	if err != nil {
-		mcpClient.Close()
+		_ = mcpClient.Close() // Ignore errors during cleanup
 		totalDuration := time.Since(startTime)
 
 		// Check if it was a timeout
@@ -319,7 +319,7 @@ func (p *StdioConnectionPool) removeConnection(serverKey string) {
 	if conn, exists := p.connections[serverKey]; exists {
 		p.logger.Infof("🔧 [STDIO POOL] Removing connection: %s", serverKey)
 		if conn.client != nil {
-			conn.client.Close()
+			_ = conn.client.Close() // Ignore errors during cleanup
 		}
 		delete(p.connections, serverKey)
 	}
@@ -333,7 +333,7 @@ func (p *StdioConnectionPool) ForceRemoveBrokenConnection(serverKey string) {
 	if conn, exists := p.connections[serverKey]; exists {
 		p.logger.Infof("🔧 [STDIO POOL] Force removing broken connection: %s", serverKey)
 		if conn.client != nil {
-			conn.client.Close()
+			_ = conn.client.Close() // Ignore errors during cleanup
 		}
 		delete(p.connections, serverKey)
 		p.logger.Infof("✅ [STDIO POOL] Successfully force removed broken connection: %s", serverKey)
@@ -360,7 +360,7 @@ func (p *StdioConnectionPool) CloseAllConnections() {
 	for serverKey, conn := range p.connections {
 		p.logger.Infof("🔧 [STDIO POOL] Closing connection: %s", serverKey)
 		if conn.client != nil {
-			conn.client.Close()
+			_ = conn.client.Close() // Ignore errors during cleanup
 		}
 	}
 	p.connections = make(map[string]*StdioConnection)

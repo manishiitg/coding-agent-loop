@@ -25,8 +25,6 @@ import type {
   HumanFeedbackResponse,
   RunFoldersResponse,
   ProgressResponse,
-  ExecutionOptions,
-  StepProgress,
 } from './api-types'
 
 // Re-export types for other components to use
@@ -55,8 +53,6 @@ export type {
   HumanFeedbackResponse,
   RunFoldersResponse,
   ProgressResponse,
-  ExecutionOptions,
-  StepProgress,
 } from './api-types'
 
 const API_BASE_URL = 'http://localhost:8000'

@@ -47,6 +47,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
+  const [learningReadingLLM, setLearningReadingLLM] = useState<AgentLLMConfig | null>(null);
 
   // Store subscriptions - using selectors for stable references
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -99,6 +100,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setExecutionLLM(presetLLM.execution_llm || null);
       setValidationLLM(presetLLM.validation_llm || null);
       setLearningLLM(presetLLM.learning_llm || null);
+      setLearningReadingLLM(presetLLM.learning_reading_llm || null);
       // Note: Other learning-related agent configs (planning, variable_extraction, etc.) 
       // are not loaded here as they will fallback to learning_llm in the backend
     } else {
@@ -121,6 +123,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setExecutionLLM(null);
       setValidationLLM(null);
       setLearningLLM(null);
+      setLearningReadingLLM(null);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
@@ -170,16 +173,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       });
       
       // Build LLM config with agent-specific defaults for workflow mode
-      // Only save execution_llm, validation_llm, and learning_llm
+      // Only save execution_llm, validation_llm, learning_llm, and learning_reading_llm
       // All other learning-related agents will fallback to learning_llm in the backend
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
-      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM)) {
-        // For workflow mode, include only the 3 main agent configs
+      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || learningReadingLLM)) {
+        // For workflow mode, include the 4 main agent configs
         finalLLMConfig = {
           ...(llmConfig || {}),
           execution_llm: executionLLM || undefined,
           validation_llm: validationLLM || undefined,
           learning_llm: learningLLM || undefined,
+          learning_reading_llm: learningReadingLLM || undefined,
         };
       }
       console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
@@ -219,7 +223,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, useCodeExecutionMode, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, learningReadingLLM, useCodeExecutionMode, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -391,6 +395,28 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           />
                           <div className="text-xs text-gray-500 mt-1">
                             Default model for execution agents (used when step config doesn't specify)
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            Learning Reading Agent Default Model
+                          </label>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={learningReadingLLM ? availableLLMs.find(llm => 
+                              llm.provider === learningReadingLLM.provider && llm.model === learningReadingLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setLearningReadingLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for learning reading agent (used when step config doesn't specify, falls back to execution_llm if not set)
                           </div>
                         </div>
                         <div>

@@ -33,14 +33,14 @@ const EXECUTION_PHASE_ID = 'execution'
 
 // Execution Mode options - how to run (human feedback, learning, etc.)
 const EXECUTION_MODE_OPTIONS: { id: ExecutionModeType; label: string; icon: typeof Play; description: string }[] = [
-  { id: 'human_approval', label: 'With Human Approval', icon: Play, description: 'Pause for feedback at each step' },
-  { id: 'fast_execution', label: 'Fast Execution', icon: Zap, description: 'Execute all without pausing' },
-  { id: 'with_learning', label: 'With Learning', icon: SkipForward, description: 'Human approval + capture learnings' },
+  { id: 'human_approval', label: 'With Human Approval', icon: Play, description: 'Pause for human approval before going to next step (learning enabled)' },
+  { id: 'fast_execution', label: 'Fast Execution', icon: Zap, description: 'Execute all without pausing or learning' },
+  { id: 'with_learning', label: 'With Learning (No Human)', icon: SkipForward, description: 'Proceed to next step without human approval (learning enabled)' },
 ]
 
 // Start Point options - where to start execution
 type StartPointType = 'from_beginning' | 'resume' | 'single_step'
-interface StartPointOption {
+interface StartPointOption {  
   id: StartPointType
   stepNumber?: number  // For resume/single_step, which step to target (1-based)
   label: string
@@ -263,11 +263,27 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
     ]
     
-    // Add resume options for each step that can be resumed from
-    // User can resume from any step after the first completed step
+    // Add resume options for all completed steps plus the next step
     if (completedStepIndices.length > 0 && totalSteps > 0) {
-      // Find the next step after last completed
-      const nextStep = Math.max(...completedStepIndices) + 2 // +2 because indices are 0-based, and we want the next step (1-based)
+      // Convert 0-based indices to 1-based step numbers
+      const completedStepNumbers = completedStepIndices.map(idx => idx + 1).sort((a, b) => a - b)
+      const lastCompletedStep = completedStepNumbers[completedStepNumbers.length - 1]
+      const nextStep = lastCompletedStep + 1
+      
+      // Add all completed steps as resume options
+      completedStepNumbers.forEach(stepNum => {
+        options.push({
+          id: 'resume',
+          stepNumber: stepNum,
+          label: `Resume from Step ${stepNum}`,
+          icon: stepNum === lastCompletedStep ? RefreshCw : SkipForward,
+          description: stepNum === lastCompletedStep 
+            ? `Continue from step ${stepNum} (${completedStepCount} completed)`
+            : `Jump to step ${stepNum}`
+        })
+      })
+      
+      // Add next step if it exists
       if (nextStep <= totalSteps) {
         options.push({
           id: 'resume',
@@ -276,23 +292,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           icon: RefreshCw,
           description: `Continue from step ${nextStep} (${completedStepCount} completed)`
         })
-      }
-      
-      // Add option to resume from any other runnable step
-      for (let i = 1; i <= totalSteps; i++) {
-        // Skip steps that are already in the list or are the "next" step
-        if (i === nextStep) continue
-        // Can only resume from step if all previous steps are done
-        const canResumeFrom = i === 1 || completedStepIndices.filter(idx => idx < i - 1).length === i - 1
-        if (canResumeFrom && i > 1) {
-          options.push({
-            id: 'resume',
-            stepNumber: i,
-            label: `Resume from Step ${i}`,
-            icon: SkipForward,
-            description: `Jump to step ${i}`
-          })
-        }
       }
     }
     
@@ -645,10 +644,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           const isSelected = option.id === 'from_beginning' 
                             ? selectedStartPoint === 0 
                             : selectedStartPoint === option.stepNumber
+                          // Explicitly handle "Start from Beginning" to ensure it sets selectedStartPoint to 0
+                          const stepNumberToSet = option.id === 'from_beginning' ? 0 : (option.stepNumber || 0)
                           return (
                             <button
                               key={`${option.id}-${option.stepNumber || idx}`}
-                              onClick={() => handleSelectStartPoint(option.stepNumber || 0)}
+                              onClick={() => handleSelectStartPoint(stepNumberToSet)}
                               className={`
                                 w-full text-left px-3 py-2.5 rounded-md transition-colors
                                 ${isSelected 

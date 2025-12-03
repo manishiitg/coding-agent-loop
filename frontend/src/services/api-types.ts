@@ -468,6 +468,7 @@ export interface PresetLLMConfig {
   execution_llm?: AgentLLMConfig        // Default for execution agents
   validation_llm?: AgentLLMConfig       // Default for validation agents
   learning_llm?: AgentLLMConfig         // Default for learning agents
+  learning_reading_llm?: AgentLLMConfig // Default for learning reading agent
   planning_llm?: AgentLLMConfig         // Default for planning agent
   variable_extraction_llm?: AgentLLMConfig // Default for variable extraction agent
   anonymization_llm?: AgentLLMConfig    // Default for anonymization agent

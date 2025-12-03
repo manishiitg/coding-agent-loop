@@ -158,3 +158,34 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) initializeFreshProgress(ctx 
 	hcpo.GetLogger().Infof("✅ Initialized fresh progress with %d total steps", newTotalSteps)
 	return nil
 }
+
+// deleteStepExecutionFolder deletes the execution folder for a specific step
+// stepNumber is 1-based (e.g., step 1, step 2, etc.)
+// This is used when resuming from a step or running a single step to ensure clean re-execution
+// by removing any existing execution artifacts from previous runs
+func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ctx context.Context, stepNumber int) error {
+	// Validate that run folder is set (required for building correct path)
+	if hcpo.selectedRunFolder == "" {
+		return fmt.Errorf("selectedRunFolder not set - run folder must be resolved before deleting execution folders")
+	}
+
+	// Build execution folder path: workspacePath/runs/{runFolder}/execution/step-{stepNumber}
+	// Example: /workspace/runs/iteration-1/execution/step-3
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	runWorkspacePath := fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	stepFolderPath := fmt.Sprintf("%s/step-%d", executionWorkspacePath, stepNumber)
+
+	hcpo.GetLogger().Infof("🗑️ Deleting execution folder for step %d: %s", stepNumber, stepFolderPath)
+
+	// Use CleanupDirectory to delete the step folder recursively
+	// This removes all files and subdirectories within the step's execution folder
+	// CleanupDirectory handles the recursive deletion and depth-first directory removal
+	if err := hcpo.CleanupDirectory(ctx, stepFolderPath, fmt.Sprintf("execution/step-%d", stepNumber)); err != nil {
+		hcpo.GetLogger().Warnf("⚠️ Failed to delete execution folder for step %d: %w", stepNumber, err)
+		return err
+	}
+
+	hcpo.GetLogger().Infof("✅ Deleted execution folder for step %d", stepNumber)
+	return nil
+}

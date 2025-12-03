@@ -67,6 +67,7 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	presetExecutionLLM          *AgentLLMConfig // Default for execution agents
 	presetValidationLLM         *AgentLLMConfig // Default for validation agents
 	presetLearningLLM           *AgentLLMConfig // Default for learning agents
+	presetLearningReadingLLM    *AgentLLMConfig // Default for learning reading agent
 	presetPlanningLLM           *AgentLLMConfig // Default for planning agent
 	presetVariableExtractionLLM *AgentLLMConfig // Default for variable extraction agent
 	presetAnonymizationLLM      *AgentLLMConfig // Default for anonymization agent
@@ -94,6 +95,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	presetExecutionLLM *AgentLLMConfig, // Optional preset default for execution agents
 	presetValidationLLM *AgentLLMConfig, // Optional preset default for validation agents
 	presetLearningLLM *AgentLLMConfig, // Optional preset default for learning agents
+	presetLearningReadingLLM *AgentLLMConfig, // Optional preset default for learning reading agent
 	presetPlanningLLM *AgentLLMConfig, // Optional preset default for planning agent
 	presetVariableExtractionLLM *AgentLLMConfig, // Optional preset default for variable extraction agent
 	presetAnonymizationLLM *AgentLLMConfig, // Optional preset default for anonymization agent
@@ -165,6 +167,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 		presetExecutionLLM:          presetExecutionLLM,
 		presetValidationLLM:         presetValidationLLM,
 		presetLearningLLM:           presetLearningLLM,
+		presetLearningReadingLLM:    presetLearningReadingLLM,
 		presetPlanningLLM:           presetPlanningLLM,
 		presetVariableExtractionLLM: presetVariableExtractionLLM,
 		presetAnonymizationLLM:      presetAnonymizationLLM,
@@ -511,6 +514,26 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		}
 	}
 
+	// Process execution strategy early to set controller state
+	// This ensures skipHumanInput and fastExecuteMode are set regardless of code path
+	if execOpts != nil && execOpts.ExecutionStrategy != "" {
+		hcpo.GetLogger().Infof("🔧 Processing execution strategy early: %s", execOpts.ExecutionStrategy)
+		switch execOpts.ExecutionStrategy {
+		case ExecutionStrategyStartFromBeginningNoHuman:
+			hcpo.GetLogger().Infof("🔧 Setting skipHumanInput=true for START_FROM_BEGINNING_NO_HUMAN (early processing)")
+			hcpo.SetSkipHumanInput(true)
+		case ExecutionStrategyResumeFromStepNoHuman:
+			hcpo.GetLogger().Infof("🔧 Setting skipHumanInput=true for RESUME_FROM_STEP_NO_HUMAN (early processing)")
+			hcpo.SetSkipHumanInput(true)
+		case ExecutionStrategyFastExecuteAll:
+			hcpo.GetLogger().Infof("🔧 Setting fastExecuteMode=true for FAST_EXECUTE_ALL (early processing)")
+			hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
+		case ExecutionStrategyFastResumeFromStep:
+			hcpo.GetLogger().Infof("🔧 Setting fastExecuteMode=true for FAST_RESUME_FROM_STEP (early processing)")
+			hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
+		}
+	}
+
 	// Check for existing progress and ask user if they want to resume
 	var startFromStep int = 0 // 0-based index, 0 means start from beginning
 	var existingProgress *StepProgress
@@ -564,6 +587,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			case ExecutionStrategyStartFromBeginningNoHuman:
 				hcpo.GetLogger().Infof("⚡ Frontend chose to start from beginning without human input")
 				skipHumanInput = true
+				hcpo.GetLogger().Infof("🔧 Setting skipHumanInput=true for START_FROM_BEGINNING_NO_HUMAN strategy")
+				// Immediately set on controller to ensure it's persisted
+				hcpo.SetSkipHumanInput(true)
+			case ExecutionStrategyResumeFromStepNoHuman:
+				// Handle resume from step even when starting fresh (no existing progress)
+				// This can happen when user selects "Resume from Step X" but there's no progress yet
+				targetStep := execOpts.ResumeFromStep
+				if targetStep > 0 {
+					startFromStep = targetStep - 1 // Convert to 0-based
+					hcpo.GetLogger().Infof("✅ Frontend chose to start from step %d without human input (fresh start)", targetStep)
+				} else {
+					hcpo.GetLogger().Infof("⚡ Frontend chose to start from beginning without human input (resume strategy but no step specified)")
+				}
+				skipHumanInput = true
+				hcpo.GetLogger().Infof("🔧 Setting skipHumanInput=true for RESUME_FROM_STEP_NO_HUMAN strategy (fresh start)")
+				// Immediately set on controller to ensure it's persisted
+				hcpo.SetSkipHumanInput(true)
 			case ExecutionStrategyRunSingleStep:
 				targetStep := execOpts.ResumeFromStep
 				if targetStep <= 0 {
@@ -572,6 +612,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only (from resume_from_step: %d)", targetStep, execOpts.ResumeFromStep)
 				startFromStep = targetStep - 1 // Convert to 0-based
 				hcpo.SetRunSingleStepMode(true, startFromStep)
+				// Delete execution folder for this specific step to ensure clean re-execution
+				// This removes any existing execution artifacts (e.g., step-{targetStep}/ folder contents)
+				// so the single step execution starts with a clean slate
+				// Note: We only delete the target step's folder, not other steps' folders
+				if err := hcpo.deleteStepExecutionFolder(ctx, targetStep); err != nil {
+					// Log warning but continue - execution can proceed even if cleanup fails
+					hcpo.GetLogger().Warnf("⚠️ Failed to delete execution folder for step %d: %w (continuing anyway)", targetStep, err)
+				} else {
+					hcpo.GetLogger().Infof("🗑️ Deleted execution folder for step %d (single step execution)", targetStep)
+				}
 				// Note: For run_single_step, we don't modify steps_done.json - it's a one-off execution that doesn't affect progress tracking
 			default:
 				hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to normal execution", execOpts.ExecutionStrategy)
@@ -621,6 +671,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		// Store fast execute mode and skip human input mode for use in execution loop
 		hcpo.SetFastExecuteMode(fastExecuteMode, fastExecuteEndStep)
 		hcpo.SetSkipHumanInput(skipHumanInput)
+		hcpo.GetLogger().Infof("🔧 Final skipHumanInput state: %v (fresh start section)", skipHumanInput)
 	}
 
 	// Process existing progress if available
@@ -852,7 +903,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 							endStep = max(existingProgress.CompletedStepIndices)
 						}
 						hcpo.GetLogger().Infof("⚡ Frontend chose fast execute mode (0 to %d)", endStep)
-						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						// Use run folder if available, otherwise use base workspace (backward compatibility)
+						var runWorkspacePath string
+						if hcpo.selectedRunFolder != "" {
+							runWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+						} else {
+							runWorkspacePath = hcpo.GetWorkspacePath()
+						}
+						executionDir := fmt.Sprintf("%s/execution", runWorkspacePath)
 						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
 							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
 						}
@@ -868,7 +926,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						existingProgress.CompletedStepIndices = newCompletedIndices
 					case ExecutionStrategyFastExecuteAll:
 						hcpo.GetLogger().Infof("⚡ Frontend chose fast execute mode for all steps")
-						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						// Use run folder if available, otherwise use base workspace (backward compatibility)
+						var runWorkspacePath string
+						if hcpo.selectedRunFolder != "" {
+							runWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+						} else {
+							runWorkspacePath = hcpo.GetWorkspacePath()
+						}
+						executionDir := fmt.Sprintf("%s/execution", runWorkspacePath)
 						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
 							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
 						}
@@ -889,6 +954,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						resumeStep := startFromStep + 1 // Convert back to 1-based for logging
 						skipHumanInput = true
 						hcpo.GetLogger().Infof("✅ Frontend chose to resume from step %d without human input", resumeStep)
+						hcpo.GetLogger().Infof("🔧 Setting skipHumanInput=true for RESUME_FROM_STEP_NO_HUMAN strategy")
+						// Immediately set on controller to ensure it's persisted
+						hcpo.SetSkipHumanInput(true)
 					case ExecutionStrategyStartFromBeginningNoHuman:
 						hcpo.GetLogger().Infof("🔄 Frontend chose to start from beginning without human input")
 						if err := hcpo.deleteStepProgress(ctx); err != nil {
@@ -904,6 +972,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						existingProgress = nil
 						startFromStep = 0
 						skipHumanInput = true
+						hcpo.GetLogger().Infof("🔧 Setting skipHumanInput=true for START_FROM_BEGINNING_NO_HUMAN strategy (resume section)")
+						// Immediately set on controller to ensure it's persisted
+						hcpo.SetSkipHumanInput(true)
 					case ExecutionStrategyRunSingleStep:
 						targetStep := execOpts.ResumeFromStep
 						// Always use the step number sent from frontend (don't default to nextIncompleteStep)
@@ -916,6 +987,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						hcpo.GetLogger().Infof("🎯 Frontend chose to run single step %d only (from resume_from_step: %d)", targetStep, execOpts.ResumeFromStep)
 						startFromStep = targetStep - 1 // Convert to 0-based
 						hcpo.SetRunSingleStepMode(true, startFromStep)
+						// Delete execution folder for this specific step to ensure clean re-execution
+						// This removes any existing execution artifacts (e.g., step-{targetStep}/ folder contents)
+						// so the single step execution starts with a clean slate
+						// Note: We only delete the target step's folder, not other steps' folders
+						if err := hcpo.deleteStepExecutionFolder(ctx, targetStep); err != nil {
+							// Log warning but continue - execution can proceed even if cleanup fails
+							hcpo.GetLogger().Warnf("⚠️ Failed to delete execution folder for step %d: %w (continuing anyway)", targetStep, err)
+						} else {
+							hcpo.GetLogger().Infof("🗑️ Deleted execution folder for step %d (single step execution)", targetStep)
+						}
 						// Note: For run_single_step, we don't modify steps_done.json - it's a one-off execution that doesn't affect progress tracking
 					default:
 						hcpo.GetLogger().Warnf("⚠️ Unknown execution strategy: %s, defaulting to resume", execOpts.ExecutionStrategy)
@@ -976,7 +1057,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						hcpo.GetLogger().Infof("⚡ User chose fast execute mode for completed steps (0 to %d)", lastCompletedStepNumber)
 
 						// Clean up execution artifacts for steps that will be re-executed
-						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						// Use run folder if available, otherwise use base workspace (backward compatibility)
+						var runWorkspacePath string
+						if hcpo.selectedRunFolder != "" {
+							runWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+						} else {
+							runWorkspacePath = hcpo.GetWorkspacePath()
+						}
+						executionDir := fmt.Sprintf("%s/execution", runWorkspacePath)
 						hcpo.GetLogger().Infof("🔍 DEBUG: About to call CleanupDirectory for fast execute, path: %s", executionDir)
 						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
 							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
@@ -1002,7 +1090,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 						hcpo.GetLogger().Infof("⚡ User chose fast execute mode for all steps")
 
 						// Clean up execution artifacts for all steps
-						executionDir := fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+						// Use run folder if available, otherwise use base workspace (backward compatibility)
+						var runWorkspacePath string
+						if hcpo.selectedRunFolder != "" {
+							runWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+						} else {
+							runWorkspacePath = hcpo.GetWorkspacePath()
+						}
+						executionDir := fmt.Sprintf("%s/execution", runWorkspacePath)
 						if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
 							hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
 						} else {
@@ -1062,6 +1157,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				// Store fast execute mode and skip human input mode for use in execution loop
 				hcpo.SetFastExecuteMode(fastExecuteMode, fastExecuteEndStep)
 				hcpo.SetSkipHumanInput(skipHumanInput)
+				hcpo.GetLogger().Infof("🔧 Final skipHumanInput state: local=%v, controller field=%v (resume section)", skipHumanInput, hcpo.IsSkipHumanInput())
 			} else {
 				// This should not happen if logic is correct, but handle edge case
 				hcpo.GetLogger().Warnf("⚠️ Unexpected state: progress exists but couldn't determine next incomplete step. Starting from beginning.")
@@ -1102,7 +1198,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		}
 	}
 
-	_, err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep)
+	// Build execution context once from current controller state
+	execCtx := hcpo.buildExecutionContext(len(breakdownSteps))
+
+	_, err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep, execCtx)
 	if err != nil {
 		return "", fmt.Errorf("execution phase failed: %w", err)
 	}
@@ -1252,6 +1351,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) handleResumeStrategy(
 		existingProgress.CompletedStepIndices = newCompletedIndices
 		hcpo.GetLogger().Infof("🔄 Updated completed list: only steps before step %d remain completed (removed step %d and all subsequent steps)", resumeStep, resumeStep)
 
+		// Delete execution folders for resume step and all subsequent steps
+		// This ensures clean re-execution of these steps by removing any existing execution artifacts
+		// Example: If resuming from step 3 out of 10 total steps, delete execution folders for steps 3-10
+		// This prevents stale files from previous executions from interfering with the re-execution
+		if existingProgress.TotalSteps > 0 {
+			// Iterate from resume step to total steps (both inclusive, 1-based)
+			for stepNum := resumeStep; stepNum <= existingProgress.TotalSteps; stepNum++ {
+				// Delete each step's execution folder (execution/step-{stepNum}/)
+				// Continue even if deletion fails for one step - log warning but proceed with others
+				if err := hcpo.deleteStepExecutionFolder(ctx, stepNum); err != nil {
+					hcpo.GetLogger().Warnf("⚠️ Failed to delete execution folder for step %d: %w (continuing anyway)", stepNum, err)
+				}
+			}
+			hcpo.GetLogger().Infof("🗑️ Deleted execution folders for steps %d-%d (resume step and all subsequent steps)", resumeStep, existingProgress.TotalSteps)
+		}
+
 		// Save the updated progress to steps_done.json
 		if err := hcpo.saveStepProgress(ctx, existingProgress); err != nil {
 			hcpo.GetLogger().Warnf("⚠️ Failed to save updated step progress: %w", err)
@@ -1284,6 +1399,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) IsFastExecuteStep(stepIndex 
 // SetSkipHumanInput sets the skip human input mode (runs learning but skips human feedback)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) SetSkipHumanInput(enabled bool) {
 	hcpo.skipHumanInput = enabled
+	hcpo.GetLogger().Infof("🔧 SetSkipHumanInput called with value: %v", enabled)
 }
 
 // IsSkipHumanInput checks if human feedback should be skipped
@@ -1304,6 +1420,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetExecutionOptions(options 
 // GetExecutionOptions returns the current execution options
 func (hcpo *HumanControlledTodoPlannerOrchestrator) GetExecutionOptions() *ExecutionOptions {
 	return hcpo.executionOptions
+}
+
+// buildExecutionContext creates an ExecutionContext from current controller state
+// This should be called once at execution start to create an immutable context
+func (hcpo *HumanControlledTodoPlannerOrchestrator) buildExecutionContext(totalSteps int) *ExecutionContext {
+	execCtx := &ExecutionContext{
+		SkipHumanInput:     hcpo.skipHumanInput,
+		FastExecuteMode:    hcpo.fastExecuteMode,
+		FastExecuteEndStep: hcpo.fastExecuteEndStep,
+		RunSingleStepOnly:  hcpo.runSingleStepOnly,
+		SingleStepTarget:   hcpo.singleStepTarget,
+	}
+
+	hcpo.GetLogger().Infof("🔧 Built ExecutionContext: skipHumanInput=%v, fastExecuteMode=%v, fastExecuteEndStep=%d, runSingleStepOnly=%v, singleStepTarget=%d",
+		execCtx.SkipHumanInput, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, execCtx.RunSingleStepOnly, execCtx.SingleStepTarget)
+
+	return execCtx
 }
 
 // HasExecutionOptions checks if execution options are set

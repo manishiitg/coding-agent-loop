@@ -248,9 +248,29 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }), [refresh, plan])
 
-  // Clear highlights after timeout
+  // Clear highlights after timeout and auto-focus on changed steps
   React.useEffect(() => {
     if (changes?.hasChanges) {
+      // Auto-focus on first added or updated step when plan/step config is updated
+      const stepToFocus = changes.added?.[0] || changes.updated?.[0]
+      if (stepToFocus) {
+        // Find the node for this step
+        const node = nodesRef.current.find(n => {
+          if (n.type === 'step' || n.type === 'conditional' || n.type === 'loop') {
+            const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData
+            const nodeStepId = nodeData?.step?.id || n.id
+            return nodeStepId === stepToFocus
+          }
+          return false
+        })
+        
+        if (node) {
+          // Auto-focus on the changed step (position viewport, but don't open sidebar)
+          focusNode(node.id, { topPadding: 150, selectNode: false, delay: 300 })
+          console.log('[WorkflowCanvas] Auto-focused on step that was added/updated:', stepToFocus, node.id)
+        }
+      }
+      
       // Clear any existing timeout
       if (highlightTimeoutRef.current) {
         clearTimeout(highlightTimeoutRef.current)
@@ -269,7 +289,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         clearTimeout(highlightTimeoutRef.current)
       }
     }
-  }, [changes, clearChanges])
+  }, [changes, clearChanges, focusNode])
 
   // Track previous nodes/edges to detect actual changes
   const prevNodesRef = React.useRef<typeof initialNodes>([])
@@ -465,6 +485,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Update node status based on step status map from events
   React.useEffect(() => {
     if (stepStatusMap.size > 0) {
+      const prevStatusMap = prevStepStatusMapRef.current
+      
       setNodes(nds => 
         nds.map(node => {
           // Only update status for step-type nodes (step, conditional, loop)
@@ -475,6 +497,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             const stepStatus = stepStatusMap.get(stepId)
             
             if (stepStatus) {
+              // Detect if step just transitioned to 'running' (was not 'running' before)
+              const prevStatus = prevStatusMap.get(stepId)
+              if (stepStatus === 'running' && prevStatus !== 'running') {
+                // Auto-focus on the node when it starts running (position viewport, but don't open sidebar)
+                // This happens when the running label and loader are added to the node
+                focusNode(node.id, { topPadding: 150, selectNode: false, delay: 200 })
+                console.log('[WorkflowCanvas] Auto-focused on step that started running:', stepId, node.id)
+              }
+              
               if (node.type === 'step') {
                 return {
                   ...node,
@@ -497,10 +528,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         })
       )
       
-      // Update previous status map (for tracking changes, but no auto-focus)
+      // Update previous status map (for tracking changes)
       prevStepStatusMapRef.current = new Map(stepStatusMap)
     }
-  }, [stepStatusMap, setNodes, nodes.length])
+  }, [stepStatusMap, setNodes, nodes.length, focusNode])
 
   // Handle node selection - disabled: nodes no longer open sidebar on click
   // Sidebar is now opened via settings icon button on nodes

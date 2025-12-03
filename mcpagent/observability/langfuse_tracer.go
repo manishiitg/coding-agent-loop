@@ -1,5 +1,4 @@
 //go:build !langfuse_disabled
-// +build !langfuse_disabled
 
 package observability
 
@@ -197,7 +196,7 @@ func initializeSharedLangfuseClientWithLogger(logger logger.ExtendedLogger) erro
 	if _, err := os.Stat(".env"); err == nil {
 		if err := godotenv.Load(); err != nil {
 			// Don't fail if .env can't be loaded, just log
-			log.Printf("Warning: Could not load .env file: %w", err)
+			log.Printf("Warning: Could not load .env file: %v", err)
 		}
 	}
 
@@ -272,7 +271,7 @@ func (l *LangfuseTracer) authCheck() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // Ignore errors during cleanup
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -285,7 +284,10 @@ func (l *LangfuseTracer) authCheck() error {
 // generateID generates a unique ID for traces and spans
 func generateID() string {
 	bytes := make([]byte, 16)
-	rand.Read(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to time-based ID if random read fails
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
 	return hex.EncodeToString(bytes)
 }
 
@@ -1173,7 +1175,7 @@ func (l *LangfuseTracer) sendBatch(events []*langfuseEvent) {
 		}
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // Ignore errors during cleanup
 
 	// Read response body once
 	body, _ := io.ReadAll(resp.Body)

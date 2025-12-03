@@ -1,10 +1,10 @@
 import React, { useState } from 'react'
-import { 
-  X, 
-  Play, 
-  Settings, 
-  Edit2, 
-  Trash2, 
+import {
+  X,
+  Play,
+  Settings,
+  Edit2,
+  Trash2,
   Save,
   ChevronDown,
   ChevronRight,
@@ -44,7 +44,7 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
     return null
   }
 
-  const step = node.data.step
+  const step = node.data.step as PlanStep
   const isConditional = step.has_condition
   const isLoop = step.has_loop
 
@@ -76,7 +76,7 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
           {isConditional && <GitBranch className="w-4 h-4 text-purple-500" />}
           {isLoop && <RefreshCw className="w-4 h-4 text-cyan-500" />}
           <span className="font-medium text-gray-900 dark:text-gray-100">
-            {isEditing ? 'Edit Step' : `Step ${node.data.stepIndex + 1}`}
+            {isEditing ? 'Edit Step' : `Step ${(node.data.stepIndex as number) + 1}`}
           </span>
         </div>
         <button

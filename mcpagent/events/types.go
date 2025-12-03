@@ -229,29 +229,29 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 
 // Helper function to get component from event type
 func GetComponentFromEventType(eventType EventType) string {
-	switch {
-	case eventType == OrchestratorStart || eventType == OrchestratorEnd || eventType == OrchestratorError ||
-		eventType == OrchestratorAgentStart || eventType == OrchestratorAgentEnd || eventType == OrchestratorAgentError ||
-		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
-		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
-		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted || eventType == VariablesExtracted ||
-		eventType == StepTokenUsage || eventType == StepProgressUpdated ||
-		eventType == StepExecutionStart || eventType == StepExecutionEnd || eventType == StepExecutionFailed:
+	switch eventType {
+	case OrchestratorStart, OrchestratorEnd, OrchestratorError,
+		OrchestratorAgentStart, OrchestratorAgentEnd, OrchestratorAgentError,
+		StructuredOutputStart, StructuredOutputEnd, StructuredOutputError,
+		JSONValidationStart, JSONValidationEnd,
+		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
+		StepTokenUsage, StepProgressUpdated,
+		StepExecutionStart, StepExecutionEnd, StepExecutionFailed:
 		return "orchestrator"
-	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
+	case AgentStart, AgentEnd, AgentError:
 		return "agent"
-	case eventType == LLMGenerationStart || eventType == LLMGenerationEnd || eventType == LLMGenerationError ||
-		eventType == SmartRoutingStart || eventType == SmartRoutingEnd:
+	case LLMGenerationStart, LLMGenerationEnd, LLMGenerationError,
+		SmartRoutingStart, SmartRoutingEnd:
 		return "llm"
-	case eventType == ToolCallStart || eventType == ToolCallEnd || eventType == ToolCallError || eventType == WorkspaceFileOperation:
+	case ToolCallStart, ToolCallEnd, ToolCallError, WorkspaceFileOperation:
 		return "tool"
-	case eventType == ConversationStart || eventType == ConversationEnd || eventType == ConversationError || eventType == ConversationTurn || eventType == ConversationThinking:
+	case ConversationStart, ConversationEnd, ConversationError, ConversationTurn, ConversationThinking:
 		return "conversation"
-	case eventType == CacheHit || eventType == CacheMiss || eventType == CacheWrite ||
-		eventType == CacheExpired || eventType == CacheCleanup || eventType == CacheError ||
-		eventType == CacheOperationStart || eventType == ComprehensiveCache:
+	case CacheHit, CacheMiss, CacheWrite,
+		CacheExpired, CacheCleanup, CacheError,
+		CacheOperationStart, ComprehensiveCache:
 		return "cache"
-	case eventType == SystemPrompt || eventType == UserMessage:
+	case SystemPrompt, UserMessage:
 		return "system"
 	default:
 		return "system"

@@ -26,6 +26,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	progress *StepProgress,
 	previousContextFiles []string, // Context files from previous steps
 	iteration int, // Current iteration number
+	execCtx *ExecutionContext, // Execution context with flags
 ) error {
 	const maxDepth = 2
 	if depth > maxDepth {
@@ -91,6 +92,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			previousContextFiles,
 			progress,
 			false, // isBranchStep = false (conditional step is a main step)
+			execCtx,
 		)
 		if err != nil {
 			hcpo.GetLogger().Errorf("❌ Failed to execute conditional step %d: %v", stepIndex+1, err)
@@ -244,7 +246,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 		if branchStep.HasCondition {
 			// Recursively execute nested conditional step
 			hcpo.GetLogger().Infof("🔀 Executing nested conditional step in branch: %s (depth %d)", branchStep.Title, depth+1)
-			if err := hcpo.executeConditionalStep(ctx, branchStep, stepIndex, depth+1, progress, branchContextFiles, iteration); err != nil {
+			if err := hcpo.executeConditionalStep(ctx, branchStep, stepIndex, depth+1, progress, branchContextFiles, iteration, execCtx); err != nil {
 				hcpo.GetLogger().Errorf("❌ Failed to execute nested conditional step '%s' at depth %d: %v", branchStep.Title, depth+1, err)
 				return fmt.Errorf("failed to execute nested conditional step '%s': %w", branchStep.Title, err)
 			}
@@ -261,6 +263,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 				branchContextFiles,
 				progress,
 				true, // isBranchStep = true
+				execCtx,
 			)
 			if err != nil {
 				hcpo.GetLogger().Errorf("❌ Failed to execute branch step '%s': %v", branchStep.Title, err)
@@ -312,6 +315,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 	previousContextFiles []string,
 	progress *StepProgress,
 	isBranchStep bool, // true if this is a branch step (affects progress tracking)
+	execCtx *ExecutionContext, // Execution context with flags (skipHumanInput, fastExecuteMode, etc.)
 ) (executionResult string, updatedContextFiles []string, err error) {
 	// Initialize updated context files as copy of previous context files
 	updatedContextFiles = make([]string, len(previousContextFiles))
@@ -333,11 +337,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				Timestamp: time.Now(),
 				Component: "orchestrator",
 			},
-			StepID:       stepId,
-			StepIndex:    stepIndex,
-			StepTitle:    stepTitle,
-			StepPath:     stepPath,
-			IsBranchStep: isBranchStep,
+			StepID:        stepId,
+			StepIndex:     stepIndex,
+			StepTitle:     stepTitle,
+			StepPath:      stepPath,
+			IsBranchStep:  isBranchStep,
+			RunFolder:     hcpo.selectedRunFolder,
+			WorkspacePath: hcpo.GetWorkspacePath(),
 		}
 		eventBridge.HandleEvent(ctx, &events.AgentEvent{
 			Type:      events.StepExecutionStart,
@@ -589,8 +595,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 				// Pass the already-computed isCodeExecutionMode to ensure consistency with execution agent
 				// Also pass executionWorkspacePath for reading context dependencies in code execution mode
+				// Pass stepIndex (0-based) - createLearningReadingAgent will convert to 1-based for logging
 				var learningAgent agents.OrchestratorAgent
-				learningAgent, err = hcpo.createLearningReadingAgent(ctx, "learning_reading", stepIndex+1, iteration, learningAgentName, step.AgentConfigs, isCodeExecutionMode, executionWorkspacePath)
+				learningAgent, err = hcpo.createLearningReadingAgent(ctx, "learning_reading", stepIndex, iteration, learningAgentName, step.AgentConfigs, isCodeExecutionMode, executionWorkspacePath)
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to create learning reading agent for step %d: %w", stepIndex+1, err)
 				}
@@ -675,7 +682,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				templateVars["LearningHistory"] = formattedLearningHistory
 
 				var executionAgent agents.OrchestratorAgent
-				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepIndex+1, iteration, executionAgentName, step.AgentConfigs)
+				// Pass stepIndex (0-based) - createExecutionOnlyAgent will convert to 1-based for folder path
+				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepIndex, iteration, executionAgentName, step.AgentConfigs)
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 				}
@@ -782,7 +790,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 						// Run success learning when loop completes successfully (before breaking)
 						// FAST MODE & LEARNING DISABLED: Skip learning agents entirely
-						isFastExecuteStep := hcpo.IsFastExecuteStep(stepIndex)
+						isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 						// Check step-specific learning detail level
 						isLearningDisabledStep := step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning
 						isLearningDetailLevelNone := false
@@ -796,7 +804,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							hcpo.GetLogger().Infof("🔧 Code execution mode enabled - forcing learning for step %d (overriding step config)", stepIndex+1)
 							isLearningDisabled = false
 						}
-						hcpo.GetLogger().Infof("🔍 DEBUG: Step %d (loop) - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v (detailLevelNone=%v, stepDisabled=%v, codeExecutionMode=%v)", stepIndex+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, isFastExecuteStep, isLearningDisabled, isLearningDetailLevelNone, isLearningDisabledStep, isCodeExecutionMode)
+						hcpo.GetLogger().Infof("🔍 DEBUG: Step %d (loop) - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v (detailLevelNone=%v, stepDisabled=%v, codeExecutionMode=%v)", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, isFastExecuteStep, isLearningDisabled, isLearningDetailLevelNone, isLearningDisabledStep, isCodeExecutionMode)
 						if !isFastExecuteStep && !isLearningDisabled {
 							// Success Learning Agent - analyze what worked well and update plan.json
 							// Loop condition met means step completed successfully
@@ -823,7 +831,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						learningAfterLoopIteration := step.AgentConfigs != nil && step.AgentConfigs.LearningAfterLoopIteration
 						if learningAfterLoopIteration {
 							// Run learning after this loop iteration
-							isFastExecuteStep := hcpo.IsFastExecuteStep(stepIndex)
+							isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 							// Check step-specific learning detail level
 							isLearningDisabledStep := step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning
 							isLearningDetailLevelNone := false
@@ -873,7 +881,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				}
 
 				// FAST MODE & LEARNING DISABLED: Skip learning agents entirely
-				isFastExecuteStep := hcpo.IsFastExecuteStep(stepIndex)
+				isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 				// Check step-specific learning detail level
 				isLearningDisabledStep := step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning
 				isLearningDetailLevelNone := false
@@ -887,7 +895,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					hcpo.GetLogger().Infof("🔧 Code execution mode enabled - forcing learning for step %d (overriding step config)", stepIndex+1)
 					isLearningDisabled = false
 				}
-				hcpo.GetLogger().Infof("🔍 DEBUG: Step %d - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v (detailLevelNone=%v, stepDisabled=%v, codeExecutionMode=%v)", stepIndex+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, isFastExecuteStep, isLearningDisabled, isLearningDetailLevelNone, isLearningDisabledStep, isCodeExecutionMode)
+				hcpo.GetLogger().Infof("🔍 DEBUG: Step %d - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v (detailLevelNone=%v, stepDisabled=%v, codeExecutionMode=%v)", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, isFastExecuteStep, isLearningDisabled, isLearningDetailLevelNone, isLearningDisabledStep, isCodeExecutionMode)
 				if isFastExecuteStep || isLearningDisabled {
 					if isFastExecuteStep {
 						hcpo.GetLogger().Infof("⚡ Fast mode: Skipping learning agents for step %d", stepIndex+1)
@@ -1017,16 +1025,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		// FAST MODE: Skip human feedback and auto-approve
 		// SKIP HUMAN INPUT MODE: Skip human feedback but keep learning enabled
 		// NORMAL MODE & LOOP MODE: Always request human feedback before moving to next step
-		isFastExecuteStep := hcpo.IsFastExecuteStep(stepIndex)
-		isSkipHumanInput := hcpo.IsSkipHumanInput()
-		hcpo.GetLogger().Infof("🔍 DEBUG: Step %d human feedback check - fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v, skipHumanInput=%v", stepIndex+1, hcpo.fastExecuteMode, hcpo.fastExecuteEndStep, stepIndex, isFastExecuteStep, isSkipHumanInput)
+		isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
+		isSkipHumanInput := execCtx.SkipHumanInput
+		hcpo.GetLogger().Infof("🔍 DEBUG: Step %d human feedback check - execCtx: fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v, skipHumanInput=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, stepIndex, isFastExecuteStep, isSkipHumanInput)
+
 		var approved bool
 		var feedback string
 
 		// In fast execute mode or skip human input mode, always auto-approve without human feedback
 		if isFastExecuteStep || isSkipHumanInput {
 			if isFastExecuteStep {
-				hcpo.GetLogger().Infof("⚡ Fast mode: Auto-approving step %d without human feedback (stepIndex=%d <= fastExecuteEndStep=%d)", stepIndex+1, stepIndex, hcpo.fastExecuteEndStep)
+				hcpo.GetLogger().Infof("⚡ Fast mode: Auto-approving step %d without human feedback (stepIndex=%d <= fastExecuteEndStep=%d)", stepIndex+1, stepIndex, execCtx.FastExecuteEndStep)
 			} else {
 				hcpo.GetLogger().Infof("⚡ Skip human input mode: Auto-approving step %d without human feedback (learning will still run)", stepIndex+1)
 			}
@@ -1136,6 +1145,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	iteration int,
 	progress *StepProgress,
 	startFromStep int,
+	execCtx *ExecutionContext,
 ) ([]llmtypes.MessageContent, error) {
 	hcpo.GetLogger().Infof("🔄 Starting step-by-step execution of %d steps (starting from step %d)",
 		len(breakdownSteps), startFromStep+1)
@@ -1154,8 +1164,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	for i, step := range breakdownSteps {
 		// Reset fast execute mode if we've passed the fast execute range
 		// This ensures normal execution (with learning and human feedback) for steps after fastExecuteEndStep
-		if hcpo.fastExecuteMode && i > hcpo.fastExecuteEndStep {
-			hcpo.GetLogger().Infof("🔄 Fast execute mode completed (steps 0-%d), resetting to normal execution mode for step %d+", hcpo.fastExecuteEndStep, i+1)
+		// Note: execCtx is immutable, so we update the controller state for future steps
+		if execCtx.FastExecuteMode && i > execCtx.FastExecuteEndStep {
+			hcpo.GetLogger().Infof("🔄 Fast execute mode completed (steps 0-%d), resetting to normal execution mode for step %d+", execCtx.FastExecuteEndStep, i+1)
+			// Update execCtx for remaining steps (create new context with fast mode disabled)
+			execCtx = &ExecutionContext{
+				SkipHumanInput:     execCtx.SkipHumanInput,
+				FastExecuteMode:    false,
+				FastExecuteEndStep: -1,
+				RunSingleStepOnly:  execCtx.RunSingleStepOnly,
+				SingleStepTarget:   execCtx.SingleStepTarget,
+			}
 			hcpo.SetFastExecuteMode(false, -1)
 			// Ensure progress is saved when transitioning from fast to normal mode
 			// This catches any steps that were completed in fast mode but not yet saved
@@ -1177,7 +1196,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		// BUT: If we're in single-step mode and this is the target step, force execution even if completed
 		isCompleted := false
 		forceExecution := false
-		if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+		if execCtx.RunSingleStepOnly && i == execCtx.SingleStepTarget {
 			// Force execution of target step even if completed
 			forceExecution = true
 			hcpo.GetLogger().Infof("🎯 Single-step mode: forcing execution of target step %d even if previously completed", i+1)
@@ -1209,7 +1228,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		if step.HasCondition {
 			// Execute conditional step
 			hcpo.GetLogger().Infof("🔀 Starting conditional step execution: %s", step.Title)
-			if err := hcpo.executeConditionalStep(ctx, step, i, 0, progress, previousContextFiles, iteration); err != nil {
+			if err := hcpo.executeConditionalStep(ctx, step, i, 0, progress, previousContextFiles, iteration, execCtx); err != nil {
 				hcpo.GetLogger().Errorf("❌ Conditional step %d execution failed: %v", i+1, err)
 				// Emit error event
 				eventBridge := hcpo.GetContextAwareBridge()
@@ -1267,6 +1286,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			previousContextFiles,
 			progress,
 			false, // isBranchStep = false
+			execCtx,
 		)
 		if err != nil {
 			hcpo.GetLogger().Errorf("❌ Step %d execution failed: %v", i+1, err)

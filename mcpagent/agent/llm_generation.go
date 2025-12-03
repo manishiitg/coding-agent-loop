@@ -3,17 +3,19 @@ package mcpagent
 import (
 	"context"
 	"fmt"
+	"mcpagent/events"
 	"mcpagent/llm"
 	"mcpagent/observability"
-	"mcpagent/events"
 	"strings"
 	"time"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
-func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
+func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	// 🆕 DETAILED GENERATECONTENTWITHRETRY DEBUG LOGGING
 	logger := getLogger(a)
 	logger.Infof("🔄 [DEBUG] GenerateContentWithRetry START - Time: %v", time.Now())
@@ -38,12 +40,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "ValidationException") ||
 			strings.Contains(msg, "too long")
 
-		// Enhanced debugging for max token error detection
-		if isMaxToken {
-			// Note: logger will be available in the main function scope
-			// This will be logged when the error is actually processed
-		}
-
 		return isMaxToken
 		// REMOVED: Empty content patterns to prevent conflict with isEmptyContentError
 		// Empty content errors should only be handled by isEmptyContentError function
@@ -64,12 +60,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(errStr, "rate limit") ||
 			strings.Contains(errStr, "throttled")
 
-		// Enhanced debugging for throttling error detection
-		if isThrottling {
-			// Note: logger will be available in the main function scope
-			// This will be logged when the error is actually processed
-		}
-
 		return isThrottling
 	}
 
@@ -88,12 +78,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "empty content error") ||
 			strings.Contains(msg, "choice.Content is empty") ||
 			strings.Contains(msg, "empty response")
-
-		// Enhanced debugging for empty content error detection
-		if isEmptyContent {
-			// Note: logger will be available in the main function scope
-			// This will be logged when the error is actually processed
-		}
 
 		return isEmptyContent
 	}
@@ -116,12 +100,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "connection closed") ||
 			strings.Contains(msg, "unexpected EOF")
 
-		// Enhanced debugging for connection error detection
-		if isConnection {
-			// Note: logger will be available in the main function scope
-			// This will be logged when the error is actually processed
-		}
-
 		return isConnection
 	}
 
@@ -138,12 +116,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "stream interrupted") ||
 			strings.Contains(msg, "stream timeout") ||
 			strings.Contains(msg, "streaming error")
-
-		// Enhanced debugging for stream error detection
-		if isStream {
-			// Note: logger will be available in the main function scope
-			// This will be logged when the error is actually processed
-		}
 
 		return isStream
 	}
@@ -184,12 +156,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "Bad Gateway") ||
 			strings.Contains(msg, "Service Unavailable") ||
 			strings.Contains(msg, "Gateway Timeout")
-
-		// Enhanced debugging for internal error detection
-		if isInternal {
-			// Note: logger will be available in the main function scope
-			// This will be logged when the error is actually processed
-		}
 
 		return isInternal
 	}
@@ -262,7 +228,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err(), usage
+			return nil, usage, ctx.Err()
 		default:
 		}
 
@@ -291,7 +257,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			usage = extractUsageMetricsWithMessages(resp, messages)
 			// Note: llm_generation_end event is emitted by EndLLMGeneration() in conversation.go
 			// to avoid duplicate events
-			return resp, nil, usage
+			return resp, usage, nil
 		}
 
 		// 🆕 DETAILED ERROR DEBUGGING
@@ -463,7 +429,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					}
 					a.EmitTypedEvent(ctx, maxTokenSuccessEvent)
 					sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, string(a.provider)))
-					return fresp, nil, usage
+					return fresp, usage, nil
 				}
 
 				// Emit fallback attempt event for generation failure
@@ -492,7 +458,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
 			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), strings.Title(crossProviderName)))
+				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
 				for i, fallbackModelID := range crossProviderFallbacks {
 					// Create cross-provider fallback attempt event (replaced span-based tracing)
 					crossProviderFallbackEvent := &events.GenericEventData{
@@ -512,7 +478,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					}
 					a.EmitTypedEvent(ctx, crossProviderFallbackEvent)
 
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", strings.Title(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
+					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
 
 					// Track fallback attempt start time
 					fallbackStartTime := time.Now()
@@ -621,8 +587,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 							},
 						}
 						a.EmitTypedEvent(ctx, maxTokenCrossProviderSuccessEvent)
-						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, strings.Title(crossProviderName)))
-						return fresp, nil, usage
+						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, cases.Title(language.English).String(crossProviderName)))
+						return fresp, usage, nil
 					}
 
 					// Emit fallback attempt event for generation failure
@@ -701,10 +667,10 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			}
 			a.EmitTypedEvent(ctx, throttlingFallbackEvent)
 
-			sendMessage(fmt.Sprintf("\n⚠️ %s throttling detected (turn %d, attempt %d/%d). Trying fallback models...", strings.Title(string(a.provider)), turn, attempt+1, maxRetries))
+			sendMessage(fmt.Sprintf("\n⚠️ %s throttling detected (turn %d, attempt %d/%d). Trying fallback models...", cases.Title(language.English).String(string(a.provider)), turn, attempt+1, maxRetries))
 
 			// Phase 1: Try same-provider fallbacks first
-			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), strings.Title(string(a.provider))))
+			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), cases.Title(language.English).String(string(a.provider))))
 			for i, fallbackModelID := range sameProviderFallbacks {
 				// Create throttling fallback attempt event (replaced span-based tracing)
 				throttlingFallbackAttemptEvent := &events.GenericEventData{
@@ -816,7 +782,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					}
 					a.EmitTypedEvent(ctx, throttlingOverallSuccessEvent)
 					sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, string(a.provider)))
-					return fresp, nil, usage
+					return fresp, usage, nil
 				}
 
 				// Emit throttling fallback attempt failure event
@@ -831,7 +797,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
 			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), strings.Title(crossProviderName)))
+				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
 				for i, fallbackModelID := range crossProviderFallbacks {
 					// Create cross-provider throttling fallback attempt event (replaced span-based tracing)
 					crossProviderThrottlingFallbackEvent := &events.GenericEventData{
@@ -851,7 +817,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					}
 					a.EmitTypedEvent(ctx, crossProviderThrottlingFallbackEvent)
 
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", strings.Title(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
+					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
 
 					origModelID := a.ModelID
 					a.ModelID = fallbackModelID
@@ -942,8 +908,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 							},
 						}
 						a.EmitTypedEvent(ctx, crossProviderThrottlingOverallSuccessEvent)
-						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, strings.Title(crossProviderName)))
-						return fresp, nil, usage
+						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, cases.Title(language.English).String(crossProviderName)))
+						return fresp, usage, nil
 					}
 
 					// Emit cross-provider throttling fallback attempt failure event
@@ -1014,7 +980,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 						},
 					}
 					a.EmitTypedEvent(ctx, retryDelayCancelledEvent)
-					return nil, ctx.Err(), usage
+					return nil, usage, ctx.Err()
 				case <-time.After(delay):
 				}
 
@@ -1220,7 +1186,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					}
 					a.EmitTypedEvent(ctx, emptyContentFallbackSuccessEvent)
 					sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, string(a.provider)))
-					return fresp, nil, usage
+					return fresp, usage, nil
 				}
 
 				// Emit fallback attempt failure event
@@ -1235,7 +1201,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
 			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), strings.Title(crossProviderName)))
+				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
 				for i, fallbackModelID := range crossProviderFallbacks {
 					// Create cross-provider fallback attempt event (replaced span-based tracing)
 					crossProviderFallbackAttemptEvent := &events.GenericEventData{
@@ -1255,7 +1221,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					}
 					a.EmitTypedEvent(ctx, crossProviderFallbackAttemptEvent)
 
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", strings.Title(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
+					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
 
 					origModelID := a.ModelID
 					a.ModelID = fallbackModelID
@@ -1347,8 +1313,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 							},
 						}
 						a.EmitTypedEvent(ctx, emptyContentCrossProviderSuccessEvent)
-						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, strings.Title(crossProviderName)))
-						return fresp, nil, usage
+						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, cases.Title(language.English).String(crossProviderName)))
+						return fresp, usage, nil
 					}
 
 					// Emit cross-provider fallback attempt failure event
@@ -1504,7 +1470,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 						},
 					}
 					a.EmitTypedEvent(ctx, connectionErrorSuccessEvent)
-					return fresp, nil, usage
+					return fresp, usage, nil
 				} else {
 					sendMessage(fmt.Sprintf("\n❌ Connection error fallback model %s failed: %v", fallbackModelID, ferr2))
 				}
@@ -1512,7 +1478,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
 			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), strings.Title(crossProviderName)))
+				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
 				for i, fallbackModelID := range crossProviderFallbacks {
 					// Create cross-provider connection error fallback attempt event
 					crossProviderConnectionErrorFallbackEvent := &events.GenericEventData{
@@ -1532,7 +1498,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					}
 					a.EmitTypedEvent(ctx, crossProviderConnectionErrorFallbackEvent)
 
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", strings.Title(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
+					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
 
 					// Track fallback attempt start time
 					fallbackStartTime := time.Now()
@@ -1597,7 +1563,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 							},
 						}
 						a.EmitTypedEvent(ctx, crossProviderConnectionErrorSuccessEvent)
-						return fresp, nil, usage
+						return fresp, usage, nil
 					} else {
 						sendMessage(fmt.Sprintf("\n❌ Connection error cross-provider fallback model %s failed: %v", fallbackModelID, ferr2))
 					}
@@ -1637,9 +1603,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 		// Handle stream errors with fallback models
 		if isStreamError(err) {
-			resp, fallbackErr, fallbackUsage := handleErrorWithFallback(a, ctx, err, "stream_error", turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
+			resp, fallbackUsage, fallbackErr := handleErrorWithFallback(a, ctx, err, "stream_error", turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
 			if fallbackErr == nil {
-				return resp, nil, fallbackUsage
+				return resp, fallbackUsage, nil
 			}
 			lastErr = fallbackErr
 			break
@@ -1647,9 +1613,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 		// Handle internal server errors with fallback models
 		if isInternalError(err) {
-			resp, fallbackErr, fallbackUsage := handleErrorWithFallback(a, ctx, err, "internal_error", turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
+			resp, fallbackUsage, fallbackErr := handleErrorWithFallback(a, ctx, err, "internal_error", turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
 			if fallbackErr == nil {
-				return resp, nil, fallbackUsage
+				return resp, fallbackUsage, nil
 			}
 			lastErr = fallbackErr
 			break
@@ -1661,11 +1627,11 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	}
 
 	sendMessage(fmt.Sprintf("\n❌ LLM generation failed after %d attempts (turn %d): %v", maxRetries, turn, lastErr))
-	return nil, lastErr, usage
+	return nil, usage, lastErr
 }
 
 // handleErrorWithFallback is a generic function that handles any error type with fallback models
-func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
+func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType string, turn int, attempt int, maxRetries int, sameProviderFallbacks, crossProviderFallbacks []string, sendMessage func(string), messages []llmtypes.MessageContent, opts []llmtypes.CallOption) (*llmtypes.ContentResponse, observability.UsageMetrics, error) {
 	// 🔧 FIX: Reset reasoning tracker to prevent infinite final answer events
 
 	// Track error start time
@@ -1762,7 +1728,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 			a.LLM = fallbackLLM
 
 			sendMessage(fmt.Sprintf("\n✅ %s fallback successful with %s model: %s", errorType, string(fallbackProvider), fallbackModelID))
-			return fresp, nil, usage
+			return fresp, usage, nil
 		} else {
 			sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
 			// Emit fallback attempt event for generation failure
@@ -1829,7 +1795,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 				a.LLM = fallbackLLM
 
 				sendMessage(fmt.Sprintf("\n✅ %s cross-provider fallback successful with %s model: %s", errorType, string(fallbackProvider), fallbackModelID))
-				return fresp, nil, usage
+				return fresp, usage, nil
 			} else {
 				sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
 				// Emit fallback attempt event for generation failure
@@ -1857,7 +1823,7 @@ func handleErrorWithFallback(a *Agent, ctx context.Context, err error, errorType
 	}
 	a.EmitTypedEvent(ctx, errorAllFailedEvent)
 
-	return nil, fmt.Errorf("all fallback models failed for %s: %w", errorType, err), observability.UsageMetrics{}
+	return nil, observability.UsageMetrics{}, fmt.Errorf("all fallback models failed for %s: %w", errorType, err)
 }
 
 // createFallbackLLM creates a fallback LLM instance for the given modelID

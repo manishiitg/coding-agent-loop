@@ -31,6 +31,15 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+const (
+	contextKeyWorkspaceEventEmitter contextKey = "workspace_event_emitter"
+	contextKeyTurn                  contextKey = "turn"
+	contextKeyServerName            contextKey = "server_name"
+)
+
 // getLogger returns the agent's logger (guaranteed to be non-nil)
 func getLogger(a *Agent) logger.ExtendedLogger {
 	// Agent logger is guaranteed to be non-nil in the new architecture
@@ -421,28 +430,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		}
 
 		// Emit LLM Messages event to track what's being sent to the LLM
-		// Build tool context from previous tool calls in this conversation
-		var toolContext []events.ToolContext
-		for _, msg := range messages {
-			if msg.Role == llmtypes.ChatMessageTypeTool {
-				for _, part := range msg.Parts {
-					if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
-						toolContext = append(toolContext, events.ToolContext{
-							ToolName:   "previous_tool_call", // We don't have the original tool name here
-							ServerName: "unknown",            // We don't have the server name here
-							Result:     toolResp.Content,
-							Status:     "completed",
-						})
-					}
-				}
-			}
-		}
 
 		// NEW: Start LLM generation for hierarchy tracking
 		a.StartLLMGeneration(ctx)
 
 		// Use GenerateContentWithRetry for robust fallback handling
-		resp, genErr, usage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
+		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
 			// Streaming callback - no ReAct reasoning tracking needed
 		})
 
@@ -474,7 +467,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, empty content error detected, triggering fallback...", turn+1)
 
 				// Try fallback models by calling GenerateContentWithRetry again with fallback
-				fallbackResp, fallbackErr, fallbackUsage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
+				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
 					logger.Infof("[FALLBACK] %s", msg)
 				})
 
@@ -971,9 +964,9 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				}
 
 				// Inject event emitter, turn, and server name into context for workspace tools
-				toolCtx = context.WithValue(toolCtx, "workspace_event_emitter", a)
-				toolCtx = context.WithValue(toolCtx, "turn", turn+1)
-				toolCtx = context.WithValue(toolCtx, "server_name", serverName)
+				toolCtx = context.WithValue(toolCtx, contextKeyWorkspaceEventEmitter, a)
+				toolCtx = context.WithValue(toolCtx, contextKeyTurn, turn+1)
+				toolCtx = context.WithValue(toolCtx, contextKeyServerName, serverName)
 
 				var result *mcp.CallToolResult
 				var toolErr error
@@ -1051,7 +1044,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					errorRecoveryHandler := NewErrorRecoveryHandler(a)
 
 					// Attempt error recovery for recoverable errors
-					recoveredResult, recoveredErr, recoveredDuration, wasRecovered := errorRecoveryHandler.HandleError(
+					recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 						ctx, &tc, serverName, toolErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
 
 					if wasRecovered && recoveredErr == nil {
@@ -1110,7 +1103,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						fakeErr := fmt.Errorf("broken pipe detected in result: %s", resultText)
 
 						// Attempt error recovery
-						recoveredResult, recoveredErr, recoveredDuration, wasRecovered := errorRecoveryHandler.HandleError(
+						recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 							ctx, &tc, serverName, fakeErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
 
 						if wasRecovered && recoveredErr == nil {
@@ -1291,7 +1284,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, err, finalUsage := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
+	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
 		// Optional: stream the final response
 	})
 

@@ -32,6 +32,16 @@ type ExecutionOptions struct {
 	AllStepsCompletedAction string `json:"all_steps_completed_action,omitempty"` // "fast_execute_again" or "skip_execution"
 }
 
+// ExecutionContext represents immutable execution configuration
+// Created once at execution start and passed through the call chain
+type ExecutionContext struct {
+	SkipHumanInput     bool // Whether to skip human feedback requests (auto-approve steps)
+	FastExecuteMode    bool // Whether we're in fast execute mode
+	FastExecuteEndStep int  // Last step index to fast execute (0-based, -1 means not set)
+	RunSingleStepOnly  bool // Whether to run only a single step and stop
+	SingleStepTarget   int  // Target step index to run (0-based)
+}
+
 // Execution strategy constants
 const (
 	// Fresh start strategies

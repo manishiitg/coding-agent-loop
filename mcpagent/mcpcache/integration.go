@@ -1242,9 +1242,7 @@ func EmitComprehensiveCacheEvent(
 	}
 
 	for _, tracer := range tracers {
-		if err := tracer.EmitEvent(event); err != nil {
-			// Silently ignore emission errors to avoid disrupting cache operations
-		}
+		_ = tracer.EmitEvent(event) // Silently ignore emission errors to avoid disrupting cache operations
 	}
 }
 

@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"mcp-agent/agent_go/internal/utils"
@@ -58,15 +57,6 @@ type BaseOrchestrator struct {
 	folderGuardReadPaths  []string
 	folderGuardWritePaths []string
 
-	// Step token tracking
-	stepTokenAccumulator map[string]*StepTokenUsage // key format: "phase:step"
-	stepTokenTitles      map[string]string          // key format: "phase:step" -> step title
-	stepTokenMutex       sync.RWMutex
-
-	// Model token tracking (internal accumulation uses raw integers)
-	modelTokenAccumulator map[string]*ModelTokenUsageInternal // key: modelID
-	modelTokenMutex       sync.RWMutex
-
 	// Iteration folder for token persistence (workflow-specific)
 	iterationFolder string
 }
@@ -115,15 +105,10 @@ func NewBaseOrchestrator(
 		useStepSpecificLearnings: true,                 // Default to true: store learnings in step-specific folders
 		llmConfig:                llmConfig,
 		maxTurns:                 maxTurns,
-		// Initialize step token tracking
-		stepTokenAccumulator: make(map[string]*StepTokenUsage),
-		stepTokenTitles:      make(map[string]string),
-		// Initialize model token tracking
-		modelTokenAccumulator: make(map[string]*ModelTokenUsageInternal),
 	}
 
-	// Set token accumulator on bridge for step token tracking
-	contextAwareBridge.SetTokenAccumulator(orchestrator)
+	// Set token persister on bridge (no longer using accumulators)
+	contextAwareBridge.SetTokenPersister(orchestrator)
 
 	return orchestrator, nil
 }

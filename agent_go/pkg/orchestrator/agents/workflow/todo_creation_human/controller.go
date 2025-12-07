@@ -504,68 +504,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			}
 			hcpo.GetLogger().Infof("📊 Not all steps completed yet - will proceed with execution")
 		} else {
-			// Plan changed - handle based on frontend options or ask user
-			hcpo.GetLogger().Warnf("⚠️ Total steps changed (previous: %d, current: %d)",
+			// Plan changed - always preserve existing progress by default
+			hcpo.GetLogger().Infof("ℹ️ Total steps changed (previous: %d, current: %d) - preserving existing progress by default",
 				earlyProgress.TotalSteps, len(breakdownSteps))
-
-			// Use selected run mode (or default if not set yet)
-			runMode := hcpo.selectedRunMode
-			if runMode == "" {
-				runMode = "use_same_run"
-				hcpo.selectedRunMode = runMode
-			}
-			hcpo.GetLogger().Infof("📁 Using selected run mode: %s", runMode)
-
-			// Check if we should ask the question (only when reusing existing folder)
-			shouldAsk := hcpo.shouldAskDeleteOldProgress(ctx, hcpo.GetWorkspacePath(), runMode)
-			if !shouldAsk {
-				hcpo.GetLogger().Infof("📁 Run mode '%s' will create new folder - skipping 'Delete old progress' question", runMode)
-				earlyProgress = nil
-				planChangeHandled = true
-			} else if execOpts != nil && execOpts.PlanChangeAction != "" {
-				// Use frontend-provided action
-				planChangeHandled = true
-				switch execOpts.PlanChangeAction {
-				case PlanChangeActionKeepOldProgress:
-					hcpo.GetLogger().Infof("✅ Frontend chose to keep old progress (will try to match steps)")
-					// Keep earlyProgress as-is
-				case PlanChangeActionDeleteOldProgress:
-					hcpo.GetLogger().Infof("🔄 Frontend chose to delete old progress and start fresh")
-					execManager := hcpo.GetExecutionManager()
-					if err := execManager.CleanupForPlanChange(ctx, len(breakdownSteps), hcpo.GetWorkspacePath(), runMode); err != nil {
-						hcpo.GetLogger().Warnf("⚠️ Plan change cleanup failed: %v", err)
-					}
-					earlyProgress = nil
-				default:
-					hcpo.GetLogger().Warnf("⚠️ Unknown plan_change_action: %s, keeping old progress", execOpts.PlanChangeAction)
-				}
-			} else {
-				// Interactive mode - ask user what to do
-				choice, err := hcpo.handlePlanChange(ctx, earlyProgress, len(breakdownSteps))
-				planChangeHandled = true // Mark that we've already handled plan change
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for plan change: %w, defaulting to KEEP old progress (preserving user data)", err)
-					// Keep earlyProgress as-is to preserve user data - don't delete progress file
-					// User can manually delete if needed
-				} else {
-					switch choice {
-					case "option0": // Keep old progress (try to match)
-						hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
-						// Keep earlyProgress as-is, will be handled later
-					case "option1": // Delete old progress and start fresh
-						hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
-						execManager := hcpo.GetExecutionManager()
-						if err := execManager.CleanupForPlanChange(ctx, len(breakdownSteps), hcpo.GetWorkspacePath(), runMode); err != nil {
-							hcpo.GetLogger().Warnf("⚠️ Plan change cleanup failed: %v", err)
-						}
-						earlyProgress = nil
-					default:
-						hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to KEEP old progress (preserving user data)", choice)
-						// Keep earlyProgress as-is to preserve user data - don't delete progress file
-						// User can manually delete if needed
-					}
-				}
-			}
+			hcpo.GetLogger().Infof("💡 User can start a new iteration using execution strategy (e.g., START_FROM_BEGINNING_NO_HUMAN) if needed")
+			// Keep earlyProgress as-is to preserve user data
+			planChangeHandled = true
 		}
 	}
 
@@ -609,10 +553,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				err = nil // Reset err to allow execution to proceed
 			}
 		} else {
-			// Plan change was already handled, don't reload to avoid duplicate prompts
-			hcpo.GetLogger().Infof("ℹ️ Plan change already handled, skipping reload to avoid duplicate prompts")
-			existingProgress = nil
-			err = nil
+			// Plan change was already handled, but we still want to preserve progress
+			// Try to load existing progress even if earlyProgress is nil
+			hcpo.GetLogger().Infof("ℹ️ Plan change already handled, but attempting to load existing progress to preserve user data")
+			existingProgress, err = hcpo.loadStepProgress(ctx)
+			if err != nil {
+				// File doesn't exist - this is normal for first run, log and continue
+				hcpo.GetLogger().Infof("ℹ️ No existing progress file found (this is normal for first run), will start fresh execution")
+				existingProgress = nil
+				err = nil // Reset err to allow execution to proceed
+			} else {
+				hcpo.GetLogger().Infof("✅ Loaded existing progress after plan change (preserving user data)")
+			}
 		}
 	}
 
@@ -768,55 +720,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		// Check if total steps match (plan might have changed)
 		// Only check if we haven't already handled plan change
 		if !planChangeHandled && existingProgress.TotalSteps != len(breakdownSteps) {
-			// Plan changed - ask user what to do
-			hcpo.GetLogger().Warnf("⚠️ Plan has changed (previous: %d steps, current: %d steps), prompting user for decision",
+			// Plan changed - always preserve existing progress by default
+			hcpo.GetLogger().Infof("ℹ️ Plan has changed (previous: %d steps, current: %d steps) - preserving existing progress by default",
 				existingProgress.TotalSteps, len(breakdownSteps))
-
-			// Use selected run mode (or default if not set yet)
-			runMode := hcpo.selectedRunMode
-			if runMode == "" {
-				runMode = "use_same_run"
-				hcpo.selectedRunMode = runMode
-			}
-			hcpo.GetLogger().Infof("📁 Using selected run mode: %s", runMode)
-
-			// Check if we should ask the question (only when reusing existing folder)
-			shouldAsk := hcpo.shouldAskDeleteOldProgress(ctx, hcpo.GetWorkspacePath(), runMode)
-			if !shouldAsk {
-				hcpo.GetLogger().Infof("📁 Run mode '%s' will create new folder - skipping 'Delete old progress' question, old progress in old folder will be preserved", runMode)
-				// Don't delete old progress file - it's in a different folder and won't interfere
-				// Just clean up execution artifacts for the new folder (which will be created later)
-				// Note: We don't call cleanupExecutionArtifactsForFreshStart here because it would try to clean
-				// the folder that will be created, which doesn't exist yet. The cleanup will happen when needed.
-				// Clear existingProgress so we start fresh in the new folder
-				existingProgress = nil
-			} else {
-				// Ask user what to do
-				choice, err := hcpo.handlePlanChange(ctx, existingProgress, len(breakdownSteps))
-				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for plan change: %w, defaulting to KEEP old progress (preserving user data)", err)
-					// Keep existingProgress as-is to preserve user data - don't delete progress file
-					// User can manually delete if needed
-				} else {
-					switch choice {
-					case "option0": // Keep old progress (try to match)
-						hcpo.GetLogger().Infof("✅ User chose to keep old progress (will try to match steps)")
-						// Keep existingProgress as-is, continue processing below
-						// Note: Step matching logic may not work perfectly, but we'll try
-					case "option1": // Delete old progress and start fresh
-						hcpo.GetLogger().Infof("🔄 User chose to delete old progress and start fresh")
-						execManager := hcpo.GetExecutionManager()
-						if err := execManager.CleanupForPlanChange(ctx, len(breakdownSteps), hcpo.GetWorkspacePath(), runMode); err != nil {
-							hcpo.GetLogger().Warnf("⚠️ Plan change cleanup failed: %v", err)
-						}
-						existingProgress = nil
-					default:
-						hcpo.GetLogger().Warnf("⚠️ Unknown choice: %s, defaulting to KEEP old progress (preserving user data)", choice)
-						// Keep existingProgress as-is to preserve user data - don't delete progress file
-						// User can manually delete if needed
-					}
-				}
-			}
+			hcpo.GetLogger().Infof("💡 User can start a new iteration using execution strategy (e.g., START_FROM_BEGINNING_NO_HUMAN) if needed")
+			// Keep existingProgress as-is to preserve user data
 		}
 
 		// Process existing progress if still available after plan change handling
@@ -1207,8 +1115,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.GetLogger().Infof("✅ Proceeding to execution phase with %d steps", len(breakdownSteps))
 
 	// Initialize progress tracking if not already loaded
-	if existingProgress == nil {
-		// Initialize and save fresh progress file
+	// Only initialize fresh progress if we're NOT trying to preserve existing progress
+	// (i.e., if planChangeHandled = false, this is a first run and we should initialize)
+	if existingProgress == nil && !planChangeHandled {
+		// Initialize and save fresh progress file (first run scenario)
 		if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
 			hcpo.GetLogger().Warnf("⚠️ Failed to initialize fresh progress: %w", err)
 			// Continue anyway with in-memory progress
@@ -1225,6 +1135,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				LastUpdated:          time.Now(),
 				BranchSteps:          make(map[int]BranchStepProgress),
 			}
+		}
+	} else if existingProgress == nil && planChangeHandled {
+		// Plan change detected but progress file doesn't exist - preserve mode
+		// Don't initialize fresh progress, just continue with nil and let execution handle it
+		hcpo.GetLogger().Infof("ℹ️ Preserving progress mode: progress file doesn't exist, continuing without initializing fresh progress")
+		// Create minimal in-memory progress for execution to work with
+		existingProgress = &StepProgress{
+			CompletedStepIndices: []int{},
+			TotalSteps:           len(breakdownSteps),
+			BranchSteps:          make(map[int]BranchStepProgress),
 		}
 	}
 

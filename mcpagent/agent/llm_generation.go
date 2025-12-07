@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
@@ -29,21 +27,18 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	var lastErr error
 	var usage observability.UsageMetrics
 
+	// Helper functions for error classification
 	isMaxTokenError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
-		isMaxToken := strings.Contains(msg, "max_token") ||
+		return strings.Contains(msg, "max_token") ||
 			strings.Contains(msg, "context") ||
 			strings.Contains(msg, "max tokens") ||
 			strings.Contains(msg, "Input is too long") ||
 			strings.Contains(msg, "ValidationException") ||
 			strings.Contains(msg, "too long")
-
-		return isMaxToken
-		// REMOVED: Empty content patterns to prevent conflict with isEmptyContentError
-		// Empty content errors should only be handled by isEmptyContentError function
 	}
 
 	isThrottlingError := func(err error) bool {
@@ -51,7 +46,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			return false
 		}
 		errStr := err.Error()
-		isThrottling := strings.Contains(errStr, "ThrottlingException") ||
+		return strings.Contains(errStr, "ThrottlingException") ||
 			strings.Contains(errStr, "Too many tokens") ||
 			strings.Contains(errStr, "StatusCode: 429") ||
 			strings.Contains(errStr, "API returned unexpected status code: 429") ||
@@ -60,36 +55,28 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(errStr, "429") ||
 			strings.Contains(errStr, "rate limit") ||
 			strings.Contains(errStr, "throttled")
-
-		return isThrottling
 	}
 
-	// Helper function to check if an error is an empty content error
-	// Note: Excludes MALFORMED_FUNCTION_CALL errors which have their own specific error message
 	isEmptyContentError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
-		// Exclude MALFORMED_FUNCTION_CALL errors - they have their own specific message
 		if strings.Contains(msg, "MALFORMED_FUNCTION_CALL") {
 			return false
 		}
-		isEmptyContent := strings.Contains(msg, "Choice.Content is empty string") ||
+		return strings.Contains(msg, "Choice.Content is empty string") ||
 			strings.Contains(msg, "empty content error") ||
 			strings.Contains(msg, "choice.Content is empty") ||
 			strings.Contains(msg, "empty response")
-
-		return isEmptyContent
 	}
 
-	// Helper function to check if an error is a connection/network error
 	isConnectionError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
-		isConnection := strings.Contains(msg, "EOF") ||
+		return strings.Contains(msg, "EOF") ||
 			strings.Contains(msg, "connection refused") ||
 			strings.Contains(msg, "timeout") ||
 			strings.Contains(msg, "network") ||
@@ -100,34 +87,28 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "connection lost") ||
 			strings.Contains(msg, "connection closed") ||
 			strings.Contains(msg, "unexpected EOF")
-
-		return isConnection
 	}
 
-	// Helper function to check if an error is a stream-related error
 	isStreamError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
-		isStream := strings.Contains(msg, "stream error") ||
+		return strings.Contains(msg, "stream error") ||
 			strings.Contains(msg, "stream ID") ||
 			strings.Contains(msg, "streaming") ||
 			strings.Contains(msg, "stream closed") ||
 			strings.Contains(msg, "stream interrupted") ||
 			strings.Contains(msg, "stream timeout") ||
 			strings.Contains(msg, "streaming error")
-
-		return isStream
 	}
 
-	// Helper function to check if an error is an internal server error
 	isInternalError := func(err error) bool {
 		if err == nil {
 			return false
 		}
 		msg := err.Error()
-		isInternal := strings.Contains(msg, "INTERNAL_ERROR") ||
+		return strings.Contains(msg, "INTERNAL_ERROR") ||
 			strings.Contains(msg, "internal error") ||
 			strings.Contains(msg, "server error") ||
 			strings.Contains(msg, "unexpected error") ||
@@ -135,7 +116,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "peer error") ||
 			strings.Contains(msg, "internal server error") ||
 			strings.Contains(msg, "service error") ||
-			// Add server errors (5xx) to trigger fallback - these should be classified as internal errors, not throttling
 			strings.Contains(msg, "status 500") ||
 			strings.Contains(msg, "status code: 500") ||
 			strings.Contains(msg, "status code 500") ||
@@ -157,15 +137,13 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			strings.Contains(msg, "Bad Gateway") ||
 			strings.Contains(msg, "Service Unavailable") ||
 			strings.Contains(msg, "Gateway Timeout")
-
-		return isInternal
 	}
 
 	// Get fallback models for the current provider
 	v2Logger := a.Logger
 	v2Logger.Debug("Getting fallback models", loggerv2.String("provider_field", string(a.provider)))
 
-	// Use the agent's provider field directly since the LLM instance might not have provider info
+	// Validate and fallback provider
 	var provider llm.Provider
 	var err error
 	if a.provider != "" {
@@ -184,11 +162,12 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	}
 
 	v2Logger.Debug("Validated provider", loggerv2.String("provider", string(provider)))
-	sameProviderFallbacks := llm.GetDefaultFallbackModels(provider)
 
-	// Use actual cross-provider fallback configuration if available, otherwise fall back to hardcoded function
+	// Determine fallback models
+	sameProviderFallbacks := llm.GetDefaultFallbackModels(provider)
 	var crossProviderFallbacks []string
 	var crossProviderName string
+
 	if a.CrossProviderFallback != nil {
 		crossProviderFallbacks = a.CrossProviderFallback.Models
 		crossProviderName = a.CrossProviderFallback.Provider
@@ -197,12 +176,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			loggerv2.Any("models", crossProviderFallbacks))
 	} else {
 		crossProviderFallbacks = llm.GetCrossProviderFallbackModels(provider)
-		// Determine cross-provider name based on provider and fallback models
 		if len(crossProviderFallbacks) > 0 {
-			// Detect provider from first fallback model
 			crossProviderName = string(detectProviderFromModelID(crossProviderFallbacks[0]))
 		} else {
-			// Default fallback provider based on primary provider
 			if provider == llm.ProviderVertex {
 				crossProviderName = "anthropic"
 			} else {
@@ -218,7 +194,7 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		loggerv2.Any("same_provider", sameProviderFallbacks),
 		loggerv2.Any("cross_provider", crossProviderFallbacks))
 
-	// Create LLM generation with retry event (replaced span-based tracing)
+	// Emit start event
 	llmGenerationStartEvent := &events.LLMGenerationWithRetryEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
@@ -242,17 +218,24 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		default:
 		}
 
-		// Use non-streaming approach for all agents
+		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - About to call a.LLM.GenerateContent", attempt+1))
+
+		llmCallStart := time.Now()
 		resp, err := a.LLM.GenerateContent(ctx, messages, opts...)
+		llmCallDuration := time.Since(llmCallStart)
+		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - Duration: %v, Error: %v", attempt+1, llmCallDuration, err != nil))
 
 		if err == nil {
+			logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - SUCCESS", attempt+1))
 			usage = extractUsageMetricsWithMessages(resp, messages)
-			// Note: llm_generation_end event is emitted by EndLLMGeneration() in conversation.go
-			// to avoid duplicate events
 			return resp, usage, nil
 		}
 
-		// Emit LLM generation error event (replaced span-based tracing)
+		// Error handling
+		logger.Info(fmt.Sprintf("🔄 [DEBUG] GenerateContentWithRetry attempt %d - ERROR: %v", attempt+1, err))
+		lastErr = err
+
+		// Emit error event
 		llmAttemptErrorEvent := &events.LLMGenerationErrorEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
@@ -264,586 +247,42 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		}
 		a.EmitTypedEvent(ctx, llmAttemptErrorEvent)
 
-		// Handle max token errors with fallback models
+		// Determine error type
+		var errorType string
 		if isMaxTokenError(err) {
-
-			// Create max token fallback event (replaced span-based tracing)
-			maxTokenFallbackEvent := &events.LLMGenerationErrorEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-					EventID:   events.GenerateEventID(),
-				},
-				Turn:     turn + 1,
-				ModelID:  a.ModelID,
-				Error:    err.Error(),
-				Duration: 0, // Will be calculated when fallback completes
-			}
-			a.EmitTypedEvent(ctx, maxTokenFallbackEvent)
-
-			sendMessage(fmt.Sprintf("\n⚠️ LLM generation failed due to max_token/context error (turn %d). Trying fallback models...", turn))
-
-			// Store original error for final fallback
-			originalError := err
-
-			// Phase 1: Try same-provider fallbacks first
-			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), string(a.provider)))
-			for i, fallbackModelID := range sameProviderFallbacks {
-				// Create fallback attempt event (replaced span-based tracing)
-				fallbackAttemptEvent := &events.FallbackAttemptEvent{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Turn:          turn + 1,
-					AttemptIndex:  i + 1,
-					TotalAttempts: len(sameProviderFallbacks),
-					ModelID:       fallbackModelID,
-					Provider:      string(a.provider),
-					Phase:         "same_provider",
-					Success:       false, // Will be updated when attempt completes
-					Duration:      "",    // Will be updated when attempt completes
-				}
-				a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-				sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", string(a.provider), i+1, len(sameProviderFallbacks), fallbackModelID))
-
-				// Track fallback attempt start time
-				fallbackStartTime := time.Now()
-
-				origModelID := a.ModelID
-				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-				if ferr != nil {
-					a.ModelID = origModelID
-					// Emit fallback attempt event for initialization failure (replaced span-based tracing)
-					fallbackInitFailureEvent := &events.FallbackAttemptEvent{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Turn:          turn + 1,
-						AttemptIndex:  i + 1,
-						TotalAttempts: len(sameProviderFallbacks),
-						ModelID:       fallbackModelID,
-						Provider:      string(a.provider),
-						Phase:         "same_provider",
-						Success:       false,
-						Duration:      time.Since(fallbackStartTime).String(),
-						Error:         ferr.Error(),
-					}
-					a.EmitTypedEvent(ctx, fallbackInitFailureEvent)
-
-					// Emit fallback attempt event for initialization failure
-					fallbackAttemptEvent := events.NewFallbackAttemptEvent(
-						turn, i+1, len(sameProviderFallbacks),
-						fallbackModelID, string(a.provider), "same_provider",
-						false, time.Since(fallbackStartTime), ferr.Error(),
-					)
-					a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-					sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
-					continue
-				}
-
-				origLLM := a.LLM
-				a.LLM = fallbackLLM
-
-				// For ReAct agents, use streaming in fallback as well
-				// Use non-streaming approach for all agents during fallback
-				fresp, ferr2 := a.LLM.GenerateContent(ctx, messages, opts...)
-
-				a.LLM = origLLM
-				a.ModelID = origModelID
-
-				if ferr2 == nil {
-					usage = extractUsageMetricsWithMessages(fresp, messages)
-
-					// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-					a.ModelID = fallbackModelID
-					a.LLM = fallbackLLM
-					// Note: We don't restore origModelID and origLLM anymore
-
-					// Emit fallback attempt event for successful attempt
-					fallbackAttemptEvent := events.NewFallbackAttemptEvent(
-						turn, i+1, len(sameProviderFallbacks),
-						fallbackModelID, string(a.provider), "same_provider",
-						true, time.Since(fallbackStartTime), "",
-					)
-					a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-					// Emit fallback model used event
-					fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, string(a.provider), "max_token_error", time.Since(fallbackStartTime))
-					a.EmitTypedEvent(ctx, fallbackEvent)
-
-					// Emit model change event to track the permanent model change
-					modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", string(a.provider), time.Since(fallbackStartTime))
-					a.EmitTypedEvent(ctx, modelChangeEvent)
-
-					// Emit fallback attempt success event (replaced span-based tracing)
-					fallbackSuccessEvent := &events.FallbackAttemptEvent{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Turn:          turn + 1,
-						AttemptIndex:  i + 1,
-						TotalAttempts: len(sameProviderFallbacks),
-						ModelID:       fallbackModelID,
-						Provider:      string(a.provider),
-						Phase:         "same_provider",
-						Success:       true,
-						Duration:      time.Since(fallbackStartTime).String(),
-					}
-					a.EmitTypedEvent(ctx, fallbackSuccessEvent)
-					// Emit max token fallback success event
-					maxTokenSuccessEvent := events.NewFallbackSuccessDetailEvent(turn+1, fallbackModelID, string(a.provider), "same_provider", "max_token", i+1, time.Since(fallbackStartTime))
-					a.EmitTypedEvent(ctx, maxTokenSuccessEvent)
-					sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, string(a.provider)))
-					return fresp, usage, nil
-				}
-
-				// Emit fallback attempt event for generation failure
-				fallbackAttemptEvent = events.NewFallbackAttemptEvent(
-					turn, i+1, len(sameProviderFallbacks),
-					fallbackModelID, string(a.provider), "same_provider",
-					false, time.Since(fallbackStartTime), ferr2.Error(),
-				)
-				a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-				// Emit fallback attempt failure event
-				fallbackAttemptFailureEvent := events.NewFallbackAttemptEvent(
-					turn, i+1, len(sameProviderFallbacks),
-					fallbackModelID, string(a.provider), "same_provider",
-					false, time.Since(fallbackStartTime), ferr2.Error(),
-				)
-				a.EmitTypedEvent(ctx, fallbackAttemptFailureEvent)
-				// Provide more specific error messages for context length issues
-				errorMsg := ferr2.Error()
-				if strings.Contains(errorMsg, "Input is too long") || strings.Contains(errorMsg, "ValidationException") {
-					sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: Input too long for this model's context window", fallbackModelID))
-				} else {
-					sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
-				}
-			}
-
-			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
-			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
-				for i, fallbackModelID := range crossProviderFallbacks {
-					// Create cross-provider fallback attempt event
-					crossProviderFallbackEvent := events.NewFallbackAttemptDetailEvent(turn+1, i+1, len(crossProviderFallbacks), fallbackModelID, "openai", "cross_provider", "max_token")
-					a.EmitTypedEvent(ctx, crossProviderFallbackEvent)
-
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
-
-					// Track fallback attempt start time
-					fallbackStartTime := time.Now()
-
-					origModelID := a.ModelID
-					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-					if ferr != nil {
-						a.ModelID = origModelID
-						// Emit cross-provider fallback initialization failure event
-						crossProviderInitFailureEvent := events.NewFallbackFailureDetailEvent(turn+1, fallbackModelID, "openai", "cross_provider", "initialization", "max_token", ferr.Error(), time.Since(fallbackStartTime))
-						a.EmitTypedEvent(ctx, crossProviderInitFailureEvent)
-
-						// Emit fallback attempt event for initialization failure
-						fallbackAttemptEvent := events.NewFallbackAttemptEvent(
-							turn, i+1, len(crossProviderFallbacks),
-							fallbackModelID, "openai", "cross_provider",
-							false, time.Since(fallbackStartTime), ferr.Error(),
-						)
-						a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-						sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
-						continue
-					}
-
-					origLLM := a.LLM
-					a.LLM = fallbackLLM
-
-					// For ReAct agents, use streaming in fallback as well
-					var fresp *llmtypes.ContentResponse
-					var ferr2 error
-					// Use non-streaming approach for all agents, including ReAct agents during fallback
-					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-
-					a.LLM = origLLM
-					a.ModelID = origModelID
-
-					if ferr2 == nil {
-						usage = extractUsageMetricsWithMessages(fresp, messages)
-
-						// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-						a.ModelID = fallbackModelID
-						a.LLM = fallbackLLM
-						// Note: We don't restore origModelID and origLLM anymore
-
-						// Emit fallback attempt event for successful attempt
-						fallbackAttemptEvent := events.NewFallbackAttemptEvent(
-							turn, i+1, len(crossProviderFallbacks),
-							fallbackModelID, "openai", "cross_provider",
-							true, time.Since(fallbackStartTime), "",
-						)
-						a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-						// Emit fallback model used event
-						fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, "openai", "max_token_error", time.Since(fallbackStartTime))
-						a.EmitTypedEvent(ctx, fallbackEvent)
-
-						// Emit model change event to track the permanent model change
-						modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", "openai", time.Since(fallbackStartTime))
-						a.EmitTypedEvent(ctx, modelChangeEvent)
-
-						// Emit cross-provider fallback success event
-						crossProviderSuccessEvent := events.NewFallbackSuccessDetailEvent(turn+1, fallbackModelID, "openai", "cross_provider", "max_token", i+1, time.Since(fallbackStartTime))
-						a.EmitTypedEvent(ctx, crossProviderSuccessEvent)
-						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, cases.Title(language.English).String(crossProviderName)))
-						return fresp, usage, nil
-					}
-
-					// Emit fallback attempt event for generation failure
-					fallbackAttemptEvent := events.NewFallbackAttemptEvent(
-						turn, i+1, len(crossProviderFallbacks),
-						fallbackModelID, "openai", "cross_provider",
-						false, time.Since(fallbackStartTime), ferr2.Error(),
-					)
-					a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-					// Emit cross-provider fallback attempt failure event
-					crossProviderFallbackFailureEvent := events.NewFallbackAttemptEvent(
-						turn, i+1, len(crossProviderFallbacks),
-						fallbackModelID, crossProviderName, fmt.Sprintf("cross_provider_%s", crossProviderName),
-						false, time.Since(fallbackStartTime), ferr2.Error(),
-					)
-					a.EmitTypedEvent(ctx, crossProviderFallbackFailureEvent)
-					sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
-				}
-			}
-
-			// Provide a detailed summary of all failed fallback attempts
-			sendMessage(fmt.Sprintf("\n❌ All fallback models failed for context length error (turn %d):", turn))
-			sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(sameProviderFallbacks), string(a.provider), sameProviderFallbacks))
-			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(crossProviderFallbacks), crossProviderName, crossProviderFallbacks))
-			}
-			sendMessage("   - Original error: " + fmt.Sprint(originalError))
-			sendMessage("   - Suggestion: Try reducing conversation history or input length")
-
-			// Emit max token fallback all failed event (replaced span-based tracing)
-			maxTokenAllFailedEvent := &events.GenericEventData{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Data: map[string]interface{}{
-					"turn":                    turn + 1,
-					"all_fallbacks_failed":    true,
-					"same_provider_attempts":  len(sameProviderFallbacks),
-					"cross_provider_attempts": len(crossProviderFallbacks),
-					"failed_models":           append(sameProviderFallbacks, crossProviderFallbacks...),
-					"error_type":              "max_token",
-					"operation":               "max_token_fallback",
-					"final_error":             err.Error(),
-				},
-			}
-			a.EmitTypedEvent(ctx, maxTokenAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for max_token error: %w", originalError)
-			break
+			errorType = "max_token_error"
+		} else if isThrottlingError(err) {
+			errorType = "throttling_error"
+		} else if isEmptyContentError(err) {
+			errorType = "empty_content_error"
+		} else if isConnectionError(err) {
+			errorType = "connection_error"
+		} else if isStreamError(err) {
+			errorType = "stream_error"
+		} else if isInternalError(err) {
+			errorType = "internal_error"
 		}
 
-		// Handle throttling errors with fallback models
-		if isThrottlingError(err) {
+		if errorType != "" {
+			// Use unified fallback logic
+			fResp, fUsage, fErr := handleErrorWithFallback(a, ctx, err, errorType, turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
 
-			// Track throttling start time
-			throttlingStartTime := time.Now()
-
-			// Emit throttling detected event
-			throttlingEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(throttlingStartTime), "throttling", 0)
-			a.EmitTypedEvent(ctx, throttlingEvent)
-
-			// Create throttling fallback event (replaced span-based tracing)
-			throttlingFallbackEvent := &events.GenericEventData{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Data: map[string]interface{}{
-					"error_type":               "throttling_error",
-					"original_error":           err.Error(),
-					"same_provider_fallbacks":  len(sameProviderFallbacks),
-					"cross_provider_fallbacks": len(crossProviderFallbacks),
-					"turn":                     turn,
-					"attempt":                  attempt + 1,
-					"operation":                "throttling_fallback",
-				},
-			}
-			a.EmitTypedEvent(ctx, throttlingFallbackEvent)
-
-			sendMessage(fmt.Sprintf("\n⚠️ %s throttling detected (turn %d, attempt %d/%d). Trying fallback models...", cases.Title(language.English).String(string(a.provider)), turn, attempt+1, maxRetries))
-
-			// Phase 1: Try same-provider fallbacks first
-			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), cases.Title(language.English).String(string(a.provider))))
-			for i, fallbackModelID := range sameProviderFallbacks {
-				// Create throttling fallback attempt event (replaced span-based tracing)
-				throttlingFallbackAttemptEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Data: map[string]interface{}{
-						"fallback_index":    i + 1,
-						"fallback_model":    fallbackModelID,
-						"llm_model":         fallbackModelID,
-						"fallback_provider": string(a.provider),
-						"fallback_phase":    "same_provider",
-						"total_fallbacks":   len(sameProviderFallbacks),
-						"error_type":        "throttling",
-						"operation":         "fallback_attempt",
-					},
-				}
-				a.EmitTypedEvent(ctx, throttlingFallbackAttemptEvent)
-
-				sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", string(a.provider), i+1, len(sameProviderFallbacks), fallbackModelID))
-
-				origModelID := a.ModelID
-				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-				if ferr != nil {
-					a.ModelID = origModelID
-					// Emit throttling fallback initialization failure event (replaced span-based tracing)
-					throttlingInitFailureEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":              turn + 1,
-							"success":           false,
-							"error":             ferr.Error(),
-							"stage":             "initialization",
-							"fallback_model":    fallbackModelID,
-							"fallback_provider": string(a.provider),
-							"fallback_phase":    "same_provider",
-							"error_type":        "throttling",
-						},
-					}
-					a.EmitTypedEvent(ctx, throttlingInitFailureEvent)
-					sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
-					continue
-				}
-
-				origLLM := a.LLM
-				a.LLM = fallbackLLM
-
-				// Use non-streaming approach for all agents during fallback
-				var fresp *llmtypes.ContentResponse
-				var ferr2 error
-				// Use non-streaming approach for all agents, including ReAct agents during fallback
-				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-
-				a.LLM = origLLM
-				a.ModelID = origModelID
-
-				if ferr2 == nil {
-					usage = extractUsageMetricsWithMessages(fresp, messages)
-
-					// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-					a.ModelID = fallbackModelID
-					a.LLM = fallbackLLM
-					// Note: We don't restore origModelID and origLLM anymore
-
-					// Emit fallback model used event
-					fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, string(a.provider), "throttling", time.Since(throttlingStartTime))
-					a.EmitTypedEvent(ctx, fallbackEvent)
-
-					// Emit model change event to track the permanent model change
-					modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", string(a.provider), time.Since(throttlingStartTime))
-					a.EmitTypedEvent(ctx, modelChangeEvent)
-
-					// Emit throttling fallback success event (replaced span-based tracing)
-					throttlingFallbackSuccessEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":              turn + 1,
-							"success":           true,
-							"usage":             usage,
-							"stage":             "generation",
-							"llm_model":         fallbackModelID,
-							"fallback_provider": string(a.provider),
-							"fallback_phase":    "same_provider",
-							"error_type":        "throttling",
-							"duration":          time.Since(throttlingStartTime).String(),
-						},
-					}
-					a.EmitTypedEvent(ctx, throttlingFallbackSuccessEvent)
-					// Emit throttling fallback overall success event (replaced span-based tracing)
-					throttlingOverallSuccessEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":                turn + 1,
-							"successful_fallback": fallbackModelID,
-							"attempts":            i + 1,
-							"successful_llm":      fallbackModelID,
-							"successful_provider": string(a.provider),
-							"successful_phase":    "same_provider",
-							"error_type":          "throttling",
-							"duration":            time.Since(throttlingStartTime).String(),
-						},
-					}
-					a.EmitTypedEvent(ctx, throttlingOverallSuccessEvent)
-					sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, string(a.provider)))
-					return fresp, usage, nil
-				}
-
-				// Emit throttling fallback attempt failure event
-				throttlingFallbackFailureEvent := events.NewFallbackAttemptEvent(
-					turn, i+1, len(sameProviderFallbacks),
-					fallbackModelID, string(a.provider), "same_provider",
-					false, time.Since(throttlingStartTime), ferr2.Error(),
-				)
-				a.EmitTypedEvent(ctx, throttlingFallbackFailureEvent)
-				sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
+			if fErr == nil {
+				return fResp, fUsage, nil
 			}
 
-			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
-			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
-				for i, fallbackModelID := range crossProviderFallbacks {
-					// Create cross-provider throttling fallback attempt event (replaced span-based tracing)
-					crossProviderThrottlingFallbackEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"fallback_index":    i + 1,
-							"fallback_model":    fallbackModelID,
-							"llm_model":         fallbackModelID,
-							"fallback_provider": "openai",
-							"fallback_phase":    "cross_provider",
-							"total_fallbacks":   len(crossProviderFallbacks),
-							"error_type":        "throttling",
-							"operation":         "fallback_attempt",
-						},
-					}
-					a.EmitTypedEvent(ctx, crossProviderThrottlingFallbackEvent)
+			lastErr = fErr
 
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
-
-					origModelID := a.ModelID
-					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-					if ferr != nil {
-						a.ModelID = origModelID
-						// Emit cross-provider throttling fallback initialization failure event (replaced span-based tracing)
-						crossProviderThrottlingInitFailureEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":              turn + 1,
-								"success":           false,
-								"error":             ferr.Error(),
-								"stage":             "initialization",
-								"fallback_model":    fallbackModelID,
-								"fallback_provider": "openai",
-								"fallback_phase":    "cross_provider",
-								"error_type":        "throttling",
-							},
-						}
-						a.EmitTypedEvent(ctx, crossProviderThrottlingInitFailureEvent)
-						sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
-						continue
-					}
-
-					origLLM := a.LLM
-					a.LLM = fallbackLLM
-
-					// Use non-streaming approach for all agents during fallback
-					var fresp *llmtypes.ContentResponse
-					var ferr2 error
-					// Use non-streaming approach for all agents, including ReAct agents during fallback
-					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-
-					a.LLM = origLLM
-					a.ModelID = origModelID
-
-					if ferr2 == nil {
-						usage = extractUsageMetricsWithMessages(fresp, messages)
-
-						// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-						a.ModelID = fallbackModelID
-						a.LLM = fallbackLLM
-						// Note: We don't restore origModelID and origLLM anymore
-
-						// Emit fallback model used event
-						fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, "openai", "throttling", time.Since(throttlingStartTime))
-						a.EmitTypedEvent(ctx, fallbackEvent)
-
-						// Emit model change event to track the permanent model change
-						modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", "openai", time.Since(throttlingStartTime))
-						a.EmitTypedEvent(ctx, modelChangeEvent)
-
-						// Emit cross-provider throttling fallback success event (replaced span-based tracing)
-						crossProviderThrottlingSuccessEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":              turn + 1,
-								"success":           true,
-								"usage":             usage,
-								"stage":             "generation",
-								"llm_model":         fallbackModelID,
-								"fallback_provider": "openai",
-								"fallback_phase":    "cross_provider",
-								"error_type":        "throttling",
-								"duration":          time.Since(throttlingStartTime).String(),
-							},
-						}
-						a.EmitTypedEvent(ctx, crossProviderThrottlingSuccessEvent)
-						// Emit cross-provider throttling fallback overall success event (replaced span-based tracing)
-						crossProviderThrottlingOverallSuccessEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":                turn + 1,
-								"successful_fallback": fallbackModelID,
-								"attempts":            i + 1,
-								"successful_llm":      fallbackModelID,
-								"successful_provider": "openai",
-								"successful_phase":    "cross_provider",
-								"error_type":          "throttling",
-								"duration":            time.Since(throttlingStartTime).String(),
-							},
-						}
-						a.EmitTypedEvent(ctx, crossProviderThrottlingOverallSuccessEvent)
-						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, cases.Title(language.English).String(crossProviderName)))
-						return fresp, usage, nil
-					}
-
-					// Emit cross-provider throttling fallback attempt failure event
-					crossProviderThrottlingFallbackFailureEvent := events.NewFallbackAttemptEvent(
-						turn, i+1, len(crossProviderFallbacks),
-						fallbackModelID, crossProviderName, fmt.Sprintf("cross_provider_%s", crossProviderName),
-						false, time.Since(throttlingStartTime), ferr2.Error(),
-					)
-					a.EmitTypedEvent(ctx, crossProviderThrottlingFallbackFailureEvent)
-					sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
-				}
-			}
-
-			// If all fallback models failed, try waiting and retrying with original model
-			if attempt < maxRetries-1 {
+			// Special handling for throttling: retry with original model if fallbacks failed
+			if errorType == "throttling_error" && attempt < maxRetries-1 {
 				delay := time.Duration(float64(baseDelay) * (1.5 + float64(attempt)*0.5))
 				if delay > maxDelay {
 					delay = maxDelay
 				}
 
-				// Create retry delay event (replaced span-based tracing)
+				// Emit and log delay
 				retryDelayEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
+					BaseEventData: events.BaseEventData{Timestamp: time.Now()},
 					Data: map[string]interface{}{
 						"delay_duration": delay.String(),
 						"attempt":        attempt + 1,
@@ -853,689 +292,24 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					},
 				}
 				a.EmitTypedEvent(ctx, retryDelayEvent)
-
 				sendMessage(fmt.Sprintf("\n⏳ All fallback models failed. Waiting %v before retry with original model...", delay))
 
-				go func() {
-					ticker := time.NewTicker(15 * time.Second)
-					defer ticker.Stop()
-					remaining := delay
-					for remaining > 0 {
-						select {
-						case <-ctx.Done():
-							return
-						case <-ticker.C:
-							remaining -= 15 * time.Second
-							if remaining > 0 {
-								sendMessage(fmt.Sprintf("\n⏳ Still waiting... %v remaining (turn %d)", remaining, turn))
-							}
-						}
-					}
-				}()
-
+				// Wait for delay or context cancellation
 				select {
 				case <-ctx.Done():
-					// Emit retry delay cancellation event (replaced span-based tracing)
-					retryDelayCancelledEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":       turn + 1,
-							"cancelled":  true,
-							"error":      ctx.Err().Error(),
-							"error_type": "throttling",
-							"operation":  "retry_delay",
-						},
-					}
-					a.EmitTypedEvent(ctx, retryDelayCancelledEvent)
 					return nil, usage, ctx.Err()
 				case <-time.After(delay):
 				}
-
-				// Emit retry delay completion event (replaced span-based tracing)
-				retryDelayCompletedEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Data: map[string]interface{}{
-						"turn":       turn + 1,
-						"completed":  true,
-						"error_type": "throttling",
-						"operation":  "retry_delay",
-					},
-				}
-				a.EmitTypedEvent(ctx, retryDelayCompletedEvent)
-				// Emit throttling fallback all failed event (replaced span-based tracing)
-				throttlingAllFailedEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Data: map[string]interface{}{
-						"turn":                    turn + 1,
-						"all_fallbacks_failed":    true,
-						"retrying_with_original":  true,
-						"same_provider_attempts":  len(sameProviderFallbacks),
-						"cross_provider_attempts": len(crossProviderFallbacks),
-						"error_type":              "throttling",
-						"duration":                time.Since(throttlingStartTime).String(),
-					},
-				}
-				a.EmitTypedEvent(ctx, throttlingAllFailedEvent)
 
 				sendMessage(fmt.Sprintf("\n🔄 Retrying with original model (turn %d, attempt %d/%d)...", turn, attempt+2, maxRetries))
 				continue
 			}
 
-			// Emit throttling fallback max retries reached event (replaced span-based tracing)
-			throttlingMaxRetriesEvent := &events.GenericEventData{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Data: map[string]interface{}{
-					"turn":                    turn + 1,
-					"all_fallbacks_failed":    true,
-					"max_retries_reached":     true,
-					"same_provider_attempts":  len(sameProviderFallbacks),
-					"cross_provider_attempts": len(crossProviderFallbacks),
-					"error_type":              "throttling",
-					"duration":                time.Since(throttlingStartTime).String(),
-					"final_error":             err.Error(),
-				},
-			}
-			a.EmitTypedEvent(ctx, throttlingMaxRetriesEvent)
-			lastErr = fmt.Errorf("all models failed after %d attempts: %w", maxRetries, err)
+			// For other error types, or if max retries reached for throttling, break loops
 			break
 		}
 
-		// Handle empty content errors - go directly to fallback models (no retry delay)
-		if isEmptyContentError(err) {
-			v2Logger := a.Logger
-			v2Logger.Debug("Empty content error handling started",
-				loggerv2.Error(err),
-				loggerv2.Int("same_provider_fallbacks", len(sameProviderFallbacks)),
-				loggerv2.Int("cross_provider_fallbacks", len(crossProviderFallbacks)),
-				loggerv2.Any("same_provider_fallbacks", sameProviderFallbacks),
-				loggerv2.Any("cross_provider_fallbacks", crossProviderFallbacks))
-
-			// Track empty content error start time
-			emptyContentStartTime := time.Now()
-
-			// Go directly to fallback models (no retry delay for empty content errors)
-			v2Logger.Warn("Empty content error detected, proceeding directly to fallback models",
-				loggerv2.Int("turn", turn),
-				loggerv2.Int("attempt", attempt+1),
-				loggerv2.Int("max_retries", maxRetries))
-
-			// Emit empty content error event (no retry delay since we're going to fallback)
-			emptyContentEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(emptyContentStartTime), "empty_content", 0)
-			a.EmitTypedEvent(ctx, emptyContentEvent)
-
-			// Create empty content fallback event (replaced span-based tracing)
-			emptyContentFallbackEvent := &events.GenericEventData{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Data: map[string]interface{}{
-					"error_type":               "empty_content_error",
-					"original_error":           err.Error(),
-					"same_provider_fallbacks":  len(sameProviderFallbacks),
-					"cross_provider_fallbacks": len(crossProviderFallbacks),
-					"turn":                     turn,
-					"attempt":                  attempt + 1,
-					"operation":                "empty_content_fallback",
-				},
-			}
-			a.EmitTypedEvent(ctx, emptyContentFallbackEvent)
-
-			sendMessage("\n⚠️ Empty content error: Proceeding directly to fallback models...")
-
-			// Phase 1: Try same-provider fallbacks first
-			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), string(a.provider)))
-			for i, fallbackModelID := range sameProviderFallbacks {
-				// Create fallback attempt event (replaced span-based tracing)
-				fallbackAttemptEvent := &events.FallbackAttemptEvent{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Turn:          turn + 1,
-					AttemptIndex:  i + 1,
-					TotalAttempts: len(sameProviderFallbacks),
-					ModelID:       fallbackModelID,
-					Provider:      string(a.provider),
-					Phase:         "same_provider",
-					Success:       false, // Will be updated when attempt completes
-					Duration:      "",    // Will be updated when attempt completes
-				}
-				a.EmitTypedEvent(ctx, fallbackAttemptEvent)
-
-				sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", string(a.provider), i+1, len(sameProviderFallbacks), fallbackModelID))
-
-				origModelID := a.ModelID
-				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-				if ferr != nil {
-					a.ModelID = origModelID
-					// Emit fallback initialization failure event (replaced span-based tracing)
-					fallbackInitFailureEvent := &events.FallbackAttemptEvent{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Turn:          turn + 1,
-						AttemptIndex:  i + 1,
-						TotalAttempts: len(sameProviderFallbacks),
-						ModelID:       fallbackModelID,
-						Provider:      string(a.provider),
-						Phase:         "same_provider",
-						Error:         ferr.Error(),
-						Success:       false,
-						Duration:      "",
-					}
-					a.EmitTypedEvent(ctx, fallbackInitFailureEvent)
-					sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
-					continue
-				}
-
-				origLLM := a.LLM
-				a.LLM = fallbackLLM
-
-				// Use non-streaming approach for all agents during fallback
-				var fresp *llmtypes.ContentResponse
-				var ferr2 error
-				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-
-				a.LLM = origLLM
-				a.ModelID = origModelID
-
-				if ferr2 == nil {
-					usage = extractUsageMetricsWithMessages(fresp, messages)
-
-					// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-					a.ModelID = fallbackModelID
-					a.LLM = fallbackLLM
-					// Note: We don't restore origModelID and origLLM anymore
-
-					// Emit fallback model used event
-					fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, string(a.provider), "empty_content", time.Since(emptyContentStartTime))
-					a.EmitTypedEvent(ctx, fallbackEvent)
-
-					// Emit model change event to track the permanent model change
-					modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", string(a.provider), time.Since(emptyContentStartTime))
-					a.EmitTypedEvent(ctx, modelChangeEvent)
-
-					// Emit fallback success event (replaced span-based tracing)
-					fallbackSuccessEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":              turn + 1,
-							"success":           true,
-							"usage":             usage,
-							"stage":             "generation",
-							"llm_model":         fallbackModelID,    // Successful LLM model
-							"fallback_provider": string(a.provider), // Provider for this fallback
-							"fallback_phase":    "same_provider",    // Phase of successful fallback
-							"error_type":        "empty_content",
-							"operation":         "fallback_attempt",
-						},
-					}
-					a.EmitTypedEvent(ctx, fallbackSuccessEvent)
-					// Emit empty content fallback success event (replaced span-based tracing)
-					emptyContentFallbackSuccessEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":                turn + 1,
-							"successful_fallback": fallbackModelID,
-							"attempts":            i + 1,
-							"successful_llm":      fallbackModelID,    // Successful LLM model
-							"successful_provider": string(a.provider), // Provider for successful fallback
-							"successful_phase":    "same_provider",    // Phase of successful fallback
-							"error_type":          "empty_content",
-							"operation":           "empty_content_fallback",
-							"duration":            time.Since(emptyContentStartTime).String(),
-						},
-					}
-					a.EmitTypedEvent(ctx, emptyContentFallbackSuccessEvent)
-					sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, string(a.provider)))
-					return fresp, usage, nil
-				}
-
-				// Emit fallback attempt failure event
-				fallbackAttemptFailureEvent := events.NewFallbackAttemptEvent(
-					turn, i+1, len(sameProviderFallbacks),
-					fallbackModelID, string(a.provider), "same_provider",
-					false, time.Since(emptyContentStartTime), ferr2.Error(),
-				)
-				a.EmitTypedEvent(ctx, fallbackAttemptFailureEvent)
-				sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
-			}
-
-			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
-			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
-				for i, fallbackModelID := range crossProviderFallbacks {
-					// Create cross-provider fallback attempt event (replaced span-based tracing)
-					crossProviderFallbackAttemptEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"fallback_index":    i + 1,
-							"fallback_model":    fallbackModelID,
-							"llm_model":         fallbackModelID,  // Explicit LLM model identifier
-							"fallback_provider": "openai",         // Provider for this fallback
-							"fallback_phase":    "cross_provider", // Phase of fallback
-							"total_fallbacks":   len(crossProviderFallbacks),
-							"error_type":        "empty_content",
-							"operation":         "fallback_attempt",
-						},
-					}
-					a.EmitTypedEvent(ctx, crossProviderFallbackAttemptEvent)
-
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
-
-					origModelID := a.ModelID
-					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-					if ferr != nil {
-						a.ModelID = origModelID
-						// Emit cross-provider fallback initialization failure event (replaced span-based tracing)
-						crossProviderFallbackInitFailureEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":              turn + 1,
-								"success":           false,
-								"error":             ferr.Error(),
-								"stage":             "initialization",
-								"fallback_model":    fallbackModelID,
-								"fallback_provider": "openai",
-								"fallback_phase":    "cross_provider",
-								"error_type":        "empty_content",
-								"operation":         "fallback_attempt",
-							},
-						}
-						a.EmitTypedEvent(ctx, crossProviderFallbackInitFailureEvent)
-						sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
-						continue
-					}
-
-					origLLM := a.LLM
-					a.LLM = fallbackLLM
-
-					// Use non-streaming approach for all agents during fallback
-					var fresp *llmtypes.ContentResponse
-					var ferr2 error
-					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-
-					a.LLM = origLLM
-					a.ModelID = origModelID
-
-					if ferr2 == nil {
-						usage = extractUsageMetricsWithMessages(fresp, messages)
-
-						// PERMANENTLY UPDATE AGENT'S MODEL to the successful fallback
-						a.ModelID = fallbackModelID
-						a.LLM = fallbackLLM
-						// Note: We don't restore origModelID and origLLM anymore
-
-						// Emit fallback model used event
-						fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, "openai", "empty_content", time.Since(emptyContentStartTime))
-						a.EmitTypedEvent(ctx, fallbackEvent)
-
-						// Emit model change event to track the permanent model change
-						modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", "openai", time.Since(emptyContentStartTime))
-						a.EmitTypedEvent(ctx, modelChangeEvent)
-
-						// Emit cross-provider fallback success event (replaced span-based tracing)
-						crossProviderFallbackSuccessEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":              turn + 1,
-								"success":           true,
-								"usage":             usage,
-								"stage":             "generation",
-								"llm_model":         fallbackModelID,  // Successful LLM model
-								"fallback_provider": "openai",         // Provider for successful fallback
-								"fallback_phase":    "cross_provider", // Phase of successful fallback
-								"error_type":        "empty_content",
-								"operation":         "fallback_attempt",
-							},
-						}
-						a.EmitTypedEvent(ctx, crossProviderFallbackSuccessEvent)
-						// Emit empty content cross-provider fallback success event (replaced span-based tracing)
-						emptyContentCrossProviderSuccessEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":                turn + 1,
-								"successful_fallback": fallbackModelID,
-								"attempts":            i + 1,
-								"successful_llm":      fallbackModelID,  // Successful LLM model
-								"successful_provider": "openai",         // Provider for successful fallback
-								"successful_phase":    "cross_provider", // Phase of successful fallback
-								"error_type":          "empty_content",
-								"operation":           "empty_content_fallback",
-								"duration":            time.Since(emptyContentStartTime).String(),
-							},
-						}
-						a.EmitTypedEvent(ctx, emptyContentCrossProviderSuccessEvent)
-						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, cases.Title(language.English).String(crossProviderName)))
-						return fresp, usage, nil
-					}
-
-					// Emit cross-provider fallback attempt failure event
-					crossProviderFallbackFailureEvent := events.NewFallbackAttemptEvent(
-						turn, i+1, len(crossProviderFallbacks),
-						fallbackModelID, crossProviderName, fmt.Sprintf("cross_provider_%s", crossProviderName),
-						false, time.Since(emptyContentStartTime), ferr2.Error(),
-					)
-					a.EmitTypedEvent(ctx, crossProviderFallbackFailureEvent)
-					sendMessage(fmt.Sprintf("\n❌ Fallback model %s failed: %v", fallbackModelID, ferr2))
-				}
-			}
-
-			// Provide a detailed summary of all failed fallback attempts
-			sendMessage(fmt.Sprintf("\n❌ All fallback models failed for empty content error (turn %d):", turn))
-			sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(sameProviderFallbacks), string(a.provider), sameProviderFallbacks))
-			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(crossProviderFallbacks), crossProviderName, crossProviderFallbacks))
-			}
-			sendMessage("   - Original error: " + err.Error())
-			sendMessage("   - Suggestion: Try rephrasing your question or providing more context")
-
-			// Emit empty content fallback all failed event (replaced span-based tracing)
-			emptyContentAllFailedEvent := &events.GenericEventData{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Data: map[string]interface{}{
-					"turn":                    turn + 1,
-					"all_fallbacks_failed":    true,
-					"same_provider_attempts":  len(sameProviderFallbacks),
-					"cross_provider_attempts": len(crossProviderFallbacks),
-					"failed_models":           append(sameProviderFallbacks, crossProviderFallbacks...),
-					"error_type":              "empty_content",
-					"operation":               "empty_content_fallback",
-					"duration":                time.Since(emptyContentStartTime).String(),
-					"final_error":             err.Error(),
-				},
-			}
-			a.EmitTypedEvent(ctx, emptyContentAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for empty content error: %w", err)
-			break
-		}
-
-		// Handle connection/network errors with fallback models
-		if isConnectionError(err) {
-			// Track connection error start time
-			connectionErrorStartTime := time.Now()
-
-			// Emit connection error detected event
-			connectionErrorEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(connectionErrorStartTime), "connection_error", 0)
-			a.EmitTypedEvent(ctx, connectionErrorEvent)
-
-			// Create connection error fallback event
-			connectionErrorFallbackEvent := &events.GenericEventData{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Data: map[string]interface{}{
-					"error_type":               "connection_error",
-					"original_error":           err.Error(),
-					"same_provider_fallbacks":  len(sameProviderFallbacks),
-					"cross_provider_fallbacks": len(crossProviderFallbacks),
-					"turn":                     turn,
-					"attempt":                  attempt + 1,
-					"operation":                "connection_error_fallback",
-				},
-			}
-			a.EmitTypedEvent(ctx, connectionErrorFallbackEvent)
-
-			sendMessage(fmt.Sprintf("\n⚠️ Connection/network error detected (turn %d, attempt %d/%d). Trying fallback models...", turn, attempt+1, maxRetries))
-
-			// Phase 1: Try same-provider fallbacks first
-			sendMessage(fmt.Sprintf("\n🔄 Phase 1: Trying %d same-provider (%s) fallback models...", len(sameProviderFallbacks), string(a.provider)))
-			for i, fallbackModelID := range sameProviderFallbacks {
-				// Create connection error fallback attempt event
-				connectionErrorFallbackAttemptEvent := &events.GenericEventData{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					Data: map[string]interface{}{
-						"fallback_index":    i + 1,
-						"fallback_model":    fallbackModelID,
-						"llm_model":         fallbackModelID,
-						"fallback_provider": string(a.provider),
-						"fallback_phase":    "same_provider",
-						"total_fallbacks":   len(sameProviderFallbacks),
-						"error_type":        "connection_error",
-						"operation":         "connection_error_fallback_attempt",
-					},
-				}
-				a.EmitTypedEvent(ctx, connectionErrorFallbackAttemptEvent)
-
-				sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", string(a.provider), i+1, len(sameProviderFallbacks), fallbackModelID))
-
-				origModelID := a.ModelID
-				a.ModelID = fallbackModelID
-				fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-				if ferr != nil {
-					a.ModelID = origModelID
-					// Emit fallback initialization failure event
-					fallbackInitFailureEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"fallback_index":    i + 1,
-							"fallback_model":    fallbackModelID,
-							"fallback_provider": string(a.provider),
-							"fallback_phase":    "same_provider",
-							"error_type":        "connection_error",
-							"operation":         "connection_error_fallback_init_failure",
-							"init_error":        ferr.Error(),
-						},
-					}
-					a.EmitTypedEvent(ctx, fallbackInitFailureEvent)
-					sendMessage(fmt.Sprintf("\n❌ Failed to initialize fallback model %s: %v", fallbackModelID, ferr))
-					continue
-				}
-
-				origLLM := a.LLM
-				a.LLM = fallbackLLM
-
-				// Use non-streaming approach for all agents during fallback
-				var fresp *llmtypes.ContentResponse
-				var ferr2 error
-				fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-
-				a.LLM = origLLM
-				a.ModelID = origModelID
-
-				if ferr2 == nil {
-					usage = extractUsageMetricsWithMessages(fresp, messages)
-					sendMessage(fmt.Sprintf("\n✅ Connection error fallback succeeded with %s model: %s", string(a.provider), fallbackModelID))
-
-					// Emit fallback model used event
-					fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, string(a.provider), "connection_error", time.Since(connectionErrorStartTime))
-					a.EmitTypedEvent(ctx, fallbackEvent)
-
-					// Emit connection error fallback success event
-					connectionErrorSuccessEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"fallback_index":    i + 1,
-							"fallback_model":    fallbackModelID,
-							"fallback_provider": string(a.provider),
-							"fallback_phase":    "same_provider",
-							"error_type":        "connection_error",
-							"operation":         "connection_error_fallback_success",
-							"duration":          time.Since(connectionErrorStartTime).String(),
-						},
-					}
-					a.EmitTypedEvent(ctx, connectionErrorSuccessEvent)
-					return fresp, usage, nil
-				} else {
-					sendMessage(fmt.Sprintf("\n❌ Connection error fallback model %s failed: %v", fallbackModelID, ferr2))
-				}
-			}
-
-			// Phase 2: Try cross-provider fallbacks if same-provider fallbacks failed
-			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
-				for i, fallbackModelID := range crossProviderFallbacks {
-					// Create cross-provider connection error fallback attempt event
-					crossProviderConnectionErrorFallbackEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"fallback_index":    i + 1,
-							"fallback_model":    fallbackModelID,
-							"llm_model":         fallbackModelID,
-							"fallback_provider": "openai",
-							"fallback_phase":    "cross_provider",
-							"total_fallbacks":   len(crossProviderFallbacks),
-							"error_type":        "connection_error",
-							"operation":         "connection_error_cross_provider_fallback_attempt",
-						},
-					}
-					a.EmitTypedEvent(ctx, crossProviderConnectionErrorFallbackEvent)
-
-					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
-
-					// Track fallback attempt start time
-					fallbackStartTime := time.Now()
-
-					origModelID := a.ModelID
-					a.ModelID = fallbackModelID
-					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
-					if ferr != nil {
-						a.ModelID = origModelID
-						// Emit cross-provider fallback initialization failure event
-						crossProviderInitFailureEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"fallback_index":    i + 1,
-								"fallback_model":    fallbackModelID,
-								"fallback_provider": "openai",
-								"fallback_phase":    "cross_provider",
-								"error_type":        "connection_error",
-								"operation":         "connection_error_cross_provider_fallback_init_failure",
-								"init_error":        ferr.Error(),
-							},
-						}
-						a.EmitTypedEvent(ctx, crossProviderInitFailureEvent)
-						sendMessage(fmt.Sprintf("\n❌ Failed to initialize cross-provider fallback model %s: %v", fallbackModelID, ferr))
-						continue
-					}
-
-					origLLM := a.LLM
-					a.LLM = fallbackLLM
-
-					// Use non-streaming approach for all agents during fallback
-					var fresp *llmtypes.ContentResponse
-					var ferr2 error
-					fresp, ferr2 = a.LLM.GenerateContent(ctx, messages, opts...)
-
-					a.LLM = origLLM
-					a.ModelID = origModelID
-
-					if ferr2 == nil {
-						usage = extractUsageMetricsWithMessages(fresp, messages)
-						sendMessage(fmt.Sprintf("\n✅ Connection error cross-provider fallback succeeded with OpenAI model: %s", fallbackModelID))
-
-						// Emit fallback model used event
-						fallbackEvent := events.NewFallbackModelUsedEvent(turn, origModelID, fallbackModelID, "openai", "connection_error", time.Since(fallbackStartTime))
-						a.EmitTypedEvent(ctx, fallbackEvent)
-
-						// Emit cross-provider connection error fallback success event
-						crossProviderConnectionErrorSuccessEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"fallback_index":    i + 1,
-								"fallback_model":    fallbackModelID,
-								"fallback_provider": "openai",
-								"fallback_phase":    "cross_provider",
-								"error_type":        "connection_error",
-								"operation":         "connection_error_cross_provider_fallback_success",
-								"duration":          time.Since(fallbackStartTime).String(),
-							},
-						}
-						a.EmitTypedEvent(ctx, crossProviderConnectionErrorSuccessEvent)
-						return fresp, usage, nil
-					} else {
-						sendMessage(fmt.Sprintf("\n❌ Connection error cross-provider fallback model %s failed: %v", fallbackModelID, ferr2))
-					}
-				}
-			}
-
-			// Provide a detailed summary of all failed fallback attempts
-			sendMessage(fmt.Sprintf("\n❌ All fallback models failed for connection error (turn %d):", turn))
-			sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(sameProviderFallbacks), string(a.provider), sameProviderFallbacks))
-			if len(crossProviderFallbacks) > 0 {
-				sendMessage(fmt.Sprintf("   - Tried %d %s models: %v", len(crossProviderFallbacks), crossProviderName, crossProviderFallbacks))
-			}
-			sendMessage("   - Original error: " + err.Error())
-			sendMessage("   - Suggestion: Check network connectivity and try again")
-
-			// Emit connection error fallback all failed event
-			connectionErrorAllFailedEvent := &events.GenericEventData{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				Data: map[string]interface{}{
-					"turn":                    turn + 1,
-					"all_fallbacks_failed":    true,
-					"same_provider_attempts":  len(sameProviderFallbacks),
-					"cross_provider_attempts": len(crossProviderFallbacks),
-					"failed_models":           append(sameProviderFallbacks, crossProviderFallbacks...),
-					"error_type":              "connection_error",
-					"operation":               "connection_error_fallback",
-					"duration":                time.Since(connectionErrorStartTime).String(),
-					"final_error":             err.Error(),
-				},
-			}
-			a.EmitTypedEvent(ctx, connectionErrorAllFailedEvent)
-			lastErr = fmt.Errorf("all fallback models failed for connection error: %w", err)
-			break
-		}
-
-		// Handle stream errors with fallback models
-		if isStreamError(err) {
-			resp, fallbackUsage, fallbackErr := handleErrorWithFallback(a, ctx, err, "stream_error", turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
-			if fallbackErr == nil {
-				return resp, fallbackUsage, nil
-			}
-			lastErr = fallbackErr
-			break
-		}
-
-		// Handle internal server errors with fallback models
-		if isInternalError(err) {
-			resp, fallbackUsage, fallbackErr := handleErrorWithFallback(a, ctx, err, "internal_error", turn, attempt, maxRetries, sameProviderFallbacks, crossProviderFallbacks, sendMessage, messages, opts)
-			if fallbackErr == nil {
-				return resp, fallbackUsage, nil
-			}
-			lastErr = fallbackErr
-			break
-		}
-
-		// For any other errors, just return the error
+		// Unknown error type - break and return last error
 		lastErr = err
 		break
 	}

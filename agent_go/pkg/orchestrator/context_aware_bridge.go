@@ -9,33 +9,21 @@ import (
 	"sync"
 )
 
-// StepTokenAccumulator defines the interface for accumulating step token usage
-type StepTokenAccumulator interface {
-	AccumulateStepTokens(phase string, step int, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int, llmCallCount int, cacheDiscount float64)
-}
-
-// ModelTokenAccumulator defines the interface for accumulating model token usage
-type ModelTokenAccumulator interface {
-	AccumulateModelTokens(modelID, provider string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens int, llmCallCount int)
-}
-
 // TokenPersister defines the interface for persisting token usage to file
 type TokenPersister interface {
-	PersistTokenUsage(ctx context.Context, iterationFolder string) error
+	PersistTokenUsage(ctx context.Context, iterationFolder string, stepTokenData *StepTokenData, modelTokenData *ModelTokenData) error
 }
 
 // ContextAwareEventBridge wraps an existing AgentEventListener and adds orchestrator context
 type ContextAwareEventBridge struct {
-	underlyingBridge      mcpagent.AgentEventListener
-	tokenAccumulator      StepTokenAccumulator  // Interface for step token tracking
-	modelTokenAccumulator ModelTokenAccumulator // Interface for model token tracking
-	tokenPersister        TokenPersister        // Interface for persisting token usage
-	iterationFolder       string                // Current iteration folder for persistence
-	currentPhase          string
-	currentStep           int
-	currentAgentName      string
-	mu                    sync.RWMutex
-	logger                loggerv2.Logger
+	underlyingBridge mcpagent.AgentEventListener
+	tokenPersister   TokenPersister // Interface for persisting token usage
+	iterationFolder  string         // Current iteration folder for persistence
+	currentPhase     string
+	currentStep      int
+	currentAgentName string
+	mu               sync.RWMutex
+	logger           loggerv2.Logger
 }
 
 // Name implements the EventBridge interface
@@ -51,19 +39,11 @@ func NewContextAwareEventBridge(underlyingBridge mcpagent.AgentEventListener, lo
 	}
 }
 
-// SetTokenAccumulator sets the token accumulator for step token tracking
-func (c *ContextAwareEventBridge) SetTokenAccumulator(accumulator StepTokenAccumulator) {
+// SetTokenPersister sets the token persister (no longer using accumulators)
+func (c *ContextAwareEventBridge) SetTokenPersister(persister TokenPersister) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.tokenAccumulator = accumulator
-	// If accumulator also implements ModelTokenAccumulator, set it
-	if modelAccumulator, ok := accumulator.(ModelTokenAccumulator); ok {
-		c.modelTokenAccumulator = modelAccumulator
-	}
-	// If accumulator also implements TokenPersister, set it
-	if persister, ok := accumulator.(TokenPersister); ok {
-		c.tokenPersister = persister
-	}
+	c.tokenPersister = persister
 }
 
 // SetIterationFolder sets the current iteration folder for token persistence
@@ -146,61 +126,43 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 		}
 	}
 
-	// Intercept token_usage events and accumulate per step and model
-	// Note: Model accumulation works even without phase context
+	// Intercept token_usage events and persist directly to file (no in-memory accumulation)
 	if event.Type == events.TokenUsage {
 		if tokenEvent, ok := event.Data.(*events.TokenUsageEvent); ok {
-			c.mu.RLock()
-			accumulator := c.tokenAccumulator
-			c.mu.RUnlock()
-
-			// Extract cache tokens once (used for both step and model accumulation)
+			// Extract cache tokens
 			cacheTokens := extractCacheTokens(tokenEvent)
 
-			// Extract cache discount from token event
-			cacheDiscount := 0.0
-			if tokenEvent.CacheDiscount > 0 {
-				cacheDiscount = tokenEvent.CacheDiscount
+			// Prepare token data for persistence
+			var stepTokenData *StepTokenData
+			var modelTokenData *ModelTokenData
+
+			// Prepare step token data if we have phase context
+			if currentPhase != "" {
+				stepTokenData = &StepTokenData{
+					Phase:           currentPhase,
+					Step:            currentStep,
+					InputTokens:     tokenEvent.PromptTokens,     // input tokens
+					OutputTokens:    tokenEvent.CompletionTokens, // output tokens
+					CacheTokens:     cacheTokens,
+					ReasoningTokens: tokenEvent.ReasoningTokens,
+					LLMCallCount:    1, // Each token_usage event represents one LLM call
+				}
 			}
 
-			// Accumulate tokens for step (only if we have phase context)
-			if accumulator != nil && currentPhase != "" {
-				// Accumulate tokens for this step
-				accumulator.AccumulateStepTokens(
-					currentPhase,
-					currentStep,
-					tokenEvent.PromptTokens,
-					tokenEvent.CompletionTokens,
-					tokenEvent.TotalTokens,
-					cacheTokens,
-					tokenEvent.ReasoningTokens,
-					1, // Each token_usage event represents one LLM call
-					cacheDiscount,
-				)
-				c.logger.Debug(fmt.Sprintf("📊 Accumulated tokens for step %s:%d - Total: %d", currentPhase, currentStep, tokenEvent.TotalTokens))
+			// Prepare model token data
+			if tokenEvent.ModelID != "" {
+				modelTokenData = &ModelTokenData{
+					ModelID:         tokenEvent.ModelID,
+					Provider:        tokenEvent.Provider,
+					InputTokens:     tokenEvent.PromptTokens,     // input tokens
+					OutputTokens:    tokenEvent.CompletionTokens, // output tokens
+					CacheTokens:     cacheTokens,
+					ReasoningTokens: tokenEvent.ReasoningTokens,
+					LLMCallCount:    1, // Each token_usage event represents one LLM call
+				}
 			}
 
-			// Also accumulate tokens per model (works even without phase context)
-			c.mu.RLock()
-			modelAccumulator := c.modelTokenAccumulator
-			c.mu.RUnlock()
-
-			if modelAccumulator != nil && tokenEvent.ModelID != "" {
-				// Accumulate tokens for this model
-				modelAccumulator.AccumulateModelTokens(
-					tokenEvent.ModelID,
-					tokenEvent.Provider,
-					tokenEvent.PromptTokens,
-					tokenEvent.CompletionTokens,
-					tokenEvent.TotalTokens,
-					cacheTokens,
-					tokenEvent.ReasoningTokens,
-					1, // Each token_usage event represents one LLM call
-				)
-				c.logger.Debug(fmt.Sprintf("📊 Accumulated tokens for model %s (%s) - Total: %d", tokenEvent.ModelID, tokenEvent.Provider, tokenEvent.TotalTokens))
-			}
-
-			// Persist token usage immediately after accumulation (real-time persistence)
+			// Persist token usage directly to file (real-time persistence, no accumulation)
 			c.mu.RLock()
 			persister := c.tokenPersister
 			iterationFolder := c.iterationFolder
@@ -209,10 +171,10 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			if persister != nil && iterationFolder != "" {
 				// Persist asynchronously to avoid blocking event processing
 				go func() {
-					if err := persister.PersistTokenUsage(ctx, iterationFolder); err != nil {
-						c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist token usage immediately: %v", err))
+					if err := persister.PersistTokenUsage(ctx, iterationFolder, stepTokenData, modelTokenData); err != nil {
+						c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist token usage: %v", err))
 					} else {
-						c.logger.Debug("💾 Persisted token usage immediately after event")
+						c.logger.Debug(fmt.Sprintf("💾 Persisted token usage directly to file"))
 					}
 				}()
 			}

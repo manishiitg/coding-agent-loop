@@ -1169,6 +1169,52 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	// Get logger from MCP agent (it has a Logger field)
 	logger := mcpAgent.Logger
 
+	// Register WorkspaceTools (including human_feedback) before plan modification tools
+	// This ensures human_feedback is available for the planning agent to use
+	if baseOrchestrator != nil {
+		toolsToRegister := baseOrchestrator.WorkspaceTools
+		executorsToUse := baseOrchestrator.WorkspaceToolExecutors
+
+		if toolsToRegister != nil && executorsToUse != nil {
+			// Wrap executors and enhance tool descriptions with folder guard
+			toolsToRegister, wrappedExecutors := baseOrchestrator.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
+
+			logger.Info(fmt.Sprintf("🔧 Registering %d workspace tools (including human_feedback) for planning agent", len(toolsToRegister)))
+
+			for _, tool := range toolsToRegister {
+				if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
+					var params map[string]interface{}
+					if tool.Function.Parameters != nil {
+						paramsBytes, err := json.Marshal(tool.Function.Parameters)
+						if err == nil {
+							json.Unmarshal(paramsBytes, &params)
+						}
+					}
+					if params == nil {
+						logger.Warn(fmt.Sprintf("⚠️ Failed to convert parameters for tool %s", tool.Function.Name))
+						continue
+					}
+
+					if toolExecutor, ok := executor.(func(context.Context, map[string]interface{}) (string, error)); ok {
+						if err := mcpAgent.RegisterCustomTool(
+							tool.Function.Name,
+							tool.Function.Description,
+							params,
+							toolExecutor,
+							"workspace",
+						); err != nil {
+							logger.Warn(fmt.Sprintf("⚠️ Failed to register workspace tool %s: %v", tool.Function.Name, err))
+							// Continue with other tools even if one fails
+						} else {
+							logger.Debug(fmt.Sprintf("✅ Registered workspace tool: %s", tool.Function.Name))
+						}
+					}
+				}
+			}
+			logger.Info(fmt.Sprintf("✅ Registered workspace tools for planning agent"))
+		}
+	}
+
 	// Register all plan modification tools using shared function
 	if err := registerPlanModificationTools(mcpAgent, workspacePath, logger, readFile, writeFile, "planning agent"); err != nil {
 		return nil, nil, err

@@ -1199,8 +1199,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Proceeding to execution phase with %d steps", len(breakdownSteps)))
 
 	// Initialize progress tracking if not already loaded
-	if existingProgress == nil {
-		// Initialize and save fresh progress file
+	// Only initialize fresh progress if we're NOT trying to preserve existing progress
+	// (i.e., if planChangeHandled = false, this is a first run and we should initialize)
+	if existingProgress == nil && !planChangeHandled {
+		// Initialize and save fresh progress file (first run scenario)
 		if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize fresh progress: %w", err))
 			// Continue anyway with in-memory progress
@@ -1217,6 +1219,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				LastUpdated:          time.Now(),
 				BranchSteps:          make(map[int]BranchStepProgress),
 			}
+		}
+	} else if existingProgress == nil && planChangeHandled {
+		// Plan change detected but progress file doesn't exist - preserve mode
+		// Don't initialize fresh progress, just continue with nil and let execution handle it
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Preserving progress mode: progress file doesn't exist, continuing without initializing fresh progress"))
+		// Create minimal in-memory progress for execution to work with
+		existingProgress = &StepProgress{
+			CompletedStepIndices: []int{},
+			TotalSteps:           len(breakdownSteps),
+			BranchSteps:          make(map[int]BranchStepProgress),
 		}
 	}
 

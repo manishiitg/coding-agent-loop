@@ -600,9 +600,20 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					args, err := mcpclient.ParseToolArguments(tc.FunctionCall.Arguments)
 					if err != nil {
 						logger.Errorf("🖼️ [DEBUG] Failed to parse read_image arguments: %v", err)
-						// Emit error event and continue (don't add tool response)
+						// Emit error event
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse arguments: %v", err), serverName, 0)
 						a.EmitTypedEvent(ctx, toolErrorEvent)
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Failed to parse arguments: %v", err),
+								},
+							},
+						})
 						continue
 					}
 					logger.Infof("🖼️ [DEBUG] read_image parsed arguments: %+v", args)
@@ -634,7 +645,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						// Emit tool call error event (for observability only)
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
 						a.EmitTypedEvent(ctx, toolErrorEvent)
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Tool execution failed: %v", toolErr),
+								},
+							},
+						})
 						continue
 					}
 					logger.Infof("🖼️ [DEBUG] read_image tool executed successfully. Result length: %d", len(resultText))
@@ -652,7 +673,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							previewLen = len(resultText)
 						}
 						logger.Warnf("🖼️ [DEBUG] Failed to parse read_image result as JSON: %v, raw result: %s", err, resultText[:previewLen])
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Failed to parse result as JSON: %v", err),
+								},
+							},
+						})
 						continue
 					}
 					// Extract keys for logging
@@ -665,7 +696,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Check if it's an image_query type
 					if imageResult["_type"] != "image_query" {
 						logger.Warnf("🖼️ [DEBUG] read_image result is not image_query type, got: %v", imageResult["_type"])
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Result is not image_query type, got: %v", imageResult["_type"]),
+								},
+							},
+						})
 						continue
 					}
 
@@ -678,7 +719,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					if query == "" || mimeType == "" || base64Data == "" {
 						logger.Warnf("🖼️ [DEBUG] Missing required fields in read_image result - query: %q, mimeType: %q, base64Data: %q", query != "", mimeType != "", base64Data != "")
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    "Error: Missing required fields in read_image result (query, mime_type, or data)",
+								},
+							},
+						})
 						continue
 					}
 

@@ -349,12 +349,10 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 					Package: dirName,
 					Tools:   tools,
 				}
-			default:
-				// Any other category directories (memory, custom, tavily_search, or any future categories)
 				// Append to CustomTools array - supports multiple custom tool categories
 				result.CustomTools = append(result.CustomTools, CustomToolsInfo{
-					Category: serverName, // Category name (e.g., "tavily_search", "memory", "custom")
-					Package:  dirName,    // Package name (e.g., "tavily_search_tools", "memory_tools", "custom_tools")
+					Category: serverName, // Category name (e.g., "tavily_search", "custom")
+					Package:  dirName,    // Package name (e.g., "tavily_search_tools", "custom_tools")
 					Tools:    tools,
 				})
 			}

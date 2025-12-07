@@ -21,7 +21,7 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	sessionID string,
 	workflowID string,
 ) (bool, string, error) {
-	bo.GetLogger().Infof("🤔 Requesting human feedback: %s", question)
+	// Removed verbose logging
 
 	// Emit human feedback request event
 	// Note: YesNoOnly is false to allow text feedback in frontend (textarea + "Approve & Continue" button)
@@ -51,15 +51,13 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	// Use the context-aware bridge to emit the event
 	bridge := bo.GetContextAwareBridge()
 	if bridge == nil {
-		bo.GetLogger().Errorf("❌ Context-aware bridge is nil, cannot emit blocking human feedback event")
+		bo.GetLogger().Error("❌ Context-aware bridge is nil, cannot emit blocking human feedback event", fmt.Errorf("context-aware bridge is nil"))
 		return false, "", fmt.Errorf("context-aware bridge is nil")
 	}
-	bo.GetLogger().Infof("📤 Attempting to emit blocking_human_feedback event via context-aware bridge")
 	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Errorf("❌ Failed to emit human feedback event: %w", err)
+		bo.GetLogger().Error(fmt.Sprintf("❌ Failed to emit human feedback event: %v", err), err)
 		return false, "", fmt.Errorf("failed to emit event: %w", err)
 	}
-	bo.GetLogger().Infof("✅ Successfully emitted blocking_human_feedback event: requestID=%s", requestID)
 
 	// Use HumanFeedbackStore to wait for response
 	// Note: blocking_human_feedback events do NOT send Slack notifications
@@ -71,7 +69,7 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 		return false, "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for human response (timeout: 10 minutes)...")
+	// Removed verbose logging
 
 	// BLOCKING CALL - waits here until response or timeout
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
@@ -79,18 +77,16 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 		return false, "", fmt.Errorf("timeout waiting for human feedback: %w", err)
 	}
 
-	bo.GetLogger().Infof("▶️ Orchestrator resumed with human response: %s", response)
+	// Removed verbose logging
 
 	// Parse response
 	// Expected format: "Approve & Continue", "Approve", or feedback text for revision
 	responseTrimmed := strings.TrimSpace(response)
 	if responseTrimmed == "Approve & Continue" || responseTrimmed == "Approve" {
-		bo.GetLogger().Infof("✅ User approved via button, continuing")
 		return true, "", nil
 	}
 
 	// Default: treat as feedback for revision
-	bo.GetLogger().Infof("🔄 User provided feedback: %s", response)
 	return false, response, nil
 }
 
@@ -106,7 +102,7 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	sessionID string,
 	workflowID string,
 ) (bool, error) {
-	bo.GetLogger().Infof("🤔 Requesting yes/no feedback: %s", question)
+	// Removed verbose logging
 
 	// Set default labels if not provided
 	if yesLabel == "" {
@@ -140,7 +136,7 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	}
 
 	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit yes/no feedback event: %w", err)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit yes/no feedback event: %v", err))
 	}
 
 	// Wait for response
@@ -152,22 +148,19 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 		return false, fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for yes/no response...")
+	// Removed verbose logging
 
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
 	if err != nil {
 		return false, fmt.Errorf("timeout waiting for feedback: %w", err)
 	}
 
-	bo.GetLogger().Infof("▶️ Orchestrator resumed with response: %s", response)
+	// Removed verbose logging
 
 	// Parse response: "Approve" means Yes, anything else means No
 	if strings.TrimSpace(response) == "Approve" {
-		bo.GetLogger().Infof("✅ User selected Yes (Approve)")
 		return true, nil
 	}
-
-	bo.GetLogger().Infof("❌ User selected No (Reject)")
 	return false, nil
 }
 
@@ -182,7 +175,7 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	sessionID string,
 	workflowID string,
 ) (string, error) {
-	bo.GetLogger().Infof("🤔 Requesting multiple-choice feedback: %s (%d options)", question, len(options))
+	// Removed verbose logging
 
 	if len(options) == 0 {
 		return "", fmt.Errorf("at least one option is required")
@@ -210,7 +203,7 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	}
 
 	if err := bo.GetContextAwareBridge().HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit multiple-choice feedback event: %w", err)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit multiple-choice feedback event: %v", err))
 	}
 
 	// Wait for response
@@ -222,14 +215,14 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
-	bo.GetLogger().Infof("⏸️ Orchestrator paused, waiting for multiple-choice response...")
+	// Removed verbose logging
 
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
 	if err != nil {
 		return "", fmt.Errorf("timeout waiting for feedback: %w", err)
 	}
 
-	bo.GetLogger().Infof("▶️ Orchestrator resumed with response: %s", response)
+	// Removed verbose logging
 
 	// Parse response: should be "option0", "option1", "option2", etc. (0-based)
 	response = strings.TrimSpace(response)
@@ -240,12 +233,11 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 		indexStr := strings.TrimPrefix(response, "option")
 		index, err := strconv.Atoi(indexStr)
 		if err == nil && index >= 0 && index < len(options) {
-			bo.GetLogger().Infof("✅ User selected: %s (option %d: %s)", response, index, options[index])
 			return response, nil
 		}
 	}
 
 	// Default to option0 if response is unclear
-	bo.GetLogger().Warnf("⚠️ Unexpected response format: %s, defaulting to option0", response)
+	bo.GetLogger().Warn(fmt.Sprintf("⚠️ Unexpected response format: %s, defaulting to option0", response))
 	return "option0", nil
 }

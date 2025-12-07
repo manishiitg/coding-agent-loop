@@ -32,6 +32,7 @@ import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -117,7 +118,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const loadSavedSettings = useWorkflowStore(state => state.loadSavedSettings)
   const saveSettings = useWorkflowStore(state => state.saveSettings)
   const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
+  const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
+  const tempOverrideLLMEnabled = useWorkflowStore(state => state.tempOverrideLLMEnabled)
+  const setTempOverrideLLMEnabled = useWorkflowStore(state => state.setTempOverrideLLMEnabled)
   const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)
+  const clearTempOverrideLLM2 = useWorkflowStore(state => state.clearTempOverrideLLM2)
   const variablesManifest = useWorkflowStore(state => state.variablesManifest)
   
   // LLM Override modal state
@@ -1106,28 +1111,65 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       <div className="flex items-center gap-1">
         {/* Toggle dependency edges - icon only */}
         {/* LLM Override Button and Banner */}
-        {tempOverrideLLM ? (
-          // Active override indicator with clear button
-          <div className="flex items-center gap-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-md shadow-sm">
-            <Brain className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 animate-pulse" />
-            <span className="text-xs font-medium text-amber-700 dark:text-amber-300 max-w-[120px] truncate" title={`${tempOverrideLLM.provider}/${tempOverrideLLM.model_id}`}>
-              {tempOverrideLLM.model_id.split('/').pop() || tempOverrideLLM.model_id}
-            </span>
-            <button
-              onClick={() => clearTempOverrideLLM()}
-              className="p-0.5 rounded hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-600 dark:text-amber-400"
-              title="Clear LLM override"
-            >
-              <X className="w-3 h-3" />
-            </button>
+        {tempOverrideLLM || tempOverrideLLM2 ? (
+          // Active override indicator with toggle and clear button
+          <TooltipProvider>
+            <div className={`flex items-center gap-1 px-2 py-1 bg-secondary border border-border rounded-md shadow-sm ${!tempOverrideLLMEnabled ? 'opacity-60' : ''}`}>
+              <div className="flex items-center gap-0.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="cursor-help">
+                      <Brain className={`w-3.5 h-3.5 ${tempOverrideLLMEnabled && tempOverrideLLM ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{tempOverrideLLM ? `Temp LLM 1: ${tempOverrideLLM.provider}/${tempOverrideLLM.model_id}` : 'Temp LLM 1: not set'}</p>
+                    {!tempOverrideLLMEnabled && <p className="text-xs mt-1 text-muted-foreground">(Disabled)</p>}
+                  </TooltipContent>
+                </Tooltip>
+                <span className="text-xs text-muted-foreground">→</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="cursor-help">
+                      <Brain className={`w-3.5 h-3.5 ${tempOverrideLLMEnabled && tempOverrideLLM2 ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{tempOverrideLLM2 ? `Temp LLM 2: ${tempOverrideLLM2.provider}/${tempOverrideLLM2.model_id}` : 'Temp LLM 2: not set'}</p>
+                    {!tempOverrideLLMEnabled && <p className="text-xs mt-1 text-muted-foreground">(Disabled)</p>}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <button
+                onClick={() => setTempOverrideLLMEnabled(!tempOverrideLLMEnabled)}
+                className={`px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                  tempOverrideLLMEnabled 
+                    ? 'bg-primary/20 text-primary hover:bg-primary/30' 
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+                title={tempOverrideLLMEnabled ? 'Disable temp LLM overrides' : 'Enable temp LLM overrides'}
+              >
+                {tempOverrideLLMEnabled ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={() => {
+                  clearTempOverrideLLM()
+                  clearTempOverrideLLM2()
+                }}
+                className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                title="Clear LLM overrides (removes configs)"
+              >
+                <X className="w-3 h-3" />
+              </button>
             <button
               onClick={() => setShowLLMOverrideModal(true)}
-              className="p-0.5 rounded hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-600 dark:text-amber-400"
-              title="Change LLM override"
+              className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+              title="Change LLM overrides"
             >
               <Settings className="w-3 h-3" />
             </button>
           </div>
+          </TooltipProvider>
         ) : (
           // No override - show button to set one
           <button

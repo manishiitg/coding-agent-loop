@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
-	"mcp-agent/agent_go/pkg/external"
+	mcpagent "mcpagent/agent"
+	"mcpagent/llm"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -75,25 +77,47 @@ This test demonstrates:
 		InitTestLogger(logFile, logLevel)
 		logger := GetTestLogger()
 
-		logger.Infof("=== Custom Tools Test ===")
+		logger.Info(fmt.Sprintf("=== Custom Tools Test ==="))
 
 		// Create custom weather tool
 		weatherTool := &WeatherTool{APIKey: "demo-key"}
 
-		// Create agent configuration
-		agentConfig := external.DefaultConfig().
-			WithAgentMode(external.SimpleAgent).
-			WithServer("fileserver", "configs/mcp_servers_simple.json").
-			WithLLM("openai", "gpt-4.1", 0.2).
-			WithMaxTurns(5)
+		// Initialize LLM
+		openAIKey := os.Getenv("OPENAI_API_KEY")
+		if openAIKey == "" {
+			return fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+		}
 
-		logger.Infof("Agent configuration created")
+		llmModel, err := llm.InitializeLLM(llm.Config{
+			Provider:    llm.ProviderOpenAI,
+			ModelID:     "gpt-4.1",
+			Temperature: 0.2,
+			Logger:      nil, // Use default logger
+			APIKeys: &llm.ProviderAPIKeys{
+				OpenAI: &openAIKey,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialize LLM: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("Agent configuration created"))
 
 		// Create the agent
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
-		agent, err := external.NewAgent(ctx, agentConfig)
+		agent, err := mcpagent.NewAgent(
+			ctx,
+			llmModel,
+			"fileserver",                      // server name
+			"configs/mcp_servers_simple.json", // config path
+			"gpt-4.1",                         // model ID
+			nil,                               // tracer
+			"",                                // trace ID
+			nil,                               // logger (use default)
+			mcpagent.WithMaxTurns(5),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to create agent: %w", err)
 		}
@@ -134,41 +158,44 @@ This test demonstrates:
 			},
 		)
 
-		logger.Infof("✅ Registered weather tool with external agent")
+		logger.Info(fmt.Sprintf("✅ Registered weather tool with external agent"))
 
-		logger.Infof("✅ Agent created successfully with custom tools")
+		logger.Info(fmt.Sprintf("✅ Agent created successfully with custom tools"))
 
 		// Test the weather tool
 		weatherQuestion := "What's the weather like in New York City?"
-		logger.Infof("Testing weather tool with question: %s", weatherQuestion)
+		logger.Info(fmt.Sprintf("Testing weather tool with question: %s", weatherQuestion))
 
-		response, err := agent.Invoke(ctx, weatherQuestion)
+		response, err := agent.Ask(ctx, weatherQuestion)
 		if err != nil {
-			logger.Errorf("❌ Weather tool test failed: %w", err)
+			logger.Error(fmt.Sprintf("❌ Weather tool test failed: %w", err), nil)
 			return fmt.Errorf("weather tool test failed: %w", err)
 		}
 
-		logger.Infof("✅ Weather tool test successful")
-		logger.Infof("Response length: %d characters", len(response))
+		logger.Info(fmt.Sprintf("✅ Weather tool test successful"))
+		logger.Info(fmt.Sprintf("Response length: %d characters", len(response)))
 
 		// Show response
 		fmt.Printf("\n🌤️ Question: %s\n", weatherQuestion)
 		fmt.Printf("📝 Response: %s\n", response)
 
 		// Show agent capabilities
-		capabilities := agent.GetCapabilities()
-		fmt.Printf("\n📊 Agent Capabilities:\n%s\n", capabilities)
+		toolNames := make([]string, 0, len(agent.Tools))
+		for _, tool := range agent.Tools {
+			if tool.Function != nil {
+				toolNames = append(toolNames, tool.Function.Name)
+			}
+		}
+		fmt.Printf("\n📊 Available Tools: %v\n", toolNames)
 
 		// Show connected servers
 		serverNames := agent.GetServerNames()
 		fmt.Printf("\n🛠️ Connected Servers: %v\n", serverNames)
 
 		// Close the agent
-		if err := agent.Close(); err != nil {
-			logger.Errorf("Failed to close agent: %w", err)
-		}
+		agent.Close()
 
-		logger.Infof("✅ Custom tools test completed successfully")
+		logger.Info(fmt.Sprintf("✅ Custom tools test completed successfully"))
 		fmt.Println("\n🎉 Custom tools test completed successfully!")
 
 		return nil

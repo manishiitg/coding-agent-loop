@@ -415,7 +415,17 @@ func ListDocuments(c *gin.Context) {
 
 	// Build search path
 	var searchPath string
-	if normalizedFolder != "" {
+	// Special handling for Downloads folder - use global path /app/workspace/Downloads
+	if normalizedFolder == "Downloads" || strings.HasPrefix(normalizedFolder, "Downloads/") {
+		// Use fixed global Downloads path
+		if normalizedFolder == "Downloads" {
+			searchPath = "/app/workspace/Downloads"
+		} else {
+			// Handle Downloads/subfolder case
+			subfolder := strings.TrimPrefix(normalizedFolder, "Downloads/")
+			searchPath = filepath.Join("/app/workspace/Downloads", subfolder)
+		}
+	} else if normalizedFolder != "" {
 		searchPath = filepath.Join(docsDir, normalizedFolder)
 	} else {
 		searchPath = docsDir
@@ -1183,6 +1193,225 @@ func CreateFolder(c *gin.Context) {
 	c.JSON(http.StatusCreated, models.APIResponse[any]{
 		Success: true,
 		Message: "Folder created successfully",
+		Data:    response,
+	})
+}
+
+// CopyFolder handles POST /api/folders/copy
+func CopyFolder(c *gin.Context) {
+	var req models.CopyFolderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid request body",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	docsDir := viper.GetString("docs-dir")
+
+	// Sanitize input paths to ensure they're relative
+	req.SourcePath = utils.SanitizeInputPath(req.SourcePath, docsDir)
+	req.DestinationPath = utils.SanitizeInputPath(req.DestinationPath, docsDir)
+
+	// Validate folder paths
+	if err := validateFolderPath(req.SourcePath); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid source folder path",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	if err := validateFolderPath(req.DestinationPath); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid destination folder path",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	sourcePath := filepath.Join(docsDir, req.SourcePath)
+	destinationPath := filepath.Join(docsDir, req.DestinationPath)
+
+	// Validate paths for security
+	if !utils.IsValidFilePath(sourcePath, docsDir) {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid source folder path",
+			Error:   "Source path contains invalid characters or attempts directory traversal",
+		})
+		return
+	}
+
+	if !utils.IsValidFilePath(destinationPath, docsDir) {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid destination folder path",
+			Error:   "Destination path contains invalid characters or attempts directory traversal",
+		})
+		return
+	}
+
+	// Check if source folder exists
+	sourceInfo, err := os.Stat(sourcePath)
+	if os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.APIResponse[any]{
+			Success: false,
+			Message: "Source folder not found",
+			Error:   "Source folder does not exist: " + req.SourcePath,
+		})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to check source folder",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Check if source is actually a directory
+	if !sourceInfo.IsDir() {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Source path is not a folder",
+			Error:   "Source path is not a directory: " + req.SourcePath,
+		})
+		return
+	}
+
+	// Check if destination already exists
+	if _, err := os.Stat(destinationPath); err == nil {
+		c.JSON(http.StatusConflict, models.APIResponse[any]{
+			Success: false,
+			Message: "Destination folder already exists",
+			Error:   "Destination folder already exists: " + req.DestinationPath,
+		})
+		return
+	}
+
+	// Acquire locks for both source and destination
+	sourceLock, err := lockManager.AcquireLock(sourcePath, 30*time.Second)
+	if err != nil {
+		c.JSON(http.StatusConflict, models.APIResponse[any]{
+			Success: false,
+			Message: "Source folder is currently being modified",
+			Error:   err.Error(),
+		})
+		return
+	}
+	defer lockManager.ReleaseLock(sourceLock)
+
+	destinationLock, err := lockManager.AcquireLock(destinationPath, 30*time.Second)
+	if err != nil {
+		c.JSON(http.StatusConflict, models.APIResponse[any]{
+			Success: false,
+			Message: "Destination folder is currently being modified",
+			Error:   err.Error(),
+		})
+		return
+	}
+	defer lockManager.ReleaseLock(destinationLock)
+
+	// Counters for response
+	var filesCopied int
+	var dirsCreated int
+
+	// Use filepath.Walk to recursively copy all files and directories
+	err = filepath.Walk(sourcePath, func(srcPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip .git directory entirely
+		if info.IsDir() && info.Name() == ".git" {
+			return filepath.SkipDir
+		}
+
+		// Calculate relative path from source
+		relPath, err := filepath.Rel(sourcePath, srcPath)
+		if err != nil {
+			return err
+		}
+
+		// Build destination path
+		dstPath := filepath.Join(destinationPath, relPath)
+
+		if info.IsDir() {
+			// Create directory
+			if err := os.MkdirAll(dstPath, info.Mode()); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", dstPath, err)
+			}
+			dirsCreated++
+		} else {
+			// Create parent directory if it doesn't exist
+			if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+				return fmt.Errorf("failed to create parent directory for %s: %w", dstPath, err)
+			}
+
+			// Copy file
+			srcFile, err := os.Open(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to open source file %s: %w", srcPath, err)
+			}
+			defer srcFile.Close()
+
+			dstFile, err := os.Create(dstPath)
+			if err != nil {
+				return fmt.Errorf("failed to create destination file %s: %w", dstPath, err)
+			}
+			defer dstFile.Close()
+
+			// Copy file contents
+			_, err = io.Copy(dstFile, srcFile)
+			if err != nil {
+				return fmt.Errorf("failed to copy file from %s to %s: %w", srcPath, dstPath, err)
+			}
+
+			// Preserve file permissions
+			if err := os.Chmod(dstPath, info.Mode()); err != nil {
+				return fmt.Errorf("failed to set permissions for %s: %w", dstPath, err)
+			}
+
+			filesCopied++
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to copy folder",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Handle git operations if commit message provided
+	if req.CommitMessage != "" {
+		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
+			// Log error but don't fail the request
+			fmt.Printf("Warning: Git operation failed: %v\n", err)
+		}
+	}
+
+	response := models.CopyFolderResponse{
+		SourcePath:      req.SourcePath,
+		DestinationPath: req.DestinationPath,
+		FilesCopied:     filesCopied,
+		DirsCreated:     dirsCreated,
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse[any]{
+		Success: true,
+		Message: fmt.Sprintf("Folder copied successfully: %d files, %d directories", filesCopied, dirsCreated),
 		Data:    response,
 	})
 }

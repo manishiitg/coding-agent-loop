@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Workflow, Settings, ExternalLink, Trash2 } from 'lucide-react'
+import { MessageCircle, Workflow, Settings, ExternalLink, Trash2, Copy } from 'lucide-react'
 import { EventModeToggle } from './events'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -51,7 +51,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const { 
     customPresets, 
     savePreset,
-    deletePreset
+    deletePreset,
+    duplicatePreset
   } = usePresetManagement()
   
   const { 
@@ -143,6 +144,21 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       }
     }
   }, [deletePreset])
+
+  const handleDuplicatePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const duplicatedPreset = await duplicatePreset(presetId)
+      if (duplicatedPreset) {
+        setShowPresetDropdown(false)
+        // Optionally apply the duplicated preset
+        handlePresetClick(duplicatedPreset)
+      }
+    } catch (error) {
+      console.error('Failed to duplicate preset:', error)
+      alert('Failed to duplicate preset. Please try again.')
+    }
+  }, [duplicatePreset, handlePresetClick])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -387,7 +403,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                                     </div>
                                   </button>
                                   
-                                  {/* Edit/Delete buttons - only show for custom presets */}
+                                  {/* Edit/Duplicate/Delete buttons - only show for custom presets */}
                                   {customPresets.some(cp => cp.id === preset.id) && (
                                     <div className="flex gap-1">
                                       {isPresetActive(preset.id, selectedModeCategory as 'chat' | 'workflow') && (
@@ -404,6 +420,14 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                                           <Settings className="w-3 h-3" />
                                         </button>
                                       )}
+                                      {/* Duplicate button - show for all custom presets */}
+                                      <button
+                                        onClick={(e) => handleDuplicatePreset(preset.id, e)}
+                                        className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                                        title="Duplicate preset"
+                                      >
+                                        <Copy className="w-3 h-3" />
+                                      </button>
                                       {/* Delete button - show for all custom presets, especially workflow ones */}
                                       {(selectedModeCategory === 'workflow' || preset.agentMode === 'workflow') && (
                                         <button

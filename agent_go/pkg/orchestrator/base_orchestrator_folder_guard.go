@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -232,13 +233,11 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 			// Determine which paths to use for validation
 			var allowedPaths []string
-			var pathType string
 
 			if useFolderGuardPaths {
 				if isWriteCopy {
 					// Write operations use writePaths only
 					allowedPaths = bo.folderGuardWritePaths
-					pathType = "write"
 				} else if isReadOnlyCopy {
 					// Read operations can use both readPaths AND writePaths (if you can write, you can read)
 					// Combine readPaths and writePaths, removing duplicates
@@ -254,7 +253,6 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 					for path := range allowedPathsMap {
 						allowedPaths = append(allowedPaths, path)
 					}
-					pathType = "read"
 				} else {
 					// Unknown tool type - use readPaths + writePaths as default (read-like behavior)
 					allowedPathsMap := make(map[string]bool)
@@ -268,13 +266,11 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 					for path := range allowedPathsMap {
 						allowedPaths = append(allowedPaths, path)
 					}
-					pathType = "read"
 				}
 			} else {
 				// Fallback to workspacePath (single path mode)
 				if workspacePath != "" {
 					allowedPaths = []string{workspacePath}
-					pathType = "workspace"
 				}
 			}
 
@@ -285,28 +281,21 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 						// Empty string or "." means workspace root - normalize to ""
 						if pathStr == "" || pathStr == "." {
 							args[paramName] = ""
-							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '' (workspace root)", toolNameCopy, paramName, pathStr)
+							// Removed verbose logging
 							continue
 						}
 
 						// Validate the path against allowed paths
-						bo.GetLogger().Infof("🔒 Validating path for tool %s, parameter %s: type=%s, paths=%v, input='%s'", toolNameCopy, paramName, pathType, allowedPaths, pathStr)
 						if err := validatePathInAllowedPaths(allowedPaths, pathStr); err != nil {
-							bo.GetLogger().Warnf("⚠️ Path validation failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
+							bo.GetLogger().Warn(fmt.Sprintf("⚠️ Path validation failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err))
 							return "", err
 						}
-						bo.GetLogger().Infof("✅ Path validation passed for tool %s, parameter %s (type: %s)", toolNameCopy, paramName, pathType)
 
 						// Normalize the path
-						normalizedPath, matchedIndex, err := normalizePathForAllowedPaths(allowedPaths, pathStr)
+						normalizedPath, _, err := normalizePathForAllowedPaths(allowedPaths, pathStr)
 						if err != nil {
-							bo.GetLogger().Warnf("⚠️ Path normalization failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err)
+							bo.GetLogger().Warn(fmt.Sprintf("⚠️ Path normalization failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err))
 							return "", err
-						}
-						if matchedIndex >= 0 {
-							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s' (matched path index: %d)", toolNameCopy, paramName, pathStr, normalizedPath, matchedIndex)
-						} else {
-							bo.GetLogger().Infof("📁 Normalized path for tool %s, parameter %s: '%s' -> '%s' (no folder guard)", toolNameCopy, paramName, pathStr, normalizedPath)
 						}
 						// Update the args with normalized path
 						args[paramName] = normalizedPath

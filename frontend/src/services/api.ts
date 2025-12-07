@@ -73,7 +73,7 @@ const api = axios.create({
   },
 })
 
-const workspaceApi = axios.create({
+export const workspaceApi = axios.create({
   baseURL: WORKSPACE_API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
@@ -408,6 +408,15 @@ export const agentApi = {
   createPlannerFolder: async (folderPath: string, commitMessage?: string) => {
     const response = await workspaceApi.post('/api/folders', {
       folder_path: folderPath,
+      commit_message: commitMessage
+    })
+    return response.data
+  },
+
+  copyFolder: async (sourcePath: string, destinationPath: string, commitMessage?: string) => {
+    const response = await workspaceApi.post('/api/folders/copy', {
+      source_path: sourcePath,
+      destination_path: destinationPath,
       commit_message: commitMessage
     })
     return response.data

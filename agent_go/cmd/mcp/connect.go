@@ -42,12 +42,13 @@ func runConnect(cmd *cobra.Command, args []string) {
 	}
 
 	// Use direct connection instead of pooling
-	logger, err := logger.CreateLogger("", "info", "text", true)
+	v2Logger, err := logger.CreateLogger("", "info", "text", true)
 	if err != nil {
 		log.Fatalf("Failed to create logger: %w", err)
 	}
-	defer logger.Close()
-	client := mcpclient.New(serverConfig, logger)
+	defer v2Logger.Close()
+
+	client := mcpclient.New(serverConfig, v2Logger)
 	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -68,6 +69,6 @@ func runConnect(cmd *cobra.Command, args []string) {
 		fmt.Printf("⚠️ Failed to list tools: %v\n", err)
 	} else {
 		// Use the same logger for CLI output
-		mcpclient.PrintTools(tools, logger)
+		mcpclient.PrintTools(tools, v2Logger)
 	}
 }

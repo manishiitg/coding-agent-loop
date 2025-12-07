@@ -213,7 +213,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServers(w http.ResponseWriter, r *h
 	// Enhance response with cached server information
 	enhancedResponse, err := api.enhanceRegistryResponseWithCache(registryResponse)
 	if err != nil {
-		api.logger.Warnf("Failed to enhance registry response with cache: %w", err)
+		api.logger.Warn(fmt.Sprintf("Failed to enhance registry response with cache: %w", err))
 		// Continue with original response if enhancement fails
 		enhancedResponse = &EnhancedMCPRegistryResponse{
 			Servers:  make([]EnhancedMCPRegistryServer, len(registryResponse.Servers)),
@@ -322,22 +322,22 @@ func (api *StreamingAPI) handleGetMCPRegistryServerTools(w http.ResponseWriter, 
 	if r.Body != nil {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			api.logger.Warnf("Failed to read request body: %w", err)
+			api.logger.Warn(fmt.Sprintf("Failed to read request body: %w", err))
 		} else if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, &requestBody); err != nil {
-				api.logger.Warnf("Failed to parse request body: %w", err)
+				api.logger.Warn(fmt.Sprintf("Failed to parse request body: %w", err))
 			}
 		}
 	}
 
 	// Note: Registry routes don't have access to full server config for cache keys
 	// For now, we'll skip cache lookup in this context
-	api.logger.Debugf("Skipping cache lookup for server %s - configuration required for cache keys", serverID)
+	api.logger.Debug(fmt.Sprintf("Skipping cache lookup for server %s - configuration required for cache keys", serverID))
 
 	// Cache lookup skipped - configuration required for cache keys
-	api.logger.Debugf("Proceeding with live discovery for server %s", serverID)
+	api.logger.Debug(fmt.Sprintf("Proceeding with live discovery for server %s", serverID))
 
-	api.logger.Debugf("Cache miss for server %s, discovering tools live with headers: %v, envVars: %v", serverID, requestBody.Headers, requestBody.EnvVars)
+	api.logger.Debug(fmt.Sprintf("Cache miss for server %s, discovering tools live with headers: %v, envVars: %v", serverID, requestBody.Headers, requestBody.EnvVars))
 
 	// Cache miss - discover tools live with custom headers and environment variables
 	response, err := api.discoverServerToolsLiveWithAuth(serverID, requestBody.Headers, requestBody.EnvVars)
@@ -349,7 +349,7 @@ func (api *StreamingAPI) handleGetMCPRegistryServerTools(w http.ResponseWriter, 
 	// Store in cache for future requests (only if no custom headers or env vars)
 	if len(requestBody.Headers) == 0 && len(requestBody.EnvVars) == 0 {
 		if err := api.storeServerToolsInCache(serverID, response); err != nil {
-			api.logger.Warnf("Failed to store server tools in cache: %w", err)
+			api.logger.Warn(fmt.Sprintf("Failed to store server tools in cache: %w", err))
 			// Continue without caching
 		}
 	}
@@ -591,7 +591,7 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 	prompts, err := client.ListPrompts(ctx)
 	if err != nil {
 		// Prompts are optional, log but don't fail
-		api.logger.Warnf("Failed to list prompts for server %s: %v", serverID, err)
+		api.logger.Warn(fmt.Sprintf("Failed to list prompts for server %s: %v", serverID, err))
 		prompts = []mcp.Prompt{}
 	}
 
@@ -599,7 +599,7 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 	resources, err := client.ListResources(ctx)
 	if err != nil {
 		// Resources are optional, log but don't fail
-		api.logger.Warnf("Failed to list resources for server %s: %v", serverID, err)
+		api.logger.Warn(fmt.Sprintf("Failed to list resources for server %s: %v", serverID, err))
 		resources = []mcp.Resource{}
 	}
 
@@ -688,7 +688,7 @@ func (api *StreamingAPI) discoverServerToolsLiveWithAuth(serverID string, custom
 func (api *StreamingAPI) storeServerToolsInCache(serverID string, response *EnhancedToolStatus) error {
 	// Cache storage commented out since we need server config for cache keys
 	// TODO: Implement proper cache storage for registry servers
-	api.logger.Debugf("Cache storage skipped for server %s - configuration required for cache keys", serverID)
+	api.logger.Debug(fmt.Sprintf("Cache storage skipped for server %s - configuration required for cache keys", serverID))
 	return nil
 }
 
@@ -735,26 +735,27 @@ func (api *StreamingAPI) findCachedServerByRegistryName(registryServer MCPRegist
 
 	// Strategy 1: Direct name match
 	if entry, found := cachedEntries[registryName]; found {
-		api.logger.Debugf("Found direct cache match: registry='%s' -> cache='%s'", registryName, entry.ServerName)
+		api.logger.Debug(fmt.Sprintf("Found direct cache match: registry='%s' -> cache='%s'", registryName, entry.ServerName))
 		return entry
 	}
 
 	// Debug: Log what we're looking for and what we have
-	api.logger.Debugf("Looking for registry server: '%s'", registryName)
-	api.logger.Debugf("Available cached entries: %v", func() []string {
-		var keys []string
+	api.logger.Debug(fmt.Sprintf("Looking for registry server: '%s'", registryName))
+	keys := func() []string {
+		var result []string
 		for k := range cachedEntries {
-			keys = append(keys, k)
+			result = append(result, k)
 		}
-		return keys
-	}())
+		return result
+	}()
+	api.logger.Debug(fmt.Sprintf("Available cached entries: %v", keys))
 
 	// Strategy 2: Extract package name from registry name and match
 	// e.g., "io.github.containers/kubernetes-mcp-server" -> "kubernetes-mcp-server"
 	if lastSlash := strings.LastIndex(registryName, "/"); lastSlash != -1 {
 		packageName := registryName[lastSlash+1:]
 		if entry, found := cachedEntries[packageName]; found {
-			api.logger.Debugf("Found package cache match: registry='%s' -> cache='%s'", registryName, entry.ServerName)
+			api.logger.Debug(fmt.Sprintf("Found package cache match: registry='%s' -> cache='%s'", registryName, entry.ServerName))
 			return entry
 		}
 	}
@@ -793,6 +794,6 @@ func (api *StreamingAPI) getAllCachedEntries(cacheManager *mcpcache.CacheManager
 		}
 	}
 
-	api.logger.Debugf("Loaded %d cached entries for registry matching", len(allEntries))
+	api.logger.Debug(fmt.Sprintf("Loaded %d cached entries for registry matching", len(allEntries)))
 	return entries
 }

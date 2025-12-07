@@ -3,7 +3,7 @@ package todo_creation_human
 import (
 	"context"
 
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
@@ -18,7 +18,7 @@ type HumanControlledTodoPlannerCodeExecutionLearningAgent struct {
 }
 
 // NewHumanControlledTodoPlannerCodeExecutionLearningAgent creates a new code execution learning agent
-func NewHumanControlledTodoPlannerCodeExecutionLearningAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerCodeExecutionLearningAgent {
+func NewHumanControlledTodoPlannerCodeExecutionLearningAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerCodeExecutionLearningAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,

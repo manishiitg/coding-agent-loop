@@ -7,12 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	"mcpagent/llm"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // LLMAgentWrapper wraps the complex MCP Agent to provide a simple LLM-like interface
@@ -25,7 +26,7 @@ type LLMAgentWrapper struct {
 	metrics *agentMetricsImpl
 	tracer  observability.Tracer
 	traceID observability.TraceID
-	logger  utils.ExtendedLogger
+	logger  loggerv2.Logger
 
 	// In-memory conversation history for multi-turn state
 	history []llmtypes.MessageContent
@@ -106,7 +107,7 @@ type agentMetricsImpl struct {
 }
 
 // NewLLMAgentWrapper creates a new LLM agent wrapper
-func NewLLMAgentWrapper(ctx context.Context, config LLMAgentConfig, tracer observability.Tracer, logger utils.ExtendedLogger) (*LLMAgentWrapper, error) {
+func NewLLMAgentWrapper(ctx context.Context, config LLMAgentConfig, tracer observability.Tracer, logger loggerv2.Logger) (*LLMAgentWrapper, error) {
 	// If no tracer is provided, automatically get one based on environment configuration
 	if tracer == nil {
 		tracer = observability.GetTracer("noop")
@@ -115,9 +116,9 @@ func NewLLMAgentWrapper(ctx context.Context, config LLMAgentConfig, tracer obser
 }
 
 // NewLLMAgentWrapperWithTrace creates a new LLM agent wrapper with hierarchical tracing support
-func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tracer observability.Tracer, mainTraceID observability.TraceID, logger utils.ExtendedLogger) (*LLMAgentWrapper, error) {
-	logger.Infof("NewLLMAgentWrapper received config: %+v", config)
-	logger.Infof("Creating agent with config path: %s", config.ConfigPath)
+func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tracer observability.Tracer, mainTraceID observability.TraceID, logger loggerv2.Logger) (*LLMAgentWrapper, error) {
+	logger.Info(fmt.Sprintf("NewLLMAgentWrapper received config: %+v", config))
+	logger.Info(fmt.Sprintf("Creating agent with config path: %s", config.ConfigPath))
 	if config.Name == "" {
 		config.Name = "mcp-agent"
 	}
@@ -125,7 +126,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	// Set default tool timeout if not specified
 	if config.ToolTimeout == 0 {
 		config.ToolTimeout = 5 * time.Minute
-		logger.Infof("Setting default tool timeout to %v", config.ToolTimeout)
+		logger.Info(fmt.Sprintf("Setting default tool timeout to %v", config.ToolTimeout))
 	}
 
 	// Create trace ID for agent initialization
@@ -139,7 +140,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	}
 
 	// Initialize the LLM externally (using Bedrock as default)
-	logger.Infof("NewLLMAgentWrapper initializing LLM with provider: %s, model_id: %s", config.Provider, config.ModelID)
+	logger.Info(fmt.Sprintf("NewLLMAgentWrapper initializing LLM with provider: %s, model_id: %s", config.Provider, config.ModelID))
 	llm, err := initializeLLMWithConfig(config, logger, tracer, traceID)
 	if err != nil {
 		// Emit error event instead of ending trace
@@ -181,20 +182,20 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			Models:   config.CrossProviderFallback.Models,
 		}
 		agentOptions = append(agentOptions, mcpagent.WithCrossProviderFallback(crossProviderFallback))
-		logger.Infof("🔄 Cross-provider fallback configured - Provider: %s, Models: %v",
-			crossProviderFallback.Provider, crossProviderFallback.Models)
+		logger.Info(fmt.Sprintf("🔄 Cross-provider fallback configured - Provider: %s, Models: %v",
+			crossProviderFallback.Provider, crossProviderFallback.Models))
 	}
 
 	// Add selected tools if provided
 	if len(config.SelectedTools) > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(config.SelectedTools))
-		logger.Infof("🔧 Selected tools configured: %d tools", len(config.SelectedTools))
+		logger.Info(fmt.Sprintf("🔧 Selected tools configured: %d tools", len(config.SelectedTools)))
 	}
 
 	// Add code execution mode if enabled
 	if config.UseCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
-		logger.Infof("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
+		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
 	}
 
 	// Add smart routing options if enabled
@@ -216,10 +217,18 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			mcpagent.WithSmartRoutingConfig(0.1, 5000, 8, 200, 300),
 		)
 
-		logger.Infof("🎯 Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
-			maxTools, maxServers)
+		logger.Info(fmt.Sprintf("🎯 Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
+			maxTools, maxServers))
 	} else {
-		logger.Infof("🔧 Smart routing disabled - using all available tools")
+		logger.Info("🔧 Smart routing disabled - using all available tools")
+	}
+
+	// Use logger directly (already loggerv2.Logger)
+	var v2Logger loggerv2.Logger
+	if logger != nil {
+		v2Logger = logger
+	} else {
+		v2Logger = loggerv2.NewDefault()
 	}
 
 	if config.AgentMode == mcpagent.SimpleAgent {
@@ -232,7 +241,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			config.ModelID,
 			tracer,
 			traceID,
-			logger, // Pass the logger parameter directly
+			v2Logger,
 			agentOptions...,
 		)
 	} else {
@@ -245,7 +254,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			config.ModelID,
 			tracer,
 			traceID,
-			logger, // Pass the logger parameter directly
+			v2Logger,
 			agentOptions...,
 		)
 	}
@@ -288,7 +297,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			}
 		}
 		agent.APIKeys = agentAPIKeys
-		logger.Infof("🔑 API keys configured for agent fallback LLM creation")
+		logger.Info("🔑 API keys configured for agent fallback LLM creation")
 	}
 
 	// Note: Event bridge integration will be added later to avoid import cycles
@@ -314,12 +323,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	// Don't end the trace immediately - let it be ended after conversation completion
 	if mainTraceID == "" {
 		// For standalone agent traces, we'll end them after conversation completion
-		logger.Infof("Created agent trace for conversation: %s", traceID)
+		logger.Info(fmt.Sprintf("Created agent trace for conversation: %s", traceID))
 	} else {
 		// For hierarchical tracing, don't end the main trace - let the parent handle it
 		if tracer != nil {
 			// Just log that we're using hierarchical tracing
-			logger.Infof("Using hierarchical tracing, main_trace_id: %s", mainTraceID)
+			logger.Info(fmt.Sprintf("Using hierarchical tracing, main_trace_id: %s", mainTraceID))
 		}
 	}
 
@@ -379,9 +388,7 @@ func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llmt
 			source = "all"
 		}
 
-		// Debug logging
-		w.logger.Infof("Server selection event - server_names: %v, total_servers: %d, source: %s, config_server_name: %s",
-			serverNames, totalServers, source, w.config.ServerName)
+		// Debug logging removed - excessive verbosity
 
 		// Create server selection event
 		serverSelectionEvent := events.NewMCPServerSelectionEvent(
@@ -398,7 +405,7 @@ func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llmt
 
 	// Check for context cancellation before executing the request
 	if ctx.Err() != nil {
-		w.logger.Infof("Context cancelled before agent execution: %s", ctx.Err().Error())
+		w.logger.Info(fmt.Sprintf("Context cancelled before agent execution: %s", ctx.Err().Error()))
 		return "", fmt.Errorf("agent execution cancelled: %w", ctx.Err())
 	}
 
@@ -408,12 +415,12 @@ func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llmt
 
 	// End the trace after conversation completion
 	if w.traceID != "" && w.tracer != nil {
-		w.logger.Infof("Ending agent trace - trace_id: %s, response_length: %d, duration_ms: %d",
-			w.traceID, len(response), duration.Milliseconds())
+		w.logger.Info(fmt.Sprintf("Ending agent trace - trace_id: %s, response_length: %d, duration_ms: %d",
+			w.traceID, len(response), duration.Milliseconds()))
 
 		// Agent end event removed - no longer needed
 	} else {
-		w.logger.Infof("Not ending trace - trace_id: %s, tracer: %v", w.traceID, w.tracer != nil)
+		w.logger.Info(fmt.Sprintf("Not ending trace - trace_id: %s, tracer: %v", w.traceID, w.tracer != nil))
 	}
 
 	// Update metrics based on result
@@ -432,29 +439,6 @@ func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llmt
 	return response, nil
 }
 
-// GetCapabilities implements the AgentCapabilities interface
-func (w *LLMAgentWrapper) GetCapabilities() map[string]interface{} {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
-	if w.closed {
-		return map[string]interface{}{"error": "Agent is closed"}
-	}
-
-	toolNames := make([]string, 0, len(w.agent.Tools))
-	for _, tool := range w.agent.Tools {
-		toolNames = append(toolNames, tool.Function.Name)
-	}
-
-	return map[string]interface{}{
-		"name":      w.name,
-		"model":     w.config.ModelID,
-		"server":    w.config.ServerName,
-		"tools":     toolNames,
-		"max_turns": w.config.MaxTurns,
-	}
-}
-
 // GetUnderlyingAgent returns the underlying MCP agent for direct access
 func (w *LLMAgentWrapper) GetUnderlyingAgent() *mcpagent.Agent {
 	w.mu.RLock()
@@ -467,110 +451,6 @@ func (w *LLMAgentWrapper) GetName() string {
 	return w.name
 }
 
-// GetVersion implements the AgentCapabilities interface
-func (w *LLMAgentWrapper) GetVersion() string {
-	return "1.0.0"
-}
-
-// Start implements the AgentLifecycle interface
-func (w *LLMAgentWrapper) Start(ctx context.Context) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.closed {
-		return errors.New("cannot start closed agent")
-	}
-
-	// Agent is already started during initialization
-	w.metrics.IsHealthy = true
-	w.metrics.LastSuccessTime = time.Now()
-
-	return nil
-}
-
-// Stop implements the AgentLifecycle interface
-func (w *LLMAgentWrapper) Stop(ctx context.Context) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.closed {
-		return nil // Already stopped
-	}
-
-	w.closed = true
-	w.metrics.IsHealthy = false
-
-	// Close the underlying agent
-	if w.agent != nil {
-		w.agent.Close()
-	}
-
-	return nil
-}
-
-// IsHealthy implements the AgentLifecycle interface
-func (w *LLMAgentWrapper) IsHealthy() bool {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
-	return !w.closed && w.metrics.IsHealthy
-}
-
-// GetMetrics implements the AgentMetrics interface
-func (w *LLMAgentWrapper) GetMetrics() map[string]interface{} {
-	w.metrics.mu.RLock()
-	defer w.metrics.mu.RUnlock()
-
-	return map[string]interface{}{
-		"total_requests":       w.metrics.TotalRequests,
-		"successful_requests":  w.metrics.SuccessfulRequests,
-		"failed_requests":      w.metrics.FailedRequests,
-		"total_latency_ms":     w.metrics.TotalLatency.Milliseconds(),
-		"min_latency_ms":       w.metrics.MinLatency.Milliseconds(),
-		"max_latency_ms":       w.metrics.MaxLatency.Milliseconds(),
-		"average_latency_ms":   w.metrics.AverageLatency.Milliseconds(),
-		"total_tokens_used":    w.metrics.TotalTokensUsed,
-		"input_tokens":         w.metrics.InputTokens,
-		"output_tokens":        w.metrics.OutputTokens,
-		"tool_calls_executed":  w.metrics.ToolCallsExecuted,
-		"tool_calls_succeeded": w.metrics.ToolCallsSucceeded,
-		"tool_calls_failed":    w.metrics.ToolCallsFailed,
-		"streams_started":      w.metrics.StreamsStarted,
-		"streams_completed":    w.metrics.StreamsCompleted,
-		"streams_failed":       w.metrics.StreamsFailed,
-		"is_healthy":           w.metrics.IsHealthy,
-		"last_request_time":    w.metrics.LastRequestTime,
-		"last_success_time":    w.metrics.LastSuccessTime,
-		"last_error_time":      w.metrics.LastErrorTime,
-		"last_error":           w.getLastErrorString(),
-	}
-}
-
-// GetToolDefinitions returns the full tool definitions (name, description, parameters) for advanced UI display
-func (w *LLMAgentWrapper) GetToolDefinitions() []map[string]interface{} {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
-	if w.closed || w.agent == nil {
-		return nil
-	}
-
-	tools := w.agent.Tools
-	result := make([]map[string]interface{}, 0, len(tools))
-	for _, t := range tools {
-		if t.Function == nil {
-			continue
-		}
-		entry := map[string]interface{}{
-			"name":        t.Function.Name,
-			"description": t.Function.Description,
-			"parameters":  t.Function.Parameters, // Already JSON-schema
-		}
-		result = append(result, entry)
-	}
-	return result
-}
-
 // GetHistory returns a copy of the current conversation history
 func (w *LLMAgentWrapper) GetHistory() []llmtypes.MessageContent {
 	w.mu.RLock()
@@ -578,13 +458,6 @@ func (w *LLMAgentWrapper) GetHistory() []llmtypes.MessageContent {
 	h := make([]llmtypes.MessageContent, len(w.history))
 	copy(h, w.history)
 	return h
-}
-
-// ClearHistory resets the in-memory conversation history
-func (w *LLMAgentWrapper) ClearHistory() {
-	w.mu.Lock()
-	w.history = nil
-	w.mu.Unlock()
 }
 
 // AppendUserMessage adds a user message to the agent's history
@@ -601,19 +474,6 @@ func (w *LLMAgentWrapper) AppendUserMessage(text string) {
 	})
 }
 
-// AppendAssistantMessage adds an assistant message to the agent's history
-func (w *LLMAgentWrapper) AppendAssistantMessage(text string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.closed {
-		return
-	}
-	w.history = append(w.history, llmtypes.MessageContent{
-		Role:  llmtypes.ChatMessageTypeAI,
-		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: text}},
-	})
-}
-
 // AppendMessage adds a message to the conversation history
 func (w *LLMAgentWrapper) AppendMessage(msg llmtypes.MessageContent) {
 	w.mu.Lock()
@@ -622,12 +482,6 @@ func (w *LLMAgentWrapper) AppendMessage(msg llmtypes.MessageContent) {
 		return
 	}
 	w.history = append(w.history, msg)
-}
-
-// ExecuteTask implements the Agent interface for task execution compatibility.
-func (w *LLMAgentWrapper) ExecuteTask(ctx context.Context, description string) (string, error) {
-	w.logger.Infof("Entered LLMAgentWrapper.ExecuteTask: %s", description)
-	return w.Invoke(ctx, description)
 }
 
 // Helper methods for metrics tracking
@@ -693,7 +547,7 @@ func (w *LLMAgentWrapper) getLastErrorString() string {
 }
 
 // initializeLLMWithConfig initializes an LLM using detailed configuration from frontend
-func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, traceID observability.TraceID) (llmtypes.Model, error) {
+func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, traceID observability.TraceID) (llmtypes.Model, error) {
 	// Validate and convert provider string to llm.Provider type
 	llmProvider, err := llm.ValidateProvider(string(config.Provider))
 	if err != nil {
@@ -706,22 +560,30 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 	// Add custom fallback models from frontend if provided
 	if len(config.FallbackModels) > 0 {
 		fallbackModels = append(fallbackModels, config.FallbackModels...)
-		logger.Infof("Using custom fallback models from frontend: %v", config.FallbackModels)
+		logger.Info(fmt.Sprintf("Using custom fallback models from frontend: %v", config.FallbackModels))
 	} else {
 		// Use default fallback models for the provider
 		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llmProvider)...)
-		logger.Infof("Using default fallback models for provider %s: %v", config.Provider, fallbackModels)
+		logger.Info(fmt.Sprintf("Using default fallback models for provider %s: %v", config.Provider, fallbackModels))
 	}
 
 	// Add cross-provider fallback models if configured
 	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
 		fallbackModels = append(fallbackModels, config.CrossProviderFallback.Models...)
-		logger.Infof("Added cross-provider fallback models for %s: %v", config.CrossProviderFallback.Provider, config.CrossProviderFallback.Models)
+		logger.Info(fmt.Sprintf("Added cross-provider fallback models for %s: %v", config.CrossProviderFallback.Provider, config.CrossProviderFallback.Models))
 	} else {
 		// Add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Infof("Added default cross-provider fallback models: %v", crossProviderFallbacks)
+		logger.Info(fmt.Sprintf("Added default cross-provider fallback models: %v", crossProviderFallbacks))
+	}
+
+	// Use logger directly (already loggerv2.Logger)
+	var v2LoggerForLLM loggerv2.Logger
+	if logger != nil {
+		v2LoggerForLLM = logger
+	} else {
+		v2LoggerForLLM = loggerv2.NewDefault()
 	}
 
 	// Use the existing LLM provider system with detailed fallback models
@@ -732,34 +594,12 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger utils.ExtendedLogger,
 		TraceID:        traceID, // Pass the trace ID for proper span hierarchy
 		FallbackModels: fallbackModels,
 		MaxRetries:     3,
-		Logger:         logger,
+		Logger:         v2LoggerForLLM,
 		APIKeys:        config.APIKeys, // Use API keys directly from config
 	}
 
 	// Initialize the LLM using the factory with detailed fallback support
 	return llm.InitializeLLM(llmConfig)
-}
-
-// GetEventDispatcher returns the agent's event dispatcher for direct event access
-func (w *LLMAgentWrapper) GetEventDispatcher() interface{} {
-	// Event dispatcher was removed in simplified architecture
-	// Events now go directly to tracers via EmitTypedEvent
-	w.logger.Infof("🔍 DEBUG: EventDispatcher removed - use EmitTypedEvent instead")
-	return nil
-}
-
-// AddEventListener adds an event listener to the agent's event dispatcher
-func (w *LLMAgentWrapper) AddEventListener(listener interface{}) {
-	// Event listeners were removed in simplified architecture
-	// Events now go directly to tracers via EmitTypedEvent
-	w.logger.Infof("🔍 DEBUG: AddEventListener removed - use EmitTypedEvent instead")
-}
-
-// EmitEvent emits an event through the agent's event dispatcher
-func (w *LLMAgentWrapper) EmitEvent(ctx context.Context, eventType events.AgentEventType, data map[string]interface{}) {
-	// EmitEvent was removed in simplified architecture
-	// Use EmitTypedEvent instead for typed events
-	w.logger.Infof("🔍 DEBUG: EmitEvent removed - use EmitTypedEvent instead")
 }
 
 // EmitTypedEvent emits a typed event through the agent's event dispatcher
@@ -822,10 +662,4 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 	}()
 
 	return textChan, nil
-}
-
-// RemoveEventListener removes an event listener from the agent's event dispatcher
-func (w *LLMAgentWrapper) RemoveEventListener(listener interface{}) {
-	// Event listeners were removed in simplified architecture
-	w.logger.Infof("🔍 DEBUG: RemoveEventListener removed - event system simplified")
 }

@@ -3,20 +3,21 @@ package llm
 import (
 	"context"
 	"fmt"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	"mcpagent/llm"
 	"mcpagent/observability"
 	"time"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // BaseLLM provides common functionality for all LLM-based operations
 type BaseLLM struct {
 	llm          llmtypes.Model
-	logger       utils.ExtendedLogger
+	logger       loggerv2.Logger
 	tracer       observability.Tracer
 	eventEmitter func(context.Context, events.EventData)
 }
@@ -24,13 +25,13 @@ type BaseLLM struct {
 // NewBaseLLM creates a new BaseLLM instance with mandatory event bridge
 func NewBaseLLM(
 	llm llmtypes.Model,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
 	llmType string,
 ) *BaseLLM {
 	if eventBridge == nil {
-		logger.Warnf("⚠️ Event bridge is nil for %s LLM - this may limit observability", llmType)
+		logger.Warn(fmt.Sprintf("⚠️ Event bridge is nil for %s LLM - this may limit observability", llmType))
 	}
 
 	eventEmitter := CreateEventEmitter(eventBridge, logger, llmType)
@@ -49,7 +50,7 @@ func (b *BaseLLM) GetLLM() llmtypes.Model {
 }
 
 // GetLogger returns the logger
-func (b *BaseLLM) GetLogger() utils.ExtendedLogger {
+func (b *BaseLLM) GetLogger() loggerv2.Logger {
 	return b.logger
 }
 
@@ -71,10 +72,10 @@ func (b *BaseLLM) SetEventEmitter(emitter func(context.Context, events.EventData
 // CreateLLMInstance creates an LLM instance with standard configuration
 func CreateLLMInstance(
 	config *agents.OrchestratorAgentConfig,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	llmType string,
 ) (llmtypes.Model, error) {
-	logger.Infof("🔧 Creating %s LLM with standard configuration", llmType)
+	logger.Info(fmt.Sprintf("🔧 Creating %s LLM with standard configuration", llmType))
 
 	// Generate trace ID for this LLM session
 	traceID := observability.TraceID(fmt.Sprintf("%s-llm-%d", llmType, time.Now().UnixNano()))
@@ -85,22 +86,22 @@ func CreateLLMInstance(
 	// Add custom fallback models from config if provided
 	if len(config.FallbackModels) > 0 {
 		fallbackModels = append(fallbackModels, config.FallbackModels...)
-		logger.Infof("🔧 Using custom fallback models for %s LLM: %v", llmType, config.FallbackModels)
+		logger.Info(fmt.Sprintf("🔧 Using custom fallback models for %s LLM: %v", llmType, config.FallbackModels))
 	} else {
 		// Use default fallback models for the provider
 		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(config.Provider))...)
-		logger.Infof("🔧 Using default fallback models for %s LLM provider: %s", llmType, config.Provider)
+		logger.Info(fmt.Sprintf("🔧 Using default fallback models for %s LLM provider: %s", llmType, config.Provider))
 	}
 
 	// Add cross-provider fallback models if configured
 	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
 		fallbackModels = append(fallbackModels, config.CrossProviderFallback.Models...)
-		logger.Infof("🔧 Using configured cross-provider fallback models for %s LLM: %v", llmType, config.CrossProviderFallback.Models)
+		logger.Info(fmt.Sprintf("🔧 Using configured cross-provider fallback models for %s LLM: %v", llmType, config.CrossProviderFallback.Models))
 	} else {
 		// Add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.Provider))
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Infof("🔧 Added default cross-provider fallback models for %s LLM: %v", llmType, crossProviderFallbacks)
+		logger.Info(fmt.Sprintf("🔧 Added default cross-provider fallback models for %s LLM: %v", llmType, crossProviderFallbacks))
 	}
 
 	// Convert API keys from agent config to LLM config format
@@ -135,12 +136,12 @@ func CreateLLMInstance(
 	// Initialize LLM using the existing factory
 	llmInstance, err := llm.InitializeLLM(llmConfig)
 	if err != nil {
-		logger.Errorf("❌ Failed to create %s LLM: %v", llmType, err)
+		logger.Error(fmt.Sprintf("❌ Failed to create %s LLM: %v", llmType, err), err)
 		return nil, fmt.Errorf("failed to create %s LLM: %w", llmType, err)
 	}
 
-	logger.Infof("✅ %s LLM created successfully - Provider: %s, Model: %s, Temperature: %.1f",
-		llmType, config.Provider, config.Model, config.Temperature)
+	logger.Info(fmt.Sprintf("✅ %s LLM created successfully - Provider: %s, Model: %s, Temperature: %.1f",
+		llmType, config.Provider, config.Model, config.Temperature))
 
 	return llmInstance, nil
 }
@@ -148,12 +149,12 @@ func CreateLLMInstance(
 // CreateEventEmitter creates a standard event emitter function for LLM operations
 func CreateEventEmitter(
 	eventBridge mcpagent.AgentEventListener,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	llmType string,
 ) func(context.Context, events.EventData) {
 	return func(ctx context.Context, data events.EventData) {
 		if eventBridge == nil {
-			logger.Warnf("⚠️ No event bridge available, cannot emit %s LLM event", llmType)
+			logger.Warn(fmt.Sprintf("⚠️ No event bridge available, cannot emit %s LLM event", llmType))
 			return
 		}
 
@@ -171,7 +172,7 @@ func CreateEventEmitter(
 
 		// Emit through event bridge
 		if err := eventBridge.HandleEvent(ctx, agentEvent); err != nil {
-			logger.Warnf("⚠️ Failed to emit %s LLM event: %v", llmType, err)
+			logger.Warn(fmt.Sprintf("⚠️ Failed to emit %s LLM event: %v", llmType, err), loggerv2.Field{Key: "error", Value: err})
 		}
 	}
 }
@@ -180,10 +181,10 @@ func CreateEventEmitter(
 func CreateConditionalLLMWithEventBridge(
 	config *agents.OrchestratorAgentConfig,
 	eventBridge mcpagent.AgentEventListener,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	tracer observability.Tracer,
 ) (*ConditionalLLM, error) {
-	logger.Infof("🔧 Creating conditional LLM with mandatory event bridge integration")
+	logger.Info(fmt.Sprintf("🔧 Creating conditional LLM with mandatory event bridge integration"))
 
 	// Create LLM instance using helper
 	llmInstance, err := CreateLLMInstance(config, logger, "conditional")
@@ -196,8 +197,8 @@ func CreateConditionalLLMWithEventBridge(
 		BaseLLM: NewBaseLLM(llmInstance, logger, tracer, eventBridge, "conditional"),
 	}
 
-	logger.Infof("✅ Conditional LLM created successfully with event bridge - Provider: %s, Model: %s, Temperature: %.1f",
-		config.Provider, config.Model, config.Temperature)
+	logger.Info(fmt.Sprintf("✅ Conditional LLM created successfully with event bridge - Provider: %s, Model: %s, Temperature: %.1f",
+		config.Provider, config.Model, config.Temperature))
 
 	return conditionalLLM, nil
 }
@@ -206,10 +207,10 @@ func CreateConditionalLLMWithEventBridge(
 func CreateStructuredOutputLLMWithEventBridge(
 	config *agents.OrchestratorAgentConfig,
 	eventBridge mcpagent.AgentEventListener,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	tracer observability.Tracer,
 ) (*StructuredOutputLLM, error) {
-	logger.Infof("🔧 Creating structured output LLM with mandatory event bridge integration")
+	logger.Info(fmt.Sprintf("🔧 Creating structured output LLM with mandatory event bridge integration"))
 
 	// Create LLM instance using helper
 	llmInstance, err := CreateLLMInstance(config, logger, "structured-output")
@@ -222,8 +223,8 @@ func CreateStructuredOutputLLMWithEventBridge(
 		BaseLLM: NewBaseLLM(llmInstance, logger, tracer, eventBridge, "structured-output"),
 	}
 
-	logger.Infof("✅ Structured output LLM created successfully with event bridge - Provider: %s, Model: %s, Temperature: %.1f",
-		config.Provider, config.Model, config.Temperature)
+	logger.Info(fmt.Sprintf("✅ Structured output LLM created successfully with event bridge - Provider: %s, Model: %s, Temperature: %.1f",
+		config.Provider, config.Model, config.Temperature))
 
 	return structuredOutputLLM, nil
 }

@@ -13,6 +13,7 @@ interface LLMSelectionDropdownProps {
   disabled?: boolean;
   inModal?: boolean; // Add prop to indicate if used inside a modal
   openDirection?: 'up' | 'down'; // Add prop to control dropdown direction
+  title?: string; // Custom title for the dropdown modal (defaults to "Select Primary LLM")
 }
 
 export default function LLMSelectionDropdown({
@@ -22,11 +23,14 @@ export default function LLMSelectionDropdown({
   onRefresh,
   disabled = false,
   inModal = false,
-  openDirection = 'down' // Default to downward
+  openDirection = 'down', // Default to downward
+  title = 'Select Primary LLM' // Default title
 }: LLMSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Auto-focus search input when dropdown opens
   useEffect(() => {
@@ -90,10 +94,11 @@ export default function LLMSelectionDropdown({
 
   return (
     <TooltipProvider>
-      <div className="relative" data-llm-dropdown>
+      <div className="relative" data-llm-dropdown style={inModal && isOpen ? { zIndex: 99999 } : undefined}>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              ref={buttonRef}
               type="button"
               variant="outline"
               size="sm"
@@ -104,7 +109,7 @@ export default function LLMSelectionDropdown({
               className="h-8 px-2 text-xs font-medium bg-background border-border hover:bg-secondary text-foreground"
               aria-expanded={isOpen}
               aria-haspopup="menu"
-              aria-label="Select primary LLM"
+              aria-label={title}
             >
               <Brain className="w-3 h-3 mr-1" />
               {getDisplayText()}
@@ -112,7 +117,7 @@ export default function LLMSelectionDropdown({
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{availableLLMs.length === 0 ? 'No LLMs available' : 'Select primary LLM'}</p>
+            <p>{availableLLMs.length === 0 ? 'No LLMs available' : title}</p>
           </TooltipContent>
         </Tooltip>
 
@@ -128,7 +133,8 @@ export default function LLMSelectionDropdown({
             
             {/* Dropdown */}
             <div 
-              className={`absolute left-0 ${inModal ? 'z-[9999]' : 'z-50'} min-w-[300px] ${
+              ref={dropdownRef}
+              className={`${inModal ? 'fixed' : 'absolute'} left-0 ${inModal ? 'z-[99999]' : 'z-50'} min-w-[300px] ${
                 openDirection === 'up' 
                   ? 'bottom-full mb-1' 
                   : 'top-full mt-1'
@@ -136,13 +142,21 @@ export default function LLMSelectionDropdown({
               onClick={(e) => e.stopPropagation()}
               role="menu"
               aria-label="LLM selection menu"
+              style={inModal && buttonRef.current ? (() => {
+                const rect = buttonRef.current.getBoundingClientRect();
+                return {
+                  zIndex: 99999,
+                  top: openDirection === 'up' ? `${rect.top - 200}px` : `${rect.bottom + 4}px`,
+                  left: `${rect.left}px`,
+                };
+              })() : inModal ? { zIndex: 99999 } : undefined}
             >
-              <Card className="p-4 shadow-lg border-border bg-card" onClick={(e) => e.stopPropagation()}>
+              <Card className="p-4 shadow-lg border-border bg-card" style={inModal ? { zIndex: 99999, position: 'relative' } : undefined} onClick={(e) => e.stopPropagation()}>
                 <div className="space-y-3">
                   {/* Header */}
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-medium text-foreground">
-                      Select Primary LLM
+                      {title}
                     </h3>
                     <div className="flex items-center gap-1">
                       {/* Search Input */}
@@ -273,8 +287,8 @@ export default function LLMSelectionDropdown({
                   {/* Instructions */}
                   <div className="text-xs text-muted-foreground">
                     {selectedLLM 
-                      ? `Primary LLM: ${selectedLLM.label}`
-                      : 'No primary LLM selected - will use default'
+                      ? `Selected: ${selectedLLM.label}`
+                      : 'No LLM selected - will use default'
                     }
                   </div>
                 </div>

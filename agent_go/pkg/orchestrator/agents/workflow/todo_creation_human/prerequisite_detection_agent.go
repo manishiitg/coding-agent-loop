@@ -8,7 +8,7 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
@@ -30,7 +30,7 @@ type HumanControlledTodoPlannerPrerequisiteDetectionAgent struct {
 }
 
 // NewHumanControlledTodoPlannerPrerequisiteDetectionAgent creates a new prerequisite detection agent
-func NewHumanControlledTodoPlannerPrerequisiteDetectionAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerPrerequisiteDetectionAgent {
+func NewHumanControlledTodoPlannerPrerequisiteDetectionAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerPrerequisiteDetectionAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -47,7 +47,7 @@ func NewHumanControlledTodoPlannerPrerequisiteDetectionAgent(config *agents.Orch
 // Execute implements the OrchestratorAgent interface
 // NOTE: This method is NOT USED - use ExecuteStructured() instead
 func (hctppda *HumanControlledTodoPlannerPrerequisiteDetectionAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	return "", nil, fmt.Errorf("Execute() is not used for prerequisite detection agent - use ExecuteStructured() instead")
+	return "", nil, fmt.Errorf(fmt.Sprintf("Execute() is not used for prerequisite detection agent - use ExecuteStructured() instead"), nil)
 }
 
 // ExecuteStructured executes the prerequisite detection agent and returns structured output

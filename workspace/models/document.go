@@ -129,3 +129,18 @@ type CreateFolderResponse struct {
 	FolderPath string `json:"folder_path"`
 	Created    bool   `json:"created"`
 }
+
+// CopyFolderRequest represents the request to copy a folder
+type CopyFolderRequest struct {
+	SourcePath      string `json:"source_path" binding:"required"`
+	DestinationPath string `json:"destination_path" binding:"required"`
+	CommitMessage   string `json:"commit_message,omitempty"`
+}
+
+// CopyFolderResponse represents the response after copying a folder
+type CopyFolderResponse struct {
+	SourcePath      string `json:"source_path"`
+	DestinationPath string `json:"destination_path"`
+	FilesCopied     int    `json:"files_copied"`
+	DirsCreated     int    `json:"dirs_created"`
+}

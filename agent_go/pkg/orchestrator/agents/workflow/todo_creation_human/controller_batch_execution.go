@@ -27,7 +27,7 @@ type BatchExecutionResult struct {
 // Priority: ExecutionOptions.EnabledGroupIDs > manifest enabled groups
 func (hcpo *HumanControlledTodoPlannerOrchestrator) getEnabledGroupsForExecution() []VariableGroup {
 	if hcpo.variablesManifest == nil {
-		hcpo.GetLogger().Warnf("⚠️ [GROUP SELECTION] variablesManifest is nil - cannot determine enabled groups")
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [GROUP SELECTION] variablesManifest is nil - cannot determine enabled groups"))
 		return nil
 	}
 
@@ -36,12 +36,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getEnabledGroupsForExecution
 	for i, g := range hcpo.variablesManifest.Groups {
 		availableGroupIDs[i] = g.GroupID
 	}
-	hcpo.GetLogger().Infof("🔍 [GROUP SELECTION] Available groups in manifest: %v", availableGroupIDs)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [GROUP SELECTION] Available groups in manifest: %v", availableGroupIDs))
 
 	// Check if ExecutionOptions specifies specific group IDs
 	if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupIDs) > 0 {
 		// Use specified group IDs from ExecutionOptions
-		hcpo.GetLogger().Infof("🔍 [GROUP SELECTION] Requested group IDs from execution options: %v", hcpo.executionOptions.EnabledGroupIDs)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [GROUP SELECTION] Requested group IDs from execution options: %v", hcpo.executionOptions.EnabledGroupIDs))
 		var groups []VariableGroup
 		var foundGroupIDs []string
 		var missingGroupIDs []string
@@ -52,19 +52,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getEnabledGroupsForExecution
 				if g.GroupID == groupID {
 					groups = append(groups, g)
 					foundGroupIDs = append(foundGroupIDs, groupID)
-					hcpo.GetLogger().Infof("✅ [GROUP SELECTION] Found group %s in manifest (enabled: %v)", groupID, g.Enabled)
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ [GROUP SELECTION] Found group %s in manifest (enabled: %v)", groupID, g.Enabled))
 					found = true
 					break
 				}
 			}
 			if !found {
 				missingGroupIDs = append(missingGroupIDs, groupID)
-				hcpo.GetLogger().Warnf("⚠️ [GROUP SELECTION] Requested group %s not found in manifest", groupID)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [GROUP SELECTION] Requested group %s not found in manifest", groupID))
 			}
 		}
 
 		if len(missingGroupIDs) > 0 {
-			hcpo.GetLogger().Errorf("❌ [GROUP SELECTION] Some requested groups not found: %v (found: %v)", missingGroupIDs, foundGroupIDs)
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ [GROUP SELECTION] Some requested groups not found: %v (found: %v)", missingGroupIDs, foundGroupIDs), nil)
 		}
 
 		if len(groups) > 0 {
@@ -72,9 +72,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getEnabledGroupsForExecution
 			for i, g := range groups {
 				returnedGroupIDs[i] = g.GroupID
 			}
-			hcpo.GetLogger().Infof("✅ [GROUP SELECTION] Returning %d groups: %v", len(groups), returnedGroupIDs)
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ [GROUP SELECTION] Returning %d groups: %v", len(groups), returnedGroupIDs))
 		} else {
-			hcpo.GetLogger().Warnf("⚠️ [GROUP SELECTION] No groups found matching requested IDs, falling back to manifest enabled groups")
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [GROUP SELECTION] No groups found matching requested IDs, falling back to manifest enabled groups"))
 		}
 
 		// If we found at least some groups, return them (even if some were missing)
@@ -84,13 +84,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getEnabledGroupsForExecution
 	}
 
 	// Fall back to manifest's enabled groups
-	hcpo.GetLogger().Infof("🔍 [GROUP SELECTION] No execution options or no matches found, using manifest's enabled groups")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [GROUP SELECTION] No execution options or no matches found, using manifest's enabled groups"))
 	enabledGroups := hcpo.variablesManifest.GetEnabledGroups()
 	enabledGroupIDs := make([]string, len(enabledGroups))
 	for i, g := range enabledGroups {
 		enabledGroupIDs[i] = g.GroupID
 	}
-	hcpo.GetLogger().Infof("✅ [GROUP SELECTION] Returning %d enabled groups from manifest: %v", len(enabledGroups), enabledGroupIDs)
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ [GROUP SELECTION] Returning %d enabled groups from manifest: %v", len(enabledGroups), enabledGroupIDs))
 	return enabledGroups
 }
 
@@ -112,7 +112,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 	totalGroups := len(enabledGroups)
 
 	if totalGroups == 0 {
-		return nil, fmt.Errorf("no enabled variable groups found for batch execution")
+		return nil, fmt.Errorf(fmt.Sprintf("no enabled variable groups found for batch execution"), nil)
 	}
 
 	// Validate that returned groups match requested groups (if specified)
@@ -142,9 +142,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		}
 
 		if len(missing) > 0 {
-			hcpo.GetLogger().Errorf("❌ [BATCH EXECUTION] Requested groups not found in execution: %v (returned: %v)", missing, returnedGroupIDs)
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ [BATCH EXECUTION] Requested groups not found in execution: %v (returned: %v)", missing, returnedGroupIDs), nil)
 		} else {
-			hcpo.GetLogger().Infof("✅ [BATCH EXECUTION] All requested groups found: %v", returnedGroupIDs)
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ [BATCH EXECUTION] All requested groups found: %v", returnedGroupIDs))
 		}
 
 		// Check for unexpected groups
@@ -167,11 +167,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		}
 
 		if len(unexpected) > 0 {
-			hcpo.GetLogger().Warnf("⚠️ [BATCH EXECUTION] Unexpected groups in execution (not requested): %v", unexpected)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [BATCH EXECUTION] Unexpected groups in execution (not requested): %v", unexpected))
 		}
 	}
 
-	hcpo.GetLogger().Infof("🔄 Starting batch execution for %d variable groups", totalGroups)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔄 Starting batch execution for %d variable groups", totalGroups))
 
 	// Create ExecutionManager for centralized cleanup management
 	execManager := NewExecutionManager(hcpo)
@@ -198,7 +198,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		// Check for context cancellation
 		select {
 		case <-ctx.Done():
-			hcpo.GetLogger().Warnf("⚠️ Batch execution canceled during group %s", group.GroupID)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Batch execution canceled during group %s", group.GroupID))
 			result.CanceledGroups = totalGroups - groupIndex
 			remainingGroupIDs := make([]string, 0)
 			for i := groupIndex + 1; i < totalGroups; i++ {
@@ -211,13 +211,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		default:
 		}
 
-		hcpo.GetLogger().Infof("📦 Batch execution: processing group %d/%d (%s)", groupIndex+1, totalGroups, group.GroupID)
+		hcpo.GetLogger().Info(fmt.Sprintf("📦 Batch execution: processing group %d/%d (%s)", groupIndex+1, totalGroups, group.GroupID))
 
 		// Log group values being used for this execution
 		if len(group.Values) > 0 {
-			hcpo.GetLogger().Infof("🔍 [GROUP EXECUTION] Using variable values for group %s: %v", group.GroupID, group.Values)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [GROUP EXECUTION] Using variable values for group %s: %v", group.GroupID, group.Values))
 		} else {
-			hcpo.GetLogger().Warnf("⚠️ [GROUP EXECUTION] Group %s has no variable values!", group.GroupID)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [GROUP EXECUTION] Group %s has no variable values!", group.GroupID))
 		}
 
 		// Determine run folder for this group
@@ -232,7 +232,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 
 		// Ensure run folder exists
 		if err := hcpo.createRunFolderStructure(ctx, fullRunFolderPath); err != nil {
-			hcpo.GetLogger().Errorf("❌ Failed to create run folder for group %s: %v", group.GroupID, err)
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create run folder for group %s: %v", group.GroupID, err), nil)
 			result.FailedGroups++
 			result.FailedGroupIDs = append(result.FailedGroupIDs, group.GroupID)
 			continue
@@ -249,7 +249,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 			execCtx, // Inherit base execution context settings
 		)
 		if err != nil {
-			hcpo.GetLogger().Errorf("❌ Failed to prepare execution for group %s: %v", group.GroupID, err)
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to prepare execution for group %s: %v", group.GroupID, err), nil)
 			result.FailedGroups++
 			result.FailedGroupIDs = append(result.FailedGroupIDs, group.GroupID)
 			continue
@@ -257,7 +257,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 
 		// Apply cleanup (deletes old artifacts, initializes fresh progress)
 		if err := execManager.ApplyCleanup(ctx, groupSetup); err != nil {
-			hcpo.GetLogger().Errorf("❌ Failed to apply cleanup for group %s: %v", group.GroupID, err)
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to apply cleanup for group %s: %v", group.GroupID, err), nil)
 			result.FailedGroups++
 			result.FailedGroupIDs = append(result.FailedGroupIDs, group.GroupID)
 			continue
@@ -275,7 +275,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		progress, err := hcpo.loadStepProgress(ctx)
 		if err != nil {
 			// If loading fails, create in-memory progress
-			hcpo.GetLogger().Warnf("⚠️ Failed to load progress for group %s, using in-memory: %v", group.GroupID, err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load progress for group %s, using in-memory: %v", group.GroupID, err))
 			progress = &StepProgress{
 				CompletedStepIndices: make([]int, 0),
 				TotalSteps:           len(breakdownSteps),
@@ -290,7 +290,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		remainingGroups := totalGroups - groupIndex - 1
 
 		if err != nil {
-			hcpo.GetLogger().Errorf("❌ Batch execution: group %s failed: %v", group.GroupID, err)
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Batch execution: group %s failed: %v", group.GroupID, err), nil)
 			result.FailedGroups++
 			result.FailedGroupIDs = append(result.FailedGroupIDs, group.GroupID)
 			hcpo.emitBatchGroupEndEvent(ctx, group.GroupID, groupIndex, totalGroups, false, err.Error(), groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
@@ -300,7 +300,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 			continue
 		}
 
-		hcpo.GetLogger().Infof("✅ Batch execution: group %s completed successfully", group.GroupID)
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Batch execution: group %s completed successfully", group.GroupID))
 		result.CompletedGroups++
 		result.CompletedGroupIDs = append(result.CompletedGroupIDs, group.GroupID)
 		hcpo.emitBatchGroupEndEvent(ctx, group.GroupID, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
@@ -313,9 +313,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 	hcpo.emitBatchExecutionEndEvent(ctx, result, iteration)
 
 	if result.Success {
-		hcpo.GetLogger().Infof("✅ Batch execution completed: %d/%d groups succeeded in %v", result.CompletedGroups, totalGroups, result.Duration)
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Batch execution completed: %d/%d groups succeeded in %v", result.CompletedGroups, totalGroups, result.Duration))
 	} else {
-		hcpo.GetLogger().Warnf("⚠️ Batch execution completed with issues: %d completed, %d failed, %d canceled", result.CompletedGroups, result.FailedGroups, result.CanceledGroups)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Batch execution completed with issues: %d completed, %d failed, %d canceled", result.CompletedGroups, result.FailedGroups, result.CanceledGroups))
 	}
 
 	return result, nil
@@ -350,12 +350,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) determineBaseIterationFolder
 				baseIterationNum = hcpo.getNextIterationNumber(ctx)
 			}
 		}
-		hcpo.GetLogger().Infof("📁 Using selected run folder: %s (iteration %d)", baseIterationFolder, baseIterationNum)
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Using selected run folder: %s (iteration %d)", baseIterationFolder, baseIterationNum))
 	} else if hcpo.selectedRunMode == "create_new_runs_always" {
 		// Create new iteration folder
 		baseIterationNum = hcpo.getNextIterationNumber(ctx)
 		baseIterationFolder = fmt.Sprintf("iteration-%d", baseIterationNum)
-		hcpo.GetLogger().Infof("📁 Creating new iteration folder: %s", baseIterationFolder)
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Creating new iteration folder: %s", baseIterationFolder))
 	} else {
 		// use_same_run mode - use latest existing iteration or create new one
 		runsPath := fmt.Sprintf("%s/runs", hcpo.GetWorkspacePath())
@@ -365,16 +365,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) determineBaseIterationFolder
 			if maxIteration > 0 {
 				baseIterationNum = maxIteration
 				baseIterationFolder = fmt.Sprintf("iteration-%d", baseIterationNum)
-				hcpo.GetLogger().Infof("📁 Using existing iteration folder: %s", baseIterationFolder)
+				hcpo.GetLogger().Info(fmt.Sprintf("📁 Using existing iteration folder: %s", baseIterationFolder))
 			} else {
 				baseIterationNum = 1
 				baseIterationFolder = fmt.Sprintf("iteration-%d", baseIterationNum)
-				hcpo.GetLogger().Infof("📁 No existing iteration folders found, creating: %s", baseIterationFolder)
+				hcpo.GetLogger().Info(fmt.Sprintf("📁 No existing iteration folders found, creating: %s", baseIterationFolder))
 			}
 		} else {
 			baseIterationNum = 1
 			baseIterationFolder = fmt.Sprintf("iteration-%d", baseIterationNum)
-			hcpo.GetLogger().Infof("📁 No existing folders found, creating: %s", baseIterationFolder)
+			hcpo.GetLogger().Info(fmt.Sprintf("📁 No existing folders found, creating: %s", baseIterationFolder))
 		}
 	}
 

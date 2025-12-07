@@ -19,14 +19,15 @@ import (
 	"github.com/spf13/viper"
 
 	"mcp-agent/agent_go/internal/events"
-	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
 	unifiedevents "mcpagent/events"
+	"mcpagent/executor"
 	"mcpagent/llm"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -224,7 +225,7 @@ type StreamingAPI struct {
 	discoveryTicker  *time.Ticker
 
 	// Logger for structured logging
-	logger utils.ExtendedLogger
+	logger loggerv2.Logger
 }
 
 // QueryRequest represents an agent query request
@@ -576,14 +577,13 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/tools/edit", api.handleEditServer).Methods("POST")
 	apiRouter.HandleFunc("/tools/remove", api.handleRemoveServer).Methods("POST")
 
-	// MCP execution API (from tools.go)
-	apiRouter.HandleFunc("/mcp/execute", api.handleMCPExecute).Methods("POST", "OPTIONS")
-
-	// Custom tool execution API (from tools.go)
-	apiRouter.HandleFunc("/custom/execute", api.handleCustomExecute).Methods("POST", "OPTIONS")
-
-	// Virtual tool execution API (from tools.go)
-	apiRouter.HandleFunc("/virtual/execute", api.handleVirtualExecute).Methods("POST", "OPTIONS")
+	// Tool execution APIs - handlers provided by mcpagent/executor library
+	// Note: We pass nil for logger as server uses different logger interface (utils.ExtendedLogger vs loggerv2.Logger)
+	// The executor package will use its own default noop logger for internal logging
+	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, nil)
+	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
 
 	// MCP Registry API routes (from mcp_registry_routes.go)
 	apiRouter.HandleFunc("/mcp-registry/servers", api.handleGetMCPRegistryServers).Methods("GET")
@@ -1285,6 +1285,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					ExecutionStrategy:              req.ExecutionOptions.ExecutionStrategy,
 					ResumeFromStep:                 req.ExecutionOptions.ResumeFromStep,
 					FastExecuteEndStep:             req.ExecutionOptions.FastExecuteEndStep,
+					PlanChangeAction:               req.ExecutionOptions.PlanChangeAction,
+					AllStepsCompletedAction:        req.ExecutionOptions.AllStepsCompletedAction,
 					FallbackToOriginalLLMOnFailure: req.ExecutionOptions.FallbackToOriginalLLMOnFailure,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 				}
@@ -1294,6 +1296,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					controllerOpts.TempOverrideLLM = &todo_creation_human.AgentLLMConfig{
 						Provider: req.ExecutionOptions.TempOverrideLLM.Provider,
 						ModelID:  req.ExecutionOptions.TempOverrideLLM.ModelID,
+					}
+				}
+
+				// Convert TempOverrideLLM2 if present
+				if req.ExecutionOptions.TempOverrideLLM2 != nil {
+					controllerOpts.TempOverrideLLM2 = &todo_creation_human.AgentLLMConfig{
+						Provider: req.ExecutionOptions.TempOverrideLLM2.Provider,
+						ModelID:  req.ExecutionOptions.TempOverrideLLM2.ModelID,
 					}
 				}
 
@@ -1970,7 +1980,7 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 // State management functions removed - orchestrator is now stateless
 
 // createServerLogger creates a logger instance for the server
-func createServerLogger() utils.ExtendedLogger {
+func createServerLogger() loggerv2.Logger {
 	serverLogger, err := logger.CreateLogger("", "info", "text", true)
 	if err != nil {
 		log.Fatalf("Failed to create server logger: %w", err)

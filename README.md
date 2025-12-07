@@ -15,6 +15,8 @@ A sophisticated **Go-based MCP (Model Context Protocol) Agent** featuring a comp
 
 MCP Agent is a production-ready AI orchestrator that connects to **12+ MCP servers** across multiple protocols (HTTP, SSE, stdio) to provide intelligent automation across AWS, GitHub, Kubernetes, databases, monitoring tools, and more. It features both **Simple** and **ReAct** agent modes with comprehensive observability and security scanning.
 
+**Note**: The core MCP agent library (`mcpagent`) is now a separate independent package. See [../mcpagent/README.md](../mcpagent/README.md) for library documentation. This repository contains the server application (`agent_go`) that uses the `mcpagent` library.
+
 ## 🏗️ **Workflow Orchestration**
 
 MCP Agent provides sophisticated workflow orchestration capabilities for complex AI automation:
@@ -23,21 +25,25 @@ MCP Agent provides sophisticated workflow orchestration capabilities for complex
 
 - **[Workflow Orchestrator](docs/workflow_orchestrator.md)**: Comprehensive multi-phase orchestration system with 7 isolated phases (variable extraction, planning, execution, anonymization, plan improvement, alignment, tool optimization) and 10 specialized agents. Features human-in-the-loop control, conditional branching, loop execution, learning capture, and preset LLM configuration.
 
-- **[Code Execution Agent](docs/code_execution_agent.md)**: Specialized agent for executing Python code with security sandboxing and comprehensive error handling.
-
-- **[Standard Tool-Use Agent](docs/tool_use_agent.md)**: The default agent mode where the LLM interacts with the system by invoking tools directly through the LLM provider's native tool calling capability.
-
-- **[Smart Routing](docs/smart_routing.md)**: Advanced optimization that dynamically filters tools based on conversation context to reduce token usage.
-
-- **[LLM Resilience](docs/llm_resilience.md)**: Comprehensive system for handling API errors, rate limits, and context window exhaustion with multi-phase fallbacks.
-
-- **[Large Tool Output Handling](docs/large_output_handling.md)**: Automatic system for handling tool outputs that exceed context window limits by saving to files and providing specialized query tools.
-
-- **[MCP Cache System](docs/mcp_cache_system.md)**: Multi-layer caching system that reduces MCP server connection times by 60-85% through intelligent caching of tool definitions and server metadata.
-
-- **[Folder Guard System](docs/folder_guard.md)**: Fine-grained access control mechanism that restricts agent file operations to specific directories with separate read/write permissions for both simple and code execution modes.
+- **[Workflow Orchestrator](docs/workflow_orchestrator.md)**: Comprehensive multi-phase orchestration system with 7 isolated phases (variable extraction, planning, execution, anonymization, plan improvement, alignment, tool optimization) and 10 specialized agents. Features human-in-the-loop control, conditional branching, loop execution, learning capture, and preset LLM configuration.
 
 - **[Human Feedback Tool](docs/human_feedback_tool.md)**: Interactive virtual tool that pauses LLM execution to request real-time user input via browser notifications and UI, enabling human-in-the-loop workflows for 2FA, confirmations, and critical decisions.
+
+**Core MCP Agent Library Features** (see [mcpagent documentation](../mcpagent/README.md)):
+
+- **[Code Execution Agent](../mcpagent/docs/code_execution_agent.md)**: Specialized agent for executing Go code with security sandboxing and comprehensive error handling.
+
+- **[Standard Tool-Use Agent](../mcpagent/docs/tool_use_agent.md)**: The default agent mode where the LLM interacts with the system by invoking tools directly through the LLM provider's native tool calling capability.
+
+- **[Smart Routing](../mcpagent/docs/smart_routing.md)**: Advanced optimization that dynamically filters tools based on conversation context to reduce token usage.
+
+- **[LLM Resilience](../mcpagent/docs/llm_resilience.md)**: Comprehensive system for handling API errors, rate limits, and context window exhaustion with multi-phase fallbacks.
+
+- **[Large Tool Output Handling](../mcpagent/docs/large_output_handling.md)**: Automatic system for handling tool outputs that exceed context window limits by saving to files and providing specialized query tools.
+
+- **[MCP Cache System](../mcpagent/docs/mcp_cache_system.md)**: Multi-layer caching system that reduces MCP server connection times by 60-85% through intelligent caching of tool definitions and server metadata.
+
+- **[Folder Guard System](../mcpagent/docs/folder_guard.md)**: Fine-grained access control mechanism that restricts agent file operations to specific directories with separate read/write permissions for both simple and code execution modes.
 
 
 See the [docs/](docs/) folder for detailed documentation on each workflow and agent.
@@ -137,8 +143,8 @@ cd agent_go
 ../bin/orchestrator orchestrator --query "Create a comprehensive security assessment of my AWS infrastructure"
 ```
 
-### **External Package Usage**
-The external package provides a clean Go API for integrating the MCP agent into your applications. See the [External Package Documentation](agent_go/pkg/external/README.md) for detailed usage examples.
+### **Using MCP Agent Library**
+The MCP agent library (`mcpagent`) is now a separate independent package. See the [MCP Agent Library README](../mcpagent/README.md) and [examples](../mcpagent/examples/) for detailed usage examples.
 
 ## 🔧 **Configuration**
 
@@ -146,7 +152,7 @@ The external package provides a clean Go API for integrating the MCP agent into 
 Edit `agent_go/configs/mcp_server_actual.json` to configure your MCP servers. See the [Configuration Guide](agent_go/configs/) for detailed examples.
 
 ### **Agent Configuration**
-The agent supports flexible configuration through the external package. See the [External Package Documentation](agent_go/pkg/external/README.md) for detailed configuration options and examples.
+The agent supports flexible configuration through functional options. See the [MCP Agent Library README](../mcpagent/README.md) and [examples](../mcpagent/examples/) for detailed configuration options and examples.
 
 ## 🧪 **Testing**
 
@@ -240,18 +246,21 @@ docker build -t mcp-planner ./planner
 
 ```
 mcp-agent-builder-go/
-├── agent_go/                 # Go-based MCP Agent
+├── agent_go/                 # Go-based MCP Agent Server
 │   ├── pkg/
-│   │   ├── mcpagent/        # Core agent implementation
-│   │   ├── mcpclient/       # MCP client layer
-│   │   └── external/        # External package API
-│   ├── cmd/                 # CLI commands
+│   │   ├── orchestrator/    # Workflow orchestrator system
+│   │   └── database/        # Database layer
+│   ├── cmd/                 # CLI commands and server
 │   ├── configs/             # MCP server configurations
 │   └── internal/            # Internal packages
+├── mcpagent/                 # MCP Agent Library (separate package)
+│   ├── agent/               # Core agent implementation
+│   ├── mcpclient/           # MCP client layer
+│   ├── examples/            # Usage examples
+│   └── docs/                # Library documentation
 ├── frontend/                 # React frontend
 │   ├── src/                 # React components
 │   └── public/              # Static assets
-├── planner/                  # Planning agent
 ├── scripts/                  # Utility scripts
 ├── .github/workflows/        # GitHub Actions
 └── docker-compose.yml       # Docker services

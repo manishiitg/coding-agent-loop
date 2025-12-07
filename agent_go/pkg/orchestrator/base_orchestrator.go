@@ -2,10 +2,11 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -25,7 +26,7 @@ type BaseOrchestrator struct {
 	contextAwareBridge mcpagent.AgentEventListener
 
 	// Logger for the orchestrator
-	logger utils.ExtendedLogger
+	logger loggerv2.Logger
 
 	// Workspace tools for file operations
 	WorkspaceTools         []llmtypes.Tool
@@ -63,7 +64,7 @@ type BaseOrchestrator struct {
 
 // NewBaseOrchestrator creates a new unified base orchestrator
 func NewBaseOrchestrator(
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	eventBridge mcpagent.AgentEventListener,
 	orchestratorType OrchestratorType,
 	provider string,
@@ -119,7 +120,7 @@ func (bo *BaseOrchestrator) applyIterationFolderToBridge() {
 	if bo.iterationFolder != "" {
 		if bridge, ok := bo.contextAwareBridge.(*ContextAwareEventBridge); ok {
 			bridge.SetIterationFolder(bo.iterationFolder)
-			bo.GetLogger().Debugf("📁 Applied iteration folder to bridge: %s", bo.iterationFolder)
+			bo.GetLogger().Debug(fmt.Sprintf("📁 Applied iteration folder to bridge: %s", bo.iterationFolder))
 		}
 	}
 }

@@ -2,9 +2,10 @@ package testing
 
 import (
 	"mcp-agent/agent_go/pkg/logger"
+	loggerv2 "mcpagent/logger/v2"
 )
 
-var testLogger logger.Logger
+var testLogger loggerv2.Logger
 
 // InitTestLogger initializes the shared test logger with specified configuration
 // This creates a single logger instance that all tests can use
@@ -14,8 +15,8 @@ func InitTestLogger(logFile string, level string) {
 
 // GetTestLogger returns the shared test logger instance
 // If no logger has been initialized, creates a default one
-func GetTestLogger() logger.Logger {
-	if !testLogger.IsInitialized() {
+func GetTestLogger() loggerv2.Logger {
+	if testLogger == nil {
 		// Create default test logger if none exists
 		testLogger = logger.CreateDefaultLogger()
 	}
@@ -24,6 +25,6 @@ func GetTestLogger() logger.Logger {
 
 // SetTestLogger allows tests to override the shared logger
 // Useful for testing different logger configurations
-func SetTestLogger(logger logger.Logger) {
+func SetTestLogger(logger loggerv2.Logger) {
 	testLogger = logger
 }

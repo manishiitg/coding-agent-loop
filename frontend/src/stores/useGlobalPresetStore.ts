@@ -41,6 +41,7 @@ interface GlobalPresetState {
   updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean) => Promise<void>
   savePreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string) => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
+  duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
   // Actions for preset application
@@ -555,6 +556,110 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
+      duplicatePreset: async (presetId) => {
+        try {
+          const state = get()
+          const originalPreset = state.customPresets.find(p => p.id === presetId)
+          
+          if (!originalPreset) {
+            throw new Error('Preset not found')
+          }
+          
+          // Find next available version number
+          const baseName = originalPreset.label
+          const versionRegex = /-v(\d+)$/
+          const match = baseName.match(versionRegex)
+          const baseNameWithoutVersion = match ? baseName.slice(0, match.index) : baseName
+          
+          // Find all presets with the same base name
+          const existingVersions = state.customPresets
+            .filter(p => {
+              const pMatch = p.label.match(versionRegex)
+              const pBaseName = pMatch ? p.label.slice(0, pMatch.index) : p.label
+              return pBaseName === baseNameWithoutVersion
+            })
+            .map(p => {
+              const pMatch = p.label.match(versionRegex)
+              return pMatch ? parseInt(pMatch[1], 10) : 0
+            })
+          
+          // Find next available version
+          let nextVersion = 2
+          while (existingVersions.includes(nextVersion)) {
+            nextVersion++
+          }
+          
+          const newLabel = `${baseNameWithoutVersion}-v${nextVersion}`
+          
+          // Handle folder duplication if exists
+          let newFolder: PlannerFile | undefined = originalPreset.selectedFolder
+          if (originalPreset.selectedFolder?.filepath) {
+            const originalFolderPath = originalPreset.selectedFolder.filepath
+            const folderPathParts = originalFolderPath.split('/')
+            const folderName = folderPathParts[folderPathParts.length - 1]
+            const folderNameMatch = folderName.match(versionRegex)
+            const baseFolderName = folderNameMatch ? folderName.slice(0, folderNameMatch.index) : folderName
+            const newFolderName = `${baseFolderName}-v${nextVersion}`
+            
+            // Build new folder path
+            folderPathParts[folderPathParts.length - 1] = newFolderName
+            const newFolderPath = folderPathParts.join('/')
+            
+            // Copy the folder
+            try {
+              await agentApi.copyFolder(originalFolderPath, newFolderPath)
+              newFolder = {
+                ...originalPreset.selectedFolder,
+                filepath: newFolderPath
+              }
+            } catch (error) {
+              console.error('[PRESET] Error copying folder:', error)
+              // Continue without folder if copy fails
+            }
+          }
+          
+          // Create new preset with duplicated data
+          const newPreset = await state.savePreset(
+            newLabel,
+            originalPreset.query,
+            originalPreset.selectedServers,
+            originalPreset.selectedTools,
+            originalPreset.agentMode,
+            newFolder,
+            originalPreset.llmConfig,
+            originalPreset.useCodeExecutionMode
+          )
+          
+          // If original preset had a workflow, create a new workflow for the duplicated preset
+          if (originalPreset.agentMode === 'workflow' && newPreset) {
+            try {
+              const workflowStatus = await agentApi.getWorkflowStatus(presetId)
+              if (workflowStatus.success && workflowStatus.workflow) {
+                // Create new workflow with same status and selected options
+                await agentApi.createWorkflow(newPreset.id, false) // humanVerificationRequired = false
+                
+                // Update workflow with same status and selected options if they exist
+                if (workflowStatus.workflow.workflow_status || workflowStatus.workflow.selected_options) {
+                  await agentApi.updateWorkflow(
+                    newPreset.id,
+                    workflowStatus.workflow.workflow_status,
+                    workflowStatus.workflow.selected_options || null
+                  )
+                }
+              }
+            } catch (error) {
+              console.error('[PRESET] Error duplicating workflow:', error)
+              // Continue even if workflow duplication fails
+            }
+          }
+          
+          return newPreset
+        } catch (error) {
+          console.error('[PRESET] Error duplicating preset:', error)
+          throw error
+        }
+      },
+      
       updatePredefinedServerSelection: (presetId, selectedServers) => {
         set(state => ({
           predefinedServerSelections: {
@@ -829,6 +934,7 @@ export const usePresetManagement = () => {
     updatePreset: store.updatePreset,
     savePreset: store.savePreset,
     deletePreset: store.deletePreset,
+    duplicatePreset: store.duplicatePreset,
     updatePredefinedServerSelection: store.updatePredefinedServerSelection
   }
 }

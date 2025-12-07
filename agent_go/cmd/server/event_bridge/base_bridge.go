@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/events"
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
 	pkgevents "mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 )
 
 // EventBridge defines the interface for event bridges
@@ -23,7 +23,7 @@ type BaseEventBridge struct {
 	ObserverManager *events.ObserverManager
 	ObserverID      string // Observer ID for polling API
 	SessionID       string // Session ID for database storage
-	Logger          utils.ExtendedLogger
+	Logger          loggerv2.Logger
 	ChatDB          database.Database // Add database reference for chat history storage
 	BridgeName      string            // Name of the bridge (used for logging and ID prefix)
 }
@@ -41,12 +41,12 @@ func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.Agen
 
 	// Store the event in the server's event store for polling API
 	// Use the observer ID for in-memory storage (this is what the frontend polls)
-	b.Logger.Infof("📤 [BaseEventBridge] Storing event %s with ObserverID: %s", event.Type, b.ObserverID)
+	b.Logger.Info(fmt.Sprintf("📤 [BaseEventBridge] Storing event %s with ObserverID: %s", event.Type, b.ObserverID))
 	if b.ObserverID == "" {
-		b.Logger.Warnf("⚠️ [BaseEventBridge] ObserverID is empty! Event will not be stored correctly.")
+		b.Logger.Warn("⚠️ [BaseEventBridge] ObserverID is empty! Event will not be stored correctly.")
 	}
 	b.EventStore.AddEvent(b.ObserverID, serverEvent)
-	b.Logger.Infof("✅ [BaseEventBridge] Event stored successfully with ObserverID: %s", b.ObserverID)
+	b.Logger.Info(fmt.Sprintf("✅ [BaseEventBridge] Event stored successfully with ObserverID: %s", b.ObserverID))
 
 	// ✅ CHAT HISTORY FIX: Store event in database for chat history
 	if b.ChatDB != nil {

@@ -11,10 +11,10 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -54,7 +54,7 @@ func (f *FlexibleContextOutput) UnmarshalJSON(data []byte) error {
 	}
 
 	// If both fail, return the error from string unmarshal
-	return fmt.Errorf("failed to unmarshal context_output as string or array")
+	return fmt.Errorf(fmt.Sprintf("failed to unmarshal context_output as string or array"), nil)
 }
 
 // String returns the string value
@@ -529,12 +529,12 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 
 	content, err := readFile(ctx, planPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read plan.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to read plan.json: %w", err), nil)
 	}
 
 	var plan PlanningResponse
 	if err := json.Unmarshal([]byte(content), &plan); err != nil {
-		return nil, fmt.Errorf("failed to parse plan.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to parse plan.json: %w", err), nil)
 	}
 
 	return &plan, nil
@@ -542,7 +542,7 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 
 // writePlanToFile writes PlanningResponse to plan.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
 // Validates that all steps have IDs before saving (planning agent should always generate them)
-func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, _ func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
+func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, _ func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
 	planPath := filepath.Join(workspacePath, "planning", "plan.json")
 
 	planFileMutex.Lock()
@@ -550,16 +550,16 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 
 	// Validate that all steps have IDs (planning agent should always generate them)
 	if err := validatePlanStepIDs(plan.Steps); err != nil {
-		return fmt.Errorf("plan validation failed: %w", err)
+		return fmt.Errorf(fmt.Sprintf("plan validation failed: %w", err), nil)
 	}
 
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal plan: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to marshal plan: %w", err), nil)
 	}
 
 	if err := writeFile(ctx, planPath, string(data)); err != nil {
-		return fmt.Errorf("failed to write plan.json: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to write plan.json: %w", err), nil)
 	}
 
 	return nil
@@ -570,7 +570,7 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 func validateNestingDepth(step PlanStep, currentDepth int) error {
 	const maxDepth = 2
 	if currentDepth > maxDepth {
-		return fmt.Errorf("nesting depth exceeds maximum allowed depth of %d (current: %d)", maxDepth, currentDepth)
+		return fmt.Errorf(fmt.Sprintf("nesting depth exceeds maximum allowed depth of %d (current: %d)", maxDepth, currentDepth), nil)
 	}
 
 	// Check nested steps in branches
@@ -631,7 +631,7 @@ func mergePartialStepUpdate(existingStep PlanStep, partialUpdate PartialPlanStep
 }
 
 // NewHumanControlledTodoPlannerPlanningAgent creates a new human-controlled todo planner planning agent
-func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerPlanningAgent {
+func NewHumanControlledTodoPlannerPlanningAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerPlanningAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -745,29 +745,29 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 }
 
 // createUpdatePlanStepsExecutor creates an executor function for update_plan_steps tool
-func createUpdatePlanStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createUpdatePlanStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Extract updated_steps from args
 		updatedStepsRaw, ok := args["updated_steps"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid updated_steps argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid updated_steps argument"), nil)
 		}
 
 		// Convert to JSON and unmarshal to PartialPlanStep array
 		updatedStepsJSON, err := json.Marshal(updatedStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal updated_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal updated_steps: %w", err), nil)
 		}
 
 		var partialUpdates []PartialPlanStep
 		if err := json.Unmarshal(updatedStepsJSON, &partialUpdates); err != nil {
-			return "", fmt.Errorf("failed to parse updated_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse updated_steps: %w", err), nil)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Create map of existing steps by ID
@@ -785,7 +785,7 @@ func createUpdatePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 				for _, step := range plan.Steps {
 					availableIDs = append(availableIDs, step.ID)
 				}
-				return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
+				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
 			}
 
 			// Merge partial update
@@ -794,21 +794,21 @@ func createUpdatePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 
 		// Write updated plan (creates backup automatically)
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Updated %d steps in plan", len(partialUpdates))
+		logger.Info(fmt.Sprintf("✅ Updated %d steps in plan", len(partialUpdates)))
 		return fmt.Sprintf("Successfully updated %d step(s) in the plan", len(partialUpdates)), nil
 	}
 }
 
 // createDeletePlanStepsExecutor creates an executor function for delete_plan_steps tool
-func createDeletePlanStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Extract deleted_step_ids from args
 		deletedIDsRaw, ok := args["deleted_step_ids"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid deleted_step_ids argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid deleted_step_ids argument"), nil)
 		}
 
 		// Convert to string array
@@ -817,14 +817,14 @@ func createDeletePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 			if idStr, ok := id.(string); ok {
 				deletedIDs = append(deletedIDs, idStr)
 			} else {
-				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
+				return "", fmt.Errorf(fmt.Sprintf("invalid step ID in deleted_step_ids: %v", id), nil)
 			}
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Create set of deleted step IDs
@@ -845,7 +845,7 @@ func createDeletePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 				for _, step := range plan.Steps {
 					availableIDs = append(availableIDs, step.ID)
 				}
-				return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot delete). Available step IDs: %v", id, availableIDs)
+				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan (cannot delete). Available step IDs: %v", id, availableIDs), nil)
 			}
 		}
 
@@ -861,38 +861,38 @@ func createDeletePlanStepsExecutor(workspacePath string, logger utils.ExtendedLo
 
 		// Write updated plan (creates backup automatically)
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Deleted %d steps from plan", len(deletedIDs))
+		logger.Info(fmt.Sprintf("✅ Deleted %d steps from plan", len(deletedIDs)))
 		return fmt.Sprintf("Successfully deleted %d step(s) from the plan", len(deletedIDs)), nil
 	}
 }
 
 // createAddPlanStepsExecutor creates an executor function for add_plan_steps tool
-func createAddPlanStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createAddPlanStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Extract new_steps from args
 		newStepsRaw, ok := args["new_steps"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid new_steps argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid new_steps argument"), nil)
 		}
 
 		// Convert to JSON and unmarshal to AddPlanStep array
 		newStepsJSON, err := json.Marshal(newStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal new_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal new_steps: %w", err), nil)
 		}
 
 		var addSteps []AddPlanStep
 		if err := json.Unmarshal(newStepsJSON, &addSteps); err != nil {
-			return "", fmt.Errorf("failed to parse new_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse new_steps: %w", err), nil)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Create map of step IDs to indices for quick lookup
@@ -907,7 +907,7 @@ func createAddPlanStepsExecutor(workspacePath string, logger utils.ExtendedLogge
 		for i, addStep := range addSteps {
 			// Validate that step has ID (LLM should always provide it)
 			if addStep.PlanStep.ID == "" {
-				return "", fmt.Errorf("step at index %d in new_steps is missing required ID field. Step title: %q", i, addStep.PlanStep.Title)
+				return "", fmt.Errorf(fmt.Sprintf("step at index %d in new_steps is missing required ID field. Step title: %q", i, addStep.PlanStep.Title), nil)
 			}
 
 			var afterIndex int
@@ -926,7 +926,7 @@ func createAddPlanStepsExecutor(workspacePath string, logger utils.ExtendedLogge
 					for _, step := range plan.Steps {
 						availableIDs = append(availableIDs, step.ID)
 					}
-					return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot insert after it). Available step IDs: %v", addStep.InsertAfterStepID, availableIDs)
+					return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan (cannot insert after it). Available step IDs: %v", addStep.InsertAfterStepID, availableIDs), nil)
 				}
 			}
 
@@ -958,10 +958,10 @@ func createAddPlanStepsExecutor(workspacePath string, logger utils.ExtendedLogge
 
 		// Write updated plan (creates backup automatically)
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Added %d new steps to plan", len(addSteps))
+		logger.Info(fmt.Sprintf("✅ Added %d new steps to plan", len(addSteps)))
 		return fmt.Sprintf("Successfully added %d new step(s) to the plan", len(addSteps)), nil
 	}
 }
@@ -994,7 +994,7 @@ func extractToolCallsFromMessages(messages []llmtypes.MessageContent) []string {
 func registerPlanModificationTools(
 	mcpAgent *mcpagent.Agent,
 	workspacePath string,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	readFile func(context.Context, string) (string, error),
 	writeFile func(context.Context, string, string) error,
 	agentName string, // e.g., "planning agent" or "plan improvement agent"
@@ -1006,7 +1006,7 @@ func registerPlanModificationTools(
 	updateSchema := getUpdatePlanStepsSchema()
 	updateParams, err := parseSchemaForToolParameters(updateSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse update schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse update schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_plan_steps",
@@ -1015,13 +1015,13 @@ func registerPlanModificationTools(
 		createUpdatePlanStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register update_plan_steps tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register update_plan_steps tool: %w", err), nil)
 	}
 
 	deleteSchema := getDeletePlanStepsSchema()
 	deleteParams, err := parseSchemaForToolParameters(deleteSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse delete schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse delete schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_plan_steps",
@@ -1030,13 +1030,13 @@ func registerPlanModificationTools(
 		createDeletePlanStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register delete_plan_steps tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register delete_plan_steps tool: %w", err), nil)
 	}
 
 	addSchema := getAddPlanStepsSchema()
 	addParams, err := parseSchemaForToolParameters(addSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse add schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse add schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_plan_steps",
@@ -1045,14 +1045,14 @@ func registerPlanModificationTools(
 		createAddPlanStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register add_plan_steps tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register add_plan_steps tool: %w", err), nil)
 	}
 
 	// Register conditional step tools
 	convertToConditionalSchema := getConvertStepToConditionalSchema()
 	convertToConditionalParams, err := parseSchemaForToolParameters(convertToConditionalSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse convert_step_to_conditional schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse convert_step_to_conditional schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"convert_step_to_conditional",
@@ -1061,13 +1061,13 @@ func registerPlanModificationTools(
 		createConvertStepToConditionalExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register convert_step_to_conditional tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register convert_step_to_conditional tool: %w", err), nil)
 	}
 
 	addBranchStepsSchema := getAddBranchStepsSchema()
 	addBranchStepsParams, err := parseSchemaForToolParameters(addBranchStepsSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse add_branch_steps schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse add_branch_steps schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_branch_steps",
@@ -1076,13 +1076,13 @@ func registerPlanModificationTools(
 		createAddBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register add_branch_steps tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register add_branch_steps tool: %w", err), nil)
 	}
 
 	updateBranchStepsSchema := getUpdateBranchStepsSchema()
 	updateBranchStepsParams, err := parseSchemaForToolParameters(updateBranchStepsSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse update_branch_steps schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse update_branch_steps schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_branch_steps",
@@ -1091,13 +1091,13 @@ func registerPlanModificationTools(
 		createUpdateBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register update_branch_steps tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register update_branch_steps tool: %w", err), nil)
 	}
 
 	deleteBranchStepsSchema := getDeleteBranchStepsSchema()
 	deleteBranchStepsParams, err := parseSchemaForToolParameters(deleteBranchStepsSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse delete_branch_steps schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse delete_branch_steps schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_branch_steps",
@@ -1106,13 +1106,13 @@ func registerPlanModificationTools(
 		createDeleteBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register delete_branch_steps tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register delete_branch_steps tool: %w", err), nil)
 	}
 
 	updateConditionalStepSchema := getUpdateConditionalStepSchema()
 	updateConditionalStepParams, err := parseSchemaForToolParameters(updateConditionalStepSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse update_conditional_step schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse update_conditional_step schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_conditional_step",
@@ -1121,13 +1121,13 @@ func registerPlanModificationTools(
 		createUpdateConditionalStepExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register update_conditional_step tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register update_conditional_step tool: %w", err), nil)
 	}
 
 	convertToRegularSchema := getConvertConditionalToRegularSchema()
 	convertToRegularParams, err := parseSchemaForToolParameters(convertToRegularSchema)
 	if err != nil {
-		return fmt.Errorf("failed to parse convert_conditional_to_regular schema: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to parse convert_conditional_to_regular schema: %w", err), nil)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"convert_conditional_to_regular",
@@ -1136,11 +1136,11 @@ func registerPlanModificationTools(
 		createConvertConditionalToRegularExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register convert_conditional_to_regular tool: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to register convert_conditional_to_regular tool: %w", err), nil)
 	}
 
 	if logger != nil {
-		logger.Infof("✅ Registered all plan modification tools for %s", agentName)
+		logger.Info(fmt.Sprintf("✅ Registered all plan modification tools for %s", agentName))
 	}
 
 	return nil
@@ -1153,17 +1153,17 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	// Get workspace path from template vars
 	workspacePath := templateVars["WorkspacePath"]
 	if workspacePath == "" {
-		return nil, nil, fmt.Errorf("WorkspacePath not found in template vars")
+		return nil, nil, fmt.Errorf(fmt.Sprintf("WorkspacePath not found in template vars"), nil)
 	}
 
 	// Get the underlying MCP agent
 	baseAgent := hctppa.BaseOrchestratorAgent.BaseAgent()
 	if baseAgent == nil {
-		return nil, nil, fmt.Errorf("base agent is not initialized")
+		return nil, nil, fmt.Errorf(fmt.Sprintf("base agent is not initialized"), nil)
 	}
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, nil, fmt.Errorf("MCP agent is not initialized")
+		return nil, nil, fmt.Errorf(fmt.Sprintf("MCP agent is not initialized"), nil)
 	}
 
 	// Get logger from MCP agent (it has a Logger field)
@@ -1179,7 +1179,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 			// Wrap executors and enhance tool descriptions with folder guard
 			toolsToRegister, wrappedExecutors := baseOrchestrator.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
 
-			logger.Infof("🔧 Registering %d workspace tools (including human_feedback) for planning agent", len(toolsToRegister))
+			logger.Info(fmt.Sprintf("🔧 Registering %d workspace tools (including human_feedback) for planning agent", len(toolsToRegister)))
 
 			for _, tool := range toolsToRegister {
 				if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -1191,7 +1191,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 						}
 					}
 					if params == nil {
-						logger.Warnf("⚠️ Failed to convert parameters for tool %s", tool.Function.Name)
+						logger.Warn(fmt.Sprintf("⚠️ Failed to convert parameters for tool %s", tool.Function.Name))
 						continue
 					}
 
@@ -1203,15 +1203,15 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 							toolExecutor,
 							"workspace",
 						); err != nil {
-							logger.Warnf("⚠️ Failed to register workspace tool %s: %v", tool.Function.Name, err)
+							logger.Warn(fmt.Sprintf("⚠️ Failed to register workspace tool %s: %v", tool.Function.Name, err))
 							// Continue with other tools even if one fails
 						} else {
-							logger.Debugf("✅ Registered workspace tool: %s", tool.Function.Name)
+							logger.Debug(fmt.Sprintf("✅ Registered workspace tool: %s", tool.Function.Name))
 						}
 					}
 				}
 			}
-			logger.Infof("✅ Registered workspace tools for planning agent")
+			logger.Info(fmt.Sprintf("✅ Registered workspace tools for planning agent"))
 		}
 	}
 
@@ -1226,7 +1226,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	// Execute the agent with normal Execute (not StructuredOutputViaTool)
 	_, updatedHistory, err := baseAgent.Execute(ctx, userMessage, conversationHistory, systemPrompt, false)
 	if err != nil {
-		return nil, updatedHistory, fmt.Errorf("agent execution failed: %w", err)
+		return nil, updatedHistory, fmt.Errorf(fmt.Sprintf("agent execution failed: %w", err), nil)
 	}
 
 	// Check if any of our custom tools were called
@@ -1245,18 +1245,18 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 	// If tools were called, plan.json was updated. If not, we return the current plan unchanged.
 	currentPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
 	if err != nil {
-		return nil, updatedHistory, fmt.Errorf("failed to read plan: %w", err)
+		return nil, updatedHistory, fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 	}
 
 	if !planUpdateToolCalled {
 		// No tools called - this is a normal conversational response, not an error
 		// Return the current plan (unchanged) so conversation can continue
-		logger.Infof("📝 Planning agent in UPDATE mode: Conversational response (no plan changes). Returning current plan.")
+		logger.Info(fmt.Sprintf("📝 Planning agent in UPDATE mode: Conversational response (no plan changes). Returning current plan."))
 		return currentPlan, updatedHistory, nil
 	}
 
 	// Tools were called - plan.json was updated
-	logger.Infof("✅ Plan updated via tools (%d steps)", len(currentPlan.Steps))
+	logger.Info(fmt.Sprintf("✅ Plan updated via tools (%d steps)", len(currentPlan.Steps)))
 
 	// Emit event to notify frontend that plan was updated
 	if baseOrchestrator != nil {
@@ -1267,16 +1267,16 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 }
 
 // createConvertStepToConditionalExecutor creates an executor function for convert_step_to_conditional tool
-func createConvertStepToConditionalExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		stepID, ok := args["step_id"].(string)
 		if !ok || stepID == "" {
-			return "", fmt.Errorf("invalid or missing step_id")
+			return "", fmt.Errorf(fmt.Sprintf("invalid or missing step_id"), nil)
 		}
 
 		conditionQuestion, ok := args["condition_question"].(string)
 		if !ok || conditionQuestion == "" {
-			return "", fmt.Errorf("invalid or missing condition_question")
+			return "", fmt.Errorf(fmt.Sprintf("invalid or missing condition_question"), nil)
 		}
 
 		conditionContext, _ := args["condition_context"].(string) // Optional
@@ -1284,36 +1284,36 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger utils.E
 		// Extract if_true_steps and if_false_steps
 		ifTrueStepsRaw, ok := args["if_true_steps"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid if_true_steps argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid if_true_steps argument"), nil)
 		}
 		ifFalseStepsRaw, ok := args["if_false_steps"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid if_false_steps argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid if_false_steps argument"), nil)
 		}
 
 		// Convert to JSON and unmarshal to PlanStep arrays
 		ifTrueStepsJSON, err := json.Marshal(ifTrueStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal if_true_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal if_true_steps: %w", err), nil)
 		}
 		var ifTrueSteps []PlanStep
 		if err := json.Unmarshal(ifTrueStepsJSON, &ifTrueSteps); err != nil {
-			return "", fmt.Errorf("failed to parse if_true_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse if_true_steps: %w", err), nil)
 		}
 
 		ifFalseStepsJSON, err := json.Marshal(ifFalseStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal if_false_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal if_false_steps: %w", err), nil)
 		}
 		var ifFalseSteps []PlanStep
 		if err := json.Unmarshal(ifFalseStepsJSON, &ifFalseSteps); err != nil {
-			return "", fmt.Errorf("failed to parse if_false_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse if_false_steps: %w", err), nil)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Find the step to convert by ID
@@ -1329,18 +1329,18 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger utils.E
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.ID)
 			}
-			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
+			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs), nil)
 		}
 
 		// Validate nesting depth for branch steps (starting from depth 1 since this step becomes conditional)
 		for _, branchStep := range ifTrueSteps {
 			if err := validateNestingDepth(branchStep, 1); err != nil {
-				return "", fmt.Errorf("if_true_steps validation failed: %w", err)
+				return "", fmt.Errorf(fmt.Sprintf("if_true_steps validation failed: %w", err), nil)
 			}
 		}
 		for _, branchStep := range ifFalseSteps {
 			if err := validateNestingDepth(branchStep, 1); err != nil {
-				return "", fmt.Errorf("if_false_steps validation failed: %w", err)
+				return "", fmt.Errorf(fmt.Sprintf("if_false_steps validation failed: %w", err), nil)
 			}
 		}
 
@@ -1353,46 +1353,46 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger utils.E
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Converted step '%s' to conditional with %d true branch steps and %d false branch steps", stepToConvert.Title, len(ifTrueSteps), len(ifFalseSteps))
+		logger.Info(fmt.Sprintf("✅ Converted step '%s' to conditional with %d true branch steps and %d false branch steps", stepToConvert.Title, len(ifTrueSteps), len(ifFalseSteps)))
 		return fmt.Sprintf("Successfully converted step '%s' to conditional", stepToConvert.Title), nil
 	}
 }
 
 // createAddBranchStepsExecutor creates an executor function for add_branch_steps tool
-func createAddBranchStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createAddBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		parentStepID, ok := args["parent_step_id"].(string)
 		if !ok || parentStepID == "" {
-			return "", fmt.Errorf("invalid or missing parent_step_id")
+			return "", fmt.Errorf(fmt.Sprintf("invalid or missing parent_step_id"), nil)
 		}
 
 		branchType, ok := args["branch_type"].(string)
 		if !ok || (branchType != "if_true" && branchType != "if_false") {
-			return "", fmt.Errorf("invalid branch_type: must be 'if_true' or 'if_false'")
+			return "", fmt.Errorf(fmt.Sprintf("invalid branch_type: must be 'if_true' or 'if_false'"), nil)
 		}
 
 		newStepsRaw, ok := args["new_steps"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid new_steps argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid new_steps argument"), nil)
 		}
 
 		// Convert to JSON and unmarshal to PlanStep array
 		newStepsJSON, err := json.Marshal(newStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal new_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal new_steps: %w", err), nil)
 		}
 		var newSteps []PlanStep
 		if err := json.Unmarshal(newStepsJSON, &newSteps); err != nil {
-			return "", fmt.Errorf("failed to parse new_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse new_steps: %w", err), nil)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Find the parent conditional step by ID
@@ -1408,24 +1408,24 @@ func createAddBranchStepsExecutor(workspacePath string, logger utils.ExtendedLog
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.ID)
 			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
 		}
 
 		if !parentStep.HasCondition {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
+			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", parentStepID), nil)
 		}
 
 		// Validate that all new branch steps have IDs (required for config matching)
 		for i, newStep := range newSteps {
 			if newStep.ID == "" {
-				return "", fmt.Errorf("branch step at index %d is missing required ID field. Step title: %q", i, newStep.Title)
+				return "", fmt.Errorf(fmt.Sprintf("branch step at index %d is missing required ID field. Step title: %q", i, newStep.Title), nil)
 			}
 		}
 
 		// Validate nesting depth for new steps (starting from depth 1 since they're being added to a conditional)
 		for _, newStep := range newSteps {
 			if err := validateNestingDepth(newStep, 1); err != nil {
-				return "", fmt.Errorf("new_steps validation failed: %w", err)
+				return "", fmt.Errorf(fmt.Sprintf("new_steps validation failed: %w", err), nil)
 			}
 		}
 
@@ -1438,46 +1438,46 @@ func createAddBranchStepsExecutor(workspacePath string, logger utils.ExtendedLog
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Added %d steps to %s branch of conditional step '%s'", len(newSteps), branchType, parentStep.Title)
+		logger.Info(fmt.Sprintf("✅ Added %d steps to %s branch of conditional step '%s'", len(newSteps), branchType, parentStep.Title))
 		return fmt.Sprintf("Successfully added %d step(s) to %s branch of conditional step '%s'", len(newSteps), branchType, parentStep.Title), nil
 	}
 }
 
 // createUpdateBranchStepsExecutor creates an executor function for update_branch_steps tool
-func createUpdateBranchStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		parentStepID, ok := args["parent_step_id"].(string)
 		if !ok || parentStepID == "" {
-			return "", fmt.Errorf("invalid or missing parent_step_id")
+			return "", fmt.Errorf(fmt.Sprintf("invalid or missing parent_step_id"), nil)
 		}
 
 		branchType, ok := args["branch_type"].(string)
 		if !ok || (branchType != "if_true" && branchType != "if_false") {
-			return "", fmt.Errorf("invalid branch_type: must be 'if_true' or 'if_false'")
+			return "", fmt.Errorf(fmt.Sprintf("invalid branch_type: must be 'if_true' or 'if_false'"), nil)
 		}
 
 		updatedStepsRaw, ok := args["updated_steps"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid updated_steps argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid updated_steps argument"), nil)
 		}
 
 		// Convert to JSON and unmarshal to PartialPlanStep array
 		updatedStepsJSON, err := json.Marshal(updatedStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal updated_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal updated_steps: %w", err), nil)
 		}
 		var partialUpdates []PartialPlanStep
 		if err := json.Unmarshal(updatedStepsJSON, &partialUpdates); err != nil {
-			return "", fmt.Errorf("failed to parse updated_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse updated_steps: %w", err), nil)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Find the parent conditional step by ID
@@ -1493,11 +1493,11 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger utils.Extended
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.ID)
 			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
 		}
 
 		if !parentStep.HasCondition {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
+			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", parentStepID), nil)
 		}
 
 		// Get the appropriate branch
@@ -1522,7 +1522,7 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger utils.Extended
 				for _, step := range *branchSteps {
 					availableIDs = append(availableIDs, step.ID)
 				}
-				return "", fmt.Errorf("step ID '%s' not found in %s branch. Available step IDs: %v", partialUpdate.ExistingStepID, branchType, availableIDs)
+				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in %s branch. Available step IDs: %v", partialUpdate.ExistingStepID, branchType, availableIDs), nil)
 			}
 
 			// Merge partial update
@@ -1530,36 +1530,36 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger utils.Extended
 
 			// Validate nesting depth after update
 			if err := validateNestingDepth(*existingStep, 1); err != nil {
-				return "", fmt.Errorf("updated step validation failed: %w", err)
+				return "", fmt.Errorf(fmt.Sprintf("updated step validation failed: %w", err), nil)
 			}
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Updated %d steps in %s branch of conditional step '%s'", len(partialUpdates), branchType, parentStep.Title)
+		logger.Info(fmt.Sprintf("✅ Updated %d steps in %s branch of conditional step '%s'", len(partialUpdates), branchType, parentStep.Title))
 		return fmt.Sprintf("Successfully updated %d step(s) in %s branch of conditional step '%s'", len(partialUpdates), branchType, parentStep.Title), nil
 	}
 }
 
 // createDeleteBranchStepsExecutor creates an executor function for delete_branch_steps tool
-func createDeleteBranchStepsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		parentStepID, ok := args["parent_step_id"].(string)
 		if !ok || parentStepID == "" {
-			return "", fmt.Errorf("invalid or missing parent_step_id")
+			return "", fmt.Errorf(fmt.Sprintf("invalid or missing parent_step_id"), nil)
 		}
 
 		branchType, ok := args["branch_type"].(string)
 		if !ok || (branchType != "if_true" && branchType != "if_false") {
-			return "", fmt.Errorf("invalid branch_type: must be 'if_true' or 'if_false'")
+			return "", fmt.Errorf(fmt.Sprintf("invalid branch_type: must be 'if_true' or 'if_false'"), nil)
 		}
 
 		deletedIDsRaw, ok := args["deleted_step_ids"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid deleted_step_ids argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid deleted_step_ids argument"), nil)
 		}
 
 		// Convert to string array
@@ -1568,14 +1568,14 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger utils.Extended
 			if idStr, ok := id.(string); ok {
 				deletedIDs = append(deletedIDs, idStr)
 			} else {
-				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
+				return "", fmt.Errorf(fmt.Sprintf("invalid step ID in deleted_step_ids: %v", id), nil)
 			}
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Find the parent conditional step by ID
@@ -1591,11 +1591,11 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger utils.Extended
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.ID)
 			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
 		}
 
 		if !parentStep.HasCondition {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
+			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", parentStepID), nil)
 		}
 
 		// Get the appropriate branch
@@ -1623,7 +1623,7 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger utils.Extended
 				for _, step := range *branchSteps {
 					availableIDs = append(availableIDs, step.ID)
 				}
-				return "", fmt.Errorf("step ID '%s' not found in %s branch (cannot delete). Available step IDs: %v", id, branchType, availableIDs)
+				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in %s branch (cannot delete). Available step IDs: %v", id, branchType, availableIDs), nil)
 			}
 		}
 
@@ -1639,20 +1639,20 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger utils.Extended
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Deleted %d steps from %s branch of conditional step '%s'", len(deletedIDs), branchType, parentStep.Title)
+		logger.Info(fmt.Sprintf("✅ Deleted %d steps from %s branch of conditional step '%s'", len(deletedIDs), branchType, parentStep.Title))
 		return fmt.Sprintf("Successfully deleted %d step(s) from %s branch of conditional step '%s'", len(deletedIDs), branchType, parentStep.Title), nil
 	}
 }
 
 // createUpdateConditionalStepExecutor creates an executor function for update_conditional_step tool
-func createUpdateConditionalStepExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		stepID, ok := args["step_id"].(string)
 		if !ok || stepID == "" {
-			return "", fmt.Errorf("invalid or missing step_id")
+			return "", fmt.Errorf(fmt.Sprintf("invalid or missing step_id"), nil)
 		}
 
 		conditionQuestion, _ := args["condition_question"].(string) // Optional
@@ -1661,7 +1661,7 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger utils.Exte
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Find the conditional step by ID
@@ -1677,11 +1677,11 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger utils.Exte
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.ID)
 			}
-			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
+			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs), nil)
 		}
 
 		if !conditionalStep.HasCondition {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", stepID)
+			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", stepID), nil)
 		}
 
 		// Update conditional properties (only if provided)
@@ -1694,26 +1694,26 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger utils.Exte
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Updated conditional step '%s'", conditionalStep.Title)
+		logger.Info(fmt.Sprintf("✅ Updated conditional step '%s'", conditionalStep.Title))
 		return fmt.Sprintf("Successfully updated conditional step '%s'", conditionalStep.Title), nil
 	}
 }
 
 // createConvertConditionalToRegularExecutor creates an executor function for convert_conditional_to_regular tool
-func createConvertConditionalToRegularExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createConvertConditionalToRegularExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		stepID, ok := args["step_id"].(string)
 		if !ok || stepID == "" {
-			return "", fmt.Errorf("invalid or missing step_id")
+			return "", fmt.Errorf(fmt.Sprintf("invalid or missing step_id"), nil)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
 
 		// Find the conditional step by ID
@@ -1729,11 +1729,11 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger util
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.ID)
 			}
-			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
+			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs), nil)
 		}
 
 		if !conditionalStep.HasCondition {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", stepID)
+			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", stepID), nil)
 		}
 
 		// Convert back to regular step (remove conditional properties and branches)
@@ -1747,10 +1747,10 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger util
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		logger.Infof("✅ Converted conditional step '%s' back to regular step", conditionalStep.Title)
+		logger.Info(fmt.Sprintf("✅ Converted conditional step '%s' back to regular step", conditionalStep.Title))
 		return fmt.Sprintf("Successfully converted conditional step '%s' back to regular step", conditionalStep.Title), nil
 	}
 }
@@ -1760,13 +1760,13 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger util
 func parseSchemaForToolParameters(schemaString string) (map[string]interface{}, error) {
 	var schema map[string]interface{}
 	if err := json.Unmarshal([]byte(schemaString), &schema); err != nil {
-		return nil, fmt.Errorf("failed to parse schema JSON: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to parse schema JSON: %w", err), nil)
 	}
 
 	// Extract properties - this becomes the tool parameters
 	properties, ok := schema["properties"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("schema missing 'properties' field or it's not an object")
+		return nil, fmt.Errorf(fmt.Sprintf("schema missing 'properties' field or it's not an object"), nil)
 	}
 
 	// Build tool parameter schema with type "object"
@@ -1801,7 +1801,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) Execute(ctx context.Conte
 	// Convert structured response to string for compatibility
 	resultJSON, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return "", conversationHistory, fmt.Errorf("failed to marshal structured response: %w", err)
+		return "", conversationHistory, fmt.Errorf(fmt.Sprintf("failed to marshal structured response: %w", err), nil)
 	}
 
 	return string(resultJSON), updatedHistory, nil

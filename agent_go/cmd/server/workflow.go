@@ -343,6 +343,9 @@ type ExecutionOptions struct {
 
 	// Fallback behavior when validation fails
 	FallbackToOriginalLLMOnFailure bool `json:"fallback_to_original_llm_on_failure,omitempty"` // If true, use original LLM instead of temp override when validation fails
+
+	// Variable group execution options (for batch execution with multiple groups)
+	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)

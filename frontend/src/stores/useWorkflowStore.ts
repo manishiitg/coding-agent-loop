@@ -437,16 +437,46 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.log('[WorkflowStore] fallbackToOriginalLLMOnFailure is false, not including in execution options')
         }
 
+        // Check if selectedRunFolder contains a specific group path
+        // Pattern: iteration-X/group-Y
+        let selectedGroupId: string | null = null
+        if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/group-')) {
+          // Extract group ID from path like "iteration-1/group-5"
+          const parts = state.selectedRunFolder.split('/')
+          if (parts.length === 2 && parts[1].startsWith('group-')) {
+            selectedGroupId = parts[1] // e.g., "group-5"
+          }
+        }
+
         // Include enabled group IDs from variables manifest (for batch execution)
         // This ensures disabled groups are not executed even if the file is stale
         if (state.variablesManifest) {
           if (state.variablesManifest.groups && state.variablesManifest.groups.length > 0) {
-            // Multi-group mode: extract enabled group IDs
-            const enabledGroupIDs = state.variablesManifest.groups
-              .filter(g => g.enabled)
-              .map(g => g.group_id)
-            if (enabledGroupIDs.length > 0) {
-              options.enabled_group_ids = enabledGroupIDs
+            // If a specific group was selected via folder path, run only that group
+            if (selectedGroupId) {
+              // Verify the group exists in manifest
+              const groupExists = state.variablesManifest.groups.some(g => g.group_id === selectedGroupId)
+              if (groupExists) {
+                options.enabled_group_ids = [selectedGroupId]
+                console.log(`[WorkflowStore] Running only selected group: ${selectedGroupId}`)
+              } else {
+                console.warn(`[WorkflowStore] Selected group ${selectedGroupId} not found in manifest, using all enabled groups`)
+                // Fall back to all enabled groups
+                const enabledGroupIDs = state.variablesManifest.groups
+                  .filter(g => g.enabled)
+                  .map(g => g.group_id)
+                if (enabledGroupIDs.length > 0) {
+                  options.enabled_group_ids = enabledGroupIDs
+                }
+              }
+            } else {
+              // No specific group selected - use all enabled groups
+              const enabledGroupIDs = state.variablesManifest.groups
+                .filter(g => g.enabled)
+                .map(g => g.group_id)
+              if (enabledGroupIDs.length > 0) {
+                options.enabled_group_ids = enabledGroupIDs
+              }
             }
           }
           // Single-group mode: if no groups array, all variables are in one virtual group

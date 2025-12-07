@@ -1042,6 +1042,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create custom tools for workflow agents (workspace tools + human tools)
 		// Workflow agents can be Simple or ReAct agents, tools are registered based on mode
+		// TODO: Memory tools removed from workflow - only needed for individual React agents
+		// memoryTools := virtualtools.CreateMemoryTools()
+		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors, toolCategories := createCustomTools()
 
 		// Load selected tools, code execution mode, and preset LLM config from preset if available (for workflow agents)
@@ -1272,8 +1275,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Pass execution options from frontend if provided
 			if req.ExecutionOptions != nil {
-				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d",
-					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep)
+				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v",
+					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupIDs)
 
 				// Convert to controller ExecutionOptions and pass to workflow orchestrator
 				controllerOpts := &todo_creation_human.ExecutionOptions{
@@ -1283,6 +1286,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					ResumeFromStep:                 req.ExecutionOptions.ResumeFromStep,
 					FastExecuteEndStep:             req.ExecutionOptions.FastExecuteEndStep,
 					FallbackToOriginalLLMOnFailure: req.ExecutionOptions.FallbackToOriginalLLMOnFailure,
+					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 				}
 
 				// Convert TempOverrideLLM if present

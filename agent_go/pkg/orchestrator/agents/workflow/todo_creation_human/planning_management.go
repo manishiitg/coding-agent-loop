@@ -914,8 +914,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	var eventEmitted bool = false
 	var planSource string = ""
 
-	// If plan exists, emit event immediately so UI can display it while user decides what to do
+	// If plan exists, always update it (no user choice needed)
 	if planExists {
+		hcpo.GetLogger().Infof("📋 Found existing plan.json with %d steps - proceeding to UPDATE mode", len(existingPlan.Steps))
+
+		// Emit event immediately so UI can display the existing plan
 		breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
 		if err != nil {
 			return "", fmt.Errorf("failed to convert existing plan steps: %w", err)
@@ -924,89 +927,43 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 		eventEmitted = true
 		planSource = "existing_plan"
 		hcpo.GetLogger().Infof("📋 Emitted plan event for UI display (%d steps)", len(breakdownSteps))
-	}
 
-	// If plan exists, ask user if they want to use it, create new, or update existing
-	if planExists {
-		requestID := fmt.Sprintf("existing_plan_decision_%d", time.Now().UnixNano())
-		planOptions := []string{
-			"Use Existing Plan",    // Option 0: Use existing plan as-is
-			"Create New Plan",      // Option 1: Delete everything and create new plan
-			"Update Existing Plan", // Option 2: Create new plan but keep existing artifacts
-		}
-		planChoice, err := hcpo.RequestMultipleChoiceFeedback(
+		// Request human feedback about what they want to update in the plan
+		updateFeedbackID := fmt.Sprintf("plan_update_feedback_%d", time.Now().UnixNano())
+		approved, updateFeedback, err := hcpo.RequestHumanFeedback(
 			ctx,
-			requestID,
-			"Found existing plan.json. What would you like to do?",
-			planOptions,
-			fmt.Sprintf("Plan location: %s\nFound %d steps", planPath, len(existingPlan.Steps)),
+			updateFeedbackID,
+			"What would you like to update in the existing plan? Please describe the changes or improvements you want.",
+			fmt.Sprintf("Current plan location: %s\nFound %d steps\n\nYour feedback will be used to guide the creation of an updated plan while preserving existing validation, learning, and execution artifacts.", planPath, len(existingPlan.Steps)),
 			hcpo.getSessionID(),
 			hcpo.getWorkflowID(),
 		)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing plan: %w", err)
-			planChoice = "option0"
+			hcpo.GetLogger().Warnf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err)
+			initialPlanningFeedback = ""
+		} else if approved {
+			hcpo.GetLogger().Infof("ℹ️ User approved without providing update feedback, will create updated plan without specific guidance")
+			initialPlanningFeedback = ""
+		} else if updateFeedback != "" {
+			hcpo.GetLogger().Infof("📝 Received update feedback: %s", updateFeedback)
+			initialPlanningFeedback = updateFeedback
+		} else {
+			hcpo.GetLogger().Warnf("⚠️ Unexpected feedback state: approved=%v, feedback empty, proceeding without guidance", approved)
+			initialPlanningFeedback = ""
 		}
 
-		switch planChoice {
-		case "option0":
-			// Use existing plan
-			hcpo.GetLogger().Infof("✅ User chose to use existing plan")
-			approvedPlan = existingPlan
-			hcpo.approvedPlan = approvedPlan
-			// Event already emitted above when plan was found
-
-		case "option1":
-			// Create new plan - cleanup everything and create fresh plan
-			hcpo.GetLogger().Infof("🔄 User chose to create new plan, cleaning up existing plan and related files")
-			if err := hcpo.cleanupExistingPlanArtifacts(ctx, workspacePath); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to cleanup existing plan artifacts: %v (will continue anyway)", err)
-			} else {
-				hcpo.GetLogger().Infof("🗑️ Successfully cleaned up existing plan artifacts")
-			}
-			planExists = false
-
-		case "option2":
-			// Update existing plan - create new plan but keep artifacts (no cleanup)
-			hcpo.GetLogger().Infof("🔄 User chose to update existing plan, creating new plan but keeping existing artifacts")
-
-			// Request human feedback about what they want to update in the plan
-			updateFeedbackID := fmt.Sprintf("plan_update_feedback_%d", time.Now().UnixNano())
-			approved, updateFeedback, err := hcpo.RequestHumanFeedback(
-				ctx,
-				updateFeedbackID,
-				"What would you like to update in the existing plan? Please describe the changes or improvements you want.",
-				fmt.Sprintf("Current plan location: %s\nFound %d steps\n\nYour feedback will be used to guide the creation of an updated plan while preserving existing validation, learning, and execution artifacts.", planPath, len(existingPlan.Steps)),
-				hcpo.getSessionID(),
-				hcpo.getWorkflowID(),
-			)
-			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err)
-				initialPlanningFeedback = ""
-			} else if approved {
-				hcpo.GetLogger().Infof("ℹ️ User approved without providing update feedback, will create updated plan without specific guidance")
-				initialPlanningFeedback = ""
-			} else if updateFeedback != "" {
-				hcpo.GetLogger().Infof("📝 Received update feedback: %s", updateFeedback)
-				initialPlanningFeedback = updateFeedback
-			} else {
-				hcpo.GetLogger().Warnf("⚠️ Unexpected feedback state: approved=%v, feedback empty, proceeding without guidance", approved)
-				initialPlanningFeedback = ""
-			}
-
-			planExists = false
-			existingPlanForFirstUpdate = existingPlan
-
-		default:
-			hcpo.GetLogger().Warnf("⚠️ Unknown plan choice: %s, defaulting to use existing plan", planChoice)
-			approvedPlan = existingPlan
-			hcpo.approvedPlan = approvedPlan
-		}
+		// Set up for UPDATE mode - will go through planning phase to update the plan
+		existingPlanForFirstUpdate = existingPlan
+		planExists = false // Set to false so it goes into the planning loop
 	}
 
-	// Run planning phase if plan doesn't exist or user wants to create/update
+	// Run planning phase if plan doesn't exist (CREATE mode) or if existing plan needs update (UPDATE mode)
 	if !planExists && approvedPlan == nil {
-		hcpo.GetLogger().Infof("🔄 Creating new plan to execute objective")
+		if existingPlanForFirstUpdate != nil {
+			hcpo.GetLogger().Infof("🔄 Updating existing plan (UPDATE mode)")
+		} else {
+			hcpo.GetLogger().Infof("🔄 Creating new plan to execute objective (CREATE mode)")
+		}
 
 		maxPlanRevisions := 20
 		humanFeedback := initialPlanningFeedback
@@ -1105,8 +1062,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 		// Determine correct source if not already set
 		if planSource == "" {
 			// If we haven't emitted yet, determine source based on context
-			// If we're using the existing plan (from option0), it's "existing_plan"
-			// Otherwise, it's a "new_plan"
+			// If we're using the existing plan without modification, it's "existing_plan"
+			// Otherwise, it's a "new_plan" (created or updated)
 			if existingPlan != nil && approvedPlan == existingPlan {
 				planSource = "existing_plan"
 			} else {

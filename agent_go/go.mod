@@ -23,7 +23,7 @@ require (
 
 replace workspace => ../workspace
 
-replace mcpagent => ../mcpagent
+replace mcpagent => ../../mcpagent
 
 replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
 

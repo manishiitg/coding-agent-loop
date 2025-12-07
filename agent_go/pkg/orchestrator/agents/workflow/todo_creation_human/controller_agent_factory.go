@@ -228,7 +228,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 
 // createExecutionOnlyAgent creates an execution-only agent that receives pre-discovered learning history
 // isRetryAfterValidationFailure: if true and fallbackToOriginalLLMOnFailure is enabled, will skip tempOverrideLLM and use original LLM
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool) (agents.OrchestratorAgent, error) {
+// retryAttempt: current retry attempt number (1 = first attempt, 2 = second attempt, etc.) - used for cascading LLM fallback
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from learnings (read-only) and execution (via writePaths), writes only to execution
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
@@ -267,24 +268,45 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d", maxTurns))
 	}
 
-	// Determine LLM config: Priority: temp override > step config > preset default > orchestrator default
-	// Exception: If retrying after validation failure and fallbackToOriginalLLMOnFailure is enabled, skip temp override
+	// Determine LLM config with cascading fallback: tempLLM1 → tempLLM2 → step LLM
+	// Priority: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default > orchestrator default
+	// Exception: If retrying after validation failure and fallbackToOriginalLLMOnFailure is enabled, skip temp overrides
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, tempOverrideLLM!=nil=%v", isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hcpo.tempOverrideLLM != nil))
-	if shouldSkipTempOverride && hcpo.tempOverrideLLM != nil {
+
+	// Cascading LLM selection based on retry attempt:
+	// - retryAttempt == 1: Use tempLLM1 (if available)
+	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available)
+	// - retryAttempt >= 3: Use step LLM (step config > preset > orchestrator)
+	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
+	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2))
+
+	if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)"))
 	}
-	if !shouldSkipTempOverride && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
-		// Temporary override takes highest priority (from ExecutionOptions)
+
+	// Cascading logic: tempLLM1 → tempLLM2 → step LLM
+	if !shouldSkipTempOverride && retryAttempt == 1 && hasTempLLM1 {
+		// First attempt: Use tempLLM1
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.tempOverrideLLM.Provider,
 			ModelID:        hcpo.tempOverrideLLM.ModelID,
 			FallbackModels: []string{},                    // Use empty fallback for temp override
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE execution LLM: %s/%s", hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 (attempt %d): %s/%s", retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
+	} else if !shouldSkipTempOverride && retryAttempt == 2 && hasTempLLM1 && hasTempLLM2 {
+		// Second attempt: Use tempLLM2 (tempLLM1 was used in attempt 1 and failed)
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       hcpo.tempOverrideLLM2.Provider,
+			ModelID:        hcpo.tempOverrideLLM2.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for temp override
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 (attempt %d, tempLLM1 failed): %s/%s", retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
 	} else if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.ExecutionLLM.Provider,

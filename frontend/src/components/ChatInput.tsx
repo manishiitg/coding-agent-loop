@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useMemo, useState, useImperativeHandle, forwardRef, useEffect } from 'react'
+import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
 import { Send, Loader2, Square, Plus, Code2, Sparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
@@ -21,23 +21,21 @@ interface ChatInputProps {
   onNewChat: () => void
 }
 
-export interface ChatInputRef {
-  getCodeExecutionMode: () => boolean
-}
-
 // Completely isolated input component that doesn't re-render when events change
-const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
+const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit,
   onStopStreaming,
   onNewChat
-}, ref) => {
+}) => {
   // Store subscriptions
   const {
     agentMode,
     chatFileContext,
     removeFileFromContext,
     clearFileContext,
-    addFileToContext
+    addFileToContext,
+    useCodeExecutionMode,
+    setUseCodeExecutionMode
   } = useAppStore()
   
   // Get current query from global preset store for consistency
@@ -46,14 +44,6 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   
   // Local state for input to prevent global re-renders on every keystroke
   const [localQuery, setLocalQuery] = useState('')
-  
-  // Code execution mode state (only for chat mode) - enabled by default
-  const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(true)
-  
-  // Expose code execution mode via ref
-  useImperativeHandle(ref, () => ({
-    getCodeExecutionMode: () => useCodeExecutionMode
-  }), [useCodeExecutionMode])
   
   const { selectedModeCategory } = useModeStore()
   
@@ -627,8 +617,8 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
                 
-                {/* Agent Mode Selector - Only for Chat Mode */}
-                {selectedModeCategory === 'chat' && (
+                {/* Agent Mode Selector - Only for Chat Mode and when no preset is active */}
+                {selectedModeCategory === 'chat' && !chatActivePreset && (
                   <div className="flex items-center gap-2">
                     {/* Code Execution Mode Toggle */}
                     <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
@@ -676,8 +666,8 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                   </div>
                 )}
                 
-                {/* Server and LLM Selection for Simple mode - only show when no preset is active */}
-                {agentMode === 'simple' && !chatActivePreset && (
+                {/* Server and LLM Selection for Chat mode - only show when no preset is active */}
+                {selectedModeCategory === 'chat' && !chatActivePreset && (
                   <div className="flex items-center gap-2">
                     <ServerSelectionDropdown
                       availableServers={availableServers}
@@ -791,7 +781,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
       </div>
     </TooltipProvider>
   )
-})
+}
 
 ChatInputComponent.displayName = 'ChatInput'
 

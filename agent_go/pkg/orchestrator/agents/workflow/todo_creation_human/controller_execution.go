@@ -809,7 +809,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						return false
 					}(), isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure))
 				// Pass stepIndex (0-based) - createExecutionOnlyAgent will convert to 1-based for folder path
-				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepIndex, iteration, executionAgentName, step.AgentConfigs, isRetryAfterValidationFailure)
+				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepIndex, iteration, executionAgentName, step.AgentConfigs, isRetryAfterValidationFailure, retryAttempt)
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to create execution-only agent for step %d: %w", stepIndex+1, err), nil)
 				}

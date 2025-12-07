@@ -73,11 +73,10 @@ type ModelTokenData struct {
 
 // TokenUsageFile represents persisted token usage data per iteration
 type TokenUsageFile struct {
-	CreatedAt  time.Time                      `json:"created_at"`
-	UpdatedAt  time.Time                      `json:"updated_at"`
-	ByModel    map[string]*ModelTokenUsage    `json:"by_model"`
-	ByStep     map[string]*StepTokenSummary   `json:"by_step"`
-	ByStepType map[string]*StepTypeTokenUsage `json:"by_step_type"` // Aggregated by step type (execution, validation, learning)
+	CreatedAt      time.Time                              `json:"created_at"`
+	UpdatedAt      time.Time                              `json:"updated_at"`
+	ByModel        map[string]*ModelTokenUsage            `json:"by_model"`          // Aggregated by model (across all steps)
+	ByStepAndModel map[string]map[string]*ModelTokenUsage `json:"by_step_and_model"` // Nested map: stepKey -> modelID -> token usage
 }
 
 // TokenUsageSummary represents total token usage across all models and steps

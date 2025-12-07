@@ -214,9 +214,13 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 			continue
 		}
 
-		// Skip the root directory itself (exact match)
-		if filepath == dirPath {
-			// Removed verbose logging
+		// Skip the root directory itself (normalize paths for comparison)
+		// Normalize both paths by removing trailing slashes and comparing
+		normalizedFilePath := strings.TrimRight(filepath, "/")
+		normalizedDirPath := strings.TrimRight(dirPath, "/")
+		if normalizedFilePath == normalizedDirPath {
+			// This is the root directory itself - skip it to avoid deleting the Downloads folder
+			bo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping root directory itself: %s", filepath))
 			continue
 		}
 

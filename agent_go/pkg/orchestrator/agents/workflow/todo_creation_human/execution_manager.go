@@ -756,7 +756,9 @@ func (em *ExecutionManager) CleanupExecutionFolder(ctx context.Context, runFolde
 func (em *ExecutionManager) CleanupDownloadsFolder(ctx context.Context) error {
 	orch := em.orchestrator
 
-	downloadsDir := fmt.Sprintf("%s/Downloads", orch.GetWorkspacePath())
+	// Use "Downloads" as relative path - workspace API will handle conversion to /app/workspace/Downloads
+	// Note: CleanupDirectory will skip the Downloads folder itself and only delete files inside it
+	downloadsDir := "Downloads"
 
 	orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning Downloads folder before step execution: %s", downloadsDir))
 

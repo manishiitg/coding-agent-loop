@@ -169,13 +169,9 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning LLM: step config > preset learning_llm > preset default (or execution LLM in code exec mode)
+  // Learning LLM: step config > preset learning_llm > preset default
+  // Always use learning_llm config (not execution_llm), even in code exec mode
   const learningLLM = useMemo(() => {
-    // In code execution mode, learning uses execution LLM
-    if (useCodeExecutionMode) {
-      return executionLLM
-    }
-    
     // Check if learning is disabled
     if (stepConfig?.agent_configs?.disable_learning === true) {
       return null
@@ -192,7 +188,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs, useCodeExecutionMode, executionLLM])
+  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs])
 
   // Learning detail level (defaults to 'general', but 'exact' in code exec mode)
   const learningDetailLevel = useMemo(() => {
@@ -214,13 +210,26 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const presetServers = useMemo(() => activePreset?.selectedServers || [], [activePreset?.selectedServers])
   const stepServers = stepConfig?.agent_configs?.selected_servers
   const effectiveServers = useMemo(() => {
-    if (stepServers?.length && !stepServers.includes('NO_SERVERS')) return stepServers
+    // If step config explicitly sets servers (even if empty or NO_SERVERS), use it
+    if (stepServers !== undefined && stepServers !== null) {
+      // Filter out NO_SERVERS marker and return the result (empty array if only NO_SERVERS was present)
+      return stepServers.filter(s => s !== 'NO_SERVERS')
+    }
+    // Otherwise, fall back to preset servers
     return presetServers
   }, [stepServers, presetServers])
 
   const presetTools = useMemo(() => activePreset?.selectedTools || [], [activePreset?.selectedTools])
-  const effectiveTools = stepConfig?.agent_configs?.selected_tools?.length 
-    ? stepConfig.agent_configs.selected_tools : presetTools
+  const effectiveTools = useMemo(() => {
+    // If no servers are selected (NO_SERVERS or empty array), no tools should be shown
+    if (effectiveServers.length === 0) {
+      return []
+    }
+    // Otherwise, use step config tools or fall back to preset tools
+    return stepConfig?.agent_configs?.selected_tools?.length 
+      ? stepConfig.agent_configs.selected_tools 
+      : presetTools
+  }, [effectiveServers.length, stepConfig?.agent_configs?.selected_tools, presetTools])
 
   // Group tools by server and detect "all tools" (*) entries
   const toolsDisplayInfo = useMemo(() => {

@@ -3,7 +3,7 @@ import debounce from 'lodash.debounce'
 import { agentApi, setCurrentObserverId } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
-import { ChatInput, type ChatInputRef } from './ChatInput'
+import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { ToastContainer } from './ui/Toast'
@@ -46,8 +46,6 @@ export interface ChatAreaRef {
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const { onNewChat, hideHeader = false, hideInput = false, compact = false } = props
-  // Ref for ChatInput to get code execution mode
-  const chatInputRef = useRef<ChatInputRef>(null)
   
   // Store subscriptions
   const { 
@@ -1297,31 +1295,45 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         'hasAllToolsMarkers': currentPresetTools?.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
       });
       
-      // Get code execution mode: prefer preset value, fallback to ChatInput ref (only for chat mode with simple agent)
-      const activePreset = selectedWorkflowPreset ? getActivePreset('workflow') : getActivePreset('chat')
+      // Get code execution mode: 
+      // - For chat mode: Use ChatInput selection if no preset, or preset value if preset exists
+      // - For workflow mode: Use preset value if available
+      // IMPORTANT: Only check for chat preset when in chat mode, workflow preset when in workflow mode
+      const chatPreset = correctAgentMode === 'simple' ? getActivePreset('chat') : null
+      const workflowPreset = correctAgentMode === 'workflow' ? (selectedWorkflowPreset ? getActivePreset('workflow') : null) : null
+      const activePreset = workflowPreset || chatPreset
       const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
-      const chatInputUseCodeExecutionMode = correctAgentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
+      
+      // Get code execution mode from store (only relevant for chat mode when no preset)
+      const { useCodeExecutionMode: storeCodeExecutionMode } = useAppStore.getState()
       
       // Determine final code execution mode value
-      // If preset has explicit value (true or false), use it
-      // Otherwise, for simple mode, use ChatInput value; for workflow mode, default to undefined (backend will handle)
+      // For chat mode: Use preset value if preset exists, otherwise use store value
+      // For workflow mode: Use preset value if available, otherwise undefined
       let useCodeExecutionMode: boolean | undefined
-      if (presetUseCodeExecutionMode !== undefined) {
+      if (correctAgentMode === 'simple') {
+        // In chat mode: If preset exists, use preset value; otherwise use store value
+        if (presetUseCodeExecutionMode !== undefined) {
+          useCodeExecutionMode = presetUseCodeExecutionMode
+        } else {
+          // No preset, use store value (user's manual control via ChatInput toggle)
+          useCodeExecutionMode = storeCodeExecutionMode
+        }
+      } else if (correctAgentMode === 'workflow') {
+        // For workflow mode, use preset value if available
         useCodeExecutionMode = presetUseCodeExecutionMode
-      } else if (correctAgentMode === 'simple') {
-        useCodeExecutionMode = chatInputUseCodeExecutionMode
       } else {
-        // For workflow mode without preset, don't set it (let backend use default)
         useCodeExecutionMode = undefined
       }
       
       console.log('[code_execution] [ChatArea] Mode determination:', {
         activePreset: activePreset?.label,
         presetUseCodeExecutionMode,
-        chatInputUseCodeExecutionMode,
+        storeCodeExecutionMode,
         selectedModeCategory,
         correctAgentMode,
-        finalUseCodeExecutionMode: useCodeExecutionMode
+        finalUseCodeExecutionMode: useCodeExecutionMode,
+        finalType: typeof useCodeExecutionMode
       })
       
       // Build llm_config with API keys from provider configs
@@ -1567,7 +1579,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       {/* Input Area - Completely isolated from event updates, hidden in workflow mode */}
       {!chatSessionId && !hideInput && (
         <ChatInput
-          ref={chatInputRef}
           onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
           onNewChat={handleNewChat}

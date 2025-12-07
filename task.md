@@ -33,11 +33,8 @@ g) add references as extra agent
 will index data
 i) prompt tempaltes, need to check variables on compile time
 
-k) also fix logging in this process
-
 h) check if external package is even required
 
+8.. also store token_usage. for overlal planning etc.. in main folder
 
-5. Checking if tab exists in spreadsheet...
-ListSheets output: Error: Error executing tool list_sheets: [Errno 32] Broken pipe
-❌ Error listing sheets: Error: Error executing tool list_sheets: [Errno 32] Broken pipe === we have handled this properly.. but in mcp code exec, lets add retry
+9. for slack integration, we should add optino in ui when to use this..

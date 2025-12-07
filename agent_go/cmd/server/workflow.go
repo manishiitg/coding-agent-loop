@@ -337,12 +337,17 @@ type ExecutionOptions struct {
 	PlanChangeAction        string `json:"plan_change_action,omitempty"`         // "keep_old_progress" or "delete_old_progress"
 	AllStepsCompletedAction string `json:"all_steps_completed_action,omitempty"` // "fast_execute_again" or "skip_execution"
 
-	// Temporary LLM override (optional, overrides step-level configs for this execution only)
+	// Temporary LLM overrides (optional, overrides step-level configs for this execution only)
 	// Only applies to execution agents (not validation or learning agents)
-	TempOverrideLLM *AgentLLMConfig `json:"temp_override_llm,omitempty"` // Override LLM for execution agents only
+	// Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
+	TempOverrideLLM  *AgentLLMConfig `json:"temp_override_llm,omitempty"`  // First override LLM (used on first attempt)
+	TempOverrideLLM2 *AgentLLMConfig `json:"temp_override_llm2,omitempty"` // Second override LLM (used on second attempt if tempLLM1 fails)
 
 	// Fallback behavior when validation fails
 	FallbackToOriginalLLMOnFailure bool `json:"fallback_to_original_llm_on_failure,omitempty"` // If true, use original LLM instead of temp override when validation fails
+
+	// Variable group execution options (for batch execution with multiple groups)
+	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)

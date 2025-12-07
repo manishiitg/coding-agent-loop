@@ -64,17 +64,8 @@ export const FileEditor: React.FC<FileEditorProps> = ({
     return 'vs'
   }
 
-  const handleEditorDidMount: OnMount = (editor, monaco) => {
+  const handleEditorDidMount: OnMount = (editor, _monaco) => {
     editorRef.current = editor
-
-    // Configure JSON validation and formatting
-    if (getLanguage(filepath) === 'json') {
-      monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-        validate: true,
-        allowComments: false,
-        schemas: []
-      })
-    }
 
     // Configure editor options
     editor.updateOptions({
@@ -86,7 +77,7 @@ export const FileEditor: React.FC<FileEditorProps> = ({
       scrollBeyondLastLine: false,
       automaticLayout: true,
       formatOnPaste: true,
-      formatOnType: getLanguage(filepath) === 'json'
+      formatOnType: false
     })
 
     if (onMount) {
@@ -129,7 +120,7 @@ export const FileEditor: React.FC<FileEditorProps> = ({
     <div className="h-full w-full">
       <Editor
         height={height}
-        language={getLanguage(filepath)}
+        language="plaintext"
         value={value}
         theme={getMonacoTheme(theme)}
         onChange={handleChange}
@@ -143,7 +134,7 @@ export const FileEditor: React.FC<FileEditorProps> = ({
           scrollBeyondLastLine: false,
           automaticLayout: true,
           formatOnPaste: true,
-          formatOnType: getLanguage(filepath) === 'json',
+          formatOnType: false,
           fontSize: 14,
           fontFamily: 'Menlo, Monaco, "Courier New", monospace',
           tabSize: 2,

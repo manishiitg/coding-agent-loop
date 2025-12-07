@@ -73,9 +73,11 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	presetAnonymizationLLM      *AgentLLMConfig // Default for anonymization agent
 	presetPlanImprovementLLM    *AgentLLMConfig // Default for plan improvement agent
 
-	// Temporary LLM override (highest priority, from ExecutionOptions)
+	// Temporary LLM overrides (highest priority, from ExecutionOptions)
 	// Only applies to execution agents (not validation or learning agents) for all steps during this execution
-	tempOverrideLLM *AgentLLMConfig
+	// Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
+	tempOverrideLLM  *AgentLLMConfig // First override LLM (used on first attempt)
+	tempOverrideLLM2 *AgentLLMConfig // Second override LLM (used on second attempt if tempLLM1 fails)
 
 	// Fallback to original LLM on validation failure (from ExecutionOptions)
 	// If true, when validation fails, use original LLM instead of temp override for retry attempts
@@ -244,28 +246,86 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	}
 
 	// Load runtime variable values if provided and switch to templated objective
-	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load variable values: %w", err))
+	// If a specific group is selected via execution options, use that group's values
+	var variableValues map[string]string
+	if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupIDs) > 0 && hcpo.variablesManifest != nil {
+		// Specific group(s) selected - use the first group's values (for single group execution)
+		requestedGroupID := hcpo.executionOptions.EnabledGroupIDs[0]
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [VARIABLE LOADING] Requested group ID: %s", requestedGroupID))
+
+		// Log available groups for debugging
+		availableGroupIDs := make([]string, len(hcpo.variablesManifest.Groups))
+		for i, g := range hcpo.variablesManifest.Groups {
+			availableGroupIDs[i] = g.GroupID
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [VARIABLE LOADING] Available groups in manifest: %v", availableGroupIDs))
+
+		variableValues = hcpo.variablesManifest.GetVariableValues(requestedGroupID)
+		if variableValues == nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Group %s not found in manifest, falling back to LoadVariableValues", requestedGroupID))
+			var err error
+			variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
+			if err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Failed to load variable values: %w", err))
+			} else {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Loaded from fallback LoadVariableValues (may not match requested group %s)", requestedGroupID))
+			}
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Loaded variable values for selected group: %s (values: %v)", requestedGroupID, variableValues))
+
+			// Validate: Double-check that we got the right group's values
+			// Find the group in manifest to verify
+			for _, g := range hcpo.variablesManifest.Groups {
+				if g.GroupID == requestedGroupID {
+					// Compare values to ensure they match
+					valuesMatch := true
+					if len(variableValues) != len(g.Values) {
+						valuesMatch = false
+					} else {
+						for k, v := range variableValues {
+							if g.Values[k] != v {
+								valuesMatch = false
+								hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Value mismatch for key %s: expected %s, got %s", k, g.Values[k], v), nil)
+								break
+							}
+						}
+					}
+					if !valuesMatch {
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Variable values don't match group %s! Expected: %v, Got: %v", requestedGroupID, g.Values, variableValues), nil)
+					} else {
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Verified variable values match group %s", requestedGroupID))
+					}
+					break
+				}
+			}
+		}
 	} else {
+		// No specific group selected - use default LoadVariableValues (backward compatibility)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [VARIABLE LOADING] No specific group selected, using default LoadVariableValues"))
+		var err error
+		variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Failed to load variable values: %w", err))
+		}
+	}
+
+	if variableValues != nil {
 		hcpo.variableValues = variableValues
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Set hcpo.variableValues with %d variables", len(variableValues)))
+	} else {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] variableValues is nil - no variables loaded"))
 	}
 
 	// Switch to templated objective for all subsequent phases
 	hcpo.SetObjective(templatedObjective)
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective))
 
-	// Emit both events together
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 Found both existing variables.json and plan.json - emitting both events together"))
-	hcpo.variableManager.emitVariablesExtractedEvent(ctx, existingVariablesManifest.Variables, existingVariablesManifest.Objective)
-
-	// Convert existing plan to TodoStep format and emit TodoStepsExtractedEvent
+	// Convert existing plan to TodoStep format for execution
 	breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to convert existing plan steps: %w", err), nil)
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Converted existing plan: %d steps extracted", len(breakdownSteps)))
-	hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
 
 	// Store approved plan for access during execution
 	hcpo.approvedPlan = existingPlan
@@ -1443,13 +1503,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetExecutionOptions(options 
 	if options != nil {
 		hcpo.GetLogger().Info(fmt.Sprintf("📋 Execution options set from frontend: run_mode=%s, strategy=%s, run_folder=%s", options.RunMode, options.ExecutionStrategy, options.SelectedRunFolder))
 
-		// Apply temporary LLM override (highest priority for execution agents only)
+		// Apply temporary LLM overrides (highest priority for execution agents only)
+		// Cascading fallback: tempLLM1 → tempLLM2 → step LLM
 		if options.TempOverrideLLM != nil && options.TempOverrideLLM.Provider != "" && options.TempOverrideLLM.ModelID != "" {
 			hcpo.tempOverrideLLM = options.TempOverrideLLM
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temporary execution agent LLM override set: %s/%s (applies to execution agents only, not validation/learning)", options.TempOverrideLLM.Provider, options.TempOverrideLLM.ModelID))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temporary execution agent LLM override 1 set: %s/%s (applies to execution agents only, not validation/learning)", options.TempOverrideLLM.Provider, options.TempOverrideLLM.ModelID))
 		} else {
 			// Clear any previous temporary override
 			hcpo.tempOverrideLLM = nil
+		}
+		if options.TempOverrideLLM2 != nil && options.TempOverrideLLM2.Provider != "" && options.TempOverrideLLM2.ModelID != "" {
+			hcpo.tempOverrideLLM2 = options.TempOverrideLLM2
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temporary execution agent LLM override 2 set: %s/%s (will be used on second attempt if tempLLM1 fails)", options.TempOverrideLLM2.Provider, options.TempOverrideLLM2.ModelID))
+		} else {
+			// Clear any previous temporary override
+			hcpo.tempOverrideLLM2 = nil
 		}
 
 		// Store fallback to original LLM on failure flag
@@ -1459,8 +1527,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetExecutionOptions(options 
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Fallback to original LLM on validation failure enabled - will use original LLM instead of temp override when validation fails"))
 		}
 	} else {
-		// Clear temporary override when options are cleared
+		// Clear temporary overrides when options are cleared
 		hcpo.tempOverrideLLM = nil
+		hcpo.tempOverrideLLM2 = nil
 		hcpo.fallbackToOriginalLLMOnFailure = false
 	}
 }

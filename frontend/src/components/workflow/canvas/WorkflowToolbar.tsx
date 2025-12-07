@@ -20,17 +20,19 @@ import {
   Settings,
   X,
   Brain,
-  MessageSquare
+  MessageSquare,
+  Circle
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
 import { useWorkflowStore, type ExecutionModeType, type RunFolder } from '../../../stores/useWorkflowStore'
-import type { PlannerFile, WorkflowPhase } from '../../../services/api-types'
+import type { PlannerFile, WorkflowPhase, StepProgress } from '../../../services/api-types'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -116,7 +118,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const loadSavedSettings = useWorkflowStore(state => state.loadSavedSettings)
   const saveSettings = useWorkflowStore(state => state.saveSettings)
   const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
+  const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
+  const tempOverrideLLMEnabled = useWorkflowStore(state => state.tempOverrideLLMEnabled)
+  const setTempOverrideLLMEnabled = useWorkflowStore(state => state.setTempOverrideLLMEnabled)
   const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)
+  const clearTempOverrideLLM2 = useWorkflowStore(state => state.clearTempOverrideLLM2)
+  const variablesManifest = useWorkflowStore(state => state.variablesManifest)
   
   // LLM Override modal state
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
@@ -268,6 +275,117 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Get current execution mode info
   const currentModeInfo = EXECUTION_MODE_OPTIONS.find(m => m.id === selectedExecutionMode) || EXECUTION_MODE_OPTIONS[0]
+
+  // Build merged list of iterations and groups
+  // Combines existing folders with groups from manifest
+  const iterationGroups = useMemo(() => {
+    interface GroupItem {
+      id: string  // Full path like "iteration-1/group-5" or just "iteration-1"
+      name: string  // Display name like "group-5" or "iteration-1"
+      iteration: string  // e.g., "iteration-1"
+      groupId: string | null  // e.g., "group-5" or null if no group
+      progress: StepProgress | null
+      exists: boolean  // Whether folder exists
+      enabled: boolean  // Whether group is enabled (null if not a group)
+    }
+
+    const items: GroupItem[] = []
+    const iterationMap = new Map<string, GroupItem[]>()
+
+    // Add existing folders
+    runFolders.forEach((folder) => {
+      const parts = folder.name.split('/')
+      if (parts.length === 2 && parts[1].startsWith('group-')) {
+        // Group folder: iteration-X/group-Y
+        const iteration = parts[0]
+        const groupId = parts[1]
+        const item: GroupItem = {
+          id: folder.name,
+          name: groupId,
+          iteration,
+          groupId,
+          progress: folder.progress || null,
+          exists: true,
+          enabled: true  // Default, will be updated from manifest if available
+        }
+        items.push(item)
+        if (!iterationMap.has(iteration)) {
+          iterationMap.set(iteration, [])
+        }
+        iterationMap.get(iteration)!.push(item)
+      } else if (parts.length === 1 && parts[0].startsWith('iteration-')) {
+        // Top-level iteration folder (no groups or single group mode)
+        const iteration = parts[0]
+        const item: GroupItem = {
+          id: folder.name,
+          name: iteration,
+          iteration,
+          groupId: null,
+          progress: folder.progress || null,
+          exists: true,
+          enabled: true
+        }
+        items.push(item)
+        if (!iterationMap.has(iteration)) {
+          iterationMap.set(iteration, [])
+        }
+        iterationMap.get(iteration)!.push(item)
+      }
+    })
+
+    // Add groups from manifest that don't have folders yet
+    if (variablesManifest?.groups && variablesManifest.groups.length > 0) {
+      // Find the highest iteration number from existing folders
+      let maxIteration = 0
+      runFolders.forEach((folder) => {
+        const match = folder.name.match(/iteration-(\d+)/)
+        if (match) {
+          const num = parseInt(match[1], 10)
+          if (num > maxIteration) {
+            maxIteration = num
+          }
+        }
+      })
+      
+      // Use the latest iteration, or iteration-1 if none exist
+      // This is the default iteration for groups that haven't been run yet
+      const defaultIteration = maxIteration > 0 ? `iteration-${maxIteration}` : 'iteration-1'
+
+      variablesManifest.groups.forEach((group) => {
+        // Check if this group already exists in items (has a folder)
+        const existingItem = items.find(item => item.groupId === group.group_id)
+        if (!existingItem) {
+          // Group doesn't have a folder yet - add it to the default iteration
+          const item: GroupItem = {
+            id: `${defaultIteration}/${group.group_id}`,
+            name: group.group_id,
+            iteration: defaultIteration,
+            groupId: group.group_id,
+            progress: null,
+            exists: false,
+            enabled: group.enabled
+          }
+          items.push(item)
+          if (!iterationMap.has(defaultIteration)) {
+            iterationMap.set(defaultIteration, [])
+          }
+          iterationMap.get(defaultIteration)!.push(item)
+        } else {
+          // Update enabled status from manifest for existing group
+          existingItem.enabled = group.enabled
+        }
+      })
+    }
+
+    // Sort iterations by number (descending)
+    const sortedIterations = Array.from(iterationMap.keys()).sort((a, b) => {
+      const numA = parseInt(a.replace('iteration-', '')) || 0
+      const numB = parseInt(b.replace('iteration-', '')) || 0
+      return numB - numA
+    })
+
+    return { sortedIterations, iterationMap, items }
+  }, [runFolders, variablesManifest])
   
   // Generate start point options based on completed steps
   const startPointOptions = useMemo((): StartPointOption[] => {
@@ -446,6 +564,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const handleExecute = useCallback(() => {
     if (!isRunning && executionPhase) {
       const options = buildExecutionOptions()
+      console.log('[WorkflowToolbar] Execution options:', JSON.stringify(options, null, 2))
       onStartPhase(executionPhase.id, options)
     }
   }, [isRunning, executionPhase, buildExecutionOptions, onStartPhase])
@@ -551,67 +670,163 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           {selectedRunFolder === 'new' && !isCreatingFolder && <Check className="w-4 h-4 ml-auto" />}
                         </button>
                         
-                        {runFolders.length > 0 ? (
+                        {(iterationGroups.sortedIterations.length > 0 || runFolders.length > 0) ? (
                           <>
                             <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
                             <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-1">
-                              Existing Runs ({runFolders.length})
+                              {iterationGroups.sortedIterations.length > 0 ? 'Iterations & Groups' : `Existing Runs (${runFolders.length})`}
                             </div>
-                            {runFolders.map((folder: RunFolder) => {
-                              const progress = folder.progress
-                              const folderCompletedCount = progress?.completed_step_indices?.length || 0
-                              const folderTotalSteps = progress?.total_steps || 0
-                              const hasProgress = progress && folderCompletedCount > 0
-                              
-                              return (
-                                <div
-                                  key={folder.name}
-                                  className={`
-                                    group flex items-center gap-1 px-1
-                                    ${selectedRunFolder === folder.name 
-                                      ? 'bg-purple-100 dark:bg-purple-900/30' 
-                                      : ''
-                                    }
-                                  `}
-                                  onMouseEnter={() => {
-                                    // Load progress on-demand if not already loaded
-                                    if (!folder.progress && workspacePath) {
-                                      loadFolderProgressOnDemand(workspacePath, folder.name)
-                                    }
-                                  }}
-                                >
-                                  <button
-                                    onClick={() => handleSelectRunFolder(folder.name)}
+                            {iterationGroups.sortedIterations.length > 0 ? (
+                              // Show grouped by iteration
+                              iterationGroups.sortedIterations.map((iteration) => {
+                                const groups = iterationGroups.iterationMap.get(iteration) || []
+                                const hasGroups = groups.some(g => g.groupId !== null)
+                                
+                                return (
+                                  <div key={iteration}>
+                                    {/* Iteration header (only if it has groups or is a top-level folder) */}
+                                    {hasGroups ? (
+                                      <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
+                                        {iteration}
+                                      </div>
+                                    ) : null}
+                                    
+                                    {/* Groups under this iteration */}
+                                    {groups.map((group) => {
+                                      const progress = group.progress
+                                      const completedCount = progress?.completed_step_indices?.length || 0
+                                      const totalSteps = progress?.total_steps || 0
+                                      const hasProgress = progress && completedCount > 0
+                                      const isSelected = selectedRunFolder === group.id
+                                      const isDisabled = group.enabled === false
+                                      
+                                      return (
+                                        <div
+                                          key={group.id}
+                                          className={`
+                                            group flex items-center gap-1 px-1
+                                            ${isSelected 
+                                              ? 'bg-purple-100 dark:bg-purple-900/30' 
+                                              : ''
+                                            }
+                                            ${isDisabled ? 'opacity-60' : ''}
+                                          `}
+                                          onMouseEnter={() => {
+                                            // Load progress on-demand if not already loaded and folder exists
+                                            if (!group.progress && group.exists && workspacePath) {
+                                              loadFolderProgressOnDemand(workspacePath, group.id)
+                                            }
+                                          }}
+                                        >
+                                          <button
+                                            onClick={() => handleSelectRunFolder(group.id)}
+                                            className={`
+                                              flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                              ${isSelected 
+                                                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
+                                                : isDisabled
+                                                ? 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400'
+                                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                              }
+                                            `}
+                                            title={isDisabled ? 'Group is disabled' : group.exists ? undefined : 'Group not run yet'}
+                                          >
+                                            {group.exists ? (
+                                              <FolderOpen className="w-4 h-4" />
+                                            ) : (
+                                              <Circle className="w-4 h-4" />
+                                            )}
+                                            <span className="flex-1 font-mono text-xs">
+                                              {group.groupId || group.name}
+                                            </span>
+                                            {hasProgress && (
+                                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                                                {completedCount}/{totalSteps}
+                                              </span>
+                                            )}
+                                            {!group.exists && !hasProgress && (
+                                              <span className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+                                                not run
+                                              </span>
+                                            )}
+                                            {isSelected && <Check className="w-4 h-4 ml-auto" />}
+                                          </button>
+                                          {group.exists && (
+                                            <button
+                                              onClick={(e) => handleDeleteFolderClick(e, group.id)}
+                                              className={`
+                                                p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20
+                                                opacity-0 group-hover:opacity-100 transition-opacity
+                                              `}
+                                              title={`Delete ${group.id}`}
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )
+                              })
+                            ) : (
+                              // Fallback: show flat list if no groups (backward compatibility)
+                              runFolders.map((folder: RunFolder) => {
+                                const progress = folder.progress
+                                const folderCompletedCount = progress?.completed_step_indices?.length || 0
+                                const folderTotalSteps = progress?.total_steps || 0
+                                const hasProgress = progress && folderCompletedCount > 0
+                                
+                                return (
+                                  <div
+                                    key={folder.name}
                                     className={`
-                                      flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                      group flex items-center gap-1 px-1
                                       ${selectedRunFolder === folder.name 
-                                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
-                                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                        ? 'bg-purple-100 dark:bg-purple-900/30' 
+                                        : ''
                                       }
                                     `}
+                                    onMouseEnter={() => {
+                                      // Load progress on-demand if not already loaded
+                                      if (!folder.progress && workspacePath) {
+                                        loadFolderProgressOnDemand(workspacePath, folder.name)
+                                      }
+                                    }}
                                   >
-                                    <FolderOpen className="w-4 h-4" />
-                                    <span className="flex-1">{folder.name}</span>
-                                    {hasProgress && (
-                                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                                        {folderCompletedCount}/{folderTotalSteps}
-                                      </span>
-                                    )}
-                                    {selectedRunFolder === folder.name && <Check className="w-4 h-4 ml-auto" />}
-                                  </button>
-                                  <button
-                                    onClick={(e) => handleDeleteFolderClick(e, folder.name)}
-                                    className={`
-                                      p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20
-                                      opacity-0 group-hover:opacity-100 transition-opacity
-                                    `}
-                                    title={`Delete ${folder.name}`}
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              )
-                            })}
+                                    <button
+                                      onClick={() => handleSelectRunFolder(folder.name)}
+                                      className={`
+                                        flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                        ${selectedRunFolder === folder.name 
+                                          ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
+                                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                        }
+                                      `}
+                                    >
+                                      <FolderOpen className="w-4 h-4" />
+                                      <span className="flex-1">{folder.name}</span>
+                                      {hasProgress && (
+                                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                                          {folderCompletedCount}/{folderTotalSteps}
+                                        </span>
+                                      )}
+                                      {selectedRunFolder === folder.name && <Check className="w-4 h-4 ml-auto" />}
+                                    </button>
+                                    <button
+                                      onClick={(e) => handleDeleteFolderClick(e, folder.name)}
+                                      className={`
+                                        p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20
+                                        opacity-0 group-hover:opacity-100 transition-opacity
+                                      `}
+                                      title={`Delete ${folder.name}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )
+                              })
+                            )}
                           </>
                         ) : !isLoadingRunFolders && workspacePath ? (
                           <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
@@ -896,28 +1111,65 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       <div className="flex items-center gap-1">
         {/* Toggle dependency edges - icon only */}
         {/* LLM Override Button and Banner */}
-        {tempOverrideLLM ? (
-          // Active override indicator with clear button
-          <div className="flex items-center gap-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-md shadow-sm">
-            <Brain className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 animate-pulse" />
-            <span className="text-xs font-medium text-amber-700 dark:text-amber-300 max-w-[120px] truncate" title={`${tempOverrideLLM.provider}/${tempOverrideLLM.model_id}`}>
-              {tempOverrideLLM.model_id.split('/').pop() || tempOverrideLLM.model_id}
-            </span>
-            <button
-              onClick={() => clearTempOverrideLLM()}
-              className="p-0.5 rounded hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-600 dark:text-amber-400"
-              title="Clear LLM override"
-            >
-              <X className="w-3 h-3" />
-            </button>
+        {tempOverrideLLM || tempOverrideLLM2 ? (
+          // Active override indicator with toggle and clear button
+          <TooltipProvider>
+            <div className={`flex items-center gap-1 px-2 py-1 bg-secondary border border-border rounded-md shadow-sm ${!tempOverrideLLMEnabled ? 'opacity-60' : ''}`}>
+              <div className="flex items-center gap-0.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="cursor-help">
+                      <Brain className={`w-3.5 h-3.5 ${tempOverrideLLMEnabled && tempOverrideLLM ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{tempOverrideLLM ? `Temp LLM 1: ${tempOverrideLLM.provider}/${tempOverrideLLM.model_id}` : 'Temp LLM 1: not set'}</p>
+                    {!tempOverrideLLMEnabled && <p className="text-xs mt-1 text-muted-foreground">(Disabled)</p>}
+                  </TooltipContent>
+                </Tooltip>
+                <span className="text-xs text-muted-foreground">→</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="cursor-help">
+                      <Brain className={`w-3.5 h-3.5 ${tempOverrideLLMEnabled && tempOverrideLLM2 ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{tempOverrideLLM2 ? `Temp LLM 2: ${tempOverrideLLM2.provider}/${tempOverrideLLM2.model_id}` : 'Temp LLM 2: not set'}</p>
+                    {!tempOverrideLLMEnabled && <p className="text-xs mt-1 text-muted-foreground">(Disabled)</p>}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <button
+                onClick={() => setTempOverrideLLMEnabled(!tempOverrideLLMEnabled)}
+                className={`px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                  tempOverrideLLMEnabled 
+                    ? 'bg-primary/20 text-primary hover:bg-primary/30' 
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+                title={tempOverrideLLMEnabled ? 'Disable temp LLM overrides' : 'Enable temp LLM overrides'}
+              >
+                {tempOverrideLLMEnabled ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={() => {
+                  clearTempOverrideLLM()
+                  clearTempOverrideLLM2()
+                }}
+                className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                title="Clear LLM overrides (removes configs)"
+              >
+                <X className="w-3 h-3" />
+              </button>
             <button
               onClick={() => setShowLLMOverrideModal(true)}
-              className="p-0.5 rounded hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-600 dark:text-amber-400"
-              title="Change LLM override"
+              className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+              title="Change LLM overrides"
             >
               <Settings className="w-3 h-3" />
             </button>
           </div>
+          </TooltipProvider>
         ) : (
           // No override - show button to set one
           <button

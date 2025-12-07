@@ -335,10 +335,12 @@ function createValidationLearningNodes(
   const validationLLM = agentConfigs?.validation_llm || presetValidationLLM || presetLLMConfig
   const validationLLMInfo = getLLMProviderAndModel(validationLLM, presetLLMConfig, availableLLMs)
   
-  // Get learning LLM provider and model (uses execution_llm in code exec mode)
-  const learningLLM = useCodeExecutionMode
-    ? (agentConfigs?.execution_llm || presetLLMConfig)
-    : (agentConfigs?.learning_llm || presetLearningLLM || presetLLMConfig)
+  // Get learning LLM provider and model
+  // Always use learning_llm config (not execution_llm), even in code exec mode
+  // Priority: step learning_llm → preset learning_llm → preset default (provider/model_id)
+  const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+    ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : undefined
+  const learningLLM = agentConfigs?.learning_llm || presetLearningLLM || presetDefaultLLM || presetLLMConfig
   const learningLLMInfo = getLLMProviderAndModel(learningLLM, presetLLMConfig, availableLLMs)
   
   // Add validation node if enabled

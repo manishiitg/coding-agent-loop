@@ -11,25 +11,149 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // Variable represents a single variable definition
 type Variable struct {
 	Name        string `json:"name"`        // e.g., "AWS_ACCOUNT_ID"
-	Value       string `json:"value"`       // Original value from objective
+	Value       string `json:"value"`       // Original value from objective (used in single-group mode)
 	Description string `json:"description"` // e.g., "AWS account number for deployment"
 }
 
+// VariableGroup represents a single set of variable values for batch execution
+type VariableGroup struct {
+	GroupID string            `json:"group_id"` // e.g., "group-1", "group-2"
+	Values  map[string]string `json:"values"`   // Variable name -> value mapping
+	Enabled bool              `json:"enabled"`  // Whether to include in execution
+}
+
 // VariablesManifest contains all extracted variables
+// Supports both single-group (backward compatible) and multi-group modes
 type VariablesManifest struct {
-	Objective      string     `json:"objective"` // Templated objective with {{VARS}}
-	Variables      []Variable `json:"variables"` // List of variables
-	ExtractionDate string     `json:"extraction_date"`
+	Objective      string          `json:"objective"`        // Templated objective with {{VARS}}
+	Variables      []Variable      `json:"variables"`        // List of variable definitions
+	Groups         []VariableGroup `json:"groups,omitempty"` // Array of variable groups (multi-group mode)
+	ExtractionDate string          `json:"extraction_date"`
+}
+
+// HasGroups returns true if the manifest has multiple variable groups
+func (m *VariablesManifest) HasGroups() bool {
+	return len(m.Groups) > 0
+}
+
+// GetEnabledGroups returns only the enabled groups
+func (m *VariablesManifest) GetEnabledGroups() []VariableGroup {
+	if !m.HasGroups() {
+		// Single group mode: create a virtual group from Variables
+		values := make(map[string]string)
+		for _, v := range m.Variables {
+			values[v.Name] = v.Value
+		}
+		return []VariableGroup{{
+			GroupID: "group-1",
+			Values:  values,
+			Enabled: true,
+		}}
+	}
+
+	var enabled []VariableGroup
+	for _, g := range m.Groups {
+		if g.Enabled {
+			enabled = append(enabled, g)
+		}
+	}
+	return enabled
+}
+
+// GetVariableValues returns variable values for a specific group
+// If groupID is empty and no groups exist, returns values from Variables directly
+func (m *VariablesManifest) GetVariableValues(groupID string) map[string]string {
+	if !m.HasGroups() {
+		// Old format: values are in Variables[].Value
+		values := make(map[string]string)
+		for _, v := range m.Variables {
+			values[v.Name] = v.Value
+		}
+		return values
+	}
+
+	// New format: find group by ID
+	for _, g := range m.Groups {
+		if g.GroupID == groupID {
+			return g.Values
+		}
+	}
+	return nil
+}
+
+// GetVariableNames returns just the variable names (for display in UI)
+func (m *VariablesManifest) GetVariableNames() []string {
+	names := make([]string, len(m.Variables))
+	for i, v := range m.Variables {
+		names[i] = v.Name
+	}
+	return names
+}
+
+// AddGroup adds a new variable group with empty values
+func (m *VariablesManifest) AddGroup() *VariableGroup {
+	// Generate next group ID
+	nextID := len(m.Groups) + 1
+	groupID := fmt.Sprintf("group-%d", nextID)
+
+	// Create empty values for all variables
+	values := make(map[string]string)
+	for _, v := range m.Variables {
+		values[v.Name] = ""
+	}
+
+	newGroup := VariableGroup{
+		GroupID: groupID,
+		Values:  values,
+		Enabled: true,
+	}
+
+	m.Groups = append(m.Groups, newGroup)
+	return &m.Groups[len(m.Groups)-1]
+}
+
+// DeleteGroup removes a group by ID
+func (m *VariablesManifest) DeleteGroup(groupID string) bool {
+	for i, g := range m.Groups {
+		if g.GroupID == groupID {
+			m.Groups = append(m.Groups[:i], m.Groups[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// ToggleGroup enables or disables a group
+func (m *VariablesManifest) ToggleGroup(groupID string, enabled bool) bool {
+	for i := range m.Groups {
+		if m.Groups[i].GroupID == groupID {
+			m.Groups[i].Enabled = enabled
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateGroupValues updates the values for a specific group
+func (m *VariablesManifest) UpdateGroupValues(groupID string, values map[string]string) bool {
+	for i := range m.Groups {
+		if m.Groups[i].GroupID == groupID {
+			m.Groups[i].Values = values
+			return true
+		}
+	}
+	return false
 }
 
 // variablesFileMutex ensures thread-safe access to variables.json

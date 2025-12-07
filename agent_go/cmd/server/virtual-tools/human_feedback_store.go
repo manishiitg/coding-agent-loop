@@ -3,8 +3,11 @@ package virtualtools
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
+
+	"mcp-agent/agent_go/cmd/server/services"
 )
 
 // HumanFeedbackRequest represents a pending feedback request
@@ -42,6 +45,12 @@ func GetHumanFeedbackStore() *HumanFeedbackStore {
 
 // CreateRequest creates a new feedback request
 func (s *HumanFeedbackStore) CreateRequest(uniqueID, message string) error {
+	return s.CreateRequestWithSlack(context.Background(), uniqueID, message, "", nil)
+}
+
+// CreateRequestWithoutNotification creates a new feedback request without sending any notifications
+// This is used for blocking_human_feedback events that should only appear in the frontend UI
+func (s *HumanFeedbackStore) CreateRequestWithoutNotification(uniqueID, message string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -69,7 +78,50 @@ func (s *HumanFeedbackStore) CreateRequest(uniqueID, message string) error {
 	}
 
 	s.waiters[uniqueID] = make(chan string, 1)
+
 	return nil
+}
+
+// CreateRequestWithSlack creates a new feedback request and optionally sends Slack notification
+func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions) error {
+	// First register the request (without notifications)
+	if err := s.CreateRequestWithoutNotification(uniqueID, message); err != nil {
+		return err
+	}
+
+	// Send notifications via notification manager (async, non-blocking)
+	// This will send to all enabled connectors (Slack, Gmail, WhatsApp, etc.)
+	go func() {
+		notificationManager := services.GetNotificationManager()
+		log.Printf("[HUMAN_FEEDBACK_STORE] CreateRequestWithSlack - uniqueID=%s, buttonOptions is nil: %v", uniqueID, buttonOptions == nil)
+		if buttonOptions != nil {
+			log.Printf("[HUMAN_FEEDBACK_STORE] CreateRequestWithSlack - buttonOptions: YesNoOnly=%v, YesLabel=%s, NoLabel=%s, Options=%v",
+				buttonOptions.YesNoOnly, buttonOptions.YesLabel, buttonOptions.NoLabel, buttonOptions.Options)
+		}
+		if err := notificationManager.SendNotification(ctx, uniqueID, message, contextMsg, buttonOptions); err != nil {
+			// Log error but don't fail the request creation
+			// Error logging is handled inside SendNotification
+		}
+	}()
+
+	return nil
+}
+
+// GetResponse gets a user response for a feedback request (if available)
+func (s *HumanFeedbackStore) GetResponse(uniqueID string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	request, exists := s.requests[uniqueID]
+	if !exists {
+		return "", false
+	}
+
+	if !request.IsCompleted || request.UserResponse == "" {
+		return "", false
+	}
+
+	return request.UserResponse, true
 }
 
 // SubmitResponse submits a user response to a feedback request

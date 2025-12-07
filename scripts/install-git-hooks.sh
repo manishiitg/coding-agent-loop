@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Install Git Hooks for Gitleaks Secret Scanning
-# This script sets up pre-commit hooks to automatically scan for secrets
+# Install Git Hooks for Gitleaks Secret Scanning and Golangci-lint
+# This script sets up pre-commit hooks to automatically scan for secrets and run linting
 
 set -e
 
-echo "🔒 Setting up Gitleaks pre-commit hooks..."
+echo "🔒 Setting up pre-commit hooks (Gitleaks + Golangci-lint)..."
 
 # Colors for output
 RED='\033[0;31m'
@@ -63,8 +63,8 @@ mkdir -p scripts
 cat > .git/hooks/pre-commit << 'EOF'
 #!/bin/bash
 
-# Gitleaks Pre-commit Hook
-# Scans staged files for secrets before allowing commit
+# Pre-commit Hook
+# Scans staged files for secrets and runs golangci-lint
 
 set -e
 
@@ -86,8 +86,7 @@ fi
 
 # Run gitleaks on staged files
 if gitleaks protect --staged --config .gitleaks.toml --verbose; then
-    echo -e "${GREEN}✅ No secrets detected. Proceeding with commit.${NC}"
-    exit 0
+    echo -e "${GREEN}✅ No secrets detected.${NC}"
 else
     echo -e "${RED}❌ Secrets detected! Commit blocked.${NC}"
     echo ""
@@ -99,6 +98,97 @@ else
     echo ""
     echo "For more information, see agent_go/SECURITY.md"
     exit 1
+fi
+
+# Run golangci-lint on Go files
+echo -e "${BLUE}🔍 Running golangci-lint...${NC}"
+
+# Add GOPATH/bin to PATH early so golangci-lint can be found
+if [ -d "$(go env GOPATH)/bin" ]; then
+    export PATH="$PATH:$(go env GOPATH)/bin"
+fi
+
+# Check if golangci-lint is available
+GOLANGCI_LINT_CMD=""
+if command -v golangci-lint &> /dev/null; then
+    GOLANGCI_LINT_CMD="golangci-lint"
+elif [ -f "$(go env GOPATH)/bin/golangci-lint" ]; then
+    GOLANGCI_LINT_CMD="$(go env GOPATH)/bin/golangci-lint"
+else
+    echo -e "${YELLOW}⚠️  golangci-lint not found. Skipping lint check.${NC}"
+    echo "Run 'cd agent_go && make install-linter' to install golangci-lint."
+    exit 0
+fi
+
+# Change to agent_go directory and run lint
+cd agent_go 2>/dev/null || {
+    echo -e "${YELLOW}⚠️  agent_go directory not found. Skipping lint check.${NC}"
+    exit 0
+}
+
+# Run linter - show output directly to terminal
+echo ""
+# Run golangci-lint and capture output
+# Filter out errors from output directories (tool_output_folder, cache, bin, etc.)
+# to focus on main code only
+set +e  # Temporarily disable exit on error so we can capture exit code
+LINT_OUTPUT_FULL=$($GOLANGCI_LINT_CMD run ./... 2>&1)
+# Filter out errors from output directories
+LINT_OUTPUT=$(echo "$LINT_OUTPUT_FULL" | grep -v -E "(tool_output_folder|tool_output/|cache/|bin/)")
+# Show filtered output to user
+echo "$LINT_OUTPUT"
+# Determine exit code: if filtered output has any errors, exit 1; otherwise 0
+# Check for actual error patterns (file:line:column format or "issues found")
+if echo "$LINT_OUTPUT" | grep -qE "(^[^:]+:[0-9]+:[0-9]+:.*(error|expected|found))|issues found"; then
+    LINT_EXIT=1
+else
+    LINT_EXIT=0
+fi
+set -e  # Re-enable exit on error
+
+# If linting passed, proceed
+if [ $LINT_EXIT -eq 0 ]; then
+    echo ""
+    echo -e "${GREEN}✅ Linting passed. Proceeding with commit.${NC}"
+    exit 0
+else
+    # Linting found issues - check severity
+    # Use the already filtered output (from above) for analysis
+    # LINT_OUTPUT is already filtered and available from the previous run
+    
+    # Count issues to decide if we should block or warn
+    ISSUE_COUNT=$(echo "$LINT_OUTPUT" | grep -E "issues:" | grep -oE "[0-9]+ issues" | grep -oE "[0-9]+" || echo "0")
+    
+    # Check for truly critical security issues (G201/G202 SQL injection, G204 command injection, G304 path traversal)
+    # Exclude test files from critical checks (G304 in test files are usually test fixtures)
+    CRITICAL_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | grep -v "_test.go" | grep -v "/testing/" | wc -l | tr -d ' ')
+    
+    if [ "$CRITICAL_ISSUES" -gt 0 ]; then
+        echo ""
+        echo -e "${RED}❌ Critical security issues detected ($CRITICAL_ISSUES critical)! Commit blocked.${NC}"
+        echo ""
+        echo "Critical issues found: SQL injection (G201/G202), Command injection (G204), Path traversal (G304)"
+        echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | head -10
+        echo ""
+        echo "Please fix these security issues before committing."
+        exit 1
+    elif [ "$ISSUE_COUNT" -gt 200 ]; then
+        # Too many issues - block commit
+        echo ""
+        echo -e "${RED}❌ Too many linting issues ($ISSUE_COUNT)! Commit blocked.${NC}"
+        echo ""
+        echo "Please fix linting errors before committing."
+        echo "You can run 'cd agent_go && make lint-fix' to auto-fix some issues."
+        exit 1
+    else
+        # Non-critical issues - warn but allow commit
+        echo ""
+        echo -e "${YELLOW}⚠️  Linting found $ISSUE_COUNT issues (non-blocking).${NC}"
+        echo "Most are low-priority gosec checks (G104, G301, etc.)"
+        echo "Run 'cd agent_go && make lint' to see all issues."
+        echo -e "${YELLOW}Proceeding with commit...${NC}"
+        exit 0
+    fi
 fi
 EOF
 
@@ -168,19 +258,23 @@ else
 fi
 
 echo ""
-echo -e "${GREEN}🎉 Gitleaks pre-commit hooks installed successfully!${NC}"
+echo -e "${GREEN}🎉 Pre-commit hooks installed successfully!${NC}"
 echo ""
 echo -e "${BLUE}What happens now:${NC}"
-echo "  • Every commit will be automatically scanned for secrets"
-echo "  • Commits with secrets will be blocked"
-echo "  • You'll get clear error messages if secrets are detected"
+echo "  • Every commit will be automatically scanned for secrets (gitleaks)"
+echo "  • Every commit will run golangci-lint on Go code"
+echo "  • Errors from tool_output_folder, cache, and bin are automatically filtered"
+echo "  • Commits with secrets or critical linting issues will be blocked"
+echo "  • You'll get clear error messages if issues are detected"
 echo ""
 echo -e "${BLUE}Manual scanning:${NC}"
 echo "  • Run './scripts/scan-secrets.sh' to scan the entire repository"
 echo "  • Run './scripts/scan-secrets.sh path/to/file' to scan specific files"
+echo "  • Run 'cd agent_go && make lint' to run golangci-lint manually"
 echo ""
 echo -e "${BLUE}Configuration:${NC}"
-echo "  • Edit '.gitleaks.toml' to customize detection rules"
+echo "  • Edit '.gitleaks.toml' to customize secret detection rules"
+echo "  • Edit 'agent_go/.golangci.yml' to customize linting rules"
 echo "  • See 'agent_go/SECURITY.md' for security best practices"
 echo ""
-echo -e "${GREEN}Your repository is now protected against accidental secret commits! 🔒${NC}"
+echo -e "${GREEN}Your repository is now protected against accidental secret commits and linting issues! 🔒${NC}"

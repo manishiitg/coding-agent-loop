@@ -1,21 +1,11 @@
 import React from "react";
-
-interface Variable {
-  name: string;
-  value: string;
-  description: string;
-}
-
-interface VariablesExtractedEvent {
-  variables?: Variable[];
-  templated_objective?: string;
-  workspace_path?: string;
-  run_folder?: string;
-  timestamp?: string;
-}
+import type { 
+  VariablesExtractedEvent as GeneratedVariablesExtractedEvent,
+  Variable 
+} from "../../../generated/events-bridge";
 
 interface VariablesExtractedEventDisplayProps {
-  event: VariablesExtractedEvent;
+  event: GeneratedVariablesExtractedEvent;
 }
 
 export const VariablesExtractedEventDisplay: React.FC<
@@ -26,7 +16,7 @@ export const VariablesExtractedEventDisplay: React.FC<
     return new Date(timestamp).toLocaleTimeString();
   };
 
-  const variables = event.variables || [];
+  const variables: Variable[] = event.variables || [];
 
   return (
     <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -83,7 +73,7 @@ export const VariablesExtractedEventDisplay: React.FC<
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
-                        {`{{${variable.name}}}`}
+                        {`{{${variable.name || 'UNNAMED'}}}`}
                       </div>
                       {variable.description && (
                         <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">
@@ -92,7 +82,7 @@ export const VariablesExtractedEventDisplay: React.FC<
                       )}
                       <div className="text-xs">
                         <span className="font-medium text-gray-700 dark:text-gray-300">Value: </span>
-                        <span className="text-gray-600 dark:text-gray-400 font-mono">{variable.value}</span>
+                        <span className="text-gray-600 dark:text-gray-400 font-mono">{variable.value || ''}</span>
                       </div>
                     </div>
                   </div>
@@ -111,4 +101,3 @@ export const VariablesExtractedEventDisplay: React.FC<
     </div>
   );
 };
-

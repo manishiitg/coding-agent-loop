@@ -113,7 +113,7 @@ curl -X POST http://localhost:8000/api/external/execute \\
   "preset_label": "${presetLabel}"
 }`,
         phases: [
-          { id: 'pre-verification', title: 'Planning & Todo Creation', description: 'Create and refine todo list' },
+          { id: 'execution', title: 'Planning & Todo Execution', description: 'Execute the approved plan' },
           { id: 'post-verification', title: 'Execution & Review', description: 'Execute approved todo list' }
         ]
       }
@@ -153,7 +153,7 @@ curl "http://localhost:8000/api/observer/observer-uuid-456/events?since=15"`
       "type": "${selectedModeCategory === 'workflow' ? 'workflow_start' : 'conversation_start'}",
       "timestamp": "2025-01-27T10:30:00Z",
       "data": {
-        "session_id": "session-uuid-123"${selectedModeCategory === 'workflow' ? ',\n        "phase": "pre-verification"' : ''}
+        "session_id": "session-uuid-123"${selectedModeCategory === 'workflow' ? ',\n        "phase": "execution"' : ''}
       }
     },
     {
@@ -450,7 +450,7 @@ echo "🎉 ${selectedModeCategory === 'workflow' ? 'Workflow' : 'Chat'} connecti
                 <li>• <strong>session_id</strong>: Persistent identifier stored in database for chat history</li>
                 <li>• <strong>observer_id</strong>: Temporary identifier for real-time event polling</li>
                 {selectedModeCategory === 'workflow' && (
-                  <li>• <strong>execution_phase</strong>: Required for workflow mode (pre-verification for planning, post-verification for execution)</li>
+                  <li>• <strong>execution_phase</strong>: Required for workflow mode (execution for running, planning for creating plan)</li>
                 )}
                 {selectedModeCategory === 'workflow' && (
                   <li>• <strong>options</strong>: Pass run_management and execution_strategy in API call or use UI defaults</li>

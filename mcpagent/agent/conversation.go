@@ -31,6 +31,15 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+const (
+	contextKeyWorkspaceEventEmitter contextKey = "workspace_event_emitter"
+	contextKeyTurn                  contextKey = "turn"
+	contextKeyServerName            contextKey = "server_name"
+)
+
 // getLogger returns the agent's logger (guaranteed to be non-nil)
 func getLogger(a *Agent) logger.ExtendedLogger {
 	// Agent logger is guaranteed to be non-nil in the new architecture
@@ -421,28 +430,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		}
 
 		// Emit LLM Messages event to track what's being sent to the LLM
-		// Build tool context from previous tool calls in this conversation
-		var toolContext []events.ToolContext
-		for _, msg := range messages {
-			if msg.Role == llmtypes.ChatMessageTypeTool {
-				for _, part := range msg.Parts {
-					if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
-						toolContext = append(toolContext, events.ToolContext{
-							ToolName:   "previous_tool_call", // We don't have the original tool name here
-							ServerName: "unknown",            // We don't have the server name here
-							Result:     toolResp.Content,
-							Status:     "completed",
-						})
-					}
-				}
-			}
-		}
 
 		// NEW: Start LLM generation for hierarchy tracking
 		a.StartLLMGeneration(ctx)
 
 		// Use GenerateContentWithRetry for robust fallback handling
-		resp, genErr, usage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
+		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
 			// Streaming callback - no ReAct reasoning tracking needed
 		})
 
@@ -474,7 +467,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				logger.Infof("[AGENT TRACE] AskWithHistory: turn %d, empty content error detected, triggering fallback...", turn+1)
 
 				// Try fallback models by calling GenerateContentWithRetry again with fallback
-				fallbackResp, fallbackErr, fallbackUsage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
+				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
 					logger.Infof("[FALLBACK] %s", msg)
 				})
 
@@ -607,9 +600,20 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					args, err := mcpclient.ParseToolArguments(tc.FunctionCall.Arguments)
 					if err != nil {
 						logger.Errorf("🖼️ [DEBUG] Failed to parse read_image arguments: %v", err)
-						// Emit error event and continue (don't add tool response)
+						// Emit error event
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse arguments: %v", err), serverName, 0)
 						a.EmitTypedEvent(ctx, toolErrorEvent)
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Failed to parse arguments: %v", err),
+								},
+							},
+						})
 						continue
 					}
 					logger.Infof("🖼️ [DEBUG] read_image parsed arguments: %+v", args)
@@ -641,7 +645,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						// Emit tool call error event (for observability only)
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
 						a.EmitTypedEvent(ctx, toolErrorEvent)
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Tool execution failed: %v", toolErr),
+								},
+							},
+						})
 						continue
 					}
 					logger.Infof("🖼️ [DEBUG] read_image tool executed successfully. Result length: %d", len(resultText))
@@ -659,7 +673,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							previewLen = len(resultText)
 						}
 						logger.Warnf("🖼️ [DEBUG] Failed to parse read_image result as JSON: %v, raw result: %s", err, resultText[:previewLen])
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Failed to parse result as JSON: %v", err),
+								},
+							},
+						})
 						continue
 					}
 					// Extract keys for logging
@@ -672,7 +696,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Check if it's an image_query type
 					if imageResult["_type"] != "image_query" {
 						logger.Warnf("🖼️ [DEBUG] read_image result is not image_query type, got: %v", imageResult["_type"])
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Result is not image_query type, got: %v", imageResult["_type"]),
+								},
+							},
+						})
 						continue
 					}
 
@@ -685,7 +719,17 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					if query == "" || mimeType == "" || base64Data == "" {
 						logger.Warnf("🖼️ [DEBUG] Missing required fields in read_image result - query: %q, mimeType: %q, base64Data: %q", query != "", mimeType != "", base64Data != "")
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    "Error: Missing required fields in read_image result (query, mime_type, or data)",
+								},
+							},
+						})
 						continue
 					}
 
@@ -907,8 +951,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							continue
 						}
 
-						// Create a fresh connection for this specific server
-						onDemandClient, err := a.createOnDemandConnection(ctx, serverName)
+						// Create a fresh connection for this specific server using shared function
+						onDemandClient, err := mcpcache.GetFreshConnection(ctx, serverName, a.configPath, logger)
 						if err != nil {
 							logger.Errorf("[AGENT DEBUG] AskWithHistory Early return: failed to create on-demand connection for server %s: %v", serverName, err)
 							conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("failed to create on-demand connection for server %s: %v", serverName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
@@ -969,6 +1013,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 					logger.Infof("[CONNECTION CACHE DEBUG] Turn %d, Tool: %s, Using cached connection for server: %s", turn+1, tc.FunctionCall.Name, serverName)
 				}
+
+				// Inject event emitter, turn, and server name into context for workspace tools
+				toolCtx = context.WithValue(toolCtx, contextKeyWorkspaceEventEmitter, a)
+				toolCtx = context.WithValue(toolCtx, contextKeyTurn, turn+1)
+				toolCtx = context.WithValue(toolCtx, contextKeyServerName, serverName)
 
 				var result *mcp.CallToolResult
 				var toolErr error
@@ -1046,7 +1095,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					errorRecoveryHandler := NewErrorRecoveryHandler(a)
 
 					// Attempt error recovery for recoverable errors
-					recoveredResult, recoveredErr, recoveredDuration, wasRecovered := errorRecoveryHandler.HandleError(
+					recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 						ctx, &tc, serverName, toolErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
 
 					if wasRecovered && recoveredErr == nil {
@@ -1094,9 +1143,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
 					}
 
-					// 🔧 BROKEN PIPE DETECTION IN SUCCESSFUL RESULT PATH
-					if result.IsError && (strings.Contains(resultText, "Broken pipe") || strings.Contains(resultText, "[Errno 32]")) {
-						logger.Infof("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s - Attempting immediate connection recreation", turn+1, tc.FunctionCall.Name, serverName)
+					// 🔧 BROKEN PIPE DETECTION IN RESULT CONTENT (regardless of IsError flag)
+					// Check for broken pipe errors in content text, even when IsError is false
+					// This handles cases where the MCP server returns broken pipe errors in content rather than as error flags
+					if mcpclient.IsBrokenPipeInContent(resultText) {
+						logger.Infof("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s, IsError: %v - Attempting immediate connection recreation", turn+1, tc.FunctionCall.Name, serverName, result.IsError)
 
 						// Create error recovery handler
 						errorRecoveryHandler := NewErrorRecoveryHandler(a)
@@ -1105,7 +1156,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						fakeErr := fmt.Errorf("broken pipe detected in result: %s", resultText)
 
 						// Attempt error recovery
-						recoveredResult, recoveredErr, recoveredDuration, wasRecovered := errorRecoveryHandler.HandleError(
+						recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 							ctx, &tc, serverName, fakeErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
 
 						if wasRecovered && recoveredErr == nil {
@@ -1286,7 +1337,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, err, finalUsage := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
+	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
 		// Optional: stream the final response
 	})
 
@@ -1316,7 +1367,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			if genInfo.CacheDiscount != nil {
 				logger.Infof("      CacheDiscount: %.2f%%", *genInfo.CacheDiscount*100)
 			}
-			if genInfo.Additional != nil && len(genInfo.Additional) > 0 {
+			if len(genInfo.Additional) > 0 {
 				logger.Infof("      Additional fields:")
 				for key, value := range genInfo.Additional {
 					if strings.Contains(strings.ToLower(key), "cache") || strings.Contains(strings.ToLower(key), "token") {

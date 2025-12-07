@@ -421,9 +421,32 @@ func ListDocuments(c *gin.Context) {
 		searchPath = docsDir
 	}
 
+	// Check if the folder exists before attempting to read it
+	if _, err := os.Stat(searchPath); os.IsNotExist(err) {
+		// Folder doesn't exist - return 200 with empty list and message
+		c.JSON(http.StatusOK, models.APIResponse[[]models.Document]{
+			Success: true,
+			Message: "Folder does not exist",
+			Data:    []models.Document{},
+			Error:   fmt.Sprintf("Folder not found: %s", normalizedFolder),
+		})
+		return
+	}
+
 	// Use recursive function to get all documents with max depth
 	documents, err := getAllDocumentsRecursively(searchPath, docsDir, req.MaxDepth)
 	if err != nil {
+		// Check if error is due to directory not existing
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, models.APIResponse[[]models.Document]{
+				Success: true,
+				Message: "Folder does not exist",
+				Data:    []models.Document{},
+				Error:   fmt.Sprintf("Folder not found: %s", normalizedFolder),
+			})
+			return
+		}
+		// For other errors, return 500
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to read documents directory",
@@ -466,10 +489,12 @@ func GetDocument(c *gin.Context) {
 	// Check if file exists and get file info
 	fileInfo, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
-		c.JSON(http.StatusNotFound, models.APIResponse[any]{
-			Success: false,
-			Message: "Document not found",
-			Error:   "Document not found: " + filePathParam,
+		// File doesn't exist - return 200 with message indicating file doesn't exist
+		c.JSON(http.StatusOK, models.APIResponse[models.Document]{
+			Success: true,
+			Message: "File does not exist",
+			Data:    models.Document{},
+			Error:   fmt.Sprintf("File not found: %s", filePathParam),
 		})
 		return
 	}

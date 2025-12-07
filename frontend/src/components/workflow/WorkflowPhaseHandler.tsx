@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { getWorkflowPhases } from '../../constants/workflow'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { agentApi } from '../../services/api'
 import type { WorkflowSelectedOption, WorkflowSelectedOptions } from '../../services/api-types'
 
@@ -14,23 +14,14 @@ export const WorkflowPhaseHandler: React.FC<WorkflowPhaseHandlerProps> = ({
   presetQueryId,
   onStateChange,
 }) => {
-
-  const [allPhases, setAllPhases] = useState<Array<{ id: string; title: string; description: string }>>([])
+  // Get phases from workflow store
+  const { phases: allPhases, loadPhases } = useWorkflowStore()
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({}) // group -> optionId
 
-  // Load all phases for state overview
+  // Ensure phases are loaded (store handles deduplication)
   useEffect(() => {
-    const loadPhases = async () => {
-      try {
-        const allPhasesData = await getWorkflowPhases()
-        setAllPhases(allPhasesData)
-      } catch (error) {
-        console.error('[WORKFLOW_PHASE_HANDLER] Failed to load phases:', error)
-      }
-    }
-
     loadPhases()
-  }, [])
+  }, [loadPhases])
 
   // Load current workflow's selected options
   useEffect(() => {

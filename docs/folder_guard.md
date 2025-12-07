@@ -446,7 +446,7 @@ func validatePathInAllowedPaths(allowedPaths []string, inputPath string) error {
 
 **Problem:** If `SetFolderGuardPaths()` is called after `UpdateCodeExecutionRegistry()`, the generated code uses empty or stale paths, causing validation failures.
 
-**Example:** Execution agent tries to read from `execution/` folder but generated code only has `learning_code_exec` in allowed paths.
+**Example:** Execution agent tries to read from `execution/` folder but generated code only has `learnings` in allowed paths.
 
 **Solution:** Always call `SetFolderGuardPaths()` BEFORE `UpdateCodeExecutionRegistry()` so the generated path validation code includes both readPaths and writePaths.
 

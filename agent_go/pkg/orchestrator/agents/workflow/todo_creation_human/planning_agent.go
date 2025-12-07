@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
@@ -67,24 +68,32 @@ type AgentLLMConfig struct {
 	ModelID  string `json:"model_id,omitempty"` // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
 }
 
+// PrerequisiteRule represents a single prerequisite rule with one step dependency and one description
+type PrerequisiteRule struct {
+	DependsOnStep string `json:"depends_on_step"` // Step ID this rule depends on
+	Description   string `json:"description"`     // User description of when to detect prerequisite failures for this specific step (e.g., "if login session is missing or expired, go back to step 0")
+}
+
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
-	ExecutionLLM                  *AgentLLMConfig `json:"execution_llm,omitempty"`
-	ValidationLLM                 *AgentLLMConfig `json:"validation_llm,omitempty"`
-	LearningLLM                   *AgentLLMConfig `json:"learning_llm,omitempty"`
-	ExecutionMaxTurns             *int            `json:"execution_max_turns,omitempty"`               // default: 25
-	ValidationMaxTurns            *int            `json:"validation_max_turns,omitempty"`              // default: 25
-	LearningMaxTurns              *int            `json:"learning_max_turns,omitempty"`                // default: 25
-	DisableValidation             *bool           `json:"disable_validation,omitempty"`                // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	DisableLearning               *bool           `json:"disable_learning,omitempty"`                  // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	LearningAfterLoopIteration    bool            `json:"learning_after_loop_iteration,omitempty"`     // run learning after each loop iteration
-	LearningDetailLevel           string          `json:"learning_detail_level,omitempty"`             // "exact", "general", or "none" (default: "general")
-	SelectedServers               []string        `json:"selected_servers,omitempty"`                  // step-level MCP server selection (subset of preset servers)
-	SelectedTools                 []string        `json:"selected_tools,omitempty"`                    // step-level tool selection (format: "server:tool" or "server:*" for all tools)
-	EnabledCustomToolCategories   []string        `json:"enabled_custom_tool_categories,omitempty"`    // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
-	EnabledCustomTools            []string        `json:"enabled_custom_tools,omitempty"`              // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
-	EnableLargeOutputVirtualTools *bool           `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
-	UseCodeExecutionMode          *bool           `json:"use_code_execution_mode,omitempty"`           // Step-level code execution mode override (nil = use preset default, true/false = override)
+	ExecutionLLM                  *AgentLLMConfig    `json:"execution_llm,omitempty"`
+	ValidationLLM                 *AgentLLMConfig    `json:"validation_llm,omitempty"`
+	LearningLLM                   *AgentLLMConfig    `json:"learning_llm,omitempty"`
+	ExecutionMaxTurns             *int               `json:"execution_max_turns,omitempty"`               // default: 25
+	ValidationMaxTurns            *int               `json:"validation_max_turns,omitempty"`              // default: 25
+	LearningMaxTurns              *int               `json:"learning_max_turns,omitempty"`                // default: 25
+	DisableValidation             *bool              `json:"disable_validation,omitempty"`                // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	DisableLearning               *bool              `json:"disable_learning,omitempty"`                  // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LearningAfterLoopIteration    bool               `json:"learning_after_loop_iteration,omitempty"`     // run learning after each loop iteration
+	LearningDetailLevel           string             `json:"learning_detail_level,omitempty"`             // "exact", "general", or "none" (default: "general")
+	SelectedServers               []string           `json:"selected_servers,omitempty"`                  // step-level MCP server selection (subset of preset servers)
+	SelectedTools                 []string           `json:"selected_tools,omitempty"`                    // step-level tool selection (format: "server:tool" or "server:*" for all tools)
+	EnabledCustomToolCategories   []string           `json:"enabled_custom_tool_categories,omitempty"`    // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
+	EnabledCustomTools            []string           `json:"enabled_custom_tools,omitempty"`              // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnableLargeOutputVirtualTools *bool              `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
+	UseCodeExecutionMode          *bool              `json:"use_code_execution_mode,omitempty"`           // Step-level code execution mode override (nil = use preset default, true/false = override)
+	EnablePrerequisiteDetection   *bool              `json:"enable_prerequisite_detection,omitempty"`     // Enable prerequisite failure detection for this step (default: false)
+	PrerequisiteRules             []PrerequisiteRule `json:"prerequisite_rules,omitempty"`                // Array of prerequisite rules, each with one step dependency and one description
 }
 
 // PlanStep represents a step in the planning output
@@ -652,6 +661,10 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 				"items": {
 					"type": "object",
 					"properties": {
+						"id": {
+							"type": "string",
+							"description": "REQUIRED: Stable step ID for this step. Generate a unique, URL-friendly ID based on the step title (e.g., 'list-bank-statement-files' from 'List Bank Statement Files'). Use lowercase, hyphens instead of spaces, and keep it concise."
+						},
 						"title": {
 							"type": "string",
 							"description": "Short, clear title for the step"
@@ -692,7 +705,7 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructured(ctx con
 						"description": "CRITICAL for looping steps: Describe what happens in EACH ITERATION of the loop. Be specific about: (1) What to check/verify in each iteration, (2) What actions to take in each iteration, (3) What progress indicators to look for, (4) How to save/update progress after each iteration. Example: 'Each iteration: Check deployment status via health endpoint, verify pod readiness count, save current status to context file, wait 30 seconds before next check.' This guides the execution agent on per-iteration behavior. Only include when has_loop is true."
 					}
 					},
-					"required": ["title", "description", "success_criteria", "has_loop"]
+					"required": ["id", "title", "description", "success_criteria", "has_loop"]
 				}
 			}
 		},
@@ -1135,7 +1148,8 @@ func registerPlanModificationTools(
 
 // ExecuteStructuredUpdate executes the planning agent in UPDATE mode using 3 custom tools that directly update plan.json
 // readFile and writeFile are BaseOrchestrator's ReadWorkspaceFile and WriteWorkspaceFile methods
-func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) (*PlanningResponse, []llmtypes.MessageContent, error) {
+// baseOrchestrator is used to emit events when plan is updated
+func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent, userMessage string, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, baseOrchestrator *orchestrator.BaseOrchestrator) (*PlanningResponse, []llmtypes.MessageContent, error) {
 	// Get workspace path from template vars
 	workspacePath := templateVars["WorkspacePath"]
 	if workspacePath == "" {
@@ -1197,6 +1211,12 @@ func (hctppa *HumanControlledTodoPlannerPlanningAgent) ExecuteStructuredUpdate(c
 
 	// Tools were called - plan.json was updated
 	logger.Infof("✅ Plan updated via tools (%d steps)", len(currentPlan.Steps))
+
+	// Emit event to notify frontend that plan was updated
+	if baseOrchestrator != nil {
+		CheckAndEmitPlanUpdateEvent(ctx, baseOrchestrator, updatedHistory, workspacePath, readFile)
+	}
+
 	return currentPlan, updatedHistory, nil
 }
 

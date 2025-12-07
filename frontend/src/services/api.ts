@@ -23,6 +23,15 @@ import type {
   SessionStatusResponse,
   LLMGuidanceResponse,
   HumanFeedbackResponse,
+  RunFoldersResponse,
+  CreateRunFolderResponse,
+  ProgressResponse,
+  VariableGroupsResponse,
+  VariablesManifest,
+  SlackConfigRequest,
+  SlackConfigResponse,
+  SlackTestResponse,
+  SlackTestReplyResponse,
 } from './api-types'
 
 // Re-export types for other components to use
@@ -33,13 +42,7 @@ export type {
   GetEventsResponse,
   ObserverStatusResponse,
   MCPServerConfig,
-  ToolDefinition,
-  PollingEvent,
-  AgentStreamEvent,
-  RegisterObserverRequest,
   ChatSession,
-  ChatEvent,
-  ChatHistorySummary,
   ListChatSessionsResponse,
   GetSessionEventsResponse,
   CreateChatSessionRequest,
@@ -49,7 +52,15 @@ export type {
   UpdatePresetQueryRequest,
   ListPresetQueriesResponse,
   WorkflowStatusResponse,
-  WorkflowConstantsResponse
+  WorkflowConstantsResponse,
+  GetActiveSessionsResponse,
+  ReconnectSessionResponse,
+  SessionStatusResponse,
+  LLMGuidanceResponse,
+  HumanFeedbackResponse,
+  RunFoldersResponse,
+  CreateRunFolderResponse,
+  ProgressResponse,
 } from './api-types'
 
 const API_BASE_URL = 'http://localhost:8000'
@@ -89,13 +100,17 @@ export function setSessionId(sessionId: string): void {
 }
 
 // --- Observer ID Management ---
+// Module-level observer ID (synced from useChatStore via setCurrentObserverId)
+let currentObserverIdRef = ''
+
+// Called by ChatArea to sync observer ID from useChatStore
+export function setCurrentObserverId(observerId: string): void {
+  currentObserverIdRef = observerId
+  console.log(`[API] Observer ID set: ${observerId}`)
+}
+
 function getObserverId(): string {
-  const observerId = localStorage.getItem('agent_observer_id')
-  if (!observerId) {
-    // We'll get this from the server when we register
-    return ''
-  }
-  return observerId
+  return currentObserverIdRef
 }
 
 // --- Axios request interceptor to inject session ID ---
@@ -120,11 +135,9 @@ export const agentApi = {
     })
     const data = response.data
 
-    // Store observer ID for future requests
-    if (data.observer_id) {
-      localStorage.setItem('agent_observer_id', data.observer_id)
-      // Observer registered successfully
-    } else {
+    // Note: Observer ID is now managed by useChatStore, not localStorage
+    // The caller (ChatArea) should call setCurrentObserverId after this
+    if (!data.observer_id) {
       console.error('[API] No observer_id received from server')
     }
 
@@ -147,7 +160,7 @@ export const agentApi = {
   // Remove observer
   removeObserver: async (observerId: string): Promise<void> => {
     await api.delete(`/api/observer/${observerId}`)
-    localStorage.removeItem('agent_observer_id')
+    // Note: Observer ID is managed by useChatStore, caller should clear it there
   },
 
   // Stop session/agent execution (preserves conversation history)
@@ -185,14 +198,14 @@ export const agentApi = {
 
   // Start a new agent query
   startQuery: async (request: AgentQueryRequest): Promise<AgentQueryResponse> => {
-    // Get the current observer ID from localStorage
-    const observerId = localStorage.getItem('agent_observer_id')
+    // Get the current observer ID (managed via setCurrentObserverId)
+    const observerId = getObserverId()
 
     // Create headers with observer ID if available
     const headers: Record<string, string> = {}
     if (observerId) {
       headers['X-Observer-ID'] = observerId
-      // Starting query with observer ID
+      console.log(`[API] Starting query with observer ID: ${observerId}`)
     } else {
       console.warn('[API] No observer ID available for query')
     }
@@ -236,6 +249,42 @@ export const agentApi = {
       response: response
     })
     return apiResponse.data
+  },
+
+  // Slack Feedback Configuration
+  // Get Slack configuration
+  getSlackFeedbackConfig: async (): Promise<SlackConfigResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/slack/config')
+    return apiResponse.data
+  },
+
+  // Update Slack configuration
+  updateSlackFeedbackConfig: async (config: SlackConfigRequest): Promise<SlackConfigResponse> => {
+    const apiResponse = await api.post('/api/human-feedback/slack/config', config)
+    return apiResponse.data
+  },
+
+  // Test Slack connection (with optional config to test without saving)
+  testSlackConnection: async (config?: SlackConfigRequest): Promise<SlackTestResponse> => {
+    const apiResponse = await api.post('/api/human-feedback/slack/test', config || {})
+    return apiResponse.data
+  },
+
+  // Get test connection reply (polling)
+  getTestConnectionReply: async (testId: string): Promise<SlackTestReplyResponse | null> => {
+    try {
+      const apiResponse = await api.get(`/api/human-feedback/slack/test/reply?test_id=${testId}`)
+      return apiResponse.data
+    } catch (err: unknown) {
+      // 204 No Content means no reply yet
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosError = err as { response?: { status?: number } }
+        if (axiosError.response?.status === 204) {
+          return null
+        }
+      }
+      throw err
+    }
   },
 
   // Get tool list and status
@@ -527,8 +576,8 @@ export const agentApi = {
     return response.data
   },
 
-  updateWorkflow: async (presetQueryId: string, workflowStatus?: string, selectedOptions?: WorkflowSelectedOptions | null) => {
-    const body: { preset_query_id: string; workflow_status?: string; selected_options?: WorkflowSelectedOptions | null } = {
+  updateWorkflow: async (presetQueryId: string, workflowStatus?: string, selectedOptions?: WorkflowSelectedOptions | null, stepId?: string) => {
+    const body: { preset_query_id: string; workflow_status?: string; selected_options?: WorkflowSelectedOptions | null; step_id?: string } = {
       preset_query_id: presetQueryId
     }
 
@@ -540,12 +589,72 @@ export const agentApi = {
       body.selected_options = selectedOptions
     }
 
+    if (stepId !== undefined) {
+      body.step_id = stepId
+    }
+
     const response = await api.post('/api/workflow/update', body)
     return response.data
   },
 
   getWorkflowConstants: async (): Promise<WorkflowConstantsResponse> => {
     const response = await api.get('/api/workflow/constants')
+    return response.data
+  },
+
+  // Get available run folders for a workspace
+  getRunFolders: async (workspacePath: string): Promise<RunFoldersResponse> => {
+    const response = await api.get('/api/workflow/run-folders', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  // Create a new run folder (iteration)
+  createRunFolder: async (workspacePath: string): Promise<CreateRunFolderResponse> => {
+    const response = await api.post('/api/workflow/run-folder', null, {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  // Get execution progress for a run folder
+  getProgress: async (workspacePath: string, runFolder: string): Promise<ProgressResponse> => {
+    const response = await api.get('/api/workflow/progress', {
+      params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
+    return response.data
+  },
+
+  // Delete a run folder (iteration)
+  deleteRunFolder: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete('/api/workflow/run-folder', {
+      params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
+    return response.data
+  },
+
+  // Delete learnings for a specific step
+  deleteStepLearnings: async (workspacePath: string, stepNumber: number): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete('/api/workflow/learnings', {
+      params: { workspace_path: workspacePath, step_number: stepNumber }
+    })
+    return response.data
+  },
+
+  // Get variable groups from variables.json
+  getVariableGroups: async (workspacePath: string): Promise<VariableGroupsResponse> => {
+    const response = await api.get('/api/workflow/variable-groups', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  // Update variable groups in variables.json
+  updateVariableGroups: async (workspacePath: string, manifest: VariablesManifest): Promise<{ success: boolean; message: string }> => {
+    const response = await api.put('/api/workflow/variable-groups', manifest, {
+      params: { workspace_path: workspacePath }
+    })
     return response.data
   },
 

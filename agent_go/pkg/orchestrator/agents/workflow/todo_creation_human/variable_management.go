@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
@@ -16,6 +15,8 @@ import (
 	"mcpagent/events"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // VariablesExtractedEvent represents the event when variables are extracted from objective
@@ -39,6 +40,8 @@ type VariableManager struct {
 
 	// Variable extraction LLM config (optional preset)
 	presetVariableExtractionLLM *AgentLLMConfig
+	// Learning LLM config (fallback for variable extraction if presetVariableExtractionLLM not set)
+	presetLearningLLM *AgentLLMConfig
 
 	// Session and workflow IDs for human feedback
 	sessionID  string
@@ -49,12 +52,14 @@ type VariableManager struct {
 func NewVariableManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	presetVariableExtractionLLM *AgentLLMConfig,
+	presetLearningLLM *AgentLLMConfig,
 	sessionID string,
 	workflowID string,
 ) *VariableManager {
 	return &VariableManager{
 		BaseOrchestrator:            baseOrchestrator,
 		presetVariableExtractionLLM: presetVariableExtractionLLM,
+		presetLearningLLM:           presetLearningLLM,
 		sessionID:                   sessionID,
 		workflowID:                  workflowID,
 	}
@@ -255,7 +260,7 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 	vm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	vm.GetLogger().Infof("🔒 Setting folder guard for variable extraction agent - Read paths: %v, Write paths: %v", readPaths, writePaths)
 
-	// Determine LLM config: Priority: preset default > orchestrator default
+	// Determine LLM config: Priority: presetVariableExtractionLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := vm.GetLLMConfig()
 	if vm.presetVariableExtractionLLM != nil && vm.presetVariableExtractionLLM.Provider != "" && vm.presetVariableExtractionLLM.ModelID != "" {
@@ -267,6 +272,16 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
 		vm.GetLogger().Infof("🔧 Using preset default variable extraction LLM: %s/%s", vm.presetVariableExtractionLLM.Provider, vm.presetVariableExtractionLLM.ModelID)
+	} else if vm.presetLearningLLM != nil && vm.presetLearningLLM.Provider != "" && vm.presetLearningLLM.ModelID != "" {
+		// Fallback to learning LLM if variable extraction LLM not set
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:              vm.presetLearningLLM.Provider,
+			ModelID:               vm.presetLearningLLM.ModelID,
+			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
+			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
+			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
+		}
+		vm.GetLogger().Infof("🔧 Using preset learning LLM as fallback for variable extraction: %s/%s", vm.presetLearningLLM.Provider, vm.presetLearningLLM.ModelID)
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		vm.GetLogger().Infof("🔧 Using orchestrator default variable extraction LLM: %s/%s", vm.GetProvider(), vm.GetModel())
@@ -319,9 +334,13 @@ func (vm *VariableManager) checkExistingVariables(ctx context.Context, variables
 	// Try to read variables.json
 	variablesContent, err := vm.ReadWorkspaceFile(ctx, variablesPath)
 	if err != nil {
-		// Check if it's a "file not found" error
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			vm.GetLogger().Infof("📋 No existing variables found: %w", err)
+		// Check if it's a "file not found" error (various error message formats)
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, "not found") ||
+			strings.Contains(errMsg, "no such file") ||
+			strings.Contains(errMsg, "does not exist") ||
+			strings.Contains(errMsg, "file does not exist") {
+			vm.GetLogger().Infof("📋 No existing variables found at %s - proceeding without variables", variablesPath)
 			return false, nil, nil
 		}
 		// Other errors should be returned

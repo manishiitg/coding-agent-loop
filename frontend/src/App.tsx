@@ -12,7 +12,9 @@ import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
 import { Edit, Save, X, Loader2 } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
-import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore } from "./stores";
+import { WorkflowLayout } from "./components/workflow";
+import { EventModeProvider } from "./components/events";
+import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
@@ -338,6 +340,9 @@ function App() {
     
     // Initialize global preset store
     useGlobalPresetStore.getState().refreshPresets()
+    
+    // Initialize workflow store (load phases)
+    useWorkflowStore.getState().loadPhases()
   }, [])
 
   // Restore active presets after stores are initialized
@@ -522,29 +527,34 @@ function App() {
         
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
-          <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
+          <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>
             <WorkspaceSidebar
-              onPresetAdded={() => {
-                // Refresh workflow presets when a new preset is added
-                if (chatAreaRef.current) {
-                  chatAreaRef.current.refreshWorkflowPresets()
-                }
-              }}
               onChatSessionSelect={handleChatSessionSelect}
               minimized={sidebarMinimized}
               onToggleMinimize={toggleSidebarMinimize}
             />
           </div>
 
-          {/* Middle Chat Area */}
-          <div className="flex-1 flex flex-col min-w-0 relative">
-            {/* ChatArea - always rendered and mounted to preserve state */}
-            <div className="flex-1 flex flex-col h-full min-w-0">
-              <ChatArea
-                ref={chatAreaRef}
+          {/* Middle Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes) */}
+          <div className="flex-1 flex flex-col min-w-0 relative z-10">
+            {selectedModeCategory === 'workflow' ? (
+              // Workflow mode - WorkflowLayout as main view (wrapped in EventModeProvider for ChatHeader)
+              // ChatArea is now embedded inside WorkflowLayout
+              <EventModeProvider>
+              <WorkflowLayout
+                className="flex-1"
                 onNewChat={startNewChat}
               />
-            </div>
+              </EventModeProvider>
+            ) : (
+              // Other modes - show ChatArea (wrapped in EventModeProvider for filter toggle)
+              <EventModeProvider>
+                <ChatArea
+                  ref={chatAreaRef}
+                  onNewChat={startNewChat}
+                />
+              </EventModeProvider>
+            )}
             
             {/* File Content View - overlay when showing file content */}
             {showFileContent && (
@@ -796,8 +806,11 @@ function App() {
             )}
           </div>
 
-          {/* Right Workspace Area */}
-          <div className={`${workspaceMinimized ? 'w-16' : 'w-96'} transition-all duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700`}>
+          {/* Right Workspace Area - auto-minimize in workflow mode */}
+          <div className={`${
+            // Use workspaceMinimized state directly - user can toggle regardless of mode
+            workspaceMinimized ? 'w-16' : 'w-96'
+          } transition-all duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 relative z-20`}>
             <Workspace 
               minimized={workspaceMinimized}
               onToggleMinimize={toggleWorkspaceMinimize}

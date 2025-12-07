@@ -23,10 +23,11 @@ const (
 	LLMMessages        EventType = "llm_messages"
 
 	// Tool events
-	ToolCallStart    EventType = "tool_call_start"
-	ToolCallEnd      EventType = "tool_call_end"
-	ToolCallError    EventType = "tool_call_error"
-	ToolCallProgress EventType = "tool_call_progress"
+	ToolCallStart          EventType = "tool_call_start"
+	ToolCallEnd            EventType = "tool_call_end"
+	ToolCallError          EventType = "tool_call_error"
+	ToolCallProgress       EventType = "tool_call_progress"
+	WorkspaceFileOperation EventType = "workspace_file_operation"
 
 	// Agent events
 	AgentStart EventType = "agent_start"
@@ -125,6 +126,8 @@ const (
 	LLMGenerationWithRetry EventType = "llm_generation_with_retry"
 	StepExecutionStart     EventType = "step_execution_start"
 	StepExecutionEnd       EventType = "step_execution_end"
+	StepExecutionFailed    EventType = "step_execution_failed"
+	PrerequisiteNavigation EventType = "prerequisite_navigation"
 
 	// Additional event types from mcpagent
 	AgentProcessing                  EventType = "agent_processing"
@@ -160,8 +163,16 @@ const (
 	IndependentStepsSelected EventType = "independent_steps_selected"
 
 	// Todo planning events
-	TodoStepsExtracted EventType = "todo_steps_extracted"
-	VariablesExtracted EventType = "variables_extracted"
+	TodoStepsExtracted  EventType = "todo_steps_extracted"
+	VariablesExtracted  EventType = "variables_extracted"
+	StepProgressUpdated EventType = "step_progress_updated"
+
+	// Batch execution events (for variable groups)
+	BatchExecutionStart    EventType = "batch_execution_start"
+	BatchGroupStart        EventType = "batch_group_start"
+	BatchGroupEnd          EventType = "batch_group_end"
+	BatchExecutionEnd      EventType = "batch_execution_end"
+	BatchExecutionCanceled EventType = "batch_execution_canceled"
 
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"
@@ -170,6 +181,9 @@ const (
 
 	// Step token usage event
 	StepTokenUsage EventType = "step_token_usage"
+
+	// Learning events
+	LearningSkipped EventType = "learning_skipped"
 )
 
 // Unified Event structure with hierarchy support
@@ -226,28 +240,29 @@ func (b *BaseEventData) GetBaseEventData() *BaseEventData {
 
 // Helper function to get component from event type
 func GetComponentFromEventType(eventType EventType) string {
-	switch {
-	case eventType == OrchestratorStart || eventType == OrchestratorEnd || eventType == OrchestratorError ||
-		eventType == OrchestratorAgentStart || eventType == OrchestratorAgentEnd || eventType == OrchestratorAgentError ||
-		eventType == StructuredOutputStart || eventType == StructuredOutputEnd || eventType == StructuredOutputError ||
-		eventType == JSONValidationStart || eventType == JSONValidationEnd ||
-		eventType == IndependentStepsSelected || eventType == TodoStepsExtracted || eventType == VariablesExtracted ||
-		eventType == StepTokenUsage:
+	switch eventType {
+	case OrchestratorStart, OrchestratorEnd, OrchestratorError,
+		OrchestratorAgentStart, OrchestratorAgentEnd, OrchestratorAgentError,
+		StructuredOutputStart, StructuredOutputEnd, StructuredOutputError,
+		JSONValidationStart, JSONValidationEnd,
+		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
+		StepTokenUsage, StepProgressUpdated,
+		StepExecutionStart, StepExecutionEnd, StepExecutionFailed:
 		return "orchestrator"
-	case eventType == AgentStart || eventType == AgentEnd || eventType == AgentError:
+	case AgentStart, AgentEnd, AgentError:
 		return "agent"
-	case eventType == LLMGenerationStart || eventType == LLMGenerationEnd || eventType == LLMGenerationError ||
-		eventType == SmartRoutingStart || eventType == SmartRoutingEnd:
+	case LLMGenerationStart, LLMGenerationEnd, LLMGenerationError,
+		SmartRoutingStart, SmartRoutingEnd:
 		return "llm"
-	case eventType == ToolCallStart || eventType == ToolCallEnd || eventType == ToolCallError:
+	case ToolCallStart, ToolCallEnd, ToolCallError, WorkspaceFileOperation:
 		return "tool"
-	case eventType == ConversationStart || eventType == ConversationEnd || eventType == ConversationError || eventType == ConversationTurn || eventType == ConversationThinking:
+	case ConversationStart, ConversationEnd, ConversationError, ConversationTurn, ConversationThinking:
 		return "conversation"
-	case eventType == CacheHit || eventType == CacheMiss || eventType == CacheWrite ||
-		eventType == CacheExpired || eventType == CacheCleanup || eventType == CacheError ||
-		eventType == CacheOperationStart || eventType == ComprehensiveCache:
+	case CacheHit, CacheMiss, CacheWrite,
+		CacheExpired, CacheCleanup, CacheError,
+		CacheOperationStart, ComprehensiveCache:
 		return "cache"
-	case eventType == SystemPrompt || eventType == UserMessage:
+	case SystemPrompt, UserMessage:
 		return "system"
 	default:
 		return "system"

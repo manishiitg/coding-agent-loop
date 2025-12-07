@@ -663,6 +663,32 @@
   border-color: hsl(var(--warning)) !important;
 }
 
+/* ===== INFO UTILITY CLASSES ===== */
+/* Info color utilities using CSS custom properties */
+.bg-info {
+  background-color: hsl(var(--info)) !important;
+}
+
+.bg-info\/10 {
+  background-color: hsl(var(--info) / 0.1) !important;
+}
+
+.bg-info\/30 {
+  background-color: hsl(var(--info) / 0.3) !important;
+}
+
+.text-info {
+  color: hsl(var(--info)) !important;
+}
+
+.border-info {
+  border-color: hsl(var(--info)) !important;
+}
+
+.border-info\/30 {
+  border-color: hsl(var(--info) / 0.3) !important;
+}
+
 /* ===== DESTRUCTIVE UTILITY CLASSES ===== */
 /* Destructive color utilities using CSS custom properties */
 .bg-destructive {
@@ -2474,4 +2500,29 @@
 
 .dark-plus .hover\:bg-indigo-900:hover {
   background-color: hsl(240 25% 55%) !important;
+}
+
+/* ===== WORKFLOW NODE ANIMATIONS ===== */
+/* Highlight pulse animation for plan changes */
+@keyframes highlight-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.02);
+    opacity: 0.9;
+  }
+}
+
+/* Fade out animation for deleted nodes */
+@keyframes highlight-fadeout {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
 }

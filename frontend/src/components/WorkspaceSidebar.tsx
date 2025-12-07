@@ -1,19 +1,15 @@
 import React, { useState } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
+import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
-import PresetQueriesSection from './sidebar/PresetQueriesSection'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { useAppStore, useMCPStore, useChatStore, useLLMStore } from '../stores'
+import { useAppStore, useMCPStore, useLLMStore } from '../stores'
 
 interface WorkspaceSidebarProps {
-  // Presets (callbacks only)
-  onPresetFolderSelect?: (folderPath?: string) => void
-  onPresetAdded?: () => void
-  
   // Chat session selection
   onChatSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
   
@@ -23,21 +19,15 @@ interface WorkspaceSidebarProps {
 }
 
 export default function WorkspaceSidebar({
-  onPresetFolderSelect,
-  onPresetAdded,
   onChatSessionSelect,
   minimized,
   onToggleMinimize
 }: WorkspaceSidebarProps) {
   
   // Store subscriptions
-  const { agentMode, setAgentMode, setCurrentQuery } = useAppStore()
-  const { getAvailableServers, showMCPDetails, setShowMCPDetails } = useMCPStore()
-  const { isStreaming } = useChatStore()
+  const { agentMode, setAgentMode } = useAppStore()
+  const { showMCPDetails, setShowMCPDetails } = useMCPStore()
   const { showLLMModal, setShowLLMModal } = useLLMStore()
-
-  // Computed values
-  const availableServers = getAvailableServers()
   const [showShortcuts, setShowShortcuts] = useState(false)
 
   // Handle ESC and Enter keys for shortcuts modal
@@ -59,7 +49,7 @@ export default function WorkspaceSidebar({
 
   return (
     <TooltipProvider>
-      <div className="w-full h-full bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-lg dark:shadow-2xl">
+      <div className="w-full h-full bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-lg dark:shadow-2xl relative z-30">
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex items-center justify-between h-16">
         {!minimized && <SidebarHeader />}
@@ -110,19 +100,13 @@ export default function WorkspaceSidebar({
               minimized={minimized}
             />
 
-            {/* MCP Servers */}
-            <MCPServersSection />
-
-            {/* Preset Queries */}
-            <PresetQueriesSection
-              availableServers={availableServers}
-              onPresetFolderSelect={onPresetFolderSelect}
-              setCurrentQuery={setCurrentQuery}
-              isStreaming={isStreaming}
-              onPresetAdded={onPresetAdded}
+            {/* Human Feedback Connectors */}
+            <HumanFeedbackConnectorsSection
+              minimized={minimized}
             />
 
-
+            {/* MCP Servers */}
+            <MCPServersSection />
 
             {/* Chat History */}
             <ChatHistorySection
@@ -186,6 +170,11 @@ export default function WorkspaceSidebar({
 
           {/* LLM Configuration Icon */}
           <LLMConfigurationSummary
+            minimized={true}
+          />
+
+          {/* Human Feedback Connectors Icon */}
+          <HumanFeedbackConnectorsSection
             minimized={true}
           />
 

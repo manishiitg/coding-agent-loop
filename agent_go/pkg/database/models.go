@@ -11,7 +11,7 @@ import (
 
 // Workflow status constants
 const (
-	WorkflowStatusPreVerification  = "pre-verification"
+	WorkflowStatusPreVerification  = "execution"
 	WorkflowStatusPostVerification = "post-verification"
 )
 
@@ -115,13 +115,14 @@ type PresetLLMConfig struct {
 	ExecutionLLM              *AgentLLMConfig `json:"execution_llm,omitempty"`                // Default for execution agents
 	ValidationLLM             *AgentLLMConfig `json:"validation_llm,omitempty"`               // Default for validation agents
 	LearningLLM               *AgentLLMConfig `json:"learning_llm,omitempty"`                 // Default for learning agents
+	LearningReadingLLM        *AgentLLMConfig `json:"learning_reading_llm,omitempty"`         // Default for learning reading agent
 	PlanningLLM               *AgentLLMConfig `json:"planning_llm,omitempty"`                 // Default for planning agent
 	VariableExtractionLLM     *AgentLLMConfig `json:"variable_extraction_llm,omitempty"`      // Default for variable extraction agent
 	AnonymizationLLM          *AgentLLMConfig `json:"anonymization_llm,omitempty"`            // Default for anonymization agent
 	PlanImprovementLLM        *AgentLLMConfig `json:"plan_improvement_llm,omitempty"`         // Default for plan improvement agent
 	PlanToolOptimizationLLM   *AgentLLMConfig `json:"plan_tool_optimization_llm,omitempty"`   // Default for plan tool optimization agent
 	PlanLearningsAlignmentLLM *AgentLLMConfig `json:"plan_learnings_alignment_llm,omitempty"` // Default for plan learnings alignment agent
-	LearningConsolidationLLM  *AgentLLMConfig `json:"learning_consolidation_llm,omitempty"`  // Default for learning consolidation agent
+	LearningConsolidationLLM  *AgentLLMConfig `json:"learning_consolidation_llm,omitempty"`   // Default for learning consolidation agent
 }
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
@@ -395,7 +396,7 @@ type Workflow struct {
 // CreateWorkflowRequest represents a request to create a new workflow
 type CreateWorkflowRequest struct {
 	PresetQueryID   string                   `json:"preset_query_id"`
-	WorkflowStatus  string                   `json:"workflow_status,omitempty"`  // Optional, defaults to 'pre-verification'
+	WorkflowStatus  string                   `json:"workflow_status,omitempty"`  // Optional, defaults to 'execution'
 	SelectedOptions *WorkflowSelectedOptions `json:"selected_options,omitempty"` // Optional, selected options for the phase
 }
 

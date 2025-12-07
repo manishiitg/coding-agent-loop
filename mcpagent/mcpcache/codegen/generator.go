@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcpagent/logger"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // CacheEntryForCodeGen represents a cache entry for code generation (to avoid import cycle)
@@ -222,6 +223,16 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 				continue
 			}
 
+			// Generate file name in snake_case
+			fileName := ToolNameToSnakeCase(toolName) + ".go"
+			goFile := filepath.Join(packageDir, fileName)
+
+			// Skip if file already exists (tool definitions are static, no need to regenerate)
+			if _, err := os.Stat(goFile); err == nil {
+				logger.Debugf("Skipping %s - file already exists", toolName)
+				continue
+			}
+
 			actualToolName := toolName // Keep original tool name for custom tool call
 			toolDescription := customTool.Definition.Function.Description
 
@@ -231,10 +242,6 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 				logger.Warnf("Failed to parse schema for custom tool %s: %v", toolName, err)
 				continue
 			}
-
-			// Generate file name in snake_case
-			fileName := ToolNameToSnakeCase(toolName) + ".go"
-			goFile := filepath.Join(packageDir, fileName)
 
 			var codeBuilder strings.Builder
 

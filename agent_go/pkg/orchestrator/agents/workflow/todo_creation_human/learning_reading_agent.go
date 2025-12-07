@@ -7,11 +7,12 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerLearningReadingTemplate holds template variables for learning reading prompts
@@ -140,11 +141,56 @@ func (hctplra *HumanControlledTodoPlannerLearningReadingAgent) learningReadingSy
 └─────────────────────────────────────────┘
 
 ## 📤 Output Requirements
+
+**CRITICAL: Preserve Workflow Structure**
+If the learning file contains an **EXECUTION WORKFLOW** section, you MUST preserve it exactly:
+- Keep the step sequence (Step 1, Step 2, Step 3...)
+- Keep all tool names and arguments
+- Keep prerequisites, outputs, and on_error sections
+- Keep data flow documentation
+- Keep decision points and error recovery
+
 {{if and .IsCodeExecutionMode .HasContextDependencies}}- **Context Dependencies**: What you learned about file structure/format from context files  
 {{end}}- **Files Read**: List with brief relevance explanation  
-- **Key Insights**: Main patterns, best practices, {{if .IsCodeExecutionMode}}code examples{{else}}script examples{{end}}  
+- **Key Insights**: 
+  - **If EXECUTION WORKFLOW exists**: Present the COMPLETE workflow with all steps, data flow, and error recovery
+  - **If only patterns exist**: Main patterns, best practices, {{if .IsCodeExecutionMode}}code examples{{else}}script examples{{end}}
 - **Relevance**: Why each file applies to current step{{if and .IsCodeExecutionMode .HasContextDependencies}}  
 - **Context Integration**: How context dependencies inform learning selection{{end}}
+
+**WORKFLOW PRESENTATION FORMAT:**
+When presenting workflow learnings, structure them clearly for the execution agent:
+
+` + "```" + `
+🎯 EXECUTION WORKFLOW [Runs: X | Success: Y%]
+
+Step 1: tool_name: server.tool
+  arguments: {...}
+  prerequisites: ...
+  outputs: ...
+  on_error: ...
+
+Step 2: tool_name: server.tool
+  arguments: {...} (uses output from Step 1)
+  prerequisites: Step 1 completed
+  outputs: ...
+  on_error: ...
+
+📊 DATA FLOW:
+Step 1 → outputs: X
+Step 2 → inputs: X from Step 1 → outputs: Y
+
+🔀 DECISION POINTS:
+- After Step 1: If X then Y, else Z
+
+⚠️ PREREQUISITES:
+- Before workflow: ...
+- Step 1: ...
+
+🔄 ERROR RECOVERY:
+- Step 1 fails: ...
+- Step 2 fails: ...
+` + "```" + `
 
 Focus on quality over quantity - your conversation history goes to the execution agent.`
 
@@ -210,7 +256,23 @@ func (hctplra *HumanControlledTodoPlannerLearningReadingAgent) learningReadingUs
    - Key patterns{{if eq .IsCodeExecutionMode "true"}}/code examples{{else}}/scripts{{end}}{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}
    - How context informs learnings{{end}}
 
-**Remember**: Quality > Quantity. Your conversation history goes to the execution agent.`
+## 🎯 CRITICAL: Workflow Preservation
+
+**If learning file contains EXECUTION WORKFLOW:**
+- Present the COMPLETE workflow structure to the execution agent
+- Include ALL steps in order (Step 1 → Step 2 → Step 3...)
+- Include tool names, arguments, prerequisites, outputs, on_error
+- Include data flow between steps
+- Include decision points and error recovery
+- The execution agent will follow this workflow EXACTLY
+
+**If learning file contains only patterns:**
+- Summarize key patterns and approaches
+- Note which tools/scripts worked best
+- Include failure patterns to avoid
+
+**Remember**: Quality > Quantity. Your conversation history goes to the execution agent.
+The execution agent relies on your summary to execute the step correctly.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("learningReadingUserMessage").Parse(templateStr)

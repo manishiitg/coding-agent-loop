@@ -12,12 +12,12 @@
 -- NOTE: For fresh databases, the workflow_status column is already created in migration 000
 -- This ALTER TABLE is only needed for databases that existed before migration 000 included this column
 -- Commenting out to prevent "duplicate column name" error for fresh databases
--- ALTER TABLE workflows ADD COLUMN workflow_status TEXT DEFAULT 'pre-verification';
+-- ALTER TABLE workflows ADD COLUMN workflow_status TEXT DEFAULT 'execution';
 
 -- Migrate existing data from old columns to new workflow_status
 -- Only attempt migration if the old columns exist
 -- This uses a safe approach that won't fail if columns don't exist
--- NOTE: For fresh databases, this UPDATE is not needed since workflow_status is already set to 'pre-verification' by default
+-- NOTE: For fresh databases, this UPDATE is not needed since workflow_status is already set to 'execution' by default
 -- This migration is only needed for databases that existed before migration 000 included the workflow_status column
 
 -- Check if old columns exist before attempting migration
@@ -29,15 +29,15 @@
 -- Since SQLite doesn't support conditional execution of entire statements,
 -- and the old columns don't exist in fresh databases, we'll skip this migration entirely
 -- for fresh databases by commenting out the problematic UPDATE statement
--- The workflow_status column is already set to 'pre-verification' by default in migration 000
+-- The workflow_status column is already set to 'execution' by default in migration 000
 
 -- UPDATE workflows 
 -- SET workflow_status = CASE 
 --     WHEN human_verification_complete = 1 THEN 'post-verification'
 --     WHEN refinement_required = 1 THEN 'post-verification-todo-refinement'
---     ELSE 'pre-verification'
+--     ELSE 'execution'
 -- END
--- WHERE workflow_status = 'pre-verification';
+-- WHERE workflow_status = 'execution';
 
 -- Create the new index
 CREATE INDEX IF NOT EXISTS idx_workflows_status ON workflows(workflow_status);

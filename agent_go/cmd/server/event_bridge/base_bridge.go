@@ -41,7 +41,12 @@ func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.Agen
 
 	// Store the event in the server's event store for polling API
 	// Use the observer ID for in-memory storage (this is what the frontend polls)
+	b.Logger.Infof("📤 [BaseEventBridge] Storing event %s with ObserverID: %s", event.Type, b.ObserverID)
+	if b.ObserverID == "" {
+		b.Logger.Warnf("⚠️ [BaseEventBridge] ObserverID is empty! Event will not be stored correctly.")
+	}
 	b.EventStore.AddEvent(b.ObserverID, serverEvent)
+	b.Logger.Infof("✅ [BaseEventBridge] Event stored successfully with ObserverID: %s", b.ObserverID)
 
 	// ✅ CHAT HISTORY FIX: Store event in database for chat history
 	if b.ChatDB != nil {

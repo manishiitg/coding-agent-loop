@@ -5,6 +5,8 @@ export { useMCPStore } from './useMCPStore'
 export { useChatStore } from './useChatStore'
 export { useWorkspaceStore } from './useWorkspaceStore'
 export { useGlobalPresetStore, usePresetApplication, usePresetManagement, usePresetState } from './useGlobalPresetStore'
+export { useWorkflowStore, useWorkflowPhases, useWorkflowPhasesLoading, useWorkflowRunFolders, useWorkflowProgress, useCompletedStepIndices } from './useWorkflowStore'
+export type { ExecutionModeType } from './useWorkflowStore'
 
 // Export types
 export type * from './types'
@@ -26,4 +28,8 @@ export const initializeStores = async () => {
   // Initialize global preset store
   const { useGlobalPresetStore } = await import('./useGlobalPresetStore')
   await useGlobalPresetStore.getState().refreshPresets()
+  
+  // Initialize workflow store by loading phases
+  const { useWorkflowStore } = await import('./useWorkflowStore')
+  await useWorkflowStore.getState().loadPhases()
 }

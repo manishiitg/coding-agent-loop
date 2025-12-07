@@ -6,14 +6,14 @@ import (
 )
 
 type SearchLargeOutputParams struct {
+	// Name of the tool output file to search
+	Filename string `json:"filename"`
 	// Maximum number of results to return
 	Max_results *int `json:"max_results,omitempty"`
 	// Search pattern (regex supported)
 	Pattern string `json:"pattern"`
 	// Case sensitive search
 	Case_sensitive *bool `json:"case_sensitive,omitempty"`
-	// Name of the tool output file to search
-	Filename string `json:"filename"`
 }
 
 // Search for regex patterns in large tool output files
@@ -21,7 +21,7 @@ type SearchLargeOutputParams struct {
 // Usage: Import package and call with typed struct
 //       Panics on API errors - check output string for tool execution errors
 // Example: output := SearchLargeOutput(SearchLargeOutputParams{
-//     Max_results: "value",
+//     Filename: "value",
 //     // ... other parameters
 // })
 // // Check output for errors (e.g., strings.HasPrefix(output, "Error:"))

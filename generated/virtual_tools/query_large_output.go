@@ -5,29 +5,29 @@ import (
 	"fmt"
 )
 
-type SearchLargeOutputParams struct {
-	// Maximum number of results to return
-	Max_results *int `json:"max_results,omitempty"`
-	// Search pattern (regex supported)
-	Pattern string `json:"pattern"`
-	// Case sensitive search
-	Case_sensitive *bool `json:"case_sensitive,omitempty"`
-	// Name of the tool output file to search
+type QueryLargeOutputParams struct {
+	// Name of the JSON tool output file
 	Filename string `json:"filename"`
+	// jq query to execute (e.g., '.name', '.items[]')
+	Query string `json:"query"`
+	// Output raw string values
+	Raw *bool `json:"raw,omitempty"`
+	// Output compact JSON format
+	Compact *bool `json:"compact,omitempty"`
 }
 
-// Search for regex patterns in large tool output files
+// Execute jq queries on large JSON tool output files
 //
 // Usage: Import package and call with typed struct
 //       Panics on API errors - check output string for tool execution errors
-// Example: output := SearchLargeOutput(SearchLargeOutputParams{
-//     Max_results: "value",
+// Example: output := QueryLargeOutput(QueryLargeOutputParams{
+//     Filename: "value",
 //     // ... other parameters
 // })
 // // Check output for errors (e.g., strings.HasPrefix(output, "Error:"))
 // // Handle tool execution error if detected
 //
-func SearchLargeOutput(params SearchLargeOutputParams) string {
+func QueryLargeOutput(params QueryLargeOutputParams) string {
 	// Convert params struct to map for API call
 	paramsBytes, err := json.Marshal(params)
 	if err != nil {
@@ -40,7 +40,7 @@ func SearchLargeOutput(params SearchLargeOutputParams) string {
 
 	// Build request payload and call common API client
 	payload := map[string]interface{}{
-		"tool": "search_large_output",
+		"tool": "query_large_output",
 		"args": paramsMap,
 	}
 	return callAPI("/api/virtual/execute", payload)

@@ -368,6 +368,182 @@ mcpagent-test test smart-routing --temperature 0.1 --max-tokens 1000 --log-file 
 
 ---
 
+### `structured-output` - Structured Output Testing
+
+**Folder**: `cmd/testing/structured-output/`  
+**Files**: 
+- `conversion/conversion-test.go` - Model 1: Text Conversion Model test
+- `tool/tool-test.go` - Model 2: Tool-Based Model test
+- `conversion/criteria.md` - Log analysis criteria for Model 1
+- `tool/criteria.md` - Log analysis criteria for Model 2
+- `README.md` - Comprehensive documentation of both models
+**Commands**: 
+- `mcpagent-test test structured-output-conversion` - Test Model 1 (Text Conversion)
+- `mcpagent-test test structured-output-tool` - Test Model 2 (Tool-Based)
+
+Tests the agent's structured output generation capabilities using two different models:
+
+#### Model 1: Text Conversion Model (`structured-output-conversion`)
+- **How it works**: Agent gets text response → Second LLM call converts to JSON → Parse into struct
+- **Methods**: `AskStructured`, `AskWithHistoryStructured`
+- **Pros**: Always works, better for complex schemas, more predictable
+- **Cons**: 2 LLM calls (slower, more expensive)
+
+#### Model 2: Tool-Based Model (`structured-output-tool`)
+- **How it works**: Dynamically registers custom tool → LLM calls tool → Extract from arguments
+- **Methods**: `AskWithHistoryStructuredViaTool`
+- **Pros**: Single LLM call (faster, cheaper), preserves context
+- **Cons**: LLM may not call tool (graceful fallback to text)
+
+**See `structured-output/README.md` for detailed comparison and usage guide.**
+
+#### Test Coverage
+
+**Model 1 (Conversion) Tests:**
+1. Simple Person struct (`AskStructured`)
+2. TodoList with conversation history (`AskWithHistoryStructured`)
+3. Complex Project with nested arrays (`AskStructured`)
+
+**Model 2 (Tool) Tests:**
+1. Simple Person via `submit_person_profile` tool
+2. Complex Order with nested items via `submit_order` tool
+3. Tool not called scenario (graceful fallback)
+
+#### Running
+
+```bash
+# Test Model 1: Text Conversion (uses OpenAI by default)
+mcpagent-test test structured-output-conversion --log-file logs/conversion-test.log
+
+# Test Model 2: Tool-Based (uses OpenAI by default)
+mcpagent-test test structured-output-tool --log-file logs/tool-test.log
+
+# With custom model
+mcpagent-test test structured-output-conversion --model gpt-4o-mini --log-file logs/conversion-test.log
+```
+
+#### Logs
+
+- Default: stdout (no file logging unless `--log-file` is specified)
+- Override with `--log-file` flag
+- **Important**: Always use `--log-file` to avoid cluttering terminal output
+
+---
+
+### `token-tracking` - Token Tracking Testing
+
+**Folder**: `cmd/testing/token-tracking/`  
+**Files**: 
+- `token-tracking-test.go` - Test implementation with Cobra command
+- `criteria.md` - Log analysis criteria
+**Command**: `mcpagent-test test token-tracking`
+
+Tests the agent's cumulative token usage tracking feature:
+- Token accumulation across multiple LLM calls
+- Cache tokens tracking (if supported by provider)
+- Reasoning tokens tracking (if supported by model)
+- LLM call count and cache-enabled call count
+- Multi-turn conversation token accumulation
+
+**See `criteria.md` in the token-tracking folder for detailed log analysis criteria.**
+
+#### Test Coverage
+
+1. **Initial State Check** (`TestInitialTokenUsage`)
+   - Verifies token usage starts at zero
+   - All metrics should be zero before any calls
+
+2. **Single Call Token Accumulation** (`TestSingleCall`)
+   - Makes one agent call
+   - Verifies tokens are tracked after call
+   - Verifies LLM call count increments
+
+3. **Multiple Calls Cumulative Accumulation** (`TestMultipleCalls`)
+   - Makes multiple agent calls
+   - Verifies cumulative totals increase with each call
+   - Verifies no token counts decrease (only accumulate)
+
+4. **Multi-Turn Conversation** (`TestMultiTurnConversation`)
+   - Tests token tracking across conversation with context
+   - Verifies tokens accumulate across turns
+   - Calculates tokens per call
+
+5. **Final Summary** (`TestFinalSummary`)
+   - Provides comprehensive token usage statistics
+   - Calculates averages per call
+   - Analyzes cache tokens and reasoning tokens (if present)
+
+#### Running
+
+```bash
+# Basic test (uses OpenAI by default, 3 calls)
+mcpagent-test test token-tracking --log-file logs/token-tracking-test.log
+
+# With custom number of calls
+mcpagent-test test token-tracking --num-calls 5 --log-file logs/token-tracking-test.log
+
+# With specific model
+mcpagent-test test token-tracking --model gpt-4.1 --log-file logs/token-tracking-test.log
+```
+
+#### Logs
+
+- Default: stdout (no file logging unless `--log-file` is specified)
+- Override with `--log-file` flag
+- **Important**: Always use `--log-file` to avoid cluttering terminal output
+
+---
+
+### `human-feedback-code-exec` - Human Feedback Tool in Code Execution Mode Testing
+
+**Folder**: `cmd/testing/human-feedback-code-exec/`  
+**Files**: 
+- `human-feedback-code-exec-test.go` - Test implementation with Cobra command
+- `criteria.md` - Log analysis criteria
+**Command**: `mcpagent-test test human-feedback-code-exec`
+
+Tests that the `human_feedback` tool is available as a normal tool in code execution mode, even though other custom tools are excluded.
+
+**Key Feature**: In code execution mode, most tools are excluded from direct LLM access. However, tools with category "human" (like `human_feedback`) are an exception and remain available as normal tools because they require event bridge access for frontend UI.
+
+**See `criteria.md` in the human-feedback-code-exec folder for detailed log analysis criteria.**
+
+#### Test Coverage
+
+1. **Initial State Check** (`TestInitialState`)
+   - Verifies only code execution virtual tools are present initially
+   - Checks for `discover_code_files` and `write_code`
+
+2. **Regular Tool Exclusion** (`TestRegularToolExclusion`)
+   - Registers a regular custom tool (category "custom")
+   - Verifies it is NOT in Tools array in code exec mode
+
+3. **Human Tool Availability** (`TestHumanToolAvailability`)
+   - Registers `human_feedback` tool with category "human"
+   - Verifies it IS in Tools array in code exec mode
+
+4. **Tool Count Verification** (`TestToolCounts`)
+   - Verifies final tool count (expected: 3 tools)
+   - Verifies breakdown: 2 code exec tools + 1 human tool
+
+#### Running
+
+```bash
+# Basic test (uses OpenAI by default, gpt-4.1)
+mcpagent-test test human-feedback-code-exec --log-file logs/human-feedback-code-exec-test.log
+
+# With specific model
+mcpagent-test test human-feedback-code-exec --model gpt-4.1 --log-file logs/human-feedback-code-exec-test.log
+```
+
+#### Logs
+
+- Default: stdout (no file logging unless `--log-file` is specified)
+- Override with `--log-file` flag
+- **Important**: Always use `--log-file` to avoid cluttering terminal output
+
+---
+
 ## Test Plan
 
 This section outlines planned tests to be implemented for comprehensive agent feature coverage.
@@ -381,7 +557,7 @@ This section outlines planned tests to be implemented for comprehensive agent fe
 **Complexity**: High (requires conversation context)
 
 #### 3. `structured-output` - Structured Output Testing
-**Status**: 📋 Planned  
+**Status**: ✅ Completed  
 **Feature**: `AskStructured`, `AskWithHistoryStructured`, `AskWithHistoryStructuredViaTool`  
 **What to Test**: JSON schema extraction, structured data conversion, tool-based structured output  
 **Complexity**: Medium
@@ -393,7 +569,7 @@ This section outlines planned tests to be implemented for comprehensive agent fe
 **Complexity**: Medium
 
 #### 6. `token-tracking` - Token Tracking Testing
-**Status**: 📋 Planned  
+**Status**: ✅ Completed  
 **Feature**: `GetTokenUsage`, cumulative token tracking  
 **What to Test**: Token accumulation, cache tokens, reasoning tokens, cumulative metrics  
 **Complexity**: Low-Medium

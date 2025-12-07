@@ -26,6 +26,7 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
 	unifiedevents "mcpagent/events"
+	"mcpagent/executor"
 	"mcpagent/llm"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
@@ -576,14 +577,13 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/tools/edit", api.handleEditServer).Methods("POST")
 	apiRouter.HandleFunc("/tools/remove", api.handleRemoveServer).Methods("POST")
 
-	// MCP execution API (from tools.go)
-	apiRouter.HandleFunc("/mcp/execute", api.handleMCPExecute).Methods("POST", "OPTIONS")
-
-	// Custom tool execution API (from tools.go)
-	apiRouter.HandleFunc("/custom/execute", api.handleCustomExecute).Methods("POST", "OPTIONS")
-
-	// Virtual tool execution API (from tools.go)
-	apiRouter.HandleFunc("/virtual/execute", api.handleVirtualExecute).Methods("POST", "OPTIONS")
+	// Tool execution APIs - handlers provided by mcpagent/executor library
+	// Note: We pass nil for logger as server uses different logger interface (utils.ExtendedLogger vs loggerv2.Logger)
+	// The executor package will use its own default noop logger for internal logging
+	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, nil)
+	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
 
 	// MCP Registry API routes (from mcp_registry_routes.go)
 	apiRouter.HandleFunc("/mcp-registry/servers", api.handleGetMCPRegistryServers).Methods("GET")

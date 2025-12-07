@@ -8,9 +8,15 @@ import (
 
 	agentlangfuse "mcpagent/cmd/testing/agent-langfuse"
 	agentmcp "mcpagent/cmd/testing/agent-mcp"
+	executortest "mcpagent/cmd/testing/executor"
+	humanfeedbackcodeexec "mcpagent/cmd/testing/human-feedback-code-exec"
 	langfuse "mcpagent/cmd/testing/langfuse"
 	largetooloutput "mcpagent/cmd/testing/large-tool-output"
+	mcpagentcodeexec "mcpagent/cmd/testing/mcp-agent-code-exec"
 	smartrouting "mcpagent/cmd/testing/smart-routing"
+	"mcpagent/cmd/testing/structured-output/conversion"
+	"mcpagent/cmd/testing/structured-output/tool"
+	tokentracking "mcpagent/cmd/testing/token-tracking"
 	toolfilter "mcpagent/cmd/testing/tool-filter"
 )
 
@@ -86,9 +92,15 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(toolfilter.GetToolFilterTestCmd())
 	TestingCmd.AddCommand(agentlangfuse.GetLangfuseTracerTestCmd())
 	TestingCmd.AddCommand(agentmcp.GetAgentMCPTestCmd())
+	TestingCmd.AddCommand(executortest.GetExecutorTestCmd())
+	TestingCmd.AddCommand(mcpagentcodeexec.GetMCPAgentCodeExecTestCmd())
+	TestingCmd.AddCommand(humanfeedbackcodeexec.GetHumanFeedbackCodeExecTestCmd())
 	TestingCmd.AddCommand(langfuse.GetLangfuseReadTestCmd())
 	TestingCmd.AddCommand(largetooloutput.GetLargeToolOutputTestCmd())
 	TestingCmd.AddCommand(smartrouting.GetSmartRoutingTestCmd())
+	TestingCmd.AddCommand(conversion.GetStructuredOutputConversionTestCmd())
+	TestingCmd.AddCommand(tool.GetStructuredOutputToolTestCmd())
+	TestingCmd.AddCommand(tokentracking.GetTokenTrackingTestCmd())
 }
 
 func main() {

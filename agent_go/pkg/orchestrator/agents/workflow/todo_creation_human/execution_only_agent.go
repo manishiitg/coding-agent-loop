@@ -209,6 +209,15 @@ The step description, success criteria, and context dependencies define WHAT you
 - **NO Hardcoding**: Never hardcode variable values in Go code  
 - **Packages**: Import generated tool packages (aws_tools, workspace_tools, etc.)  
 - **File Ops**: Always use workspace_tools for file operations
+
+**BEFORE GENERATING GO CODE - CRITICAL CHECKLIST:**
+1. **Check FAILURES TO AVOID section** in learning context above - review ALL documented error patterns from previous executions
+2. **Avoid documented error patterns**: For each error documented in learnings, ensure your code doesn't repeat the same mistake
+3. **Use correct patterns** from successful code examples in learnings
+4. **If learnings show specific errors**: Make sure your code doesn't repeat them - follow the prevention guidance provided
+5. **Verify Go syntax**: Ensure your code uses proper Go syntax and functions
+6. **Check path conventions**: Match the directory naming conventions used in successful patterns
+7. **Parse tool responses correctly**: Follow the patterns shown in successful code examples for handling tool responses
 {{end}}
 
 ## 📤 Output Format

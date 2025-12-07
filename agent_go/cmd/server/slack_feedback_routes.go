@@ -95,9 +95,6 @@ func updateSlackConfigHandler(api *StreamingAPI, db database.Database) http.Hand
 			return
 		}
 
-		log.Printf("[SLACK] Received config update: enabled=%v, hasBotToken=%v, hasAppToken=%v, hasChannelID=%v",
-			req.Enabled, req.BotToken != "", req.AppToken != "", req.ChannelID != "")
-
 		slackService := slackservice.GetSlackService()
 		if slackService == nil {
 			// Initialize if not already initialized
@@ -127,8 +124,6 @@ func updateSlackConfigHandler(api *StreamingAPI, db database.Database) http.Hand
 			http.Error(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
 			return
 		}
-
-		log.Printf("[SLACK] Config saved successfully")
 
 		response := SlackConfigResponse{
 			Enabled:   config.Enabled,
@@ -177,8 +172,6 @@ func testSlackConnectionHandler(api *StreamingAPI, db database.Database) http.Ha
 			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
 				// Config provided - use it for testing without saving
 				testConfig = &req
-				log.Printf("[SLACK] Testing connection with provided config: enabled=%v, hasToken=%v, hasChannelID=%v",
-					req.Enabled, req.BotToken != "", req.ChannelID != "")
 			}
 		}
 
@@ -228,8 +221,6 @@ func getTestConnectionReplyHandler(api *StreamingAPI, db database.Database) http
 			return
 		}
 
-		log.Printf("[SLACK_TEST] 🔍 Polling for test reply: test_id=%s", testUniqueID)
-
 		feedbackStore := virtualtools.GetHumanFeedbackStore()
 		if feedbackStore == nil {
 			log.Printf("[SLACK_TEST] ❌ Human feedback store not initialized")
@@ -240,13 +231,10 @@ func getTestConnectionReplyHandler(api *StreamingAPI, db database.Database) http
 		// Check if there's a response for this test connection
 		response, exists := feedbackStore.GetResponse(testUniqueID)
 		if !exists {
-			log.Printf("[SLACK_TEST] ⏳ No reply yet for test_id=%s", testUniqueID)
 			// Return 204 No Content if no reply yet
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
-		log.Printf("[SLACK_TEST] ✅ Found reply for test_id=%s: %s", testUniqueID, response)
 
 		// Return the reply
 		responseData := map[string]interface{}{

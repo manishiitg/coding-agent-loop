@@ -6,11 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
 	internalLLM "mcpagent/llm"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // contextKey is a custom type for context keys to avoid collisions
@@ -30,14 +31,15 @@ type AgentType string
 
 const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
-	VariableExtractionAgentType              AgentType = "variable_extraction"                 // Extracts variables from objective
-	TodoPlannerAnonymizationAgentType        AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
-	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
-	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
-	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results
-	TodoPlannerSuccessLearningAgentType      AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
-	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
+	VariableExtractionAgentType               AgentType = "variable_extraction"                 // Extracts variables from objective
+	TodoPlannerAnonymizationAgentType         AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
+	TodoPlannerPlanImprovementAgentType       AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
+	TodoPlannerPlanningAgentType              AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType             AgentType = "todo_planner_execution"              // Executes first step of plan
+	TodoPlannerValidationAgentType            AgentType = "todo_planner_validation"             // Validates execution results
+	TodoPlannerPrerequisiteDetectionAgentType AgentType = "todo_planner_prerequisite_detection" // Detects if validation failure is due to missing prerequisites
+	TodoPlannerSuccessLearningAgentType       AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
+	TodoPlannerPlanToolOptimizationAgentType  AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
 )
 
 // BaseAgentInterface defines the interface for base agent operations

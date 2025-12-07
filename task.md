@@ -38,3 +38,7 @@ k) also fix logging in this process
 h) check if external package is even required
 
 i) check where the generated/ folder should be. if we independely use mcpagent. and also write examples for both llmprovider/mcpagent
+
+5. Checking if tab exists in spreadsheet...
+ListSheets output: Error: Error executing tool list_sheets: [Errno 32] Broken pipe
+❌ Error listing sheets: Error: Error executing tool list_sheets: [Errno 32] Broken pipe === we have handled this properly.. but in mcp code exec, lets add retry

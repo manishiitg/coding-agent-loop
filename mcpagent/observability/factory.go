@@ -3,7 +3,7 @@ package observability
 import (
 	"strings"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 )
 
 const (
@@ -30,7 +30,7 @@ func GetTracer(provider string) Tracer {
 }
 
 // GetTracerWithLogger returns a Tracer implementation based on the provided provider string with an injected logger.
-func GetTracerWithLogger(provider string, logger logger.ExtendedLogger) Tracer {
+func GetTracerWithLogger(provider string, logger loggerv2.Logger) Tracer {
 	provider = strings.ToLower(provider)
 
 	switch provider {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -14,11 +14,11 @@ import (
 type SSEManager struct {
 	url     string
 	headers map[string]string
-	logger  logger.ExtendedLogger
+	logger  loggerv2.Logger
 }
 
 // NewSSEManager creates a new SSE manager
-func NewSSEManager(url string, headers map[string]string, logger logger.ExtendedLogger) *SSEManager {
+func NewSSEManager(url string, headers map[string]string, logger loggerv2.Logger) *SSEManager {
 	return &SSEManager{
 		url:     url,
 		headers: headers,
@@ -37,7 +37,9 @@ func (s *SSEManager) CreateClient() (*client.Client, error) {
 	}
 
 	// Add custom logger for better debugging
-	options = append(options, transport.WithSSELogger(s.logger))
+	// Adapt v2.Logger to util.Logger for transport
+	utilLogger := loggerv2.ToUtilLogger(s.logger)
+	options = append(options, transport.WithSSELogger(utilLogger))
 
 	// Create SSE transport
 	sseTransport, err := transport.NewSSE(s.url, options...)
@@ -60,7 +62,7 @@ func (s *SSEManager) Connect(ctx context.Context) (*client.Client, error) {
 	// The provided context will be used for actual MCP calls (ListTools, etc.)
 	// This prevents the SSE stream from being canceled when the caller's context is done
 	startCtx := context.Background()
-	s.logger.Infof("🔍 Using background context for SSE Start() to prevent stream cancellation")
+	s.logger.Debug("Using background context for SSE Start() to prevent stream cancellation")
 
 	// Start the client with background context
 	if err := client.Start(startCtx); err != nil {

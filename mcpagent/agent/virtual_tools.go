@@ -8,6 +8,8 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	loggerv2 "mcpagent/logger/v2"
 )
 
 // VirtualTool represents a virtual tool that can be called by the LLM
@@ -235,17 +237,9 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 		return "", fmt.Errorf("uri parameter is required")
 	}
 
-	// Debug logging
-	if a.Logger != nil {
-		a.Logger.Infof("🔧 [get_resource] Attempting to fetch resource: server=%s, uri=%s", server, uri)
-	}
-
 	// First, try to fetch from server (prioritize fresh data)
 	if a.Clients != nil {
 		if client, exists := a.Clients[server]; exists {
-			if a.Logger != nil {
-				a.Logger.Infof("🔧 [get_resource] Found active client for server %s, attempting fetch", server)
-			}
 
 			resourceResult, err := client.GetResource(ctx, uri)
 			if err == nil && resourceResult != nil {
@@ -260,21 +254,10 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 						content := strings.Join(contentParts, "\n")
 						// Only return if we got actual content (not just metadata)
 						if !strings.Contains(content, "Resource loaded from") && len(content) > 0 {
-							if a.Logger != nil {
-								a.Logger.Infof("🔧 [get_resource] Successfully fetched resource from server: %s", server)
-							}
 							return content, nil
 						}
 					}
 				}
-			} else if err != nil {
-				if a.Logger != nil {
-					a.Logger.Warnf("🔧 [get_resource] Server fetch failed for %s: %v", server, err)
-				}
-			}
-		} else {
-			if a.Logger != nil {
-				a.Logger.Warnf("🔧 [get_resource] No active client found for server: %s", server)
 			}
 		}
 	}
@@ -282,15 +265,9 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 	// If server fetch failed or returned metadata only, try cached data
 	if a.resources != nil {
 		if serverResources, exists := a.resources[server]; exists {
-			if a.Logger != nil {
-				a.Logger.Infof("🔧 [get_resource] Checking cached resources for server %s (found %d resources)", server, len(serverResources))
-			}
 
 			for _, resource := range serverResources {
 				if resource.URI == uri {
-					if a.Logger != nil {
-						a.Logger.Infof("🔧 [get_resource] Found cached resource: %s", uri)
-					}
 
 					// For cached resources, we need to fetch the actual content
 					// Since we only have the resource metadata, we'll need to try fetching again
@@ -315,9 +292,6 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 								}
 								if len(contentParts) > 0 {
 									content := strings.Join(contentParts, "\n")
-									if a.Logger != nil {
-										a.Logger.Infof("🔧 [get_resource] Successfully fetched resource content from cached metadata: %s", uri)
-									}
 									return content, nil
 								}
 							}
@@ -326,28 +300,17 @@ func (a *Agent) handleGetResource(ctx context.Context, args map[string]interface
 
 					// If we still can't get content, return the resource description as fallback
 					if resource.Description != "" {
-						if a.Logger != nil {
-							a.Logger.Warnf("🔧 [get_resource] Using resource description as fallback for: %s", uri)
-						}
 						return resource.Description, nil
 					}
 				}
 			}
-		} else {
-			if a.Logger != nil {
-				a.Logger.Warnf("🔧 [get_resource] No cached resources found for server: %s", server)
-			}
-		}
-	} else {
-		if a.Logger != nil {
-			a.Logger.Warnf("🔧 [get_resource] No cached resources available (a.resources is nil)")
 		}
 	}
 
 	// If all attempts failed, provide a helpful error message
 	errorMsg := fmt.Sprintf("resource %s not found in server %s. Available resources can be found in the system prompt's 'AVAILABLE RESOURCES' section", uri, server)
 	if a.Logger != nil {
-		a.Logger.Errorf("🔧 [get_resource] %s", errorMsg)
+		a.Logger.Error("🔧 [get_resource] Resource not found", fmt.Errorf("%s", errorMsg), loggerv2.String("server", server), loggerv2.String("uri", uri))
 	}
 	return "", fmt.Errorf("resource %s not found in server %s. Available resources can be found in the system prompt's 'AVAILABLE RESOURCES' section", uri, server)
 }

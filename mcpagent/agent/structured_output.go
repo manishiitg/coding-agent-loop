@@ -8,8 +8,9 @@ import (
 	"strconv"
 	"strings"
 
+	loggerv2 "mcpagent/logger/v2"
+
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcpagent/logger"
 )
 
 // LangchaingoStructuredOutputConfig contains configuration for structured output generation
@@ -26,11 +27,16 @@ type LangchaingoStructuredOutputConfig struct {
 type LangchaingoStructuredOutputGenerator struct {
 	config LangchaingoStructuredOutputConfig
 	llm    llmtypes.Model
-	logger logger.ExtendedLogger
+	logger loggerv2.Logger
 }
 
 // NewLangchaingoStructuredOutputGenerator creates a new structured output generator using Langchaingo
-func NewLangchaingoStructuredOutputGenerator(llm llmtypes.Model, config LangchaingoStructuredOutputConfig, logger logger.ExtendedLogger) *LangchaingoStructuredOutputGenerator {
+func NewLangchaingoStructuredOutputGenerator(llm llmtypes.Model, config LangchaingoStructuredOutputConfig, logger loggerv2.Logger) *LangchaingoStructuredOutputGenerator {
+	// Use logger directly (already v2.Logger)
+	if logger == nil {
+		logger = loggerv2.NewNoop()
+	}
+
 	return &LangchaingoStructuredOutputGenerator{
 		config: config,
 		llm:    llm,
@@ -43,7 +49,7 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 	// Build the enhanced prompt with the provided schema
 	enhancedPrompt := sog.buildStructuredPromptWithSchema(prompt, schema)
 
-	sog.logger.Infof("Enhanced prompt length: %d chars", len(enhancedPrompt))
+	sog.logger.Debug("Enhanced prompt prepared", loggerv2.Int("length", len(enhancedPrompt)))
 
 	// Always use JSON mode for consistent output
 	messages := []llmtypes.MessageContent{
@@ -75,10 +81,10 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 		llmtypes.WithMaxTokens(maxTokens),
 	}
 
-	sog.logger.Infof("Structured output max_tokens: %d", maxTokens)
+	sog.logger.Debug("Generating structured output", loggerv2.Int("max_tokens", maxTokens))
 	response, err := sog.llm.GenerateContent(ctx, messages, opts...)
 	if err != nil {
-		sog.logger.Errorf("LLM call failed: %w", err)
+		sog.logger.Error("LLM call failed", err)
 		return "", fmt.Errorf("failed to generate structured output: %w", err)
 	}
 
@@ -89,29 +95,26 @@ func (sog *LangchaingoStructuredOutputGenerator) GenerateStructuredOutput(ctx co
 func (sog *LangchaingoStructuredOutputGenerator) extractContent(response *llmtypes.ContentResponse) (string, error) {
 	// Check if we have a valid response
 	if response == nil || len(response.Choices) == 0 {
-		sog.logger.Errorf("No response or choices")
+		sog.logger.Error("No response or choices", nil)
 		return "", fmt.Errorf("no response generated from LLM")
 	}
 
 	// Extract content from the first choice
 	choice := response.Choices[0]
 	if choice.Content == "" {
-		sog.logger.Errorf("No content in first choice")
+		sog.logger.Error("No content in first choice", nil)
 		return "", fmt.Errorf("no content in LLM response")
 	}
 
 	// Get the text content
 	content := choice.Content
-	sog.logger.Infof("Found text content, length: %d", len(content))
-
-	// Log the full content for debugging
-	sog.logger.Infof("🔍 Full LLM response content:")
-	sog.logger.Infof("Content: %s", content)
+	sog.logger.Debug("Found text content", loggerv2.Int("length", len(content)))
 
 	// Clean the content by removing markdown and other formatting artifacts
 	cleanedContent := sog.cleanContentForJSON(content)
-	sog.logger.Infof("Cleaned content length: %d chars", len(cleanedContent))
-	sog.logger.Infof("Cleaned content: %s", cleanedContent)
+	sog.logger.Debug("Content cleaned",
+		loggerv2.Int("original_length", len(content)),
+		loggerv2.Int("cleaned_length", len(cleanedContent)))
 
 	if sog.config.ValidateOutput {
 		// Validate that the output is valid JSON
@@ -131,13 +134,9 @@ func (sog *LangchaingoStructuredOutputGenerator) extractContent(response *llmtyp
 func (sog *LangchaingoStructuredOutputGenerator) cleanContentForJSON(content string) string {
 	cleaned := strings.TrimSpace(content)
 
-	// Log the cleaning process
-	sog.logger.Infof("🧹 Cleaning content for JSON parsing...")
-	sog.logger.Infof("Original length: %d chars", len(content))
-
 	// 1. Remove markdown code blocks (```json ... ```)
 	if strings.Contains(cleaned, "```") {
-		sog.logger.Infof("🔍 Detected markdown code blocks, extracting content...")
+		sog.logger.Debug("Detected markdown code blocks, extracting content")
 
 		// Find the start and end of code blocks
 		startIdx := strings.Index(cleaned, "```")
@@ -154,24 +153,20 @@ func (sog *LangchaingoStructuredOutputGenerator) cleanContentForJSON(content str
 			endIdx := strings.LastIndex(cleaned, "```")
 			if endIdx > contentStart {
 				cleaned = cleaned[contentStart:endIdx]
-				sog.logger.Infof("✅ Extracted content from markdown code blocks")
+				sog.logger.Debug("Extracted content from markdown code blocks")
 			}
 		}
 	}
 
 	// 2. Remove any remaining markdown artifacts using simple string operations
-	sog.logger.Infof("🔍 CONTENT CLEANING DEBUG: Before removeMarkdownArtifacts: %s", cleaned)
 	cleaned = sog.removeMarkdownArtifacts(cleaned)
-	sog.logger.Infof("🔍 CONTENT CLEANING DEBUG: After removeMarkdownArtifacts: %s", cleaned)
 
 	// 3. Final trim and cleanup
 	cleaned = strings.TrimSpace(cleaned)
 
-	sog.logger.Infof("Final cleaned length: %d chars", len(cleaned))
-	sog.logger.Infof("🔍 CONTENT CLEANING DEBUG: Final cleaned content: %s", cleaned)
-
-	// Log the final cleaned content for debugging
-	sog.logger.Infof("✅ Content cleaning completed successfully")
+	sog.logger.Debug("Content cleaning completed",
+		loggerv2.Int("original_length", len(content)),
+		loggerv2.Int("final_length", len(cleaned)))
 
 	return cleaned
 }
@@ -261,6 +256,7 @@ func (sog *LangchaingoStructuredOutputGenerator) retryGeneration(ctx context.Con
 	retryConfig := sog.config
 	retryConfig.MaxRetries = retriesLeft
 
+	// Create retry generator with same logger (already v2.Logger)
 	retryGenerator := NewLangchaingoStructuredOutputGenerator(sog.llm, retryConfig, sog.logger)
 
 	return retryGenerator.GenerateStructuredOutput(ctx, retryPrompt, "")
@@ -277,51 +273,27 @@ func ConvertToStructuredOutput[T any](a *Agent, ctx context.Context, textOutput 
 		return zero, fmt.Errorf("failed to convert to structured output: %w", err)
 	}
 
-	// Add detailed logging for JSON parsing
-	a.Logger.Infof("🔍 JSON PARSING DEBUG: Starting JSON unmarshaling")
-	a.Logger.Infof("🔍 JSON PARSING DEBUG: JSON output length: %d chars", len(jsonOutput))
-	a.Logger.Infof("🔍 JSON PARSING DEBUG: JSON output content: %s", jsonOutput)
-
 	// Validate JSON before parsing (using interface{} to support both objects and arrays)
+	logger := a.Logger
+	logger.Debug("Starting JSON unmarshaling", loggerv2.Int("json_length", len(jsonOutput)))
+
 	var jsonValidator interface{}
 	if err := json.Unmarshal([]byte(jsonOutput), &jsonValidator); err != nil {
-		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON validation failed: %w", err)
+		logger.Error("JSON validation failed", err, loggerv2.String("json_output", jsonOutput))
 		var zero T
 		return zero, fmt.Errorf("invalid JSON structure: %w", err)
 	}
-	a.Logger.Infof("✅ JSON PARSING DEBUG: JSON validation passed")
+	logger.Debug("JSON validation passed")
 
 	// Parse JSON back to the target type
 	var result T
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
-		a.Logger.Errorf("❌ JSON PARSING DEBUG: JSON unmarshaling failed: %w", err)
+		logger.Error("JSON unmarshaling failed", err, loggerv2.String("json_output", jsonOutput))
 		var zero T
 		return zero, fmt.Errorf("failed to parse structured output: %w", err)
 	}
 
-	// Log the parsed result for debugging
-	a.Logger.Infof("✅ JSON PARSING DEBUG: JSON unmarshaling successful")
-	a.Logger.Infof("🔍 JSON PARSING DEBUG: Parsed result type: %T", result)
-
-	// Add detailed logging for struct field assignment
-	if resultBytes, err := json.Marshal(result); err == nil {
-		a.Logger.Infof("🔍 JSON PARSING DEBUG: Struct after unmarshaling: %s", string(resultBytes))
-	}
-
-	// Special logging for PlanningResponse to debug should_continue issue
-	if planningResp, ok := any(result).(interface{ GetShouldContinue() bool }); ok {
-		a.Logger.Infof("🔍 JSON PARSING DEBUG: PlanningResponse should_continue: %t", planningResp.GetShouldContinue())
-	}
-
-	// Try to extract should_continue using reflection for debugging
-	if jsonData, err := json.Marshal(result); err == nil {
-		var debugMap map[string]interface{}
-		if err := json.Unmarshal(jsonData, &debugMap); err == nil {
-			if shouldContinue, exists := debugMap["should_continue"]; exists {
-				a.Logger.Infof("🔍 JSON PARSING DEBUG: should_continue from parsed result: %v (type: %T)", shouldContinue, shouldContinue)
-			}
-		}
-	}
+	logger.Debug("JSON unmarshaling successful", loggerv2.Any("result_type", fmt.Sprintf("%T", result)))
 
 	return result, nil
 }

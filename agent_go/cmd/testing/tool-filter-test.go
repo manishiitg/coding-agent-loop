@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"google.golang.org/appengine/log"
 
 	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
@@ -234,7 +235,7 @@ func testNoFiltering(logger utils.ExtendedLogger) error {
 	if !tf.IsNoFilteringActive() {
 		return fmt.Errorf("expected no filtering to be active")
 	}
-	logger.Infof("✅ IsNoFilteringActive() returns true when no filters set")
+	log.Infof("✅ IsNoFilteringActive() returns true when no filters set")
 
 	// All tools should be included
 	testCases := []struct {
@@ -280,7 +281,7 @@ func testSelectedToolsFiltering(logger utils.ExtendedLogger) error {
 	if tf.IsNoFilteringActive() {
 		return fmt.Errorf("expected filtering to be active")
 	}
-	logger.Infof("✅ IsNoFilteringActive() returns false when filters set")
+	log.Infof("✅ IsNoFilteringActive() returns false when filters set")
 
 	// Test included tools
 	includedTests := []struct {
@@ -400,12 +401,12 @@ func testWildcardPattern(logger utils.ExtendedLogger) error {
 	if !tf.ShouldIncludeTool("google_sheets", "CreateSpreadsheet", false, false) {
 		return fmt.Errorf("expected google_sheets:CreateSpreadsheet to be included")
 	}
-	logger.Infof("✅ Tool google_sheets:CreateSpreadsheet included (specific selection)")
+	log.Infof("✅ Tool google_sheets:CreateSpreadsheet included (specific selection)")
 
 	if tf.ShouldIncludeTool("google_sheets", "DeleteSpreadsheet", false, false) {
 		return fmt.Errorf("expected google_sheets:DeleteSpreadsheet to be excluded")
 	}
-	logger.Infof("✅ Tool google_sheets:DeleteSpreadsheet excluded (not in specific selection)")
+	log.Infof("✅ Tool google_sheets:DeleteSpreadsheet excluded (not in specific selection)")
 
 	return nil
 }
@@ -451,12 +452,12 @@ func testCategoryDetection(logger utils.ExtendedLogger) error {
 	if !tf.IsVirtualToolsDirectory("virtual_tools") {
 		return fmt.Errorf("expected virtual_tools to be detected as virtual tools directory")
 	}
-	logger.Infof("✅ virtual_tools detected as virtual tools directory")
+	log.Infof("✅ virtual_tools detected as virtual tools directory")
 
 	if tf.IsVirtualToolsDirectory("workspace_tools") {
 		return fmt.Errorf("expected workspace_tools NOT to be detected as virtual tools directory")
 	}
-	logger.Infof("✅ workspace_tools NOT detected as virtual tools directory")
+	log.Infof("✅ workspace_tools NOT detected as virtual tools directory")
 
 	return nil
 }
@@ -487,7 +488,7 @@ func testVirtualToolsAlwaysIncluded(logger utils.ExtendedLogger) error {
 	if tf.ShouldIncludeTool("aws", "DeleteDocument", false, false) {
 		return fmt.Errorf("expected aws:DeleteDocument to be excluded")
 	}
-	logger.Infof("✅ aws:DeleteDocument excluded (filtering still works for non-virtual)")
+	log.Infof("✅ aws:DeleteDocument excluded (filtering still works for non-virtual)")
 
 	return nil
 }
@@ -512,13 +513,13 @@ func testMixedCaseToolNames(logger utils.ExtendedLogger) error {
 	if !tf.ShouldIncludeTool("workspace_tools", "ReadWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:ReadWorkspaceFile to match read_workspace_file")
 	}
-	logger.Infof("✅ PascalCase 'ReadWorkspaceFile' matches snake_case 'read_workspace_file'")
+	log.Infof("✅ PascalCase 'ReadWorkspaceFile' matches snake_case 'read_workspace_file'")
 
 	// Test that snake_case tool name matches PascalCase selection
 	if !tf.ShouldIncludeTool("aws", "get_document", false, false) {
 		return fmt.Errorf("expected aws:get_document to match GetDocument")
 	}
-	logger.Infof("✅ snake_case 'get_document' matches PascalCase 'GetDocument'")
+	log.Infof("✅ snake_case 'get_document' matches PascalCase 'GetDocument'")
 
 	return nil
 }
@@ -548,24 +549,24 @@ func testCustomToolsFiltering(logger utils.ExtendedLogger) error {
 	if !tf.ShouldIncludeTool("workspace_tools", "ReadWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:ReadWorkspaceFile to be included")
 	}
-	logger.Infof("✅ workspace_tools:ReadWorkspaceFile included")
+	log.Infof("✅ workspace_tools:ReadWorkspaceFile included")
 
 	if !tf.ShouldIncludeTool("workspace_tools", "UpdateWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:UpdateWorkspaceFile to be included")
 	}
-	logger.Infof("✅ workspace_tools:UpdateWorkspaceFile included")
+	log.Infof("✅ workspace_tools:UpdateWorkspaceFile included")
 
 	// Non-selected workspace tools should be excluded (specific tools were selected)
 	if tf.ShouldIncludeTool("workspace_tools", "DeleteWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:DeleteWorkspaceFile to be excluded")
 	}
-	logger.Infof("✅ workspace_tools:DeleteWorkspaceFile excluded (not in selectedTools)")
+	log.Infof("✅ workspace_tools:DeleteWorkspaceFile excluded (not in selectedTools)")
 
 	// Human tools should be INCLUDED (system category with no specific selection = all included)
 	if !tf.ShouldIncludeTool("human_tools", "human_feedback", true, false) {
 		return fmt.Errorf("expected human_tools:human_feedback to be included (system category default)")
 	}
-	logger.Infof("✅ human_tools:human_feedback included (system category default)")
+	log.Infof("✅ human_tools:human_feedback included (system category default)")
 
 	return nil
 }
@@ -616,19 +617,19 @@ func testSelectedServersWithSelectedToolsConflict(logger utils.ExtendedLogger) e
 	if !tf.ShouldIncludeTool("workspace_tools", "ReadWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:ReadWorkspaceFile to be included")
 	}
-	logger.Infof("✅ workspace_tools:ReadWorkspaceFile included (in selectedTools)")
+	log.Infof("✅ workspace_tools:ReadWorkspaceFile included (in selectedTools)")
 
 	// workspace_tools tools NOT in selectedTools should be excluded
 	if tf.ShouldIncludeTool("workspace_tools", "DeleteWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:DeleteWorkspaceFile to be excluded")
 	}
-	logger.Infof("✅ workspace_tools:DeleteWorkspaceFile excluded (not in selectedTools)")
+	log.Infof("✅ workspace_tools:DeleteWorkspaceFile excluded (not in selectedTools)")
 
 	// Other servers not in selectedServers or selectedTools should be excluded
 	if tf.ShouldIncludeTool("other_server", "SomeTool", false, false) {
 		return fmt.Errorf("expected other_server:SomeTool to be excluded")
 	}
-	logger.Infof("✅ other_server:SomeTool excluded (not in selectedServers or selectedTools)")
+	log.Infof("✅ other_server:SomeTool excluded (not in selectedServers or selectedTools)")
 
 	return nil
 }
@@ -655,7 +656,7 @@ func testComprehensiveFilterScenarios(logger utils.ExtendedLogger) error {
 	}
 
 	// Scenario 1: Both selectedServers AND selectedTools set (the bug scenario)
-	logger.Infof("\n  Scenario 1: selectedServers + selectedTools for same server")
+	log.Infof("\n  Scenario 1: selectedServers + selectedTools for same server")
 	{
 		selectedTools := []string{
 			"google-sheets:GetSheetData", // Specific tool from google-sheets
@@ -692,7 +693,7 @@ func testComprehensiveFilterScenarios(logger utils.ExtendedLogger) error {
 	}
 
 	// Scenario 2: Package name format mismatch (directory name vs config name)
-	logger.Infof("\n  Scenario 2: Package name format (simulating discovery)")
+	log.Infof("\n  Scenario 2: Package name format (simulating discovery)")
 	{
 		// Discovery passes: "google_sheets" (from directory google_sheets_tools)
 		// Config has: "google-sheets" (with hyphens)
@@ -720,7 +721,7 @@ func testComprehensiveFilterScenarios(logger utils.ExtendedLogger) error {
 	// Scenario 3: Custom tools with specific filtering
 	// Note: workspace_tools and human_tools are SYSTEM CATEGORIES (included by default)
 	// But when specific tools are selected from a system category, only those are included
-	logger.Infof("\n  Scenario 3: Custom tools filtering (with system categories)")
+	log.Infof("\n  Scenario 3: Custom tools filtering (with system categories)")
 	{
 		selectedTools := []string{
 			"workspace_tools:ReadWorkspaceFile",
@@ -751,7 +752,7 @@ func testComprehensiveFilterScenarios(logger utils.ExtendedLogger) error {
 	}
 
 	// Scenario 4: Virtual tools always included (system tools)
-	logger.Infof("\n  Scenario 4: Virtual tools always included")
+	log.Infof("\n  Scenario 4: Virtual tools always included")
 	{
 		// Even with strict filtering, virtual tools should be included
 		selectedTools := []string{"aws:GetDocument"} // Only one specific tool
@@ -776,7 +777,7 @@ func testComprehensiveFilterScenarios(logger utils.ExtendedLogger) error {
 	}
 
 	// Scenario 5: Wildcard pattern (server:*)
-	logger.Infof("\n  Scenario 5: Wildcard pattern")
+	log.Infof("\n  Scenario 5: Wildcard pattern")
 	{
 		selectedTools := []string{
 			"google-sheets:*", // ALL tools from google-sheets
@@ -854,7 +855,7 @@ func testDiscoverySimulation(logger utils.ExtendedLogger) error {
 		{"virtual_tools", "virtual", true, true, "write_code", "virtual_tools", true},
 	}
 
-	logger.Infof("\n  Simulating discovery behavior:")
+	log.Infof("\n  Simulating discovery behavior:")
 	for _, c := range cases {
 		result := tf.ShouldIncludeTool(c.PackageUsed, c.ToolName, c.IsCategory, c.IsVirtual)
 		if result != c.Expected {
@@ -865,7 +866,7 @@ func testDiscoverySimulation(logger utils.ExtendedLogger) error {
 	}
 
 	// Also test the wrong way (what the bug was doing)
-	logger.Infof("\n  Verifying bug fix - these would have been wrong with the old code:")
+	log.Infof("\n  Verifying bug fix - these would have been wrong with the old code:")
 
 	// OLD BUG: Passing dirName instead of serverName for MCP servers
 	// This would cause "google_sheets_tools" to not match "google-sheets" in selectedServers
@@ -903,12 +904,12 @@ func testSystemCategoriesIncludedByDefault(logger utils.ExtendedLogger) error {
 	if !tf.IsSystemCategory("workspace_tools") {
 		return fmt.Errorf("expected workspace_tools to be detected as system category")
 	}
-	logger.Infof("✅ workspace_tools detected as system category")
+	log.Infof("✅ workspace_tools detected as system category")
 
 	if !tf.IsSystemCategory("human_tools") {
 		return fmt.Errorf("expected human_tools to be detected as system category")
 	}
-	logger.Infof("✅ human_tools detected as system category")
+	log.Infof("✅ human_tools detected as system category")
 
 	// Test 1: workspace_tools should be included by default (all tools)
 	workspaceTools := []string{"ReadWorkspaceFile", "UpdateWorkspaceFile", "DeleteWorkspaceFile", "ListWorkspaceFiles"}
@@ -932,21 +933,21 @@ func testSystemCategoriesIncludedByDefault(logger utils.ExtendedLogger) error {
 	if !tf.ShouldIncludeTool("google_sheets", "GetSheetData", false, false) {
 		return fmt.Errorf("expected google_sheets:GetSheetData to be included (in selectedTools)")
 	}
-	logger.Infof("✅ google_sheets:GetSheetData included (in selectedTools)")
+	log.Infof("✅ google_sheets:GetSheetData included (in selectedTools)")
 
 	if tf.ShouldIncludeTool("google_sheets", "DeleteSpreadsheet", false, false) {
 		return fmt.Errorf("expected google_sheets:DeleteSpreadsheet to be excluded (not in selectedTools)")
 	}
-	logger.Infof("✅ google_sheets:DeleteSpreadsheet excluded (not in selectedTools)")
+	log.Infof("✅ google_sheets:DeleteSpreadsheet excluded (not in selectedTools)")
 
 	// Test 4: When specific workspace_tools are selected, only those should be included
-	logger.Infof("\n  Testing specific tool selection for system categories:")
+	log.Infof("\n  Testing specific tool selection for system categories:")
 	selectedToolsSpecific := []string{
 		"google-sheets:GetSheetData",
 		"workspace_tools:ReadWorkspaceFile", // Only this workspace tool
 	}
 
-	tfSpecific := mcpagent.NewToolFilter(
+	tfSpecific := agent.NewToolFilter(
 		selectedToolsSpecific,
 		[]string{},
 		mockClients,
@@ -958,19 +959,19 @@ func testSystemCategoriesIncludedByDefault(logger utils.ExtendedLogger) error {
 	if !tfSpecific.ShouldIncludeTool("workspace_tools", "ReadWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:ReadWorkspaceFile to be included (explicitly selected)")
 	}
-	logger.Infof("✅ workspace_tools:ReadWorkspaceFile included (explicitly selected)")
+	log.Infof("✅ workspace_tools:ReadWorkspaceFile included (explicitly selected)")
 
 	// DeleteWorkspaceFile should be excluded (not in specific selection)
 	if tfSpecific.ShouldIncludeTool("workspace_tools", "DeleteWorkspaceFile", true, false) {
 		return fmt.Errorf("expected workspace_tools:DeleteWorkspaceFile to be excluded (not in specific selection)")
 	}
-	logger.Infof("✅ workspace_tools:DeleteWorkspaceFile excluded (not in specific selection)")
+	log.Infof("✅ workspace_tools:DeleteWorkspaceFile excluded (not in specific selection)")
 
 	// human_tools should still be included by default (no specific selection for human_tools)
 	if !tfSpecific.ShouldIncludeTool("human_tools", "human_feedback", true, false) {
 		return fmt.Errorf("expected human_tools:human_feedback to be included (system category default)")
 	}
-	logger.Infof("✅ human_tools:human_feedback included (system category default, no specific selection)")
+	log.Infof("✅ human_tools:human_feedback included (system category default, no specific selection)")
 
 	return nil
 }
@@ -992,7 +993,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, logger utils.Extende
 		return nil
 	}
 
-	logger.Infof("Using server '%s' for normal mode integration test", testServerName)
+	log.Infof("Using server '%s' for normal mode integration test", testServerName)
 
 	// Create LLM instance
 	llmModel, err := llm.InitializeLLM(llm.Config{
@@ -1013,7 +1014,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, logger utils.Extende
 		configPath = "configs/mcp_servers_clean_user.json"
 	}
 
-	agent, err := mcpagent.NewAgent(
+	agent, err := agent.NewAgent(
 		ctx,
 		llmModel,
 		testServerName,
@@ -1029,11 +1030,11 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, logger utils.Extende
 		logger.Warnf("Failed to create agent: %v", err)
 		return nil
 	}
-	defer agent.Close()
+	defer agentInstance.Close()
 
 	// Verify: Agent should have tools from the selected server
-	tools := agent.Tools
-	logger.Infof("Normal mode: Agent has %d tools registered", len(tools))
+	tools := agentInstance.Tools
+	log.Infof("Normal mode: Agent has %d tools registered", len(tools))
 
 	if len(tools) == 0 {
 		return fmt.Errorf("normal mode: expected agent to have tools, but got 0")
@@ -1046,7 +1047,7 @@ func testNormalModeIntegration(config *mcpclient.MCPConfig, logger utils.Extende
 		}
 	}
 
-	logger.Infof("✅ Normal mode integration test passed: %d tools registered", len(tools))
+	log.Infof("✅ Normal mode integration test passed: %d tools registered", len(tools))
 	return nil
 }
 
@@ -1067,7 +1068,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, logger utils.
 		return nil
 	}
 
-	logger.Infof("Using server '%s' for code execution mode integration test", testServerName)
+	log.Infof("Using server '%s' for code execution mode integration test", testServerName)
 
 	// Create LLM instance
 	llmModel, err := llm.InitializeLLM(llm.Config{
@@ -1088,7 +1089,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, logger utils.
 		configPath = "configs/mcp_servers_clean_user.json"
 	}
 
-	agent, err := mcpagent.NewAgent(
+	agent, err := agent.NewAgent(
 		ctx,
 		llmModel,
 		testServerName,
@@ -1108,7 +1109,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, logger utils.
 
 	// In code execution mode, agent should only have virtual tools (discover_code_files, write_code)
 	tools := agent.Tools
-	logger.Infof("Code execution mode: Agent has %d LLM tools (should be virtual tools only)", len(tools))
+	log.Infof("Code execution mode: Agent has %d LLM tools (should be virtual tools only)", len(tools))
 
 	// Verify: Should have virtual tools
 	hasDiscoverCodeFiles := false
@@ -1133,7 +1134,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, logger utils.
 	}
 
 	// Test discover_code_structure to verify filtering works in discovery
-	result, err := agent.HandleVirtualTool(ctx, "discover_code_structure", map[string]interface{}{})
+	result, err := agentInstance.HandleVirtualTool(ctx, "discover_code_structure", map[string]interface{}{})
 	if err != nil {
 		logger.Warnf("Failed to call discover_code_structure: %v", err)
 		// Don't fail - discovery might fail if no generated code exists
@@ -1156,7 +1157,7 @@ func testCodeExecutionModeIntegration(config *mcpclient.MCPConfig, logger utils.
 		}
 	}
 
-	logger.Infof("✅ Code execution mode integration test passed")
+	log.Infof("✅ Code execution mode integration test passed")
 	return nil
 }
 
@@ -1198,7 +1199,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, logger utils
 	selectedTools := []string{fmt.Sprintf("%s:*", testServerName)}
 
 	// Create agent in normal mode
-	normalAgent, err := mcpagent.NewAgent(
+	normalAgent, err := agent.NewAgent(
 		ctx,
 		llmModel,
 		testServerName,
@@ -1216,7 +1217,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, logger utils
 	defer normalAgent.Close()
 
 	// Create agent in code execution mode
-	codeExecAgent, err := mcpagent.NewAgent(
+	codeExecAgent, err := agent.NewAgent(
 		ctx,
 		llmModel,
 		testServerName,
@@ -1248,7 +1249,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, logger utils
 		}
 	}
 
-	logger.Infof("Normal mode: %d MCP tools registered", normalMCPToolCount)
+	log.Infof("Normal mode: %d MCP tools registered", normalMCPToolCount)
 
 	// Get discovery from code execution mode
 	discoveryResult, err := codeExecAgent.HandleVirtualTool(ctx, "discover_code_structure", map[string]interface{}{})
@@ -1273,7 +1274,7 @@ func testFilterConsistencyBetweenModes(config *mcpclient.MCPConfig, logger utils
 		codeExecToolCount += len(server.Tools)
 	}
 
-	logger.Infof("Code execution mode: %d tools in discovery", codeExecToolCount)
+	log.Infof("Code execution mode: %d tools in discovery", codeExecToolCount)
 
 	// Both modes should have similar tool counts (allowing for some variance due to function naming)
 	// The key is that both use the same ToolFilter, so filtering should be consistent

@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/logger"
 	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -27,14 +27,14 @@ import (
 // BrokenPipeHandler handles broken pipe errors by recreating connections and retrying operations
 type BrokenPipeHandler struct {
 	agent  *Agent
-	logger logger.ExtendedLogger
+	logger loggerv2.Logger
 }
 
 // NewBrokenPipeHandler creates a new broken pipe handler
 func NewBrokenPipeHandler(agent *Agent) *BrokenPipeHandler {
 	return &BrokenPipeHandler{
 		agent:  agent,
-		logger: getLogger(agent),
+		logger: agent.Logger,
 	}
 }
 
@@ -60,21 +60,23 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	startTime time.Time,
 ) (*mcp.CallToolResult, error, time.Duration) {
 
-	h.logger.Infof("🔧 [BROKEN PIPE DETECTED] Tool: %s, Server: %s - Attempting immediate connection recreation",
-		toolCall.FunctionCall.Name, serverName)
+	h.logger.Info("Broken pipe detected, attempting connection recreation",
+		loggerv2.String("tool", toolCall.FunctionCall.Name),
+		loggerv2.String("server", serverName))
 
 	// Emit broken pipe detection event
 	h.emitBrokenPipeEvent(ctx, toolCall, serverName, originalErr)
 
 	// Create a fresh connection immediately
-	h.logger.Infof("🔧 [BROKEN PIPE] Creating fresh connection for server: %s", serverName)
+	h.logger.Info("Creating fresh connection for server", loggerv2.String("server", serverName))
 	freshClient, freshErr := h.agent.createOnDemandConnection(ctx, serverName)
 	if freshErr != nil {
-		h.logger.Errorf("🔧 [BROKEN PIPE] Failed to create fresh connection: %v", freshErr)
+		h.logger.Error("Failed to create fresh connection", freshErr,
+			loggerv2.String("server", serverName))
 		return nil, freshErr, time.Since(startTime)
 	}
 
-	h.logger.Infof("🔧 [BROKEN PIPE] Successfully created fresh connection for server: %s", serverName)
+	h.logger.Info("Successfully created fresh connection for server", loggerv2.String("server", serverName))
 
 	// Retry the tool call once with the fresh connection
 	return h.retryToolCall(ctx, toolCall, freshClient, serverName, startTime)
@@ -89,12 +91,14 @@ func (h *BrokenPipeHandler) retryToolCall(
 	startTime time.Time,
 ) (*mcp.CallToolResult, error, time.Duration) {
 
-	h.logger.Infof("🔧 [BROKEN PIPE] Retrying tool call '%s' with fresh connection", toolCall.FunctionCall.Name)
+	h.logger.Info("Retrying tool call with fresh connection",
+		loggerv2.String("tool", toolCall.FunctionCall.Name))
 
 	// Parse the tool arguments from JSON string to map
 	retryArgs, parseErr := mcpclient.ParseToolArguments(toolCall.FunctionCall.Arguments)
 	if parseErr != nil {
-		h.logger.Errorf("🔧 [BROKEN PIPE] Failed to parse tool arguments: %v", parseErr)
+		h.logger.Error("Failed to parse tool arguments", parseErr,
+			loggerv2.String("tool", toolCall.FunctionCall.Name))
 		return nil, parseErr, time.Since(startTime)
 	}
 
@@ -107,12 +111,15 @@ func (h *BrokenPipeHandler) retryToolCall(
 	retryDuration := time.Since(startTime)
 
 	if retryErr == nil {
-		h.logger.Infof("🔧 [BROKEN PIPE] Retry successful for tool '%s' after %v", toolCall.FunctionCall.Name, retryDuration)
+		h.logger.Info("Retry successful",
+			loggerv2.String("tool", toolCall.FunctionCall.Name),
+			loggerv2.String("duration", retryDuration.String()))
 		h.emitRetrySuccessEvent(ctx, toolCall, serverName, retryDuration)
 		return retryResult, nil, retryDuration
 	}
 
-	h.logger.Errorf("🔧 [BROKEN PIPE] Retry failed for tool '%s': %v", toolCall.FunctionCall.Name, retryErr)
+	h.logger.Error("Retry failed", retryErr,
+		loggerv2.String("tool", toolCall.FunctionCall.Name))
 	h.emitRetryFailureEvent(ctx, toolCall, serverName, retryErr, retryDuration)
 	return nil, retryErr, retryDuration
 }
@@ -175,14 +182,14 @@ func (h *BrokenPipeHandler) emitRetryFailureEvent(ctx context.Context, toolCall 
 // ErrorRecoveryHandler provides a unified interface for different error recovery strategies
 type ErrorRecoveryHandler struct {
 	brokenPipeHandler *BrokenPipeHandler
-	logger            logger.ExtendedLogger
+	logger            loggerv2.Logger
 }
 
 // NewErrorRecoveryHandler creates a new error recovery handler
 func NewErrorRecoveryHandler(agent *Agent) *ErrorRecoveryHandler {
 	return &ErrorRecoveryHandler{
 		brokenPipeHandler: NewBrokenPipeHandler(agent),
-		logger:            getLogger(agent),
+		logger:            agent.Logger,
 	}
 }
 

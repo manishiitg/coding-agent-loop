@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/observability"
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
+	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -189,7 +189,7 @@ func GetCachedOrFreshConnection(
 	llm llmtypes.Model,
 	serverName, configPath string,
 	tracers []observability.Tracer,
-	logger logger.ExtendedLogger,
+	logger loggerv2.Logger,
 ) (*CachedConnectionResult, error) {
 
 	// Track cache operation start time
@@ -221,10 +221,9 @@ func GetCachedOrFreshConnection(
 	} else if serverName == mcpclient.NoServers {
 		// Special case: no servers should be connected
 		servers = []string{}
-		logger.Info("🔍 No servers requested - pure LLM reasoning mode", map[string]interface{}{
-			"server_count": 0,
-			"servers":      []string{},
-		})
+		logger.Info("No servers requested - pure LLM reasoning mode",
+			loggerv2.Int("server_count", 0),
+			loggerv2.Any("servers", []string{}))
 	} else {
 		// Handle comma-separated server names
 		requestedServers := strings.Split(serverName, ",")
@@ -240,18 +239,16 @@ func GetCachedOrFreshConnection(
 		}
 	}
 
-	logger.Info("🔍 Processing servers", map[string]interface{}{
-		"server_count": len(servers),
-		"servers":      servers,
-	})
+	logger.Info("Processing servers",
+		loggerv2.Int("server_count", len(servers)),
+		loggerv2.Any("servers", servers))
 
 	// Handle special case: no servers requested (pure LLM reasoning)
 	if len(servers) == 0 {
-		logger.Info("✅ No servers requested - returning empty connection result", map[string]interface{}{
-			"server_count": 0,
-			"tools_count":  0,
-			"cache_used":   true,
-		})
+		logger.Info("No servers requested - returning empty connection result",
+			loggerv2.Int("server_count", 0),
+			loggerv2.Int("tools_count", 0),
+			loggerv2.Any("cache_used", true))
 
 		// Return empty result for pure LLM reasoning
 		result.CacheUsed = true
@@ -284,7 +281,7 @@ func GetCachedOrFreshConnection(
 		// Get server configuration for cache key generation
 		serverConfig, err := config.GetServer(srvName)
 		if err != nil {
-			logger.Warnf("Failed to get server config for %s: %v", srvName, err)
+			logger.Warn("Failed to get server config", loggerv2.Error(err), loggerv2.String("server", srvName))
 			continue
 		}
 
@@ -296,10 +293,9 @@ func GetCachedOrFreshConnection(
 			// Calculate cache age
 			age := time.Since(entry.CreatedAt)
 
-			logger.Info("✅ Cache hit", map[string]interface{}{
-				"server":    srvName,
-				"cache_key": cacheKey,
-			})
+			logger.Info("Cache hit",
+				loggerv2.String("server", srvName),
+				loggerv2.String("cache_key", cacheKey))
 
 			// Track cache hit status (no individual event emission)
 			serverStatus[srvName] = ServerCacheStatus{
@@ -321,24 +317,21 @@ func GetCachedOrFreshConnection(
 			result.CacheKey = cacheKey
 			result.CacheUsed = true
 		} else {
-			logger.Info("❌ Cache miss", map[string]interface{}{
-				"server":    srvName,
-				"cache_key": cacheKey,
-			})
+			logger.Info("Cache miss",
+				loggerv2.String("server", srvName),
+				loggerv2.String("cache_key", cacheKey))
 
 			// Try to reload cache from disk before giving up
-			logger.Info("🔄 Attempting to reload cache from disk", map[string]interface{}{
-				"server":    srvName,
-				"cache_key": cacheKey,
-			})
+			logger.Info("Attempting to reload cache from disk",
+				loggerv2.String("server", srvName),
+				loggerv2.String("cache_key", cacheKey))
 
 			// Try to reload the cache entry from disk
 			if reloadedEntry := cacheManager.ReloadFromDisk(cacheKey); reloadedEntry != nil {
-				logger.Info("✅ Cache reloaded from disk", map[string]interface{}{
-					"server":    srvName,
-					"cache_key": cacheKey,
-					"tools":     len(reloadedEntry.Tools),
-				})
+				logger.Info("Cache reloaded from disk",
+					loggerv2.String("server", srvName),
+					loggerv2.String("cache_key", cacheKey),
+					loggerv2.Int("tools", len(reloadedEntry.Tools)))
 
 				// NOTE: Tools are already normalized before caching, no need to normalize again
 				// This prevents race conditions from unlocked mutations
@@ -365,10 +358,9 @@ func GetCachedOrFreshConnection(
 				result.CacheUsed = true
 				continue // Skip to next server
 			} else {
-				logger.Warn("⚠️ Cache reload from disk failed", map[string]interface{}{
-					"server":    srvName,
-					"cache_key": cacheKey,
-				})
+				logger.Warn("Cache reload from disk failed",
+					loggerv2.String("server", srvName),
+					loggerv2.String("cache_key", cacheKey))
 			}
 
 			// Track cache miss status (no individual event emission)
@@ -391,9 +383,8 @@ func GetCachedOrFreshConnection(
 	// HYBRID APPROACH: Handle different cache scenarios
 	if allFromCache && len(cachedData) > 0 {
 		// SCENARIO 1: All servers cached - use cached data
-		logger.Info("🎯 All servers cached - using cached data (will still connect)", map[string]interface{}{
-			"cached_servers": len(cachedData),
-		})
+		logger.Info("All servers cached - using cached data (will still connect)",
+			loggerv2.Int("cached_servers", len(cachedData)))
 
 		// Emit comprehensive cache event for cached data usage
 		cacheTime := time.Since(cacheStartTime)
@@ -415,12 +406,11 @@ func GetCachedOrFreshConnection(
 	// SCENARIO 2 & 3: Partial cache or all missed
 	if len(cachedServers) > 0 && len(missedServers) > 0 {
 		// HYBRID: Some cached, some missed - use cached data + connect only to missed servers
-		logger.Info("🔀 Hybrid cache scenario - using cached + connecting to missed servers", map[string]interface{}{
-			"cached_servers": cachedServers,
-			"missed_servers": missedServers,
-			"cached_count":   len(cachedServers),
-			"missed_count":   len(missedServers),
-		})
+		logger.Info("Hybrid cache scenario - using cached + connecting to missed servers",
+			loggerv2.Any("cached_servers", cachedServers),
+			loggerv2.Any("missed_servers", missedServers),
+			loggerv2.Int("cached_count", len(cachedServers)),
+			loggerv2.Int("missed_count", len(missedServers)))
 
 		// Start with cached data
 		result.CacheUsed = true
@@ -429,7 +419,7 @@ func GetCachedOrFreshConnection(
 		// Process cached data first
 		cachedResult, err := processCachedData(ctx, llm, cachedData, config, cachedServers, configPath, tracers, logger)
 		if err != nil {
-			logger.Warnf("Failed to process cached data in hybrid mode: %v", err)
+			logger.Warn("Failed to process cached data in hybrid mode", loggerv2.Error(err))
 			// Continue to fresh connection for missed servers anyway
 		} else {
 			// Copy cached result data
@@ -445,7 +435,7 @@ func GetCachedOrFreshConnection(
 		missedServersStr := strings.Join(missedServers, ",")
 		freshResult, err := performFreshConnection(ctx, llm, missedServersStr, configPath, tracers, logger)
 		if err != nil {
-			logger.Errorf("Failed to connect to missed servers: %v", err)
+			logger.Error("Failed to connect to missed servers", err)
 			result.Error = err
 			// Return partial result with cached data
 			return result, fmt.Errorf("hybrid cache: cached %d servers, failed to connect to %d servers: %w", len(cachedServers), len(missedServers), err)
@@ -473,12 +463,11 @@ func GetCachedOrFreshConnection(
 			cacheFreshConnectionData(cacheCtx, cacheManager, config, configPath, missedServers, freshResult, tracers, logger)
 		}()
 
-		logger.Info("✅ Hybrid cache complete", map[string]interface{}{
-			"total_servers":  len(servers),
-			"cached_servers": len(cachedServers),
-			"fresh_servers":  len(missedServers),
-			"total_tools":    len(result.Tools),
-		})
+		logger.Info("Hybrid cache complete",
+			loggerv2.Int("total_servers", len(servers)),
+			loggerv2.Int("cached_servers", len(cachedServers)),
+			loggerv2.Int("fresh_servers", len(missedServers)),
+			loggerv2.Int("total_tools", len(result.Tools)))
 
 		// Emit comprehensive cache event
 		cacheTime := time.Since(cacheStartTime)
@@ -498,10 +487,9 @@ func GetCachedOrFreshConnection(
 	}
 
 	// SCENARIO 4: All servers missed cache - full fresh connection
-	logger.Info("🔄 All servers missed cache - performing fresh connections", map[string]interface{}{
-		"missed_servers": missedServers,
-		"missed_count":   len(missedServers),
-	})
+	logger.Info("All servers missed cache - performing fresh connections",
+		loggerv2.Any("missed_servers", missedServers),
+		loggerv2.Int("missed_count", len(missedServers)))
 
 	result.CacheUsed = false
 	result.FreshFallback = true
@@ -555,7 +543,7 @@ func processCachedData(
 	servers []string,
 	configPath string,
 	tracers []observability.Tracer,
-	logger logger.ExtendedLogger,
+	logger loggerv2.Logger,
 ) (*CachedConnectionResult, error) {
 
 	result := &CachedConnectionResult{
@@ -576,15 +564,16 @@ func processCachedData(
 			continue
 		}
 
-		logger.Info("📋 Using cached data without connection", map[string]interface{}{
-			"server":      srvName,
-			"tools_count": len(entry.Tools),
-			"protocol":    entry.Protocol,
-		})
+		logger.Info("Using cached data without connection",
+			loggerv2.String("server", srvName),
+			loggerv2.Int("tools_count", len(entry.Tools)),
+			loggerv2.String("protocol", entry.Protocol))
 
 		// NOTE: Tools are already normalized before caching (see cacheFreshConnectionData)
 		// No need to normalize again, which prevents race conditions from unlocked mutations
-		logger.Debugf("Using pre-normalized tools for server %s: %d tools", srvName, len(entry.Tools))
+		logger.Debug("Using pre-normalized tools for server",
+			loggerv2.String("server", srvName),
+			loggerv2.Int("tools", len(entry.Tools)))
 
 		// Deduplicate tools using ToolOwnership metadata
 		// Only add tools marked as "primary" for this server
@@ -600,7 +589,9 @@ func processCachedData(
 				ownership, exists := entry.ToolOwnership[toolName]
 				if exists && ownership == "duplicate" {
 					// This tool is a duplicate - skip it with deterministic logging
-					logger.Debugf("Skipping duplicate tool %s on server %s (marked as duplicate in cache)", toolName, srvName)
+					logger.Debug("Skipping duplicate tool (marked as duplicate in cache)",
+						loggerv2.String("tool", toolName),
+						loggerv2.String("server", srvName))
 					continue
 				}
 				// If ownership is "primary" or not set, include the tool
@@ -610,12 +601,10 @@ func processCachedData(
 			if seenTools[toolName] {
 				// Duplicate tool found despite ToolOwnership metadata - log warning
 				existingServer := result.ToolToServer[toolName]
-				fields := DuplicateToolFields{
-					ToolName:        toolName,
-					ExistingServer:  existingServer,
-					DuplicateServer: srvName,
-				}
-				logger.WithFields(fields.ToLogrusFields()).Warn("⚠️ Unexpected duplicate tool in cache (ToolOwnership may need update)")
+				logger.Warn("Unexpected duplicate tool in cache (ToolOwnership may need update)",
+					loggerv2.String("tool", toolName),
+					loggerv2.String("existing_server", existingServer),
+					loggerv2.String("duplicate_server", srvName))
 				continue
 			}
 
@@ -631,10 +620,9 @@ func processCachedData(
 			result.Resources[srvName] = entry.Resources
 		}
 
-		logger.Info("✅ Cached data loaded", map[string]interface{}{
-			"server":      srvName,
-			"tools_count": len(entry.Tools),
-		})
+		logger.Info("Cached data loaded",
+			loggerv2.String("server", srvName),
+			loggerv2.Int("tools_count", len(entry.Tools)))
 	}
 
 	// Use cached system prompt if available
@@ -648,16 +636,13 @@ func processCachedData(
 	}
 
 	// Now create actual connections to servers even though we're using cached tool definitions
-	logger.Info("🔄 Creating actual connections to servers (using cached tool definitions)", map[string]interface{}{
-		"servers": servers,
-	})
+	logger.Info("Creating actual connections to servers (using cached tool definitions)",
+		loggerv2.Any("servers", servers))
 
 	// Create connections using the original connection logic
 	clients, _, _, _, prompts, resources, _, err := performOriginalConnectionLogic(ctx, llm, strings.Join(servers, ","), configPath, "cached-connection", tracers, logger)
 	if err != nil {
-		logger.Warn("⚠️ Failed to create connections, but continuing with cached data", map[string]interface{}{
-			"error": err.Error(),
-		})
+		logger.Warn("Failed to create connections, but continuing with cached data", loggerv2.Error(err))
 		// Continue with cached data even if connections fail
 	} else {
 		// Use the actual connections
@@ -681,11 +666,10 @@ func processCachedData(
 		}
 	}
 
-	logger.Info("✅ Cached data processing complete with connections", map[string]interface{}{
-		"cached_servers": len(cachedData),
-		"total_tools":    len(result.Tools),
-		"connections":    len(result.Clients), // Actual connections created
-	})
+	logger.Info("Cached data processing complete with connections",
+		loggerv2.Int("cached_servers", len(cachedData)),
+		loggerv2.Int("total_tools", len(result.Tools)),
+		loggerv2.Int("connections", len(result.Clients)))
 
 	return result, nil
 }
@@ -696,7 +680,7 @@ func performFreshConnection(
 	llm llmtypes.Model,
 	serverName, configPath string,
 	tracers []observability.Tracer,
-	logger logger.ExtendedLogger,
+	logger loggerv2.Logger,
 ) (*CachedConnectionResult, error) {
 
 	// This would call the original NewAgentConnection function
@@ -726,28 +710,28 @@ func performOriginalConnectionLogic(
 	llm llmtypes.Model,
 	serverName, configPath, traceID string,
 	tracers []observability.Tracer,
-	logger logger.ExtendedLogger,
+	logger loggerv2.Logger,
 ) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Load merged MCP server configuration (base + user)
-	logger.Info("🔍 Loading merged MCP config", map[string]interface{}{"config_path": configPath})
+	logger.Info("Loading merged MCP config", loggerv2.String("config_path", configPath))
 	cfg, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		logger.Error("❌ Failed to load merged MCP config", map[string]interface{}{"error": err.Error()})
+		logger.Error("Failed to load merged MCP config", err)
 		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("load merged config: %w", err)
 	}
-	logger.Info("✅ Merged MCP config loaded", map[string]interface{}{"server_count": len(cfg.MCPServers)})
+	logger.Info("Merged MCP config loaded", loggerv2.Int("server_count", len(cfg.MCPServers)))
 
 	// Determine which servers to connect to
 	var servers []string
 	if serverName == "all" || serverName == "" {
 		servers = cfg.ListServers()
-		logger.Info("🔍 Using all servers", map[string]interface{}{"server_count": len(servers)})
+		logger.Info("Using all servers", loggerv2.Int("server_count", len(servers)))
 	} else {
 		for _, s := range strings.Split(serverName, ",") {
 			servers = append(servers, strings.TrimSpace(s))
 		}
-		logger.Info("🔍 Using specific servers", map[string]interface{}{"servers": servers})
+		logger.Info("Using specific servers", loggerv2.Any("servers", servers))
 	}
 
 	clients := make(map[string]mcpclient.ClientInterface)
@@ -763,26 +747,24 @@ func performOriginalConnectionLogic(
 			filteredConfig.MCPServers[serverName] = serverConfig
 		}
 	}
-	logger.Info("✅ Filtered config created", map[string]interface{}{"filtered_server_count": len(filteredConfig.MCPServers)})
+	logger.Info("Filtered config created", loggerv2.Int("filtered_server_count", len(filteredConfig.MCPServers)))
 
 	// Use new parallel tool discovery for only the specified servers
 	discoveryStartTime := time.Now()
-	logger.Info("🚀 Starting parallel tool discovery", map[string]interface{}{
-		"server_count": len(filteredConfig.MCPServers),
-		"servers":      servers,
-		"start_time":   discoveryStartTime.Format(time.RFC3339),
-	})
+	logger.Info("Starting parallel tool discovery",
+		loggerv2.Int("server_count", len(filteredConfig.MCPServers)),
+		loggerv2.Any("servers", servers),
+		loggerv2.String("start_time", discoveryStartTime.Format(time.RFC3339)))
 
 	// Log discovery start (events handled by connection.go)
 
 	parallelResults := mcpclient.DiscoverAllToolsParallel(ctx, filteredConfig, logger)
 
 	discoveryDuration := time.Since(discoveryStartTime)
-	logger.Info("✅ Parallel tool discovery completed", map[string]interface{}{
-		"result_count":   len(parallelResults),
-		"discovery_time": discoveryDuration.String(),
-		"discovery_ms":   discoveryDuration.Milliseconds(),
-	})
+	logger.Info("Parallel tool discovery completed",
+		loggerv2.Int("result_count", len(parallelResults)),
+		loggerv2.Any("discovery_time", discoveryDuration.String()),
+		loggerv2.Any("discovery_ms", discoveryDuration.Milliseconds()))
 
 	// Track seen tools to prevent duplicates (Gemini/Vertex rejects duplicate function declarations)
 	seenTools := make(map[string]bool)
@@ -831,12 +813,10 @@ func performOriginalConnectionLogic(
 			if seenTools[toolName] {
 				// Duplicate tool found - log warning and skip
 				existingServer := toolToServer[toolName]
-				fields := DuplicateToolFields{
-					ToolName:        toolName,
-					ExistingServer:  existingServer,
-					DuplicateServer: srvName,
-				}
-				logger.WithFields(fields.ToLogrusFields()).Warn("⚠️ Duplicate tool detected, skipping")
+				logger.Warn("Duplicate tool detected, skipping",
+					loggerv2.String("tool", toolName),
+					loggerv2.String("existing_server", existingServer),
+					loggerv2.String("duplicate_server", srvName))
 				continue
 			}
 
@@ -849,23 +829,20 @@ func performOriginalConnectionLogic(
 		clients[srvName] = c
 	}
 
-	logger.Info("🔧 Aggregated tools", map[string]interface{}{
-		"total_tools":     len(allLLMTools),
-		"server_count":    len(clients),
-		"connection_type": "direct",
-	})
+	logger.Info("Aggregated tools",
+		loggerv2.Int("total_tools", len(allLLMTools)),
+		loggerv2.Int("server_count", len(clients)),
+		loggerv2.String("connection_type", "direct"))
 
 	// Discover prompts and resources from all connected servers
 	allPrompts := make(map[string][]mcp.Prompt)
 	allResources := make(map[string][]mcp.Resource)
 
-	logger.Info("🔍 Discovering prompts and resources", map[string]interface{}{
-		"server_count": len(clients),
-	})
+	logger.Info("Discovering prompts and resources",
+		loggerv2.Int("server_count", len(clients)))
 	for serverName, client := range clients {
-		logger.Info("  📝 Checking prompts from server", map[string]interface{}{
-			"server_name": serverName,
-		})
+		logger.Info("Checking prompts from server",
+			loggerv2.String("server_name", serverName))
 
 		// For SSE connections, use the stored context from the client
 		// For other protocols, use the parent context
@@ -873,17 +850,17 @@ func performOriginalConnectionLogic(
 		if client.GetContext() != nil {
 			// Use stored context if available (SSE connections)
 			discoveryCtx = client.GetContext()
-			logger.Info("🔍 Using stored context for discovery", map[string]interface{}{"server_name": serverName})
+			logger.Info("Using stored context for discovery", loggerv2.String("server_name", serverName))
 		} else {
 			// Fallback to parent context
 			discoveryCtx = ctx
-			logger.Info("🔍 Using parent context for discovery", map[string]interface{}{"server_name": serverName})
+			logger.Info("Using parent context for discovery", loggerv2.String("server_name", serverName))
 		}
 
 		// Discover prompts
 		prompts, err := client.ListPrompts(discoveryCtx)
 		if err != nil {
-			logger.Errorf("    ❌ Error listing prompts from %s: %v", serverName, err)
+			logger.Error("Error listing prompts", err, loggerv2.String("server", serverName))
 		} else if len(prompts) > 0 {
 			// Fetch full content for each prompt
 			var fullPrompts []mcp.Prompt
@@ -891,7 +868,10 @@ func performOriginalConnectionLogic(
 				// Try to get the full content
 				promptResult, err := client.GetPrompt(discoveryCtx, prompt.Name)
 				if err != nil {
-					logger.Warnf("    ⚠️ Failed to get full content for prompt %s from %s: %v", prompt.Name, serverName, err)
+					logger.Warn("Failed to get full content for prompt",
+						loggerv2.Error(err),
+						loggerv2.String("prompt", prompt.Name),
+						loggerv2.String("server", serverName))
 					// Use the metadata prompt if full content fetch fails
 					fullPrompts = append(fullPrompts, prompt)
 				} else if promptResult != nil && len(promptResult.Messages) > 0 {
@@ -906,7 +886,10 @@ func performOriginalConnectionLogic(
 					}
 					fullContent := contentBuilder.String()
 					if fullContent != "" {
-						logger.Infof("    ✅ Fetched full content for prompt %s from %s (%d chars)", prompt.Name, serverName, len(fullContent))
+						logger.Info("Fetched full content for prompt",
+							loggerv2.String("prompt", prompt.Name),
+							loggerv2.String("server", serverName),
+							loggerv2.Int("chars", len(fullContent)))
 
 						// Store full content in Description field (this will be used by virtual tools)
 						// The system prompt builder will extract previews from this content
@@ -930,15 +913,16 @@ func performOriginalConnectionLogic(
 		// Discover resources
 		resources, err := client.ListResources(discoveryCtx)
 		if err != nil {
-			logger.Errorf("    ❌ Error listing resources from %s: %v", serverName, err)
+			logger.Error("Error listing resources", err, loggerv2.String("server", serverName))
 		} else if len(resources) > 0 {
 			allResources[serverName] = resources
-			logger.Infof("    ✅ Found %d resources", len(resources))
+			logger.Info("Found resources", loggerv2.Int("count", len(resources)))
 		}
 	}
 
-	logger.Infof("📊 Summary: %d prompts, %d resources discovered",
-		len(allPrompts), len(allResources))
+	logger.Info("Summary: prompts and resources discovered",
+		loggerv2.Int("prompts", len(allPrompts)),
+		loggerv2.Int("resources", len(allResources)))
 
 	// Log detailed discovery completion (events handled by connection.go)
 
@@ -958,7 +942,7 @@ func cacheFreshConnectionData(
 	servers []string,
 	result *CachedConnectionResult,
 	tracers []observability.Tracer,
-	logger logger.ExtendedLogger,
+	logger loggerv2.Logger,
 ) {
 	for _, srvName := range servers {
 		serverConfig, exists := config.MCPServers[srvName]
@@ -982,7 +966,9 @@ func cacheFreshConnectionData(
 			owningServer, exists := result.ToolToServer[toolName]
 			if !exists {
 				// Tool not in ToolToServer map (shouldn't happen, but be defensive)
-				logger.Warnf("Tool %s from server %s not found in ToolToServer map", toolName, srvName)
+				logger.Warn("Tool not found in ToolToServer map",
+					loggerv2.String("tool", toolName),
+					loggerv2.String("server", srvName))
 				toolOwnership[toolName] = "primary" // Assume primary by default
 				continue
 			}
@@ -993,7 +979,10 @@ func cacheFreshConnectionData(
 			} else {
 				// Another server owns this tool (this server has a duplicate)
 				toolOwnership[toolName] = "duplicate"
-				logger.Debugf("Tool %s: Server %s marked as duplicate (primary: %s)", toolName, srvName, owningServer)
+				logger.Debug("Tool marked as duplicate",
+					loggerv2.String("tool", toolName),
+					loggerv2.String("server", srvName),
+					loggerv2.String("primary", owningServer))
 			}
 		}
 
@@ -1014,9 +1003,9 @@ func cacheFreshConnectionData(
 
 		// Store in cache using configuration-aware cache key
 		if err := cacheManager.Put(entry, serverConfig); err != nil {
-			logger.Warnf("Failed to cache connection data for %s: %v", srvName, err)
+			logger.Warn("Failed to cache connection data", loggerv2.Error(err), loggerv2.String("server", srvName))
 		} else {
-			logger.Debugf("Successfully cached connection data for %s (tools pre-normalized)", srvName)
+			logger.Debug("Successfully cached connection data (tools pre-normalized)", loggerv2.String("server", srvName))
 		}
 	}
 }
@@ -1033,63 +1022,63 @@ func extractServerTools(allTools []llmtypes.Tool, toolToServer map[string]string
 }
 
 // InvalidateServerCache invalidates cache entries for a specific server
-func InvalidateServerCache(configPath, serverName string, logger logger.ExtendedLogger) error {
+func InvalidateServerCache(configPath, serverName string, logger loggerv2.Logger) error {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.InvalidateByServer(configPath, serverName)
 }
 
 // ClearAllCache clears all cache entries
-func ClearAllCache(logger logger.ExtendedLogger) error {
+func ClearAllCache(logger loggerv2.Logger) error {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.Clear()
 }
 
 // GetCacheStats returns cache statistics
-func GetCacheStats(logger logger.ExtendedLogger) map[string]interface{} {
+func GetCacheStats(logger loggerv2.Logger) map[string]interface{} {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.GetStats()
 }
 
 // CleanupExpiredEntries removes expired cache entries
-func CleanupExpiredEntries(logger logger.ExtendedLogger) error {
+func CleanupExpiredEntries(logger loggerv2.Logger) error {
 	cacheManager := GetCacheManager(logger)
 	return cacheManager.Cleanup()
 }
 
 // ValidateCacheHealth validates the health of cached connections and emits events
-func ValidateCacheHealth(tracers []observability.Tracer, logger logger.ExtendedLogger) {
+func ValidateCacheHealth(tracers []observability.Tracer, logger loggerv2.Logger) {
 	cacheManager := GetCacheManager(logger)
 	stats := cacheManager.GetStats()
 
-	logger.Info("🔍 Cache health check started", map[string]interface{}{
-		"total_entries":   stats["total_entries"],
-		"valid_entries":   stats["valid_entries"],
-		"expired_entries": stats["expired_entries"],
-	})
+	logger.Info("Cache health check started",
+		loggerv2.Any("total_entries", stats["total_entries"]),
+		loggerv2.Any("valid_entries", stats["valid_entries"]),
+		loggerv2.Any("expired_entries", stats["expired_entries"]))
 
 	// Cleanup expired entries
 	if err := cacheManager.Cleanup(); err != nil {
-		logger.Warnf("Cache cleanup failed: %w", err)
+		logger.Warn("Cache cleanup failed", loggerv2.Error(err))
 	} else {
 		cleanupStats := cacheManager.GetStats()
-		logger.Infof("Cache cleanup completed: %d expired entries removed", cleanupStats["expired_entries"])
+		logger.Info("Cache cleanup completed",
+			loggerv2.Any("expired_entries_removed", cleanupStats["expired_entries"]))
 	}
 }
 
 // ValidateServerCache validates cache for a specific server and emits events
-func ValidateServerCache(serverName, configPath string, tracers []observability.Tracer, logger logger.ExtendedLogger) bool {
+func ValidateServerCache(serverName, configPath string, tracers []observability.Tracer, logger loggerv2.Logger) bool {
 	cacheManager := GetCacheManager(logger)
 
 	// Get merged server config to generate cache key
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		logger.Warnf("Failed to load merged config for cache validation: %w", err)
+		logger.Warn("Failed to load merged config for cache validation", loggerv2.Error(err))
 		return false
 	}
 
 	serverConfig, exists := config.MCPServers[serverName]
 	if !exists {
-		logger.Warnf("Server %s not found in config for cache validation", serverName)
+		logger.Warn("Server not found in config for cache validation", loggerv2.String("server", serverName))
 		return false
 	}
 
@@ -1102,30 +1091,33 @@ func ValidateServerCache(serverName, configPath string, tracers []observability.
 
 		if age < ttl {
 			// Cache is valid
-			logger.Debugf("Cache validation: %s is valid (age: %v, TTL: %v)", serverName, age, ttl)
+			logger.Debug("Cache validation: server is valid",
+				loggerv2.String("server", serverName),
+				loggerv2.Any("age", age.String()),
+				loggerv2.Any("ttl", ttl.String()))
 			return true
 		} else {
 			// Cache expired - invalidate
 			cacheManager.InvalidateByServer(configPath, serverName)
-			logger.Debugf("Cache validation: %s expired and invalidated", serverName)
+			logger.Debug("Cache validation: server expired and invalidated", loggerv2.String("server", serverName))
 			return false
 		}
 	} else {
 		// Cache miss
-		logger.Debugf("Cache validation: %s not found in cache", serverName)
+		logger.Debug("Cache validation: server not found in cache", loggerv2.String("server", serverName))
 		return false
 	}
 }
 
 // GetCacheStatus returns detailed cache status for monitoring
-func GetCacheStatus(configPath string, tracers []observability.Tracer, logger logger.ExtendedLogger) map[string]interface{} {
+func GetCacheStatus(configPath string, tracers []observability.Tracer, logger loggerv2.Logger) map[string]interface{} {
 	cacheManager := GetCacheManager(logger)
 	stats := cacheManager.GetStats()
 
 	// Load merged config to get server list
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
 	if err != nil {
-		logger.Warnf("Failed to load merged config for cache status: %w", err)
+		logger.Warn("Failed to load merged config for cache status", loggerv2.Error(err))
 		return stats
 	}
 

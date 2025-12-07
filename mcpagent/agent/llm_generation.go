@@ -3,9 +3,10 @@ package mcpagent
 import (
 	"context"
 	"fmt"
-	"mcpagent/llm"
-	"mcpagent/observability"
 	"mcpagent/events"
+	"mcpagent/llm"
+	loggerv2 "mcpagent/logger/v2"
+	"mcpagent/observability"
 	"strings"
 	"time"
 
@@ -14,12 +15,6 @@ import (
 
 // GenerateContentWithRetry handles LLM generation with robust retry logic for throttling errors
 func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes.MessageContent, opts []llmtypes.CallOption, turn int, sendMessage func(string)) (*llmtypes.ContentResponse, error, observability.UsageMetrics) {
-	// 🆕 DETAILED GENERATECONTENTWITHRETRY DEBUG LOGGING
-	logger := getLogger(a)
-	logger.Infof("🔄 [DEBUG] GenerateContentWithRetry START - Time: %v", time.Now())
-	logger.Infof("🔄 [DEBUG] GenerateContentWithRetry params - Messages: %d, Options: %d, Turn: %d", len(messages), len(opts), turn)
-	logger.Infof("🔄 [DEBUG] GenerateContentWithRetry context - Err: %v, Done: %v", ctx.Err(), ctx.Done())
-
 	maxRetries := 5
 	baseDelay := 30 * time.Second // Start with 30s for throttling
 	maxDelay := 5 * time.Minute   // Maximum 5 minutes
@@ -195,7 +190,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	}
 
 	// Get fallback models for the current provider
-	logger.Infof("Agent provider field: '%s'", a.provider)
+	v2Logger := a.Logger
+	v2Logger.Debug("Getting fallback models", loggerv2.String("provider_field", string(a.provider)))
 
 	// Use the agent's provider field directly since the LLM instance might not have provider info
 	var provider llm.Provider
@@ -204,16 +200,18 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		provider, err = llm.ValidateProvider(string(a.provider))
 		if err != nil {
 			// Log the error and use a default provider
-			logger.Infof("Invalid provider '%s', using default provider 'bedrock' - error: %v", a.provider, err)
+			v2Logger.Warn("Invalid provider, using default provider 'bedrock'",
+				loggerv2.String("provider", string(a.provider)),
+				loggerv2.Error(err))
 			provider = llm.ProviderBedrock
 		}
 	} else {
 		// If no provider specified, default to bedrock
-		logger.Infof("No provider specified, using default provider 'bedrock'")
+		v2Logger.Debug("No provider specified, using default provider 'bedrock'")
 		provider = llm.ProviderBedrock
 	}
 
-	logger.Infof("Validated provider: '%s'", provider)
+	v2Logger.Debug("Validated provider", loggerv2.String("provider", string(provider)))
 	sameProviderFallbacks := llm.GetDefaultFallbackModels(provider)
 
 	// Use actual cross-provider fallback configuration if available, otherwise fall back to hardcoded function
@@ -222,7 +220,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 	if a.CrossProviderFallback != nil {
 		crossProviderFallbacks = a.CrossProviderFallback.Models
 		crossProviderName = a.CrossProviderFallback.Provider
-		logger.Infof("🔍 Using frontend cross-provider fallback - Provider: %s, Models: %v", crossProviderName, crossProviderFallbacks)
+		v2Logger.Debug("Using frontend cross-provider fallback",
+			loggerv2.String("provider", crossProviderName),
+			loggerv2.Any("models", crossProviderFallbacks))
 	} else {
 		crossProviderFallbacks = llm.GetCrossProviderFallbackModels(provider)
 		// Determine cross-provider name based on provider and fallback models
@@ -237,10 +237,14 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 				crossProviderName = "openai"
 			}
 		}
-		logger.Infof("🔍 Using default cross-provider fallback - Provider: %s, Models: %v", crossProviderName, crossProviderFallbacks)
+		v2Logger.Debug("Using default cross-provider fallback",
+			loggerv2.String("provider", crossProviderName),
+			loggerv2.Any("models", crossProviderFallbacks))
 	}
 
-	logger.Infof("🔍 Fallback models loaded - same_provider: %v, cross_provider: %v", sameProviderFallbacks, crossProviderFallbacks)
+	v2Logger.Debug("Fallback models loaded",
+		loggerv2.Any("same_provider", sameProviderFallbacks),
+		loggerv2.Any("cross_provider", crossProviderFallbacks))
 
 	// Create LLM generation with retry event (replaced span-based tracing)
 	llmGenerationStartEvent := &events.LLMGenerationWithRetryEvent{
@@ -266,36 +270,15 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 		default:
 		}
 
-		// 🆕 DETAILED LLM CALL DEBUGGING IN RETRY LOOP
-		logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - About to call a.LLM.GenerateContent - Time: %v", attempt+1, time.Now())
-		logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - LLM details - Provider: %s, Model: %s", attempt+1, string(a.GetProvider()), a.ModelID)
-		logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - Context deadline check...", attempt+1)
-		if deadline, ok := ctx.Deadline(); ok {
-			timeUntilDeadline := time.Until(deadline)
-			logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - Context deadline: %v, Time until deadline: %v", attempt+1, deadline, timeUntilDeadline)
-		} else {
-			logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - Context has no deadline", attempt+1)
-		}
-
 		// Use non-streaming approach for all agents
-		llmCallStart := time.Now()
-		logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - Calling a.LLM.GenerateContent NOW - Time: %v", attempt+1, llmCallStart)
-
 		resp, err := a.LLM.GenerateContent(ctx, messages, opts...)
 
-		llmCallDuration := time.Since(llmCallStart)
-		logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - a.LLM.GenerateContent completed - Duration: %v, Error: %v", attempt+1, llmCallDuration, err != nil)
-
 		if err == nil {
-			logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - SUCCESS - Response: %v", attempt+1, resp != nil)
 			usage = extractUsageMetricsWithMessages(resp, messages)
 			// Note: llm_generation_end event is emitted by EndLLMGeneration() in conversation.go
 			// to avoid duplicate events
 			return resp, nil, usage
 		}
-
-		// 🆕 DETAILED ERROR DEBUGGING
-		logger.Infof("🔄 [DEBUG] GenerateContentWithRetry attempt %d - ERROR - Error: %v, Error type: %T", attempt+1, err, err)
 
 		// Emit LLM generation error event (replaced span-based tracing)
 		llmAttemptErrorEvent := &events.LLMGenerationErrorEvent{
@@ -308,15 +291,6 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			Duration: time.Since(llmGenerationStartEvent.Timestamp),
 		}
 		a.EmitTypedEvent(ctx, llmAttemptErrorEvent)
-
-		// Enhanced debugging: Show which error classification is being used
-		logger.Infof("🔍 ERROR CLASSIFICATION DEBUG - Error: %s", err.Error())
-		logger.Infof("🔍 isMaxTokenError: %v", isMaxTokenError(err))
-		logger.Infof("🔍 isEmptyContentError: %v", isEmptyContentError(err))
-		logger.Infof("🔍 isThrottlingError: %v", isThrottlingError(err))
-		logger.Infof("🔍 isConnectionError: %v", isConnectionError(err))
-		logger.Infof("🔍 isStreamError: %v", isStreamError(err))
-		logger.Infof("🔍 isInternalError: %v", isInternalError(err))
 
 		// Handle max token errors with fallback models
 		if isMaxTokenError(err) {
@@ -1075,17 +1049,22 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 
 		// Handle empty content errors - go directly to fallback models (no retry delay)
 		if isEmptyContentError(err) {
-			logger.Infof("🔍 EMPTY CONTENT ERROR HANDLING STARTED")
-			logger.Infof("🔍 Error details: %s", err.Error())
-			logger.Infof("🔍 Available fallbacks - same_provider: %d, cross_provider: %d", len(sameProviderFallbacks), len(crossProviderFallbacks))
-			logger.Infof("🔍 Same provider fallbacks: %v", sameProviderFallbacks)
-			logger.Infof("🔍 Cross provider fallbacks: %v", crossProviderFallbacks)
+			v2Logger := a.Logger
+			v2Logger.Debug("Empty content error handling started",
+				loggerv2.Error(err),
+				loggerv2.Int("same_provider_fallbacks", len(sameProviderFallbacks)),
+				loggerv2.Int("cross_provider_fallbacks", len(crossProviderFallbacks)),
+				loggerv2.Any("same_provider_fallbacks", sameProviderFallbacks),
+				loggerv2.Any("cross_provider_fallbacks", crossProviderFallbacks))
 
 			// Track empty content error start time
 			emptyContentStartTime := time.Now()
 
 			// Go directly to fallback models (no retry delay for empty content errors)
-			logger.Infof("⚠️ Empty content error detected (turn %d, attempt %d/%d). Proceeding directly to fallback models...", turn, attempt+1, maxRetries)
+			v2Logger.Warn("Empty content error detected, proceeding directly to fallback models",
+				loggerv2.Int("turn", turn),
+				loggerv2.Int("attempt", attempt+1),
+				loggerv2.Int("max_retries", maxRetries))
 
 			// Emit empty content error event (no retry delay since we're going to fallback)
 			emptyContentEvent := events.NewThrottlingDetectedEvent(turn, a.ModelID, string(a.provider), attempt+1, maxRetries, time.Since(emptyContentStartTime), "empty_content", 0)
@@ -1867,8 +1846,10 @@ func (a *Agent) createFallbackLLM(ctx context.Context, modelID string) (llmtypes
 	provider := detectProviderFromModelID(modelID)
 
 	// Log the fallback attempt with the detected provider
-	logger := getLogger(a)
-	logger.Infof("Creating fallback LLM using detected provider - model_id: %s, detected_provider: %s", modelID, provider)
+	v2Logger := a.Logger
+	v2Logger.Debug("Creating fallback LLM using detected provider",
+		loggerv2.String("model_id", modelID),
+		loggerv2.String("detected_provider", string(provider)))
 
 	// Use InitializeLLM from providers.go for all providers for consistency
 	// This ensures proper initialization, logging, and event emission
@@ -1892,9 +1873,9 @@ func (a *Agent) createFallbackLLM(ctx context.Context, modelID string) (llmtypes
 				Region: a.APIKeys.Bedrock.Region,
 			}
 		}
-		logger.Infof("🔑 Using API keys from agent config for fallback LLM")
+		v2Logger.Debug("Using API keys from agent config for fallback LLM")
 	} else {
-		logger.Infof("⚠️ No API keys in agent config, fallback LLM will use environment variables")
+		v2Logger.Warn("No API keys in agent config, fallback LLM will use environment variables")
 	}
 
 	llmConfig := llm.Config{
@@ -1903,7 +1884,7 @@ func (a *Agent) createFallbackLLM(ctx context.Context, modelID string) (llmtypes
 		Temperature: temperature,
 		Tracers:     a.Tracers,
 		TraceID:     a.TraceID,
-		Logger:      logger,
+		Logger:      a.Logger, // Use agent's v2.Logger (llm.Config expects v2.Logger)
 		Context:     ctx,
 		APIKeys:     llmAPIKeys,
 	}

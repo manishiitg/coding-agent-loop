@@ -3,7 +3,7 @@ package mcpagent
 import (
 	"strings"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 )
 
@@ -14,7 +14,7 @@ type ToolFilter struct {
 	selectedServers      []string        // server names for "all tools" mode
 	customToolCategories map[string]bool // known custom tool categories (e.g., "workspace", "human")
 	mcpServerNames       map[string]bool // known MCP server names from Clients
-	logger               logger.ExtendedLogger
+	logger               loggerv2.Logger
 
 	// Pre-computed lookup maps for efficient filtering
 	normalizedToolSet        map[string]bool // normalized "package:tool" -> true
@@ -38,8 +38,13 @@ func NewToolFilter(
 	selectedServers []string,
 	clients map[string]mcpclient.ClientInterface,
 	customCategories []string,
-	logger logger.ExtendedLogger,
+	logger loggerv2.Logger,
 ) *ToolFilter {
+	// Use logger directly (already v2.Logger)
+	if logger == nil {
+		logger = loggerv2.NewNoop()
+	}
+
 	tf := &ToolFilter{
 		selectedTools:            selectedTools,
 		selectedServers:          selectedServers,
@@ -103,11 +108,13 @@ func NewToolFilter(
 		}
 	}
 
-	if logger != nil {
-		logger.Debugf("🔧 [TOOL_FILTER] Created filter - selectedTools: %v, selectedServers: %v", selectedTools, selectedServers)
-		logger.Debugf("🔧 [TOOL_FILTER] MCP servers: %v, Custom categories: %v", tf.mcpServerNames, tf.customToolCategories)
-		logger.Debugf("🔧 [TOOL_FILTER] serversWithAllTools: %v, serversWithSpecificTools: %v", tf.serversWithAllTools, tf.serversWithSpecificTools)
-	}
+	tf.logger.Debug("Created tool filter",
+		loggerv2.Any("selected_tools", selectedTools),
+		loggerv2.Any("selected_servers", selectedServers),
+		loggerv2.Any("mcp_servers", tf.mcpServerNames),
+		loggerv2.Any("custom_categories", tf.customToolCategories),
+		loggerv2.Any("servers_with_all_tools", tf.serversWithAllTools),
+		loggerv2.Any("servers_with_specific_tools", tf.serversWithSpecificTools))
 
 	return tf
 }
@@ -195,17 +202,17 @@ func (tf *ToolFilter) IsVirtualToolsDirectory(dirName string) bool {
 func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string, isCustomTool bool, isVirtualTool bool) bool {
 	// Virtual tools are ALWAYS included (system tools)
 	if isVirtualTool {
-		if tf.logger != nil {
-			tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (virtual tool, always included)", packageOrServer, toolName)
-		}
+		tf.logger.Debug("Tool included (virtual tool, always included)",
+			loggerv2.String("package", packageOrServer),
+			loggerv2.String("tool", toolName))
 		return true
 	}
 
 	// If no filtering is active, include all tools
 	if tf.IsNoFilteringActive() {
-		if tf.logger != nil {
-			tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (no filtering active)", packageOrServer, toolName)
-		}
+		tf.logger.Debug("Tool included (no filtering active)",
+			loggerv2.String("package", packageOrServer),
+			loggerv2.String("tool", toolName))
 		return true
 	}
 
@@ -217,9 +224,9 @@ func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string,
 		// Check if this system category has specific tools selected
 		// If not, include ALL tools from this category by default
 		if !tf.serversWithSpecificTools[normalizedPkgForSystem] && !tf.serversWithSpecificTools[packageOrServer] {
-			if tf.logger != nil {
-				tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (system category, included by default)", packageOrServer, toolName)
-			}
+			tf.logger.Debug("Tool included (system category, included by default)",
+				loggerv2.String("package", packageOrServer),
+				loggerv2.String("tool", toolName))
 			return true
 		}
 		// System category has specific tools selected - fall through to check those
@@ -231,9 +238,9 @@ func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string,
 
 	// Check if this package/server has "all tools" pattern (package:*)
 	if tf.serversWithAllTools[normalizedPkg] || tf.serversWithAllTools[packageOrServer] {
-		if tf.logger != nil {
-			tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (package has '*' pattern)", packageOrServer, toolName)
-		}
+		tf.logger.Debug("Tool included (package has '*' pattern)",
+			loggerv2.String("package", packageOrServer),
+			loggerv2.String("tool", toolName))
 		return true
 	}
 
@@ -243,25 +250,27 @@ func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string,
 		// Check if this exact tool is in the selection
 		normalizedFull := normalizedPkg + ":" + normalizedTool
 		if tf.normalizedToolSet[normalizedFull] {
-			if tf.logger != nil {
-				tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (specific tool selected, normalized: %s)", packageOrServer, toolName, normalizedFull)
-			}
+			tf.logger.Debug("Tool included (specific tool selected, normalized)",
+				loggerv2.String("package", packageOrServer),
+				loggerv2.String("tool", toolName),
+				loggerv2.String("normalized", normalizedFull))
 			return true
 		}
 
 		// Also check original format
 		originalFull := packageOrServer + ":" + toolName
 		if tf.normalizedToolSet[originalFull] {
-			if tf.logger != nil {
-				tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (specific tool selected, original: %s)", packageOrServer, toolName, originalFull)
-			}
+			tf.logger.Debug("Tool included (specific tool selected, original)",
+				loggerv2.String("package", packageOrServer),
+				loggerv2.String("tool", toolName),
+				loggerv2.String("original", originalFull))
 			return true
 		}
 
 		// Package has specific tools but this one isn't selected
-		if tf.logger != nil {
-			tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s excluded (package has specific tools but this one not selected)", packageOrServer, toolName)
-		}
+		tf.logger.Debug("Tool excluded (package has specific tools but this one not selected)",
+			loggerv2.String("package", packageOrServer),
+			loggerv2.String("tool", toolName))
 		return false
 	}
 
@@ -272,9 +281,9 @@ func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string,
 		for _, selectedServer := range tf.selectedServers {
 			normalizedSelected := tf.NormalizeServerName(selectedServer)
 			if normalizedSelected == normalizedPkg || selectedServer == packageOrServer {
-				if tf.logger != nil {
-					tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (server in selectedServers, no specific tools selected)", packageOrServer, toolName)
-				}
+				tf.logger.Debug("Tool included (server in selectedServers, no specific tools selected)",
+					loggerv2.String("package", packageOrServer),
+					loggerv2.String("tool", toolName))
 				return true
 			}
 		}
@@ -291,16 +300,16 @@ func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string,
 			// Custom tools might be filtered by category
 			// Check if any tool from this category is selected (which would be in serversWithSpecificTools)
 			// If the category isn't mentioned at all in selectedTools, exclude it
-			if tf.logger != nil {
-				tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s excluded (custom tool, category not in selectedServers or selectedTools)", packageOrServer, toolName)
-			}
+			tf.logger.Debug("Tool excluded (custom tool, category not in selectedServers or selectedTools)",
+				loggerv2.String("package", packageOrServer),
+				loggerv2.String("tool", toolName))
 			return false
 		}
 
 		// MCP tool not in selectedServers
-		if tf.logger != nil {
-			tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s excluded (server not in selectedServers)", packageOrServer, toolName)
-		}
+		tf.logger.Debug("Tool excluded (server not in selectedServers)",
+			loggerv2.String("package", packageOrServer),
+			loggerv2.String("tool", toolName))
 		return false
 	}
 
@@ -309,16 +318,16 @@ func (tf *ToolFilter) ShouldIncludeTool(packageOrServer string, toolName string,
 	// If selectedTools is empty AND selectedServers is empty, include all (no filtering)
 	if len(tf.selectedTools) > 0 {
 		// selectedTools is set but this package isn't in it at all
-		if tf.logger != nil {
-			tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s excluded (package not in selectedTools)", packageOrServer, toolName)
-		}
+		tf.logger.Debug("Tool excluded (package not in selectedTools)",
+			loggerv2.String("package", packageOrServer),
+			loggerv2.String("tool", toolName))
 		return false
 	}
 
 	// No selectedTools and no selectedServers - include all (backwards compatible)
-	if tf.logger != nil {
-		tf.logger.Debugf("🔧 [TOOL_FILTER] Tool %s:%s included (default: no restrictions on this package)", packageOrServer, toolName)
-	}
+	tf.logger.Debug("Tool included (default: no restrictions on this package)",
+		loggerv2.String("package", packageOrServer),
+		loggerv2.String("tool", toolName))
 	return true
 }
 

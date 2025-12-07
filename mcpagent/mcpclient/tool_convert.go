@@ -8,8 +8,6 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/mark3labs/mcp-go/mcp"
-
-	"mcpagent/logger"
 )
 
 // mapToParameters converts a map[string]interface{} to a *llmtypes.Parameters struct.
@@ -315,7 +313,7 @@ type ToolDetail struct {
 }
 
 // ToolResultAsString converts a tool result to a string representation
-func ToolResultAsString(result *mcp.CallToolResult, logger logger.ExtendedLogger) string {
+func ToolResultAsString(result *mcp.CallToolResult) string {
 	if result == nil {
 		return "Tool execution completed but no result returned"
 	}
@@ -334,7 +332,6 @@ func ToolResultAsString(result *mcp.CallToolResult, logger logger.ExtendedLogger
 					if responseType, ok := jsonResponse["type"].(string); ok && responseType == "text" {
 						if responseText, ok := jsonResponse["text"].(string); ok {
 							parts = append(parts, responseText)
-							logger.Infof("[DEBUG] ToolResultAsString - Successfully parsed JSON response, extracted text: %s", responseText[:min(len(responseText), 100)])
 							continue
 						}
 					}
@@ -358,18 +355,10 @@ func ToolResultAsString(result *mcp.CallToolResult, logger logger.ExtendedLogger
 
 	joined := strings.Join(parts, "\n")
 
-	// Debug logging
-	logger.Infof("[DEBUG] ToolResultAsString - IsError: %v, Content length: %d, Content: %s", result.IsError, len(joined), joined)
-
 	// If it's already marked as an error, return the error message
 	if result.IsError {
 		// If content is empty, provide a more helpful error message
 		if joined == "" {
-			logger.Warnf("[DEBUG] ToolResultAsString - Error result has empty content, Content array length: %d", len(result.Content))
-			// Try to extract error from content types that might not have been processed
-			for i, content := range result.Content {
-				logger.Warnf("[DEBUG] ToolResultAsString - Content[%d] type: %T, value: %+v", i, content, content)
-			}
 			return "Tool call failed with error: (no error details available - error result had empty content)"
 		}
 		return fmt.Sprintf("Tool call failed with error: %s", joined)
@@ -380,7 +369,6 @@ func ToolResultAsString(result *mcp.CallToolResult, logger logger.ExtendedLogger
 		strings.Contains(joined, "Invalid choice") ||
 		strings.Contains(joined, "usage:") ||
 		strings.Contains(joined, "Error: Access denied") {
-		logger.Infof("[DEBUG] ToolResultAsString - Detected implicit error: %s", joined)
 		return fmt.Sprintf("Tool call failed with error: %s", joined)
 	}
 

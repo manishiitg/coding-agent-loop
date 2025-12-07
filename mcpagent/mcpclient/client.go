@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -41,14 +41,14 @@ type Client struct {
 	mcpClient     *client.Client
 	serverInfo    *mcp.Implementation
 	retryConfig   RetryConfig
-	logger        logger.ExtendedLogger
+	logger        loggerv2.Logger
 	contextCancel context.CancelFunc // Store context cancel function for SSE connections
 	context       context.Context    // Store context for SSE connections
 	mu            sync.RWMutex       // Protect access to contextCancel and context
 }
 
 // New creates a new MCP client for the given server configuration
-func New(config MCPServerConfig, logger logger.ExtendedLogger) *Client {
+func New(config MCPServerConfig, logger loggerv2.Logger) *Client {
 	return &Client{
 		config:      config,
 		retryConfig: DefaultRetryConfig(),
@@ -57,7 +57,7 @@ func New(config MCPServerConfig, logger logger.ExtendedLogger) *Client {
 }
 
 // NewWithRetryConfig creates a new MCP client with custom retry configuration
-func NewWithRetryConfig(config MCPServerConfig, retryConfig RetryConfig, logger logger.ExtendedLogger) *Client {
+func NewWithRetryConfig(config MCPServerConfig, retryConfig RetryConfig, logger loggerv2.Logger) *Client {
 	return &Client{
 		config:      config,
 		retryConfig: retryConfig,
@@ -73,28 +73,44 @@ func (c *Client) Connect(ctx context.Context) error {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
 			delay := time.Duration(attempt-1) * baseDelay
-			c.logger.Infof("🔄 Retrying MCP connection (attempt %d/%d) to server '%s' after %v delay...", attempt, maxRetries, c.getServerName(), delay)
+			c.logger.Debug("Retrying MCP connection",
+				loggerv2.Int("attempt", attempt),
+				loggerv2.Int("max_retries", maxRetries),
+				loggerv2.String("server", c.getServerName()),
+				loggerv2.String("delay", delay.String()))
 			time.Sleep(delay)
 		}
 
 		protocol := c.config.GetProtocol()
 		if protocol == ProtocolStdio {
-			c.logger.Infof("🔌 Connecting to MCP server '%s' via %s (command: %s %v)...", c.getServerName(), protocol, c.config.Command, c.config.Args)
+			c.logger.Debug("Connecting to MCP server",
+				loggerv2.String("server", c.getServerName()),
+				loggerv2.String("protocol", string(protocol)),
+				loggerv2.String("command", c.config.Command),
+				loggerv2.Any("args", c.config.Args))
 		} else {
-			c.logger.Infof("🔌 Connecting to MCP server '%s' via %s (%s)...", c.getServerName(), protocol, c.config.URL)
+			c.logger.Debug("Connecting to MCP server",
+				loggerv2.String("server", c.getServerName()),
+				loggerv2.String("protocol", string(protocol)),
+				loggerv2.String("url", c.config.URL))
 		}
 
 		err := c.connectOnce(ctx)
 		if err == nil {
 			if attempt > 1 {
-				c.logger.Infof("✅ Successfully connected to MCP server after retry attempts: %s (retry_attempts: %d)", c.getServerName(), attempt-1)
+				c.logger.Info("Successfully connected to MCP server after retry attempts",
+					loggerv2.String("server", c.getServerName()),
+					loggerv2.Int("retry_attempts", attempt-1))
 			} else {
-				c.logger.Infof("✅ Successfully connected to MCP server on first attempt: %s", c.getServerName())
+				c.logger.Info("Successfully connected to MCP server on first attempt",
+					loggerv2.String("server", c.getServerName()))
 			}
 			return nil
 		}
 
-		c.logger.Errorf("❌ Connection attempt failed for server %s (attempt %d): %v", c.getServerName(), attempt, err)
+		c.logger.Error("Connection attempt failed", err,
+			loggerv2.String("server", c.getServerName()),
+			loggerv2.Int("attempt", attempt))
 
 		if attempt == maxRetries {
 			return fmt.Errorf("failed to connect to MCP server '%s' after %d attempts: %w", c.getServerName(), maxRetries, err)
@@ -210,7 +226,11 @@ func (c *Client) ConnectWithRetry(ctx context.Context) error {
 				delay = c.retryConfig.MaxDelay
 			}
 
-			c.logger.Infof("🔄 Retrying MCP connection (attempt %d/%d) to server '%s' after %v delay...", attempt+1, c.retryConfig.MaxRetries+1, c.getServerName(), delay)
+			c.logger.Debug("Retrying MCP connection",
+				loggerv2.Int("attempt", attempt+1),
+				loggerv2.Int("max_retries", c.retryConfig.MaxRetries+1),
+				loggerv2.String("server", c.getServerName()),
+				loggerv2.String("delay", delay.String()))
 
 			select {
 			case <-time.After(delay):
@@ -225,7 +245,10 @@ func (c *Client) ConnectWithRetry(ctx context.Context) error {
 
 		// Log connection attempt
 		if attempt == 0 {
-			c.logger.Infof("🔌 Connecting to MCP server '%s' (command: %s %v)...", c.getServerName(), c.config.Command, c.config.Args)
+			c.logger.Debug("Connecting to MCP server",
+				loggerv2.String("server", c.getServerName()),
+				loggerv2.String("command", c.config.Command),
+				loggerv2.Any("args", c.config.Args))
 		}
 
 		// Attempt connection
@@ -234,15 +257,20 @@ func (c *Client) ConnectWithRetry(ctx context.Context) error {
 
 		if err == nil {
 			if attempt > 0 {
-				c.logger.Infof("✅ Successfully connected to MCP server after retry attempts: %s (retry_attempts: %d)", c.getServerName(), attempt)
+				c.logger.Info("Successfully connected to MCP server after retry attempts",
+					loggerv2.String("server", c.getServerName()),
+					loggerv2.Int("retry_attempts", attempt))
 			} else {
-				c.logger.Infof("✅ Successfully connected to MCP server on first attempt: %s", c.getServerName())
+				c.logger.Info("Successfully connected to MCP server on first attempt",
+					loggerv2.String("server", c.getServerName()))
 			}
 			return nil
 		}
 
 		lastErr = err
-		c.logger.Errorf("❌ Connection attempt failed for server %s (attempt %d): %v", c.getServerName(), attempt+1, err)
+		c.logger.Error("Connection attempt failed", err,
+			loggerv2.String("server", c.getServerName()),
+			loggerv2.Int("attempt", attempt+1))
 
 		// If this was the last attempt, don't sleep
 		if attempt == c.retryConfig.MaxRetries {
@@ -271,7 +299,7 @@ func (c *Client) getServerName() string {
 func (c *Client) Close() error {
 	// For SSE connections, cancel the stored context first
 	if c.contextCancel != nil {
-		c.logger.Infof("🔍 Canceling SSE context before closing client")
+		c.logger.Debug("Canceling SSE context before closing client")
 		c.contextCancel()
 	}
 
@@ -299,40 +327,48 @@ func (c *Client) GetMCPClient() *client.Client {
 
 // ListTools returns all available tools from the server
 func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] Starting ListTools call...")
+	c.logger.Debug("Starting ListTools call")
 
 	if c.mcpClient == nil {
-		c.logger.Infof("❌ [LISTTOOLS DEBUG] Client not connected")
+		c.logger.Debug("Client not connected")
 		return nil, fmt.Errorf("client not connected")
 	}
 
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] About to call underlying mcpClient.ListTools...")
+	c.logger.Debug("About to call underlying mcpClient.ListTools")
 	deadline, hasDeadline := ctx.Deadline()
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] Context info: has_deadline=%v, deadline=%v, done=%v", hasDeadline, deadline, ctx.Done())
+	c.logger.Debug("Context info",
+		loggerv2.Any("has_deadline", hasDeadline),
+		loggerv2.Any("deadline", deadline),
+		loggerv2.Any("done", ctx.Done()))
 
 	listStartTime := time.Now()
 
 	// Call ListTools directly without goroutine wrapper
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] About to make the actual ListTools call...")
+	c.logger.Debug("About to make the actual ListTools call")
 
 	// Add a timeout wrapper to see if it's the call itself
 	callCtx, callCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer callCancel()
 
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] Making ListTools call with 5m timeout...")
+	c.logger.Debug("Making ListTools call with 5m timeout")
 	result, err := c.mcpClient.ListTools(callCtx, mcp.ListToolsRequest{})
 
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] ListTools call returned: error=%w", err)
+	if err != nil {
+		c.logger.Debug("ListTools call returned with error", loggerv2.Error(err))
+	} else {
+		c.logger.Debug("ListTools call returned successfully")
+	}
 
 	listDuration := time.Since(listStartTime)
-	c.logger.Infof("🔧 [LISTTOOLS DEBUG] ListTools call completed: duration=%s", listDuration.String())
+	c.logger.Debug("ListTools call completed",
+		loggerv2.String("duration", listDuration.String()))
 
 	if err != nil {
-		c.logger.Infof("❌ [LISTTOOLS DEBUG] Failed to list tools: %w", err)
+		c.logger.Error("Failed to list tools", err)
 		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
 
-	c.logger.Infof("✅ [LISTTOOLS DEBUG] Successfully listed tools: tool_count=%d", len(result.Tools))
+	c.logger.Debug("Successfully listed tools", loggerv2.Int("tool_count", len(result.Tools)))
 	return result.Tools, nil
 }
 
@@ -467,27 +503,33 @@ type ParallelToolDiscoveryResult struct {
 }
 
 // DiscoverAllToolsParallel connects to all servers in the config in parallel, lists tools, and returns results per server.
-func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger.ExtendedLogger) []ParallelToolDiscoveryResult {
+func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger loggerv2.Logger) []ParallelToolDiscoveryResult {
 	servers := cfg.ListServers()
 	if len(servers) == 0 {
-		logger.Infof("🔍 DiscoverAllToolsParallel: No servers configured, returning empty result")
+		logger.Debug("No servers configured, returning empty result")
 		return []ParallelToolDiscoveryResult{}
 	}
 
-	logger.Infof("🚀 DiscoverAllToolsParallel started: server_count=%d, servers=%v", len(servers), servers)
-	logger.Infof("🔍 DiscoverAllToolsParallel: Parent context info - done=%v, err=%v", ctx.Done(), ctx.Err())
+	logger.Info("DiscoverAllToolsParallel started",
+		loggerv2.Int("server_count", len(servers)),
+		loggerv2.Any("servers", servers))
+	logger.Debug("Parent context info",
+		loggerv2.Any("done", ctx.Done()),
+		loggerv2.Any("err", ctx.Err()))
 
 	resultsCh := make(chan ParallelToolDiscoveryResult, len(servers))
 	var wg sync.WaitGroup
 
-	logger.Infof("🔍 DiscoverAllToolsParallel: Starting goroutines for %d servers", len(servers))
+	logger.Debug("Starting goroutines for servers", loggerv2.Int("count", len(servers)))
 	for _, name := range servers {
 		srvCfg, _ := cfg.GetServer(name) // ignore error, will be caught below
 		wg.Add(1)
-		logger.Infof("🔍 DiscoverAllToolsParallel: Starting goroutine for server=%s, protocol=%s", name, srvCfg.Protocol)
+		logger.Debug("Starting goroutine for server",
+			loggerv2.String("server", name),
+			loggerv2.String("protocol", string(srvCfg.Protocol)))
 		go func(name string, srvCfg MCPServerConfig) {
 			defer wg.Done()
-			logger.Infof("🔍 DiscoverAllToolsParallel: Goroutine started for server=%s", name)
+			logger.Debug("Goroutine started for server", loggerv2.String("server", name))
 
 			client := New(srvCfg, logger)
 			var cancel context.CancelFunc
@@ -497,20 +539,27 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 				// For SSE, create a new background context with timeout to avoid parent cancellation
 				// IMPORTANT: Do NOT defer cancel() here - we need the context to remain valid for the entire client lifecycle
 				connCtx, cancel = context.WithTimeout(context.Background(), 15*time.Minute)
-				logger.Infof("🔍 DiscoverAllToolsParallel: Using SSE protocol with isolated context: server_name=%s, timeout=15m", name)
+				logger.Debug("Using SSE protocol with isolated context",
+					loggerv2.String("server", name),
+					loggerv2.String("timeout", "15m"))
 			} else {
 				// For stdio and other protocols, also use isolated context with longer timeout
 				connCtx, cancel = context.WithTimeout(context.Background(), 15*time.Minute)
 				defer cancel() // Safe to cancel immediately for non-SSE protocols
-				logger.Infof("🔍 DiscoverAllToolsParallel: Using %s protocol with isolated context: server_name=%s, timeout=15m", srvCfg.Protocol, name)
+				logger.Debug("Using protocol with isolated context",
+					loggerv2.String("protocol", string(srvCfg.Protocol)),
+					loggerv2.String("server", name),
+					loggerv2.String("timeout", "15m"))
 			}
 
-			logger.Infof("🔍 DiscoverAllToolsParallel: Attempting connection for server=%s", name)
+			logger.Debug("Attempting connection for server", loggerv2.String("server", name))
 			connectStartTime := time.Now()
 
 			if err := client.ConnectWithRetry(connCtx); err != nil {
 				connectDuration := time.Since(connectStartTime)
-				logger.Errorf("❌ DiscoverAllToolsParallel: Connection failed for server=%s, error=%v, duration=%v", name, err, connectDuration)
+				logger.Error("Connection failed", err,
+					loggerv2.String("server", name),
+					loggerv2.String("duration", connectDuration.String()))
 				if cancel != nil {
 					cancel() // Clean up context on connection failure
 				}
@@ -519,25 +568,33 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 			}
 
 			connectDuration := time.Since(connectStartTime)
-			logger.Infof("✅ DiscoverAllToolsParallel: Connection successful for server=%s, duration=%v", name, connectDuration)
+			logger.Info("Connection successful",
+				loggerv2.String("server", name),
+				loggerv2.String("duration", connectDuration.String()))
 
 			// For SSE connections, the SSE manager now uses background context for Start() automatically
 			// For other protocols, no additional Start() call is needed
-			logger.Infof("✅ DiscoverAllToolsParallel: Client ready for use: server=%s", name)
+			logger.Debug("Client ready for use", loggerv2.String("server", name))
 
 			// For SSE connections, use the same isolated context for tool listing
 			// For other protocols, use the same isolated context
 			listCtx := connCtx // Use the same isolated context for all protocols
 
-			logger.Infof("🔍 DiscoverAllToolsParallel: Starting tool listing for server=%s", name)
-			logger.Infof("🔧 DiscoverAllToolsParallel: Context info before ListTools: server=%s, context_done=%v, context_err=%v", name, listCtx.Done(), listCtx.Err())
+			logger.Debug("Starting tool listing for server", loggerv2.String("server", name))
+			logger.Debug("Context info before ListTools",
+				loggerv2.String("server", name),
+				loggerv2.Any("context_done", listCtx.Done()),
+				loggerv2.Any("context_err", listCtx.Err()))
 			listStartTime := time.Now()
 
-			logger.Infof("🔧 DiscoverAllToolsParallel: Calling client.ListTools for server=%s", name)
+			logger.Debug("Calling client.ListTools for server", loggerv2.String("server", name))
 			tools, err := client.ListTools(listCtx)
 
 			listDuration := time.Since(listStartTime)
-			logger.Infof("🔧 DiscoverAllToolsParallel: ListTools completed for server=%s, duration=%v, error=%v", name, listDuration, err)
+			logger.Debug("ListTools completed",
+				loggerv2.String("server", name),
+				loggerv2.String("duration", listDuration.String()),
+				loggerv2.Error(err))
 
 			// Don't close the client here - we need to reuse it for agent creation
 			// _ = client.Close()
@@ -549,18 +606,21 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 				// We'll cancel it when the client is actually closed
 				client.SetContextCancel(cancel)
 				client.SetContext(connCtx) // Store the context as well
-				logger.Infof("🔍 Stored SSE context and cancel function for later cleanup: server_name=%s", name)
+				logger.Debug("Stored SSE context and cancel function for later cleanup",
+					loggerv2.String("server", name))
 			}
 
 			if err != nil {
-				logger.Errorf("❌ DiscoverAllToolsParallel: Tool listing failed for server=%s, error=%v", name, err)
+				logger.Error("Tool listing failed", err, loggerv2.String("server", name))
 			} else {
-				logger.Infof("✅ DiscoverAllToolsParallel: Tool listing successful for server=%s, tools_count=%d", name, len(tools))
+				logger.Info("Tool listing successful",
+					loggerv2.String("server", name),
+					loggerv2.Int("tools_count", len(tools)))
 			}
 
-			logger.Infof("🔍 DiscoverAllToolsParallel: Sending result for server=%s", name)
+			logger.Debug("Sending result for server", loggerv2.String("server", name))
 			resultsCh <- ParallelToolDiscoveryResult{ServerName: name, Tools: tools, Error: err, Client: client}
-			logger.Infof("✅ DiscoverAllToolsParallel: Result sent for server=%s", name)
+			logger.Debug("Result sent for server", loggerv2.String("server", name))
 		}(name, srvCfg)
 	}
 
@@ -568,43 +628,51 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 	received := make(map[string]bool)
 	total := len(servers)
 
-	logger.Infof("🔍 DiscoverAllToolsParallel: Starting result collection loop for %d servers", total)
+	logger.Debug("Starting result collection loop", loggerv2.Int("total", total))
 	timeout := false
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
-		logger.Infof("🔍 DiscoverAllToolsParallel: All goroutines finished, closing done channel")
+		logger.Debug("All goroutines finished, closing done channel")
 		close(done)
 	}()
 
 	resultCollectionStartTime := time.Now()
 	for receivedCount := 0; receivedCount < total && !timeout; {
-		logger.Infof("🔍 DiscoverAllToolsParallel: Waiting for results, received=%d/%d", receivedCount, total)
+		logger.Debug("Waiting for results",
+			loggerv2.Int("received", receivedCount),
+			loggerv2.Int("total", total))
 		select {
 		case r := <-resultsCh:
 			results = append(results, r)
 			received[r.ServerName] = true
 			receivedCount++
-			logger.Infof("✅ DiscoverAllToolsParallel: Received result for server=%s, total_received=%d/%d", r.ServerName, receivedCount, total)
+			logger.Debug("Received result for server",
+				loggerv2.String("server", r.ServerName),
+				loggerv2.Int("total_received", receivedCount),
+				loggerv2.Int("total", total))
 		case <-ctx.Done():
-			logger.Warnf("⚠️ DiscoverAllToolsParallel: Parent context cancelled, stopping result collection")
+			logger.Warn("Parent context cancelled, stopping result collection")
 			timeout = true
 		case <-done:
-			logger.Infof("✅ DiscoverAllToolsParallel: All goroutines finished, stopping result collection")
+			logger.Debug("All goroutines finished, stopping result collection")
 			// All goroutines finished
 		}
 	}
 
 	resultCollectionDuration := time.Since(resultCollectionStartTime)
-	logger.Infof("🔍 DiscoverAllToolsParallel: Result collection completed, duration=%v, timeout=%v, received=%d/%d",
-		resultCollectionDuration, timeout, len(results), total)
+	logger.Debug("Result collection completed",
+		loggerv2.String("duration", resultCollectionDuration.String()),
+		loggerv2.Any("timeout", timeout),
+		loggerv2.Int("received", len(results)),
+		loggerv2.Int("total", total))
 
 	// If timeout, add missing servers as timeouts
 	if timeout {
-		logger.Warnf("⚠️ DiscoverAllToolsParallel: Timeout detected, adding missing servers as timeouts")
+		logger.Warn("Timeout detected, adding missing servers as timeouts")
 		for _, name := range servers {
 			if !received[name] {
-				logger.Warnf("⚠️ DiscoverAllToolsParallel: Adding timeout result for missing server=%s", name)
+				logger.Warn("Adding timeout result for missing server", loggerv2.String("server", name))
 				results = append(results, ParallelToolDiscoveryResult{
 					ServerName: name,
 					Tools:      nil,
@@ -643,8 +711,10 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 	}
 
 	// Log comprehensive cache event for debugging
-	logger.Infof("🔍 Comprehensive cache event for active tool discovery: servers_count=%d, servers=%v, total_tools=%d",
-		len(serverNames), serverNames, len(results))
+	logger.Debug("Comprehensive cache event for active tool discovery",
+		loggerv2.Int("servers_count", len(serverNames)),
+		loggerv2.Any("servers", serverNames),
+		loggerv2.Int("total_tools", len(results)))
 
 	// Final summary logging
 	successCount := 0
@@ -659,8 +729,11 @@ func DiscoverAllToolsParallel(ctx context.Context, cfg *MCPConfig, logger logger
 		}
 	}
 
-	logger.Infof("🎯 DiscoverAllToolsParallel: FINAL SUMMARY - total_servers=%d, successful=%d, failed=%d, total_tools=%d",
-		len(results), successCount, errorCount, totalTools)
+	logger.Info("FINAL SUMMARY",
+		loggerv2.Int("total_servers", len(results)),
+		loggerv2.Int("successful", successCount),
+		loggerv2.Int("failed", errorCount),
+		loggerv2.Int("total_tools", totalTools))
 
 	// Note: To emit actual events, we would need to pass tracers to this function
 	// For now, we log the information so it appears in the server logs

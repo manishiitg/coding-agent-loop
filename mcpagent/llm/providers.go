@@ -3,9 +3,12 @@ package llm
 import (
 	"context"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"fmt"
+
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
-	"mcpagent/logger"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/interfaces"
@@ -34,7 +37,7 @@ type Config struct {
 	FallbackModels []string
 	MaxRetries     int
 	// Logger for structured logging
-	Logger logger.ExtendedLogger
+	Logger loggerv2.Logger
 	// Context for LLM initialization (optional, uses background with timeout if not provided)
 	Context context.Context
 	// API keys for providers (optional, falls back to environment variables if not provided)
@@ -55,13 +58,13 @@ type BedrockConfig struct {
 	Region string
 }
 
-// LoggerAdapter adapts logger.ExtendedLogger to interfaces.Logger
+// LoggerAdapter adapts v2.Logger to interfaces.Logger
 type LoggerAdapter struct {
-	logger logger.ExtendedLogger
+	logger loggerv2.Logger
 }
 
 // NewLoggerAdapter creates a new logger adapter
-func NewLoggerAdapter(logger logger.ExtendedLogger) *LoggerAdapter {
+func NewLoggerAdapter(logger loggerv2.Logger) *LoggerAdapter {
 	return &LoggerAdapter{logger: logger}
 }
 
@@ -70,7 +73,7 @@ func (l *LoggerAdapter) Infof(format string, v ...any) {
 	if l == nil || l.logger == nil {
 		return
 	}
-	l.logger.Infof(format, v...)
+	l.logger.Info(fmt.Sprintf(format, v...))
 }
 
 // Errorf implements interfaces.Logger
@@ -78,7 +81,7 @@ func (l *LoggerAdapter) Errorf(format string, v ...any) {
 	if l == nil || l.logger == nil {
 		return
 	}
-	l.logger.Errorf(format, v...)
+	l.logger.Error(fmt.Sprintf(format, v...), nil)
 }
 
 // Debugf implements interfaces.Logger
@@ -86,7 +89,7 @@ func (l *LoggerAdapter) Debugf(format string, args ...interface{}) {
 	if l == nil || l.logger == nil {
 		return
 	}
-	l.logger.Debugf(format, args...)
+	l.logger.Debug(fmt.Sprintf(format, args...))
 }
 
 // convertConfig converts agent_go Config to llm-providers Config
@@ -158,7 +161,7 @@ func InitializeLLM(config Config) (llmtypes.Model, error) {
 
 // wrapProviderAwareLLM wraps the llm-providers Model to maintain backward compatibility
 // Since both packages now use the same llmtypes, no conversion is needed
-func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger) *ProviderAwareLLM {
+func wrapProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,
@@ -177,12 +180,12 @@ type ProviderAwareLLM struct {
 	modelID  string
 	tracers  []observability.Tracer
 	traceID  observability.TraceID
-	logger   logger.ExtendedLogger
+	logger   loggerv2.Logger
 }
 
 // NewProviderAwareLLM creates a new provider-aware LLM wrapper
 // This maintains backward compatibility with existing agent_go code
-func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger) *ProviderAwareLLM {
+func NewProviderAwareLLM(llm llmtypes.Model, provider Provider, modelID string, tracers []observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) *ProviderAwareLLM {
 	return &ProviderAwareLLM{
 		Model:    llm,
 		provider: provider,
@@ -209,7 +212,7 @@ func (p *ProviderAwareLLM) GenerateContent(ctx context.Context, messages []llmty
 	// Automatically add usage parameter for OpenRouter requests to get cache token information
 	if p.provider == ProviderOpenRouter {
 		if p.logger != nil {
-			p.logger.Infof("🔧 Adding OpenRouter usage parameter for cache token information")
+			p.logger.Info("Adding OpenRouter usage parameter for cache token information")
 		}
 		options = append(options, WithOpenRouterUsage())
 	}

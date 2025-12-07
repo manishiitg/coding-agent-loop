@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -31,7 +31,7 @@ type ToolRegistry struct {
 	virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 	toolToServer map[string]string
 	mu           sync.RWMutex
-	logger       logger.ExtendedLogger
+	logger       loggerv2.Logger
 }
 
 var (
@@ -40,16 +40,21 @@ var (
 )
 
 // InitRegistry initializes the global tool registry from an agent
-func InitRegistry(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger logger.ExtendedLogger) {
+func InitRegistry(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger loggerv2.Logger) {
 	InitRegistryWithVirtualTools(mcpClients, customTools, nil, toolToServer, logger)
 }
 
 // InitRegistryWithVirtualTools initializes or updates the global tool registry with virtual tools support
 // If the registry already exists, it merges new tools/clients into the existing registry
 // This allows multiple agents with different servers to coexist
-func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger logger.ExtendedLogger) {
+func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterface, customTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), toolToServer map[string]string, logger loggerv2.Logger) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
+
+	// Use logger directly (already v2.Logger)
+	if logger == nil {
+		logger = loggerv2.NewNoop()
+	}
 
 	if virtualTools == nil {
 		virtualTools = make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
@@ -64,31 +69,24 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 			toolToServer: make(map[string]string),
 			logger:       logger,
 		}
-		if logger != nil {
-			logger.Debugf("🔧 Creating new tool registry")
-		}
+		logger.Debug("Creating new tool registry")
 	} else {
 		// Registry exists - update logger if provided
 		if logger != nil && globalRegistry.logger == nil {
 			globalRegistry.logger = logger
 		}
-		if logger != nil {
-			logger.Debugf("🔧 Updating existing tool registry (merging new tools/clients)")
-		}
+		logger.Debug("Updating existing tool registry (merging new tools/clients)")
 	}
 
 	// Merge MCP clients
 	for serverName, client := range mcpClients {
 		if existing, exists := globalRegistry.mcpClients[serverName]; exists {
-			if logger != nil {
-				logger.Debugf("🔧 MCP client for server %s already exists, keeping existing", serverName)
-			}
+			logger.Debug("MCP client for server already exists, keeping existing",
+				loggerv2.String("server", serverName))
 			_ = existing // Keep existing client
 		} else {
 			globalRegistry.mcpClients[serverName] = client
-			if logger != nil {
-				logger.Debugf("🔧 Added MCP client for server: %s", serverName)
-			}
+			logger.Debug("Added MCP client for server", loggerv2.String("server", serverName))
 		}
 	}
 
@@ -98,30 +96,24 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 		if existing, exists := globalRegistry.customTools[toolName]; exists {
 			// Replace existing executor with new one (orchestrator may have wrapped it with folder guard)
 			globalRegistry.customTools[toolName] = executor
-			if logger != nil {
-				logger.Debugf("🔧 Custom tool %s already exists, UPDATING with new executor (may be wrapped with folder guard)", toolName)
-			}
+			logger.Debug("Custom tool already exists, updating with new executor (may be wrapped with folder guard)",
+				loggerv2.String("tool", toolName))
 			_ = existing // Reference for logging/debugging
 		} else {
 			globalRegistry.customTools[toolName] = executor
-			if logger != nil {
-				logger.Debugf("🔧 Added custom tool: %s", toolName)
-			}
+			logger.Debug("Added custom tool", loggerv2.String("tool", toolName))
 		}
 	}
 
 	// Merge virtual tools
 	for toolName, executor := range virtualTools {
 		if existing, exists := globalRegistry.virtualTools[toolName]; exists {
-			if logger != nil {
-				logger.Debugf("🔧 Virtual tool %s already exists, keeping existing", toolName)
-			}
+			logger.Debug("Virtual tool already exists, keeping existing",
+				loggerv2.String("tool", toolName))
 			_ = existing // Keep existing executor
 		} else {
 			globalRegistry.virtualTools[toolName] = executor
-			if logger != nil {
-				logger.Debugf("🔧 Added virtual tool: %s", toolName)
-			}
+			logger.Debug("Added virtual tool", loggerv2.String("tool", toolName))
 		}
 	}
 
@@ -129,25 +121,24 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 	for toolName, serverName := range toolToServer {
 		if existing, exists := globalRegistry.toolToServer[toolName]; exists {
 			if existing != serverName {
-				if logger != nil {
-					logger.Warnf("⚠️ Tool %s already mapped to server %s, new mapping to %s will be ignored", toolName, existing, serverName)
-				}
+				logger.Warn("Tool already mapped to different server, new mapping will be ignored",
+					loggerv2.String("tool", toolName),
+					loggerv2.String("existing_server", existing),
+					loggerv2.String("new_server", serverName))
 			}
 		} else {
 			globalRegistry.toolToServer[toolName] = serverName
-			if logger != nil {
-				logger.Debugf("🔧 Mapped tool %s to server %s", toolName, serverName)
-			}
+			logger.Debug("Mapped tool to server",
+				loggerv2.String("tool", toolName),
+				loggerv2.String("server", serverName))
 		}
 	}
 
-	if logger != nil {
-		logger.Infof("✅ Tool registry updated: %d MCP clients, %d custom tools, %d virtual tools, %d tool mappings",
-			len(globalRegistry.mcpClients),
-			len(globalRegistry.customTools),
-			len(globalRegistry.virtualTools),
-			len(globalRegistry.toolToServer))
-	}
+	logger.Info("Tool registry updated",
+		loggerv2.Int("mcp_clients", len(globalRegistry.mcpClients)),
+		loggerv2.Int("custom_tools", len(globalRegistry.customTools)),
+		loggerv2.Int("virtual_tools", len(globalRegistry.virtualTools)),
+		loggerv2.Int("tool_mappings", len(globalRegistry.toolToServer)))
 }
 
 // GetRegistry returns the global tool registry
@@ -169,13 +160,14 @@ func CallMCPTool(ctx context.Context, toolName string, args map[string]interface
 	serverName, exists := registry.toolToServer[toolName]
 	if !exists {
 		// Debug: log available tools to help diagnose the issue
-		if registry.logger != nil {
-			availableTools := make([]string, 0, len(registry.toolToServer))
-			for t := range registry.toolToServer {
-				availableTools = append(availableTools, t)
-			}
-			registry.logger.Warnf("⚠️ Tool %s not found in tool-to-server mapping. Available tools (%d): %v", toolName, len(availableTools), availableTools)
+		availableTools := make([]string, 0, len(registry.toolToServer))
+		for t := range registry.toolToServer {
+			availableTools = append(availableTools, t)
 		}
+		registry.logger.Warn("Tool not found in tool-to-server mapping",
+			loggerv2.String("tool", toolName),
+			loggerv2.Int("available_tools_count", len(availableTools)),
+			loggerv2.Any("available_tools", availableTools))
 		return "", fmt.Errorf("tool %s not found in tool-to-server mapping", toolName)
 	}
 
@@ -186,14 +178,15 @@ func CallMCPTool(ctx context.Context, toolName string, args map[string]interface
 	}
 
 	// Call the tool
-	if registry.logger != nil {
-		registry.logger.Debugf("🔧 CallMCPTool: Calling tool %s on server %s with args: %v", toolName, serverName, args)
-	}
+	registry.logger.Debug("Calling MCP tool",
+		loggerv2.String("tool", toolName),
+		loggerv2.String("server", serverName),
+		loggerv2.Any("args", args))
 	result, err := client.CallTool(ctx, toolName, args)
 	if err != nil {
-		if registry.logger != nil {
-			registry.logger.Errorf("❌ CallMCPTool: Failed to call tool %s: %v", toolName, err)
-		}
+		registry.logger.Error("Failed to call MCP tool", err,
+			loggerv2.String("tool", toolName),
+			loggerv2.String("server", serverName))
 		return "", fmt.Errorf("failed to call MCP tool %s: %w", toolName, err)
 	}
 
@@ -248,11 +241,15 @@ func CallMCPTool(ctx context.Context, toolName string, args map[string]interface
 
 		// Method 3: If still empty, log content structure for debugging
 		if errorMsg == "" {
-			if registry.logger != nil {
-				registry.logger.Warnf("⚠️ CallMCPTool: Tool %s returned error result with empty content. Content array length: %d", toolName, len(result.Content))
-				for i, content := range result.Content {
-					registry.logger.Warnf("⚠️ CallMCPTool: Content[%d] type: %T, value: %+v", i, content, content)
-				}
+			registry.logger.Warn("Tool returned error result with empty content",
+				loggerv2.String("tool", toolName),
+				loggerv2.Int("content_count", len(result.Content)))
+			for i, content := range result.Content {
+				registry.logger.Debug("Content item",
+					loggerv2.String("tool", toolName),
+					loggerv2.Int("index", i),
+					loggerv2.Any("type", fmt.Sprintf("%T", content)),
+					loggerv2.Any("value", content))
 			}
 			errorMsg = fmt.Sprintf("tool returned error result (IsError=true) but no error message in content (content count: %d)", len(result.Content))
 		}
@@ -265,50 +262,35 @@ func CallMCPTool(ctx context.Context, toolName string, args map[string]interface
 		// Otherwise, treat as success (MCP tools may incorrectly set IsError=true)
 		if isGoBuildError {
 			// Real Go build error - treat as failure
-			if registry.logger != nil {
-				registry.logger.Errorf("❌ CallMCPTool: Tool %s returned error result with Go build error: %s", toolName, errorMsg)
-			}
+			registry.logger.Error("Tool returned error result with Go build error",
+				fmt.Errorf("%s", errorMsg),
+				loggerv2.String("tool", toolName))
 			return "", fmt.Errorf("tool %s execution failed: %s", toolName, errorMsg)
 		} else {
 			// No Go build errors - treat as success even if IsError=true
-			if registry.logger != nil {
-				registry.logger.Warnf("⚠️ CallMCPTool: Tool %s returned IsError=true but no Go build errors detected. Treating as success.", toolName)
-				registry.logger.Debugf("🔍 CallMCPTool: Content (length: %d) does not contain Go build errors, treating as success", len(allContent.String()))
-			}
+			registry.logger.Warn("Tool returned IsError=true but no Go build errors detected, treating as success",
+				loggerv2.String("tool", toolName),
+				loggerv2.Int("content_length", len(allContent.String())))
 			// Continue to success path below - don't return error
 		}
 	}
 
 	// Convert successful result to string
 	// Debug: log content structure before conversion
-	if registry.logger != nil {
-		registry.logger.Debugf("🔍 CallMCPTool: Tool %s result - IsError: %v, Content count: %d", toolName, result.IsError, len(result.Content))
-		for i, content := range result.Content {
-			registry.logger.Debugf("🔍 CallMCPTool: Content[%d] type: %T, value: %+v", i, content, content)
-			// Try both pointer and value type assertions
-			if textContent, ok := content.(*mcp.TextContent); ok {
-				preview := textContent.Text
-				if len(preview) > 200 {
-					preview = preview[:200] + "..."
-				}
-				registry.logger.Debugf("🔍 CallMCPTool: Content[%d] *TextContent.Text (length: %d): %s", i, len(textContent.Text), preview)
-			} else if textContent, ok := content.(mcp.TextContent); ok {
-				preview := textContent.Text
-				if len(preview) > 200 {
-					preview = preview[:200] + "..."
-				}
-				registry.logger.Debugf("🔍 CallMCPTool: Content[%d] TextContent.Text (length: %d): %s", i, len(textContent.Text), preview)
-			}
-		}
-	}
+	registry.logger.Debug("Tool result structure",
+		loggerv2.String("tool", toolName),
+		loggerv2.Any("is_error", result.IsError),
+		loggerv2.Int("content_count", len(result.Content)))
+
 	resultStr := convertResultToString(result)
-	if registry.logger != nil {
-		preview := resultStr
-		if len(preview) > 100 {
-			preview = preview[:100] + "..."
-		}
-		registry.logger.Debugf("✅ CallMCPTool: Tool %s returned result (length: %d): %s", toolName, len(resultStr), preview)
+	preview := resultStr
+	if len(preview) > 100 {
+		preview = preview[:100] + "..."
 	}
+	registry.logger.Debug("Tool returned result",
+		loggerv2.String("tool", toolName),
+		loggerv2.Int("result_length", len(resultStr)),
+		loggerv2.String("preview", preview))
 	return resultStr, nil
 }
 

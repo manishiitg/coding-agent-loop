@@ -7,6 +7,10 @@ import (
 
 // ExtendedLogger is our own interface that includes all the methods we need
 // This interface is implemented by logger.Logger from pkg/logger package
+//
+// Deprecated: ExtendedLogger is deprecated and will be removed in a future version.
+// Use logger/v2.Logger instead for new code. This interface is kept only for
+// backward compatibility with existing code and MCP-Go library compatibility.
 type ExtendedLogger interface {
 	// Core MCP-Go compatibility methods
 	Infof(format string, v ...any)
@@ -33,6 +37,9 @@ type ExtendedLogger interface {
 
 // AdaptLogger adapts a util.Logger (MCP-Go interface) to our ExtendedLogger interface
 // This provides backward compatibility for external packages that only have util.Logger
+//
+// Deprecated: Use logger/v2.FromUtilLogger() or logger/v2.ToUtilLogger() instead.
+// This function is kept only for backward compatibility.
 func AdaptLogger(logger util.Logger) ExtendedLogger {
 	return &LoggerAdapter{
 		logger: logger,
@@ -41,6 +48,9 @@ func AdaptLogger(logger util.Logger) ExtendedLogger {
 
 // AdaptToUtilLogger adapts our ExtendedLogger to util.Logger (MCP-Go interface)
 // This provides compatibility for packages that expect util.Logger
+//
+// Deprecated: Use logger/v2.ToUtilLogger() instead. This function is kept only
+// for backward compatibility.
 func AdaptToUtilLogger(logger ExtendedLogger) util.Logger {
 	return &ReverseLoggerAdapter{
 		logger: logger,

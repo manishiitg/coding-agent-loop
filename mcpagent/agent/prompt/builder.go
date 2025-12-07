@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -254,7 +254,7 @@ You can also make direct HTTP calls to the MCP API:
 // BuildSystemPromptWithoutTools builds the system prompt without including tool descriptions
 // This is useful when tools are passed via llmtypes.WithTools() to avoid prompt length issues
 // toolStructureJSON is optional - if provided in code execution mode, it will replace {{TOOL_STRUCTURE}} placeholder
-func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger logger.ExtendedLogger) string {
+func BuildSystemPromptWithoutTools(prompts map[string][]mcp.Prompt, resources map[string][]mcp.Resource, mode interface{}, discoverResource bool, discoverPrompt bool, useCodeExecutionMode bool, toolStructureJSON string, logger loggerv2.Logger) string {
 	// Build prompts section with previews (only if discoverPrompt is true and NOT in code execution mode)
 	// In code execution mode, prompts/resources are not accessible via get_prompt/get_resource
 	var promptsSection string
@@ -369,7 +369,8 @@ Large tool outputs (>1000 chars) are automatically saved to files. Use virtual t
 }
 
 // buildPromptsSectionWithPreviews builds the prompts section with previews
-func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger logger.ExtendedLogger) string {
+func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger loggerv2.Logger) string {
+
 	// Count total prompts across all servers
 	totalPrompts := 0
 	for _, serverPrompts := range prompts {
@@ -377,14 +378,13 @@ func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger log
 	}
 
 	if totalPrompts == 0 {
-		logger.Info("🔍 No prompts found for preview generation - skipping prompts section")
+		logger.Debug("No prompts found for preview generation - skipping prompts section")
 		return ""
 	}
 
-	logger.Info("🔍 Building prompts section with previews", map[string]interface{}{
-		"server_count":  len(prompts),
-		"total_prompts": totalPrompts,
-	})
+	logger.Debug("Building prompts section with previews",
+		loggerv2.Int("server_count", len(prompts)),
+		loggerv2.Int("total_prompts", totalPrompts))
 
 	var promptsList []string
 	for serverName, serverPrompts := range prompts {
@@ -393,21 +393,19 @@ func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger log
 			continue
 		}
 
-		logger.Info("📝 Processing server prompts", map[string]interface{}{
-			"server_name":  serverName,
-			"prompt_count": len(serverPrompts),
-		})
+		logger.Debug("Processing server prompts",
+			loggerv2.String("server_name", serverName),
+			loggerv2.Int("prompt_count", len(serverPrompts)))
 
 		promptsList = append(promptsList, fmt.Sprintf("%s:", serverName))
 		for _, prompt_item := range serverPrompts {
 			name := prompt_item.Name
 			description := prompt_item.Description
 
-			logger.Debug("📄 Processing prompt", map[string]interface{}{
-				"server_name":        serverName,
-				"prompt_name":        name,
-				"description_length": len(description),
-			})
+			logger.Debug("Processing prompt",
+				loggerv2.String("server_name", serverName),
+				loggerv2.String("prompt_name", name),
+				loggerv2.Int("description_length", len(description)))
 
 			// Extract preview (first 10 lines) from the description
 			preview := extractPromptPreview(description)
@@ -419,15 +417,14 @@ func buildPromptsSectionWithPreviews(prompts map[string][]mcp.Prompt, logger log
 
 	// Double-check: if no prompts were actually added, return empty
 	if len(promptsList) == 0 {
-		logger.Info("🔍 No actual prompts found after processing - skipping prompts section")
+		logger.Debug("No actual prompts found after processing - skipping prompts section")
 		return ""
 	}
 
 	promptsText := strings.Join(promptsList, "\n")
-	logger.Info("✅ Prompts section built", map[string]interface{}{
-		"total_length": len(promptsText),
-		"prompt_lines": len(promptsList),
-	})
+	logger.Debug("Prompts section built",
+		loggerv2.Int("total_length", len(promptsText)),
+		loggerv2.Int("prompt_lines", len(promptsList)))
 
 	return strings.ReplaceAll(PromptsSectionTemplate, PromptsListPlaceholder, promptsText)
 }

@@ -7,79 +7,51 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 )
 
-// PrintTools displays tools in a detailed, human-readable format
-func PrintTools(tools []mcp.Tool, logger logger.ExtendedLogger) {
-	logger.Infof("Available tools - count: %d", len(tools))
+// PrintTools displays tools in a detailed, human-readable format (Debug level only)
+func PrintTools(tools []mcp.Tool, logger loggerv2.Logger) {
+	logger.Debug("Available tools", loggerv2.Int("count", len(tools)))
 	for i, tool := range tools {
-		logger.Infof("Tool %d: %s - %s", i+1, tool.Name, tool.Description)
-
-		// Extract parameter information from schema
-		schemaBytes, err := json.Marshal(tool.InputSchema)
-		if err == nil {
-			var schemaMap map[string]any
-			if err := json.Unmarshal(schemaBytes, &schemaMap); err == nil {
-				// Gather required fields
-				requiredFields := map[string]bool{}
-				if req, ok := schemaMap["required"].([]any); ok {
-					for _, r := range req {
-						if s, ok := r.(string); ok {
-							requiredFields[s] = true
-						}
-					}
-				}
-
-				// Walk through properties
-				if props, ok := schemaMap["properties"].(map[string]any); ok {
-					for propName, propDetails := range props {
-						if propMap, ok := propDetails.(map[string]any); ok {
-							required := requiredFields[propName]
-							description := ""
-							if desc, ok := propMap["description"].(string); ok {
-								description = desc
-							}
-							logger.Infof("Tool parameter - Tool: %s, Param: %s, Required: %v, Description: %s",
-								tool.Name, propName, required, description)
-						}
-					}
-				}
-			}
-		}
+		logger.Debug("Tool",
+			loggerv2.Int("index", i+1),
+			loggerv2.String("name", tool.Name),
+			loggerv2.String("description", tool.Description))
 	}
 }
 
-// PrintResources displays resources in a detailed, human-readable format
-func PrintResources(resources []mcp.Resource, logger logger.ExtendedLogger) {
-	logger.Infof("Available resources - count: %d", len(resources))
+// PrintResources displays resources in a detailed, human-readable format (Debug level only)
+func PrintResources(resources []mcp.Resource, logger loggerv2.Logger) {
+	logger.Debug("Available resources", loggerv2.Int("count", len(resources)))
 	for i, resource := range resources {
-		logger.Infof("Resource %d: %s (%s) - %s", i+1, resource.Name, resource.URI, resource.Description)
+		logger.Debug("Resource",
+			loggerv2.Int("index", i+1),
+			loggerv2.String("name", resource.Name),
+			loggerv2.String("uri", resource.URI),
+			loggerv2.String("description", resource.Description))
 	}
 }
 
-// PrintPrompts displays prompts in a detailed, human-readable format
-func PrintPrompts(prompts []mcp.Prompt, logger logger.ExtendedLogger) {
-	logger.Infof("Available prompts - count: %d", len(prompts))
+// PrintPrompts displays prompts in a detailed, human-readable format (Debug level only)
+func PrintPrompts(prompts []mcp.Prompt, logger loggerv2.Logger) {
+	logger.Debug("Available prompts", loggerv2.Int("count", len(prompts)))
 	for i, prompt := range prompts {
-		logger.Infof("Prompt %d: %s - %s", i+1, prompt.Name, prompt.Description)
-
-		// Print prompt arguments if available
-		for j, arg := range prompt.Arguments {
-			logger.Infof("Prompt argument - Prompt: %s, Arg %d: %s - %s",
-				prompt.Name, j+1, arg.Name, arg.Description)
-		}
+		logger.Debug("Prompt",
+			loggerv2.Int("index", i+1),
+			loggerv2.String("name", prompt.Name),
+			loggerv2.String("description", prompt.Description))
 	}
 }
 
-// PrintToolResult displays a tool result in a human-readable format
-func PrintToolResult(result *mcp.CallToolResult, logger logger.ExtendedLogger) {
+// PrintToolResult displays a tool result in a human-readable format (Debug level only)
+func PrintToolResult(result *mcp.CallToolResult, logger loggerv2.Logger) {
 	if result == nil {
-		logger.Infof("Tool execution completed but no result returned")
+		logger.Debug("Tool execution completed but no result returned")
 		return
 	}
 
-	logger.Infof("Tool Result (IsError: %v):", result.IsError)
+	logger.Debug("Tool Result", loggerv2.Any("is_error", result.IsError))
 
 	// Join all content parts
 	var parts []string
@@ -102,38 +74,40 @@ func PrintToolResult(result *mcp.CallToolResult, logger logger.ExtendedLogger) {
 	}
 
 	joined := strings.Join(parts, "\n")
-	logger.Infof("%s", joined)
+	logger.Debug("Tool result content", loggerv2.String("content", joined))
 }
 
-// PrintResourceResult displays a resource result in a human-readable format
-func PrintResourceResult(result *mcp.ReadResourceResult, logger logger.ExtendedLogger) {
+// PrintResourceResult displays a resource result in a human-readable format (Debug level only)
+func PrintResourceResult(result *mcp.ReadResourceResult, logger loggerv2.Logger) {
 	if result == nil {
-		logger.Infof("Resource read completed but no result returned")
+		logger.Debug("Resource read completed but no result returned")
 		return
 	}
 
-	logger.Infof("Resource Result:")
-	logger.Infof("Contents (%d):", len(result.Contents))
+	logger.Debug("Resource Result", loggerv2.Int("contents_count", len(result.Contents)))
 	for i, content := range result.Contents {
-		logger.Infof("  Content %d: %s", i+1, formatResourceContents(content))
+		logger.Debug("Resource content",
+			loggerv2.Int("index", i+1),
+			loggerv2.String("content", formatResourceContents(content)))
 	}
 }
 
-// PrintPromptResult displays a prompt result in a human-readable format
-func PrintPromptResult(result *mcp.GetPromptResult, logger logger.ExtendedLogger) {
+// PrintPromptResult displays a prompt result in a human-readable format (Debug level only)
+func PrintPromptResult(result *mcp.GetPromptResult, logger loggerv2.Logger) {
 	if result == nil {
-		logger.Infof("Prompt retrieval completed but no result returned")
+		logger.Debug("Prompt retrieval completed but no result returned")
 		return
 	}
 
-	logger.Infof("Prompt Result:")
-	logger.Infof("Description: %s", result.Description)
-	logger.Infof("Messages (%d):", len(result.Messages))
+	logger.Debug("Prompt Result",
+		loggerv2.String("description", result.Description),
+		loggerv2.Int("messages_count", len(result.Messages)))
 
 	for i, msg := range result.Messages {
-		logger.Infof("  Message %d:", i+1)
-		logger.Infof("    Role: %s", msg.Role)
-		logger.Infof("    Content: %s", formatContent(msg.Content))
+		logger.Debug("Prompt message",
+			loggerv2.Int("index", i+1),
+			loggerv2.String("role", string(msg.Role)),
+			loggerv2.String("content", formatContent(msg.Content)))
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpcache/codegen"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -29,7 +30,7 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 
 	// Debug: Log received arguments
 	if a.Logger != nil {
-		a.Logger.Debugf("discover_code_files called with args: %+v", args)
+		a.Logger.Debug("discover_code_files called", loggerv2.Any("args", args))
 	}
 
 	// Extract parameters (both required)
@@ -65,13 +66,13 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 		// Found in agent directory
 		packageDir = agentPackageDir
 		if a.Logger != nil {
-			a.Logger.Debugf("🔍 Found package in agent directory: %s", packageDir)
+			a.Logger.Debug("🔍 Found package in agent directory", loggerv2.String("package_dir", packageDir))
 		}
 	} else {
 		// Fall back to shared directory
 		packageDir = filepath.Join(generatedDir, packageName)
 		if a.Logger != nil {
-			a.Logger.Debugf("🔍 Using shared directory: %s", packageDir)
+			a.Logger.Debug("🔍 Using shared directory", loggerv2.String("package_dir", packageDir))
 		}
 	}
 
@@ -90,7 +91,7 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 			return "", fmt.Errorf("server %s is filtered out and not available", serverName)
 		}
 	} else if a.Logger != nil {
-		a.Logger.Debugf("🔍 [DISCOVERY] Allowing access to %s (isVirtualTool=%v, isCategoryDir=%v)", packageName, isVirtualTool, isCategoryDir)
+		a.Logger.Debug("🔍 [DISCOVERY] Allowing access", loggerv2.String("package", packageName), loggerv2.Any("is_virtual_tool", isVirtualTool), loggerv2.Any("is_category_dir", isCategoryDir))
 	}
 
 	// Check if package directory exists
@@ -125,32 +126,9 @@ func (a *Agent) handleDiscoverCodeFiles(ctx context.Context, args map[string]int
 
 // discoverAllServersAndTools returns a JSON list of all available servers and their tools
 func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) {
-	if a.Logger != nil {
-		a.Logger.Infof("🔍 [DISCOVERY] ===== Starting Tool Discovery =====")
-		a.Logger.Infof("🔍 [DISCOVERY] Discovery directory: %s", generatedDir)
-		a.Logger.Infof("🔍 [DISCOVERY] Filter configuration:")
-		a.Logger.Infof("🔍 [DISCOVERY]   - selectedServers: %v (count: %d)", a.selectedServers, len(a.selectedServers))
-		a.Logger.Infof("🔍 [DISCOVERY]   - selectedTools: %v (count: %d)", a.selectedTools, len(a.selectedTools))
-		a.Logger.Infof("🔍 [DISCOVERY]   - useCodeExecutionMode: %v", a.UseCodeExecutionMode)
-		// Log available MCP clients for debugging server detection
-		if a.Clients != nil {
-			clientNames := make([]string, 0, len(a.Clients))
-			for name := range a.Clients {
-				clientNames = append(clientNames, name)
-			}
-			a.Logger.Infof("🔍 [DISCOVERY] Available MCP clients: %v (count: %d)", clientNames, len(clientNames))
-		} else {
-			a.Logger.Warnf("🔍 [DISCOVERY] No MCP clients available (a.Clients is nil)")
-		}
-	}
-
 	entries, err := os.ReadDir(generatedDir)
 	if err != nil {
 		return "", fmt.Errorf("failed to read generated directory: %w", err)
-	}
-
-	if a.Logger != nil {
-		a.Logger.Debugf("🔍 [DISCOVERY] Found %d entries in generated directory", len(entries))
 	}
 
 	type ServerInfo struct {
@@ -209,16 +187,12 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 		// For MCP server directories (aws_tools, gdrive_tools), this will be the server name
 		serverName := strings.TrimSuffix(dirName, "_tools")
 
-		if a.Logger != nil {
-			a.Logger.Debugf("🔍 [DISCOVERY] Processing directory: %s (serverName: %s)", dirName, serverName)
-		}
-
 		// Find all Go files in this directory
 		packageDir := filepath.Join(generatedDir, dirName)
 		packageEntries, err := os.ReadDir(packageDir)
 		if err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("Failed to read package directory %s: %v", packageDir, err)
+				a.Logger.Warn("Failed to read package directory", loggerv2.String("package_dir", packageDir), loggerv2.Error(err))
 			}
 			continue
 		}
@@ -235,7 +209,7 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			node, err := parser.ParseFile(fset, goFile, nil, parser.ParseComments)
 			if err != nil {
 				if a.Logger != nil {
-					a.Logger.Warnf("Failed to parse Go file %s: %v", goFile, err)
+					a.Logger.Warn("Failed to parse Go file", loggerv2.String("file", goFile), loggerv2.Error(err))
 				}
 				continue
 			}
@@ -273,11 +247,6 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 						}
 						shouldInclude := a.toolFilter.ShouldIncludeTool(packageOrServer, fn.Name.Name, isCategoryDir, isVirtualTool)
 
-						if a.Logger != nil {
-							a.Logger.Debugf("🔍 [TOOL DISCOVERY] Tool %s: packageOrServer=%s (normalized: %s), isVirtualTool=%v, isCategoryDir=%v, shouldInclude=%v",
-								fn.Name.Name, packageOrServer, a.toolFilter.NormalizeServerName(packageOrServer), isVirtualTool, isCategoryDir, shouldInclude)
-						}
-
 						if shouldInclude {
 							tools = append(tools, fn.Name.Name)
 						}
@@ -289,20 +258,11 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 
 		// Use unified ToolFilter for directory type detection
 		// This ensures consistency with LLM tool registration
-		isVirtualToolsDir := a.toolFilter.IsVirtualToolsDirectory(dirName)
 		isCategoryDirectory := a.toolFilter.IsCategoryDirectory(dirName)
 
 		// Skip if no tools found (after filtering)
 		if len(tools) == 0 {
-			if a.Logger != nil {
-				a.Logger.Warnf("🔍 [DISCOVERY] Skipping directory %s - no tools found after filtering (serverName=%s, isCategoryDirectory=%v, isVirtualToolsDir=%v)", dirName, serverName, isCategoryDirectory, isVirtualToolsDir)
-			}
 			continue
-		}
-
-		if a.Logger != nil {
-			a.Logger.Debugf("🔍 [DISCOVERY] Directory %s: Found %d tools after filtering: %v", dirName, len(tools), tools)
-			a.Logger.Debugf("🔍 [DISCOVERY] Directory %s: serverName=%s, isVirtualToolsDir=%v, isCategoryDirectory=%v", dirName, serverName, isVirtualToolsDir, isCategoryDirectory)
 		}
 
 		// Server-level filtering: Tools are filtered above, and server-level checks are done
@@ -312,9 +272,6 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			// Virtual tools are already registered as real tools to the LLM
 			// They don't need to be in the system prompt's tool structure discovery
 			// Skip adding them to the discovery result
-			if a.Logger != nil {
-				a.Logger.Debugf("🔍 [DISCOVERY] Skipping virtual_tools directory - tools are already registered as real LLM tools (not needed in system prompt)")
-			}
 			continue
 		} else if isCategoryDirectory {
 			// This is a category-specific directory (workspace_tools, human_tools, etc.)
@@ -368,14 +325,7 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 			}
 
 			if !shouldIncludeServer {
-				if a.Logger != nil {
-					a.Logger.Debugf("🔍 [DISCOVERY] Skipping MCP server %s - server filtered out (serverName=%s, normalized=%s)", dirName, serverName, a.toolFilter.NormalizeServerName(serverName))
-				}
 				continue
-			}
-
-			if a.Logger != nil {
-				a.Logger.Debugf("🔍 [DISCOVERY] Adding MCP server: %s (package: %s, tools: %d)", serverName, dirName, len(tools))
 			}
 			result.Servers = append(result.Servers, ServerInfo{
 				Name:    serverName,
@@ -391,30 +341,28 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 		return "", fmt.Errorf("failed to marshal discovery result: %w", err)
 	}
 
+	// Log summary only if logger is available
 	if a.Logger != nil {
-		// Log summary of what was discovered
-		a.Logger.Infof("🔍 [DISCOVERY] Discovery complete - Summary:")
-		a.Logger.Infof("🔍 [DISCOVERY]   - MCP Servers: %d", len(result.Servers))
-		for _, server := range result.Servers {
-			a.Logger.Infof("🔍 [DISCOVERY]     * %s (%s): %d tools", server.Name, server.Package, len(server.Tools))
+		totalServers := len(result.Servers)
+		totalCustomCategories := len(result.CustomTools)
+		totalTools := 0
+		for _, s := range result.Servers {
+			totalTools += len(s.Tools)
 		}
-		a.Logger.Infof("🔍 [DISCOVERY]   - Custom Tool Categories: %d", len(result.CustomTools))
-		for _, custom := range result.CustomTools {
-			a.Logger.Infof("🔍 [DISCOVERY]     * %s (%s): %d tools", custom.Category, custom.Package, len(custom.Tools))
+		for _, c := range result.CustomTools {
+			totalTools += len(c.Tools)
 		}
 		if result.WorkspaceTools != nil {
-			a.Logger.Infof("🔍 [DISCOVERY]   - WorkspaceTools (%s): %d tools", result.WorkspaceTools.Package, len(result.WorkspaceTools.Tools))
+			totalTools += len(result.WorkspaceTools.Tools)
 		}
 		if result.HumanTools != nil {
-			a.Logger.Infof("🔍 [DISCOVERY]   - HumanTools (%s): %d tools", result.HumanTools.Package, len(result.HumanTools.Tools))
+			totalTools += len(result.HumanTools.Tools)
 		}
-		if result.VirtualTools != nil {
-			a.Logger.Infof("🔍 [DISCOVERY]   - VirtualTools (%s): %d tools", result.VirtualTools.Package, len(result.VirtualTools.Tools))
-			if len(result.VirtualTools.Tools) > 0 {
-				a.Logger.Infof("🔍 [DISCOVERY]     * Tools: %v", result.VirtualTools.Tools)
-			}
-		}
-		a.Logger.Infof("🔍 [DISCOVERY] Final tool structure JSON size: %d bytes", len(jsonData))
+		a.Logger.Info("🔍 [DISCOVERY] Discovery complete",
+			loggerv2.Int("mcp_servers", totalServers),
+			loggerv2.Int("custom_categories", totalCustomCategories),
+			loggerv2.Int("total_tools", totalTools),
+			loggerv2.Int("json_size_bytes", len(jsonData)))
 	}
 
 	return string(jsonData), nil
@@ -449,9 +397,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 		return "", fmt.Errorf("failed to create execution directory: %w", err)
 	}
 
-	if a.Logger != nil {
-		a.Logger.Infof("📁 Created isolated workspace directory: %s", workspaceDir)
-	}
+	// Workspace directory creation is internal - no need to log
 
 	// Write code to file
 	filePath := filepath.Join(workspaceDir, filename)
@@ -459,14 +405,12 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 		return "", fmt.Errorf("failed to write code file: %w", err)
 	}
 
-	if a.Logger != nil {
-		a.Logger.Infof("✅ Written Go code to: %s (%d bytes)", filePath, len(code))
-	}
+	// Code file writing is internal - no need to log
 
 	// Validate code for forbidden file I/O operations before execution
 	if err := a.validateCodeForForbiddenFileIO(code); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("🚫 Code validation failed: %v", err)
+			a.Logger.Warn("🚫 Code validation failed", loggerv2.Error(err))
 		}
 		// Return formatted error message for LLM
 		return formatFileIOValidationError(err, code), nil
@@ -477,7 +421,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	agentGeneratedDir := a.getAgentGeneratedDir()
 	if err := a.ensureAgentWorkspaceToolsGenerated(agentGeneratedDir); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("⚠️ Failed to generate workspace_tools: %v", err)
+			a.Logger.Warn("⚠️ Failed to generate workspace_tools", loggerv2.Error(err))
 		}
 		// Continue anyway - workspace_tools might already exist
 	}
@@ -485,14 +429,14 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	// Parse code to find imported packages and set up Go workspace
 	importedPackages, err := a.parseImportedPackages(code)
 	if err != nil && a.Logger != nil {
-		a.Logger.Warnf("⚠️ Failed to parse imports from code: %v", err)
+		a.Logger.Warn("⚠️ Failed to parse imports from code", loggerv2.Error(err))
 	}
 
 	// Set up Go workspace to import generated packages from their original location
 	if len(importedPackages) > 0 {
 		if err := a.setupGoWorkspace(workspaceDir, importedPackages); err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("⚠️ Failed to set up Go workspace: %v", err)
+				a.Logger.Warn("⚠️ Failed to set up Go workspace", loggerv2.Error(err))
 			}
 			// Don't fail - maybe the imports are standard library or external
 		}
@@ -503,7 +447,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	if err != nil {
 		// Log the full error details for debugging
 		if a.Logger != nil {
-			a.Logger.Errorf("❌ Code execution failed - Error: %v\nError details: %+v", err, err)
+			a.Logger.Error("❌ Code execution failed", err, loggerv2.Any("error_details", err))
 		}
 		// Keep files on error for debugging - don't delete the execution directory
 		// Return error output so LLM can see what went wrong
@@ -514,19 +458,15 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 
 	// Clean up entire execution directory after successful execution
 	if err := os.RemoveAll(workspaceDir); err != nil {
+		// Log only on error
 		if a.Logger != nil {
-			a.Logger.Debugf("⚠️ Failed to remove execution directory %s: %v", workspaceDir, err)
+			a.Logger.Warn("⚠️ Failed to remove execution directory", loggerv2.String("workspace_dir", workspaceDir), loggerv2.Error(err))
 		}
-	} else if a.Logger != nil {
-		a.Logger.Debugf("🧹 Cleaned up execution directory: %s", workspaceDir)
 	}
 
 	// Ensure we always return meaningful content to the LLM
 	// If output is empty, provide a message indicating successful execution with no output
 	if output == "" {
-		if a.Logger != nil {
-			a.Logger.Infof("⚠️ Code execution succeeded but produced no output (empty stdout/stderr)")
-		}
 		return "Code executed successfully. No output was produced (stdout/stderr were empty).", nil
 	}
 
@@ -550,9 +490,7 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 // This runs the code as a separate process with full Go language support
 // Code can make HTTP calls to MCP API for tool execution
 func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string) (string, error) {
-	if a.Logger != nil {
-		a.Logger.Infof("🔧 Executing Go code using 'go run' command: %s", filePath)
-	}
+	// Code execution is internal - log only on error
 
 	// Extract just the filename since cmd.Dir is set to workspaceDir
 	// This prevents path doubling (e.g., tool_output_folder/tool_output_folder/file.go)
@@ -573,13 +511,9 @@ func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code 
 
 	if err != nil {
 		if a.Logger != nil {
-			a.Logger.Errorf("❌ go run failed: %v\nOutput: %s", err, string(output))
+			a.Logger.Error("❌ go run failed", err, loggerv2.String("output", string(output)))
 		}
 		return "", fmt.Errorf("go run failed: %w\nOutput:\n%s", err, string(output))
-	}
-
-	if a.Logger != nil {
-		a.Logger.Infof("✅ Code executed successfully, output length: %d bytes", len(output))
 	}
 
 	return string(output), nil
@@ -836,7 +770,7 @@ func (a *Agent) getAgentGeneratedDir() string {
 	// Ensure directory exists
 	if err := os.MkdirAll(agentDir, 0755); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("Failed to create agent generated directory %s: %v", agentDir, err)
+			a.Logger.Warn("Failed to create agent generated directory", loggerv2.String("agent_dir", agentDir), loggerv2.Error(err))
 		}
 	}
 
@@ -852,16 +786,11 @@ func (a *Agent) ensureAgentWorkspaceToolsGenerated(agentDir string) error {
 	apiClientFile := filepath.Join(workspaceToolsDir, "api_client.go")
 	if _, err := os.Stat(apiClientFile); err == nil {
 		// Already generated, skip
-		if a.Logger != nil {
-			a.Logger.Debugf("🔧 Workspace tools already generated for agent %s", string(a.TraceID))
-		}
 		return nil
 	}
 
 	// Generate workspace_tools with folder guard validation
-	if a.Logger != nil {
-		a.Logger.Infof("🔧 Generating workspace_tools for agent %s with folder guards", string(a.TraceID))
-	}
+	// Generation is internal - log only on error
 
 	return a.generateWorkspaceToolsWithFolderGuards(workspaceToolsDir)
 }
@@ -919,15 +848,13 @@ func (a *Agent) generateWorkspaceToolsWithFolderGuards(workspaceToolsDir string)
 		funcFile := filepath.Join(workspaceToolsDir, fileName)
 		if err := os.WriteFile(funcFile, []byte(funcCode), 0644); err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("Failed to write workspace tool %s: %v", toolName, err)
+				a.Logger.Warn("Failed to write workspace tool", loggerv2.String("tool_name", toolName), loggerv2.Error(err))
 			}
 			continue
 		}
 	}
 
-	if a.Logger != nil {
-		a.Logger.Infof("✅ Generated workspace_tools package with folder guard validation")
-	}
+	// Generation complete - no need to log success
 
 	return nil
 }
@@ -1219,9 +1146,6 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
 			return fmt.Errorf("failed to create go.mod: %w", err)
 		}
-		if a.Logger != nil {
-			a.Logger.Debugf("✅ Created go.mod in workspace")
-		}
 	}
 
 	// Track which directories we've processed to avoid duplicates
@@ -1239,9 +1163,6 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		} else if _, err := os.Stat(sharedPackageDir); err == nil {
 			packageDir = sharedPackageDir
 		} else {
-			if a.Logger != nil {
-				a.Logger.Debugf("Package %s not found in agent or shared directory, skipping", packageName)
-			}
 			continue
 		}
 
@@ -1257,12 +1178,9 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 			pkgGoModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
 			if err := os.WriteFile(pkgGoModPath, []byte(pkgGoModContent), 0644); err != nil {
 				if a.Logger != nil {
-					a.Logger.Warnf("⚠️ Failed to create go.mod for package %s: %v", packageName, err)
+					a.Logger.Warn("⚠️ Failed to create go.mod for package", loggerv2.String("package_name", packageName), loggerv2.Error(err))
 				}
 				continue
-			}
-			if a.Logger != nil {
-				a.Logger.Debugf("✅ Created go.mod for package %s", packageName)
 			}
 		}
 	}
@@ -1303,9 +1221,6 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 								if err == nil {
 									addedModules[moduleName] = absPkgDir
 									builder.WriteString(fmt.Sprintf("    %s\n", absPkgDir))
-									if a.Logger != nil {
-										a.Logger.Debugf("✅ Added agent package %s (module: %s) to workspace: %s", entry.Name(), moduleName, absPkgDir)
-									}
 								}
 							}
 						}
@@ -1348,13 +1263,6 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 								if err == nil {
 									addedModules[moduleName] = absPkgDir
 									builder.WriteString(fmt.Sprintf("    %s\n", absPkgDir))
-									if a.Logger != nil {
-										a.Logger.Debugf("✅ Added shared package %s (module: %s) to workspace: %s", entry.Name(), moduleName, absPkgDir)
-									}
-								}
-							} else if moduleName != "" && addedModules[moduleName] != "" {
-								if a.Logger != nil {
-									a.Logger.Debugf("⏭️  Skipped shared package %s (module: %s) - already added from agent directory", entry.Name(), moduleName)
 								}
 							}
 						}
@@ -1372,10 +1280,7 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		return fmt.Errorf("failed to create go.work: %w", err)
 	}
 
-	if a.Logger != nil {
-		a.Logger.Infof("✅ Created go.work in workspace with %d packages", len(packageNames))
-		a.Logger.Debugf("📄 go.work content:\n%s", builder.String())
-	}
+	// Note: go.work creation is internal - no need to log unless there's an error
 
 	// Run 'go work sync' to initialize the workspace and resolve modules
 	// This ensures Go recognizes the workspace modules correctly
@@ -1383,10 +1288,8 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		// Clean up go.work file on failure to avoid inconsistent state
 		if removeErr := os.Remove(goWorkPath); removeErr != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("⚠️ Failed to remove go.work file after sync failure: %v", removeErr)
+				a.Logger.Warn("⚠️ Failed to remove go.work file after sync failure", loggerv2.Error(removeErr))
 			}
-		} else if a.Logger != nil {
-			a.Logger.Debugf("🧹 Cleaned up go.work file after sync failure")
 		}
 		return fmt.Errorf("failed to sync Go workspace: %w", err)
 	}
@@ -1397,10 +1300,6 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 // syncGoWorkspace runs 'go work sync' to initialize the workspace and resolve modules
 // This ensures Go recognizes the workspace modules correctly
 func (a *Agent) syncGoWorkspace(workspaceDir string) error {
-	if a.Logger != nil {
-		a.Logger.Debugf("🔄 Running 'go work sync' in %s", workspaceDir)
-	}
-
 	// Create command to run 'go work sync'
 	cmd := exec.Command("go", "work", "sync")
 	cmd.Dir = workspaceDir
@@ -1409,16 +1308,9 @@ func (a *Agent) syncGoWorkspace(workspaceDir string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("⚠️ 'go work sync' failed: %v\nOutput: %s", err, string(output))
+			a.Logger.Warn("⚠️ 'go work sync' failed", loggerv2.Error(err), loggerv2.String("output", string(output)))
 		}
 		return fmt.Errorf("go work sync failed: %w\nOutput: %s", err, string(output))
-	}
-
-	if a.Logger != nil {
-		a.Logger.Debugf("✅ 'go work sync' completed successfully")
-		if len(output) > 0 {
-			a.Logger.Debugf("📋 Sync output: %s", string(output))
-		}
 	}
 
 	return nil

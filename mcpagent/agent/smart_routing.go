@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mcpagent/events"
 	"mcpagent/llm"
+	loggerv2 "mcpagent/logger/v2"
 	"strings"
 	"time"
 
@@ -18,14 +19,20 @@ func (a *Agent) shouldUseSmartRouting() bool {
 
 	// Use active clients count
 	serverCount := len(a.Clients)
-	logger.Infof("🔧 DEBUG: shouldUseSmartRouting - Active mode: Clients count=%d", serverCount)
+	logger.Debug("Checking smart routing eligibility",
+		loggerv2.Int("clients_count", serverCount))
 
 	result := a.EnableSmartRouting &&
 		len(a.Tools) > a.SmartRoutingThreshold.MaxTools &&
 		serverCount > a.SmartRoutingThreshold.MaxServers
 
-	logger.Infof("🔧 DEBUG: shouldUseSmartRouting result=%v (EnableSmartRouting=%v, Tools=%d>%d, Servers=%d>%d)",
-		result, a.EnableSmartRouting, len(a.Tools), a.SmartRoutingThreshold.MaxTools, serverCount, a.SmartRoutingThreshold.MaxServers)
+	logger.Debug("Smart routing check result",
+		loggerv2.Any("result", result),
+		loggerv2.Any("enabled", a.EnableSmartRouting),
+		loggerv2.Int("tools", len(a.Tools)),
+		loggerv2.Int("max_tools_threshold", a.SmartRoutingThreshold.MaxTools),
+		loggerv2.Int("servers", serverCount),
+		loggerv2.Int("max_servers_threshold", a.SmartRoutingThreshold.MaxServers))
 
 	return result
 }
@@ -133,7 +140,8 @@ func (a *Agent) filterToolsByRelevance(ctx context.Context, conversationContext 
 	// 🔄 NEW: Rebuild system prompt with filtered servers
 	if err := a.RebuildSystemPromptWithFilteredServers(ctx, relevantServers); err != nil {
 		// Log error but don't fail the entire operation
-		a.Logger.Warnf("Failed to rebuild system prompt with filtered servers: %w", err)
+		logger := a.Logger
+		logger.Warn("Failed to rebuild system prompt with filtered servers", loggerv2.Error(err))
 	}
 
 	filteredTools := a.filterToolsByServers(relevantServers)
@@ -286,15 +294,19 @@ AVAILABLE SERVERS:`, serverList.String(), systemPromptSection.String(), conversa
 func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt string) ([]string, string, string, error) {
 	startTime := time.Now()
 
-	// 🆕 DETAILED SMART ROUTING DEBUG LOGGING
-	a.Logger.Infof("🎯 [DEBUG] makeLightweightLLMCallWithReasoning START - Time: %v", startTime)
-	a.Logger.Infof("🎯 [DEBUG] Smart routing prompt length: %d chars", len(prompt))
-	a.Logger.Infof("🎯 [DEBUG] Context deadline check...")
+	// Smart routing debug logging
+	logger := a.Logger
+	logger.Debug("Starting smart routing LLM call",
+		loggerv2.String("start_time", startTime.Format(time.RFC3339)),
+		loggerv2.Int("prompt_length", len(prompt)))
+
 	if deadline, ok := ctx.Deadline(); ok {
 		timeUntilDeadline := time.Until(deadline)
-		a.Logger.Infof("🎯 [DEBUG] Context deadline: %v, Time until deadline: %v", deadline, timeUntilDeadline)
+		logger.Debug("Context deadline check",
+			loggerv2.String("deadline", deadline.Format(time.RFC3339)),
+			loggerv2.String("time_until_deadline", timeUntilDeadline.String()))
 	} else {
-		a.Logger.Infof("🎯 [DEBUG] Context has no deadline")
+		logger.Debug("Context has no deadline")
 	}
 
 	// Define the expected JSON schema for structured output
@@ -351,9 +363,10 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 		llmtypes.WithJSONMode(), // Use JSON mode for reliable structured output
 	}
 
-	// 🆕 DETAILED LLM CALL DEBUGGING
-	a.Logger.Infof("🎯 [DEBUG] About to call GenerateContentWithRetry - Time: %v", time.Now())
-	a.Logger.Infof("🎯 [DEBUG] GenerateContentWithRetry params - Messages: %d, Options: %d", len(messages), len(opts))
+	// LLM call debugging
+	logger.Debug("About to call GenerateContentWithRetry",
+		loggerv2.Int("messages_count", len(messages)),
+		loggerv2.Int("options_count", len(opts)))
 
 	// Use GenerateContentWithRetry for automatic fallback support
 	llmCallStart := time.Now()
@@ -363,13 +376,18 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 	})
 	llmCallDuration := time.Since(llmCallStart)
 
-	// 🆕 POST-LLM CALL DEBUGGING
-	a.Logger.Infof("🎯 [DEBUG] GenerateContentWithRetry completed - Duration: %v, Error: %v", llmCallDuration, err != nil)
+	// Post-LLM call debugging
+	logger.Debug("GenerateContentWithRetry completed",
+		loggerv2.String("duration", llmCallDuration.String()),
+		loggerv2.Any("has_error", err != nil))
 	if err != nil {
-		a.Logger.Infof("🎯 [DEBUG] GenerateContentWithRetry failed - Error: %v, Error type: %T", err, err)
+		logger.Debug("GenerateContentWithRetry failed", loggerv2.Error(err))
 		return nil, "", "", err
 	} else {
-		a.Logger.Infof("🎯 [DEBUG] GenerateContentWithRetry succeeded - Response: %v, Usage: %+v", response != nil, usage)
+		logger.Debug("GenerateContentWithRetry succeeded",
+			loggerv2.Any("has_response", response != nil),
+			loggerv2.Int("input_tokens", usage.InputTokens),
+			loggerv2.Int("output_tokens", usage.OutputTokens))
 	}
 
 	// Emit enhanced token usage event for smart routing with cache information
@@ -390,8 +408,12 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 				"smart_routing",
 				cacheDiscount, reasoningTokens, generationInfo,
 			)
-			a.Logger.Infof("[SMART ROUTING] Enhanced token usage - Prompt: %d, Completion: %d, Total: %d, Cache Discount: %.2f, Reasoning: %d",
-				usage.InputTokens, usage.OutputTokens, usage.TotalTokens, cacheDiscount, reasoningTokens)
+			logger.Debug("Smart routing token usage",
+				loggerv2.Int("prompt_tokens", usage.InputTokens),
+				loggerv2.Int("completion_tokens", usage.OutputTokens),
+				loggerv2.Int("total_tokens", usage.TotalTokens),
+				loggerv2.Any("cache_discount", cacheDiscount),
+				loggerv2.Int("reasoning_tokens", reasoningTokens))
 		} else {
 			// Fallback to basic token usage event
 			tokenEvent = events.NewTokenUsageEvent(
@@ -405,8 +427,10 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 				time.Since(startTime), // duration
 				"smart_routing",
 			)
-			a.Logger.Infof("[SMART ROUTING] Basic token usage - Prompt: %d, Completion: %d, Total: %d",
-				usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
+			logger.Debug("Smart routing basic token usage",
+				loggerv2.Int("prompt_tokens", usage.InputTokens),
+				loggerv2.Int("completion_tokens", usage.OutputTokens),
+				loggerv2.Int("total_tokens", usage.TotalTokens))
 		}
 		a.EmitTypedEvent(ctx, tokenEvent)
 	}

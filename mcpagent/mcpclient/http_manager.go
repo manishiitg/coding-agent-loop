@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -14,11 +14,11 @@ import (
 type HTTPManager struct {
 	url     string
 	headers map[string]string
-	logger  logger.ExtendedLogger
+	logger  loggerv2.Logger
 }
 
 // NewHTTPManager creates a new HTTP manager
-func NewHTTPManager(url string, headers map[string]string, logger logger.ExtendedLogger) *HTTPManager {
+func NewHTTPManager(url string, headers map[string]string, logger loggerv2.Logger) *HTTPManager {
 	return &HTTPManager{
 		url:     url,
 		headers: headers,
@@ -57,7 +57,7 @@ func (h *HTTPManager) Connect(ctx context.Context) (*client.Client, error) {
 	// The provided context will be used for actual MCP calls (ListTools, etc.)
 	// This prevents the HTTP connection from being canceled when the caller's context is done
 	startCtx := context.Background()
-	h.logger.Infof("🔍 Using background context for HTTP Start() to prevent connection cancellation")
+	h.logger.Debug("Using background context for HTTP Start() to prevent connection cancellation")
 
 	// Start the client with background context
 	if err := client.Start(startCtx); err != nil {

@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 
+	loggerv2 "mcpagent/logger/v2"
+
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcpagent/logger"
 )
 
 // CacheEntryForCodeGen represents a cache entry for code generation (to avoid import cycle)
@@ -19,7 +20,7 @@ type CacheEntryForCodeGen struct {
 }
 
 // parseToolSchema extracts and parses the JSON schema from a tool's parameters
-func parseToolSchema(toolName string, params interface{}, logger logger.ExtendedLogger) (map[string]interface{}, *GoStruct, error) {
+func parseToolSchema(toolName string, params interface{}, logger loggerv2.Logger) (map[string]interface{}, *GoStruct, error) {
 	var schema map[string]interface{}
 	if params != nil {
 		paramsBytes, err := json.Marshal(params)
@@ -46,9 +47,9 @@ func parseToolSchema(toolName string, params interface{}, logger logger.Extended
 
 // GenerateServerToolsCode generates Go code for MCP server tools
 // Creates one file per tool with snake_case file names
-func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, generatedDir string, logger logger.ExtendedLogger, timeout time.Duration) error {
+func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, generatedDir string, logger loggerv2.Logger, timeout time.Duration) error {
 	if entry == nil || len(entry.Tools) == 0 {
-		logger.Debugf("No tools to generate code for server: %s", serverName)
+		logger.Debug("No tools to generate code for server", loggerv2.String("server", serverName))
 		return nil
 	}
 
@@ -70,12 +71,12 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 		_, writeErr := f.WriteString(apiClientCode)
 		f.Close()
 		if writeErr != nil {
-			logger.Warnf("Failed to write API client file: %v", writeErr)
+			logger.Warn("Failed to write API client file", loggerv2.Error(writeErr))
 		} else {
-			logger.Debugf("Generated common API client file: %s", apiClientFile)
+			logger.Debug("Generated common API client file", loggerv2.String("file", apiClientFile))
 		}
 	} else if !os.IsExist(err) {
-		logger.Warnf("Failed to create API client file: %v", err)
+		logger.Warn("Failed to create API client file", loggerv2.Error(err))
 	}
 
 	generatedCount := 0
@@ -93,7 +94,7 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 		// Parse parameters schema
 		_, goStruct, err := parseToolSchema(toolName, tool.Function.Parameters, logger)
 		if err != nil {
-			logger.Warnf("Failed to parse schema for tool %s: %v", toolName, err)
+			logger.Warn("Failed to parse schema for tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 			continue
 		}
 
@@ -115,19 +116,22 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 
 		// Write file
 		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
-			logger.Warnf("Failed to write Go file for tool %s: %v", toolName, err)
+			logger.Warn("Failed to write Go file for tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 			continue
 		}
 
 		generatedCount++
-		logger.Debugf("Generated Go file for tool %s: %s", toolName, goFile)
+		logger.Debug("Generated Go file for tool", loggerv2.String("tool", toolName), loggerv2.String("file", goFile))
 	}
 
-	logger.Infof("Generated Go code for server %s: %d tools in %s", serverName, generatedCount, packageDir)
+	logger.Info("Generated Go code for server",
+		loggerv2.String("server", serverName),
+		loggerv2.Int("tools_count", generatedCount),
+		loggerv2.String("package_dir", packageDir))
 
 	// Regenerate index file
 	if err := GenerateIndexFile(generatedDir, logger); err != nil {
-		logger.Warnf("Failed to regenerate index file: %v", err)
+		logger.Warn("Failed to regenerate index file", loggerv2.Error(err))
 		// Don't fail the whole operation if index generation fails
 	}
 
@@ -143,10 +147,10 @@ type CustomToolForCodeGen struct {
 // GenerateCustomToolsCode generates Go code for custom tools
 // Groups tools by category and generates them into category-specific directories (workspace_tools, human_tools, etc.)
 // Creates one file per tool with snake_case file names
-func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, generatedDir string, logger logger.ExtendedLogger, timeout time.Duration) error {
+func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, generatedDir string, logger loggerv2.Logger, timeout time.Duration) error {
 	if len(customTools) == 0 {
 		if logger != nil {
-			logger.Debugf("No custom tools to generate code for")
+			logger.Debug("No custom tools to generate code for")
 		}
 		return nil
 	}
@@ -159,12 +163,13 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 		category := customTool.Category
 		if category == "" {
 			if logger != nil {
-				logger.Errorf("❌ [DISCOVERY] Tool %s has empty category - category is REQUIRED! Skipping code generation for this tool.", toolName)
+				logger.Error("Tool has empty category - category is REQUIRED! Skipping code generation for this tool", nil,
+					loggerv2.String("tool", toolName))
 			}
 			// Skip this tool - don't generate code without a category
 			continue
 		} else if logger != nil {
-			logger.Debugf("🔍 [DISCOVERY] Tool %s has category: %s", toolName, category)
+			logger.Debug("Tool has category", loggerv2.String("tool", toolName), loggerv2.String("category", category))
 		}
 
 		// Initialize category map if needed
@@ -175,9 +180,11 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 	}
 
 	if logger != nil {
-		logger.Infof("🔍 [DISCOVERY] Grouped %d tools into %d categories", len(customTools), len(toolsByCategory))
+		logger.Info("Grouped tools into categories",
+			loggerv2.Int("total_tools", len(customTools)),
+			loggerv2.Int("categories_count", len(toolsByCategory)))
 		for category, tools := range toolsByCategory {
-			logger.Infof("🔍 [DISCOVERY]   - Category '%s': %d tools", category, len(tools))
+			logger.Info("Category tools", loggerv2.String("category", category), loggerv2.Int("tools_count", len(tools)))
 		}
 	}
 
@@ -193,7 +200,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 		packageDir := filepath.Join(generatedDir, packageName)
 		if err := os.MkdirAll(packageDir, 0755); err != nil {
 			if logger != nil {
-				logger.Warnf("Failed to create package directory %s: %v", packageDir, err)
+				logger.Warn("Failed to create package directory", loggerv2.Error(err), loggerv2.String("package_dir", packageDir))
 			}
 			continue
 		}
@@ -208,14 +215,14 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 			f.Close()
 			if writeErr != nil {
 				if logger != nil {
-					logger.Warnf("Failed to write API client file: %v", writeErr)
+					logger.Warn("Failed to write API client file", loggerv2.Error(writeErr))
 				}
 			} else if logger != nil {
-				logger.Debugf("Generated common API client file: %s", apiClientFile)
+				logger.Debug("Generated common API client file", loggerv2.String("file", apiClientFile))
 			}
 		} else if !os.IsExist(err) {
 			if logger != nil {
-				logger.Warnf("Failed to create API client file: %v", err)
+				logger.Warn("Failed to create API client file", loggerv2.Error(err))
 			}
 		}
 
@@ -233,7 +240,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 			// Parse parameters schema
 			_, goStruct, err := parseToolSchema(toolName, customTool.Definition.Function.Parameters, logger)
 			if err != nil {
-				logger.Warnf("Failed to parse schema for custom tool %s: %v", toolName, err)
+				logger.Warn("Failed to parse schema for custom tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 				continue
 			}
 
@@ -255,19 +262,27 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 			// Write file
 			if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
-				logger.Warnf("Failed to write Go file for custom tool %s: %v", toolName, err)
+				logger.Warn("Failed to write Go file for custom tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 				continue
 			}
 
 			generatedCount++
 			totalGenerated++
-			logger.Debugf("Generated Go file for custom tool %s (category: %s) in %s", toolName, category, packageDir)
+			logger.Debug("Generated Go file for custom tool",
+				loggerv2.String("tool", toolName),
+				loggerv2.String("category", category),
+				loggerv2.String("package_dir", packageDir))
 		}
 
-		logger.Infof("Generated Go code for %s tools: %d tools in %s", category, generatedCount, packageDir)
+		logger.Info("Generated Go code for category tools",
+			loggerv2.String("category", category),
+			loggerv2.Int("tools_count", generatedCount),
+			loggerv2.String("package_dir", packageDir))
 	}
 
-	logger.Infof("Generated Go code for custom tools: %d total tools across %d categories", totalGenerated, len(toolsByCategory))
+	logger.Info("Generated Go code for custom tools",
+		loggerv2.Int("total_tools", totalGenerated),
+		loggerv2.Int("categories_count", len(toolsByCategory)))
 
 	// Clean up old files from custom_tools/ that have been moved to category directories
 	// This handles migration from the old single custom_tools/ directory to category-specific directories
@@ -302,9 +317,9 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 				if shouldRemove {
 					if err := os.Remove(oldFilePath); err != nil {
-						logger.Warnf("Failed to remove old file %s: %v", oldFilePath, err)
+						logger.Warn("Failed to remove old file", loggerv2.Error(err), loggerv2.String("file", oldFilePath))
 					} else {
-						logger.Debugf("Cleaned up old file from custom_tools: %s (moved to category directory)", fileName)
+						logger.Debug("Cleaned up old file from custom_tools", loggerv2.String("file", fileName))
 					}
 				}
 			}
@@ -313,7 +328,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 	// Regenerate index file
 	if err := GenerateIndexFile(generatedDir, logger); err != nil {
-		logger.Warnf("Failed to regenerate index file: %v", err)
+		logger.Warn("Failed to regenerate index file", loggerv2.Error(err))
 		// Don't fail the whole operation if index generation fails
 	}
 
@@ -322,9 +337,9 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 // GenerateVirtualToolsCode generates Go code for virtual tools
 // Creates one file per tool with snake_case file names
-func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string, logger logger.ExtendedLogger, timeout time.Duration) error {
+func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string, logger loggerv2.Logger, timeout time.Duration) error {
 	if len(virtualTools) == 0 {
-		logger.Debugf("No virtual tools to generate code for")
+		logger.Debug("No virtual tools to generate code for")
 		return nil
 	}
 
@@ -343,12 +358,12 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 		_, writeErr := f.WriteString(apiClientCode)
 		f.Close()
 		if writeErr != nil {
-			logger.Warnf("Failed to write API client file: %v", writeErr)
+			logger.Warn("Failed to write API client file", loggerv2.Error(writeErr))
 		} else {
-			logger.Debugf("Generated common API client file: %s", apiClientFile)
+			logger.Debug("Generated common API client file", loggerv2.String("file", apiClientFile))
 		}
 	} else if !os.IsExist(err) {
-		logger.Warnf("Failed to create API client file: %v", err)
+		logger.Warn("Failed to create API client file", loggerv2.Error(err))
 	}
 
 	generatedCount := 0
@@ -366,7 +381,7 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 		// Parse parameters schema
 		_, goStruct, err := parseToolSchema(toolName, tool.Function.Parameters, logger)
 		if err != nil {
-			logger.Warnf("Failed to parse schema for virtual tool %s: %v", toolName, err)
+			logger.Warn("Failed to parse schema for virtual tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 			continue
 		}
 
@@ -388,19 +403,21 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 
 		// Write file
 		if err := os.WriteFile(goFile, []byte(codeBuilder.String()), 0644); err != nil {
-			logger.Warnf("Failed to write Go file for virtual tool %s: %v", toolName, err)
+			logger.Warn("Failed to write Go file for virtual tool", loggerv2.Error(err), loggerv2.String("tool", toolName))
 			continue
 		}
 
 		generatedCount++
-		logger.Debugf("Generated Go file for virtual tool %s: %s", toolName, goFile)
+		logger.Debug("Generated Go file for virtual tool", loggerv2.String("tool", toolName), loggerv2.String("file", goFile))
 	}
 
-	logger.Infof("Generated Go code for virtual tools: %d tools in %s", generatedCount, packageDir)
+	logger.Info("Generated Go code for virtual tools",
+		loggerv2.Int("tools_count", generatedCount),
+		loggerv2.String("package_dir", packageDir))
 
 	// Regenerate index file
 	if err := GenerateIndexFile(generatedDir, logger); err != nil {
-		logger.Warnf("Failed to regenerate index file: %v", err)
+		logger.Warn("Failed to regenerate index file", loggerv2.Error(err))
 		// Don't fail the whole operation if index generation fails
 	}
 
@@ -408,7 +425,7 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 }
 
 // GenerateIndexFile generates an index.go file that re-exports all tools
-func GenerateIndexFile(generatedDir string, logger logger.ExtendedLogger) error {
+func GenerateIndexFile(generatedDir string, logger loggerv2.Logger) error {
 	// Scan for all *_tools directories
 	entries, err := os.ReadDir(generatedDir)
 	if err != nil {
@@ -459,6 +476,6 @@ func GenerateIndexFile(generatedDir string, logger logger.ExtendedLogger) error 
 		return fmt.Errorf("failed to write index file: %w", err)
 	}
 
-	logger.Debugf("Generated index file: %s", indexFile)
+	logger.Debug("Generated index file", loggerv2.String("file", indexFile))
 	return nil
 }

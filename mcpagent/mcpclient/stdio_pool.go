@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,13 +30,13 @@ type StdioConnectionPool struct {
 	connections   map[string]*StdioConnection
 	mutex         sync.RWMutex
 	maxSize       int
-	logger        logger.ExtendedLogger
+	logger        loggerv2.Logger
 	cleanupTicker *time.Ticker
 	cleanupDone   chan bool
 }
 
 // NewStdioConnectionPool creates a new stdio connection pool
-func NewStdioConnectionPool(maxSize int, logger logger.ExtendedLogger) *StdioConnectionPool {
+func NewStdioConnectionPool(maxSize int, logger loggerv2.Logger) *StdioConnectionPool {
 	pool := &StdioConnectionPool{
 		connections: make(map[string]*StdioConnection),
 		maxSize:     maxSize,
@@ -53,7 +53,7 @@ func NewStdioConnectionPool(maxSize int, logger logger.ExtendedLogger) *StdioCon
 // GetConnection retrieves or creates a stdio connection
 func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey string, command string, args []string, env []string) (*client.Client, error) {
 	p.mutex.Lock()
-	p.logger.Infof("🔧 [STDIO POOL] Getting connection for server: %s", serverKey)
+	p.logger.Debug("Getting connection for server", loggerv2.String("server", serverKey))
 
 	// Check if we have an existing connection
 	var existingConn *StdioConnection
@@ -67,7 +67,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 
 		if !needsHealthCheck {
 			// Connection already marked unhealthy, remove it
-			p.logger.Infof("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey)
+			p.logger.Debug("Existing connection unhealthy, removing", loggerv2.String("server", serverKey))
 			p.removeConnection(serverKey)
 			existingConn = nil
 		}
@@ -81,7 +81,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 			p.mutex.Lock()
 			// Double-check connection still exists and is the same one
 			if conn, stillExists := p.connections[serverKey]; stillExists && conn == existingConn {
-				p.logger.Infof("✅ [STDIO POOL] Reusing existing healthy connection for server: %s", serverKey)
+				p.logger.Debug("Reusing existing healthy connection for server", loggerv2.String("server", serverKey))
 				existingConn.mutex.Lock()
 				existingConn.lastUsed = time.Now()
 				existingConn.mutex.Unlock()
@@ -93,7 +93,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 			// Connection is unhealthy, remove it
 			p.mutex.Lock()
 			if _, stillExists := p.connections[serverKey]; stillExists {
-				p.logger.Infof("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey)
+				p.logger.Debug("Existing connection unhealthy, removing", loggerv2.String("server", serverKey))
 				p.removeConnection(serverKey)
 			}
 			p.mutex.Unlock()
@@ -102,7 +102,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 
 	// Create new connection WITHOUT holding the pool mutex
 	// This prevents blocking other goroutines during the potentially long initialization (up to 10 minutes)
-	p.logger.Infof("🔧 [STDIO POOL] Creating new connection for server: %s", serverKey)
+	p.logger.Debug("Creating new connection for server", loggerv2.String("server", serverKey))
 	conn, err := p.createNewConnection(ctx, serverKey, command, args, env)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new stdio connection: %w", err)
@@ -114,7 +114,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 
 	// Double-check another goroutine didn't create the connection while we were creating ours
 	if existingConn, exists := p.connections[serverKey]; exists {
-		p.logger.Infof("🔧 [STDIO POOL] Another goroutine created connection for %s, using existing one", serverKey)
+		p.logger.Debug("Another goroutine created connection, using existing one", loggerv2.String("server", serverKey))
 		// Close our newly created connection and use the existing one
 		if conn.client != nil {
 			conn.client.Close()
@@ -123,7 +123,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 	}
 
 	p.connections[serverKey] = conn
-	p.logger.Infof("✅ [STDIO POOL] New connection created and added to pool: %s", serverKey)
+	p.logger.Debug("New connection created and added to pool", loggerv2.String("server", serverKey))
 
 	return conn.client, nil
 }
@@ -131,8 +131,10 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 // createNewConnection creates a new stdio connection
 func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey string, command string, args []string, env []string) (*StdioConnection, error) {
 	startTime := time.Now()
-	p.logger.Infof("🔧 [STDIO POOL] Creating new stdio connection: %s %v", command, args)
-	
+	p.logger.Debug("Creating new stdio connection",
+		loggerv2.String("command", command),
+		loggerv2.Any("args", args))
+
 	// Debug: Log environment variables (but mask sensitive values)
 	if p.logger != nil {
 		envCount := len(env)
@@ -157,20 +159,23 @@ func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey
 		if envCount > 5 {
 			envPreview = append(envPreview, fmt.Sprintf("... and %d more", envCount-5))
 		}
-		p.logger.Debugf("🔧 [STDIO POOL] Environment variables (%d total): %v", envCount, envPreview)
+		p.logger.Debug("Environment variables",
+			loggerv2.Int("total", envCount),
+			loggerv2.Any("preview", envPreview))
 	}
 
 	// Create the MCP client
-	p.logger.Infof("🔧 [STDIO POOL] Step 1/2: Creating stdio MCP client for: %s", serverKey)
+	p.logger.Debug("Step 1/2: Creating stdio MCP client", loggerv2.String("server", serverKey))
 	clientStartTime := time.Now()
 	mcpClient, err := client.NewStdioMCPClient(command, env, args...)
 	if err != nil {
 		clientDuration := time.Since(clientStartTime)
-		p.logger.Errorf("❌ [STDIO POOL] Failed to create stdio client after %v: %w", clientDuration, err)
+		p.logger.Error("Failed to create stdio client", err, loggerv2.String("duration", clientDuration.String()))
 		return nil, fmt.Errorf("failed to create stdio client: %w", err)
 	}
 	clientDuration := time.Since(clientStartTime)
-	p.logger.Infof("✅ [STDIO POOL] Stdio MCP client created successfully in %v", clientDuration.Round(time.Millisecond))
+	p.logger.Debug("Stdio MCP client created successfully",
+		loggerv2.String("duration", clientDuration.Round(time.Millisecond).String()))
 
 	// Initialize the connection with timeout
 	initTimeout := 10 * time.Minute
@@ -190,10 +195,14 @@ func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey
 				elapsed := time.Since(initStartTime)
 				remaining := initTimeout - elapsed
 				if remaining > 0 {
-					p.logger.Infof("⏳ [STDIO POOL] Still initializing connection for %s... (elapsed: %v, remaining: %v)",
-						serverKey, elapsed.Round(time.Second), remaining.Round(time.Second))
+					p.logger.Debug("Still initializing connection",
+						loggerv2.String("server", serverKey),
+						loggerv2.String("elapsed", elapsed.Round(time.Second).String()),
+						loggerv2.String("remaining", remaining.Round(time.Second).String()))
 				} else {
-					p.logger.Warnf("⚠️ [STDIO POOL] Initialization for %s has exceeded timeout (%v)", serverKey, initTimeout)
+					p.logger.Warn("Initialization has exceeded timeout",
+						loggerv2.String("server", serverKey),
+						loggerv2.String("timeout", initTimeout.String()))
 				}
 			case <-initCtx.Done():
 				return
@@ -204,7 +213,9 @@ func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey
 	}()
 
 	// Initialize the connection
-	p.logger.Infof("🔧 [STDIO POOL] Step 2/2: Initializing MCP connection for: %s (timeout: %v)", serverKey, initTimeout)
+	p.logger.Debug("Step 2/2: Initializing MCP connection",
+		loggerv2.String("server", serverKey),
+		loggerv2.String("timeout", initTimeout.String()))
 	initStartTime := time.Now()
 	initResult, err := mcpClient.Initialize(initCtx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
@@ -225,21 +236,27 @@ func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey
 
 		// Check if it was a timeout
 		if initCtx.Err() == context.DeadlineExceeded {
-			p.logger.Errorf("❌ [STDIO POOL] Initialization timed out for %s after %v (total: %v): %v",
-				serverKey, initDuration, totalDuration, err)
+			p.logger.Error("Initialization timed out", err,
+				loggerv2.String("server", serverKey),
+				loggerv2.String("init_duration", initDuration.String()),
+				loggerv2.String("total_duration", totalDuration.String()))
 			return nil, fmt.Errorf("failed to initialize MCP connection for %s: timed out after %v: %w",
 				serverKey, initTimeout, err)
 		}
 
-		p.logger.Errorf("❌ [STDIO POOL] Failed to initialize MCP connection for %s after %v (total: %v): %w",
-			serverKey, initDuration, totalDuration, err)
+		p.logger.Error("Failed to initialize MCP connection", err,
+			loggerv2.String("server", serverKey),
+			loggerv2.String("init_duration", initDuration.String()),
+			loggerv2.String("total_duration", totalDuration.String()))
 		return nil, fmt.Errorf("failed to initialize MCP connection: %w", err)
 	}
 
 	totalDuration := time.Since(startTime)
-	p.logger.Infof("✅ [STDIO POOL] Connection initialized successfully: %s (init_time: %v, total_time: %v)",
-		serverKey, initDuration.Round(time.Millisecond), totalDuration.Round(time.Millisecond))
-	p.logger.Infof("🔧 [STDIO POOL] Server info: %+v", initResult.ServerInfo)
+	p.logger.Debug("Connection initialized successfully",
+		loggerv2.String("server", serverKey),
+		loggerv2.String("init_time", initDuration.Round(time.Millisecond).String()),
+		loggerv2.String("total_time", totalDuration.Round(time.Millisecond).String()))
+	p.logger.Debug("Server info", loggerv2.Any("server_info", initResult.ServerInfo))
 
 	// Get the process information if possible
 	var process *os.Process
@@ -274,7 +291,7 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 
 	// Check if connection is too old (max 1 hour)
 	if time.Since(createdAt) > time.Hour {
-		p.logger.Infof("🔧 [STDIO POOL] Connection too old, marking unhealthy: %s", serverKey)
+		p.logger.Debug("Connection too old, marking unhealthy", loggerv2.String("server", serverKey))
 		// Acquire write lock to update healthy status
 		conn.mutex.Lock()
 		conn.healthy = false
@@ -299,9 +316,13 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 			strings.Contains(errorMessage, "connection reset")
 
 		if isBrokenPipe {
-			p.logger.Infof("🔧 [STDIO POOL] Broken pipe detected in health check, marking unhealthy: %s, error: %v", serverKey, err)
+			p.logger.Debug("Broken pipe detected in health check, marking unhealthy",
+				loggerv2.String("server", serverKey),
+				loggerv2.Error(err))
 		} else {
-			p.logger.Infof("❌ [STDIO POOL] Health check failed, marking unhealthy: %s, error: %v", serverKey, err)
+			p.logger.Debug("Health check failed, marking unhealthy",
+				loggerv2.String("server", serverKey),
+				loggerv2.Error(err))
 		}
 
 		// Acquire write lock to update healthy status
@@ -317,7 +338,7 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 // removeConnection removes a connection from the pool
 func (p *StdioConnectionPool) removeConnection(serverKey string) {
 	if conn, exists := p.connections[serverKey]; exists {
-		p.logger.Infof("🔧 [STDIO POOL] Removing connection: %s", serverKey)
+		p.logger.Debug("Removing connection", loggerv2.String("server", serverKey))
 		if conn.client != nil {
 			conn.client.Close()
 		}
@@ -331,14 +352,14 @@ func (p *StdioConnectionPool) ForceRemoveBrokenConnection(serverKey string) {
 	defer p.mutex.Unlock()
 
 	if conn, exists := p.connections[serverKey]; exists {
-		p.logger.Infof("🔧 [STDIO POOL] Force removing broken connection: %s", serverKey)
+		p.logger.Debug("Force removing broken connection", loggerv2.String("server", serverKey))
 		if conn.client != nil {
 			conn.client.Close()
 		}
 		delete(p.connections, serverKey)
-		p.logger.Infof("✅ [STDIO POOL] Successfully force removed broken connection: %s", serverKey)
+		p.logger.Debug("Successfully force removed broken connection", loggerv2.String("server", serverKey))
 	} else {
-		p.logger.Infof("🔧 [STDIO POOL] No connection found to force remove: %s", serverKey)
+		p.logger.Debug("No connection found to force remove", loggerv2.String("server", serverKey))
 	}
 }
 
@@ -347,7 +368,7 @@ func (p *StdioConnectionPool) CloseConnection(serverKey string) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	p.logger.Infof("🔧 [STDIO POOL] Closing connection: %s", serverKey)
+	p.logger.Debug("Closing connection", loggerv2.String("server", serverKey))
 	p.removeConnection(serverKey)
 }
 
@@ -356,9 +377,9 @@ func (p *StdioConnectionPool) CloseAllConnections() {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	p.logger.Infof("🔧 [STDIO POOL] Closing all connections")
+	p.logger.Debug("Closing all connections")
 	for serverKey, conn := range p.connections {
-		p.logger.Infof("🔧 [STDIO POOL] Closing connection: %s", serverKey)
+		p.logger.Debug("Closing connection", loggerv2.String("server", serverKey))
 		if conn.client != nil {
 			conn.client.Close()
 		}
@@ -401,7 +422,7 @@ func (p *StdioConnectionPool) startCleanupRoutine() {
 			case <-p.cleanupTicker.C:
 				p.cleanupStaleConnections()
 			case <-p.cleanupDone:
-				p.logger.Infof("🔧 [STDIO POOL] Cleanup routine stopped")
+				p.logger.Debug("Cleanup routine stopped")
 				return
 			}
 		}
@@ -413,7 +434,7 @@ func (p *StdioConnectionPool) cleanupStaleConnections() {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	p.logger.Infof("🔧 [STDIO POOL] Running cleanup routine")
+	p.logger.Debug("Running cleanup routine")
 
 	for serverKey, conn := range p.connections {
 		conn.mutex.RLock()
@@ -423,7 +444,10 @@ func (p *StdioConnectionPool) cleanupStaleConnections() {
 
 		// Remove connections that are too old or haven't been used recently
 		if age > time.Hour || lastUsed > 30*time.Minute {
-			p.logger.Infof("🔧 [STDIO POOL] Removing stale connection: %s (age: %v, last_used: %v)", serverKey, age, lastUsed)
+			p.logger.Debug("Removing stale connection",
+				loggerv2.String("server", serverKey),
+				loggerv2.String("age", age.String()),
+				loggerv2.String("last_used", lastUsed.String()))
 			p.removeConnection(serverKey)
 		}
 	}
@@ -431,7 +455,7 @@ func (p *StdioConnectionPool) cleanupStaleConnections() {
 
 // Stop stops the connection pool and cleans up resources
 func (p *StdioConnectionPool) Stop() {
-	p.logger.Infof("🔧 [STDIO POOL] Stopping connection pool")
+	p.logger.Debug("Stopping connection pool")
 
 	// Stop cleanup routine
 	if p.cleanupTicker != nil {

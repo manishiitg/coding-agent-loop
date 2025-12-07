@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpcache/codegen"
 	"mcpagent/mcpclient"
 
@@ -71,7 +71,7 @@ func (ce *CacheEntry) UpdateAccessTime() {
 type CacheManager struct {
 	cacheDir   string
 	ttlMinutes int
-	logger     logger.ExtendedLogger
+	logger     loggerv2.Logger
 	mu         sync.RWMutex
 	cache      map[string]*CacheEntry // cache key -> entry
 }
@@ -83,7 +83,7 @@ var (
 )
 
 // GetCacheManager returns the singleton cache manager instance
-func GetCacheManager(logger logger.ExtendedLogger) *CacheManager {
+func GetCacheManager(logger loggerv2.Logger) *CacheManager {
 	once.Do(func() {
 		// Use environment variable if set, otherwise default to agent_go/cache
 		cacheDir := os.Getenv("MCP_CACHE_DIR")
@@ -101,7 +101,9 @@ func GetCacheManager(logger logger.ExtendedLogger) *CacheManager {
 			if parsedTTL, err := strconv.Atoi(ttlEnv); err == nil && parsedTTL > 0 {
 				ttlMinutes = parsedTTL
 			} else if logger != nil {
-				logger.Warnf("Invalid MCP_CACHE_TTL_MINUTES value '%s', using default %d minutes", ttlEnv, ttlMinutes)
+				logger.Warn("Invalid MCP_CACHE_TTL_MINUTES value, using default",
+					loggerv2.String("value", ttlEnv),
+					loggerv2.Int("default_minutes", ttlMinutes))
 			}
 		}
 
@@ -115,7 +117,9 @@ func GetCacheManager(logger logger.ExtendedLogger) *CacheManager {
 		// Initialize cache directory
 		if err := os.MkdirAll(cacheDir, 0755); err != nil {
 			if logger != nil {
-				logger.Warnf("Failed to create cache directory %s: %v", cacheDir, err)
+				logger.Warn("Failed to create cache directory",
+					loggerv2.Error(err),
+					loggerv2.String("cache_dir", cacheDir))
 			}
 		}
 
@@ -211,7 +215,7 @@ func (cm *CacheManager) Get(cacheKey string) (*CacheEntry, bool) {
 	if entry.IsExpired() {
 		age := time.Since(entry.CreatedAt)
 		ttl := time.Duration(entry.TTLMinutes) * time.Minute
-		cm.logger.Debugf("Cache entry expired for key: %s", cacheKey)
+		cm.logger.Debug("Cache entry expired", loggerv2.String("key", cacheKey))
 
 		// Note: We don't emit expired events here as we don't have tracers available
 		// The expiration event would be emitted when the entry is actually cleaned up
@@ -225,7 +229,7 @@ func (cm *CacheManager) Get(cacheKey string) (*CacheEntry, bool) {
 	// The field is kept for historical compatibility but is deprecated.
 	// Access time tracking was removed to eliminate data races when reading cache entries.
 
-	cm.logger.Debugf("Cache hit for key: %s", cacheKey)
+	cm.logger.Debug("Cache hit", loggerv2.String("key", cacheKey))
 	return entry, true
 }
 
@@ -272,18 +276,20 @@ func (cm *CacheManager) Invalidate(cacheKey string) error {
 		packageName := codegen.GetPackageName(serverName)
 		packageDir := filepath.Join(generatedDir, packageName)
 		if err := os.RemoveAll(packageDir); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warnf("Failed to remove generated Go files for server %s: %v", serverName, err)
+			cm.logger.Warn("Failed to remove generated Go files for server",
+				loggerv2.Error(err),
+				loggerv2.String("server", serverName))
 		} else {
-			cm.logger.Debugf("Removed generated Go files for server: %s", serverName)
+			cm.logger.Debug("Removed generated Go files for server", loggerv2.String("server", serverName))
 		}
 
 		// Regenerate index file
 		if err := codegen.GenerateIndexFile(generatedDir, cm.logger); err != nil {
-			cm.logger.Warnf("Failed to regenerate index file: %v", err)
+			cm.logger.Warn("Failed to regenerate index file", loggerv2.Error(err))
 		}
 	}
 
-	cm.logger.Debugf("Invalidated cache entry: %s", cacheKey)
+	cm.logger.Debug("Invalidated cache entry", loggerv2.String("key", cacheKey))
 	return nil
 }
 
@@ -308,7 +314,9 @@ func (cm *CacheManager) InvalidateByServer(configPath, serverName string) error 
 		// Remove from filesystem
 		cacheFile := cm.getCacheFilePath(key)
 		if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warnf("Failed to remove cache file %s: %v", cacheFile, err)
+			cm.logger.Warn("Failed to remove cache file",
+				loggerv2.Error(err),
+				loggerv2.String("file", cacheFile))
 		}
 	}
 
@@ -318,17 +326,21 @@ func (cm *CacheManager) InvalidateByServer(configPath, serverName string) error 
 		packageName := codegen.GetPackageName(serverName)
 		packageDir := filepath.Join(generatedDir, packageName)
 		if err := os.RemoveAll(packageDir); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warnf("Failed to remove generated Go files for server %s: %v", serverName, err)
+			cm.logger.Warn("Failed to remove generated Go files for server",
+				loggerv2.Error(err),
+				loggerv2.String("server", serverName))
 		} else {
-			cm.logger.Debugf("Removed generated Go files for server: %s", serverName)
+			cm.logger.Debug("Removed generated Go files for server", loggerv2.String("server", serverName))
 		}
 
 		// Regenerate index file
 		if err := codegen.GenerateIndexFile(generatedDir, cm.logger); err != nil {
-			cm.logger.Warnf("Failed to regenerate index file: %v", err)
+			cm.logger.Warn("Failed to regenerate index file", loggerv2.Error(err))
 		}
 
-		cm.logger.Infof("Invalidated %d cache entries for server %s", len(keysToRemove), serverName)
+		cm.logger.Info("Invalidated cache entries for server",
+			loggerv2.Int("count", len(keysToRemove)),
+			loggerv2.String("server", serverName))
 	}
 
 	return nil
@@ -453,12 +465,14 @@ func (cm *CacheManager) Cleanup() error {
 		// Remove from filesystem
 		cacheFile := cm.getCacheFilePath(key)
 		if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warnf("Failed to remove expired cache file %s: %v", cacheFile, err)
+			cm.logger.Warn("Failed to remove expired cache file",
+				loggerv2.Error(err),
+				loggerv2.String("file", cacheFile))
 		}
 	}
 
 	if len(expiredKeys) > 0 {
-		cm.logger.Infof("Cleaned up %d expired cache entries", len(expiredKeys))
+		cm.logger.Info("Cleaned up expired cache entries", loggerv2.Int("count", len(expiredKeys)))
 	}
 
 	return nil
@@ -469,7 +483,7 @@ func (cm *CacheManager) loadExistingCache() {
 	files, err := os.ReadDir(cm.cacheDir)
 	if err != nil {
 		if cm.logger != nil {
-			cm.logger.Debugf("Cache directory does not exist or cannot be read: %w", err)
+			cm.logger.Debug("Cache directory does not exist or cannot be read", loggerv2.Error(err))
 		}
 		return
 	}
@@ -485,7 +499,7 @@ func (cm *CacheManager) loadExistingCache() {
 				cm.cache[fileName] = entry
 				loadedCount++
 				if cm.logger != nil {
-					cm.logger.Debugf("Loaded cache entry: %s", fileName)
+					cm.logger.Debug("Loaded cache entry", loggerv2.String("file", fileName))
 				}
 
 				// Ensure Go code is generated for this cache entry if it's missing
@@ -499,7 +513,7 @@ func (cm *CacheManager) loadExistingCache() {
 					if _, err := os.Stat(packageDir); os.IsNotExist(err) {
 						// Code doesn't exist - generate it
 						if cm.logger != nil {
-							cm.logger.Debugf("Code missing for cached server %s, generating...", entry.ServerName)
+							cm.logger.Debug("Code missing for cached server, generating", loggerv2.String("server", entry.ServerName))
 						}
 						entryForCodeGen := &codegen.CacheEntryForCodeGen{
 							ServerName: entry.ServerName,
@@ -509,11 +523,13 @@ func (cm *CacheManager) loadExistingCache() {
 						defaultTimeout := 5 * time.Minute
 						if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
 							if cm.logger != nil {
-								cm.logger.Warnf("Failed to generate code for cached server %s: %v", entry.ServerName, err)
+								cm.logger.Warn("Failed to generate code for cached server",
+									loggerv2.Error(err),
+									loggerv2.String("server", entry.ServerName))
 							}
 							// Don't fail cache load if code generation fails
 						} else if cm.logger != nil {
-							cm.logger.Debugf("✅ Generated code for cached server %s", entry.ServerName)
+							cm.logger.Debug("Generated code for cached server", loggerv2.String("server", entry.ServerName))
 						}
 					}
 				}
@@ -522,7 +538,7 @@ func (cm *CacheManager) loadExistingCache() {
 	}
 
 	if loadedCount > 0 && cm.logger != nil {
-		cm.logger.Infof("Loaded %d cache entries from filesystem", loadedCount)
+		cm.logger.Info("Loaded cache entries from filesystem", loggerv2.Int("count", loadedCount))
 	}
 }
 
@@ -547,7 +563,7 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 
-	cm.logger.Debugf("Saved cache entry to file: %s", cacheFile)
+	cm.logger.Debug("Saved cache entry to file", loggerv2.String("file", cacheFile))
 
 	// Generate Go code for tools
 	generatedDir := cm.getGeneratedDir()
@@ -558,7 +574,9 @@ func (cm *CacheManager) saveToFile(entry *CacheEntry, config mcpclient.MCPServer
 	// Use default 5-minute timeout for cache manager (same as agent default)
 	defaultTimeout := 5 * time.Minute
 	if err := codegen.GenerateServerToolsCode(entryForCodeGen, entry.ServerName, generatedDir, cm.logger, defaultTimeout); err != nil {
-		cm.logger.Warnf("Failed to generate Go code for server %s: %v", entry.ServerName, err)
+		cm.logger.Warn("Failed to generate Go code for server",
+			loggerv2.Error(err),
+			loggerv2.String("server", entry.ServerName))
 		// Don't fail cache save if code generation fails
 	}
 
@@ -571,7 +589,9 @@ func (cm *CacheManager) loadFromFile(cacheFile string) *CacheEntry {
 	data, err := os.ReadFile(cacheFile)
 	if err != nil {
 		if cm.logger != nil {
-			cm.logger.Debugf("Failed to read cache file %s: %v", cacheFile, err)
+			cm.logger.Debug("Failed to read cache file",
+				loggerv2.Error(err),
+				loggerv2.String("file", cacheFile))
 		}
 		return nil
 	}
@@ -579,18 +599,22 @@ func (cm *CacheManager) loadFromFile(cacheFile string) *CacheEntry {
 	var entry CacheEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
 		if cm.logger != nil {
-			cm.logger.Warnf("Failed to unmarshal cache file %s: %v", cacheFile, err)
+			cm.logger.Warn("Failed to unmarshal cache file",
+				loggerv2.Error(err),
+				loggerv2.String("file", cacheFile))
 		}
 		return nil
 	}
 
 	// Check if entry is still valid
 	if entry.IsExpired() {
-		cm.logger.Debugf("Loaded expired cache entry: %s", cacheFile)
+		cm.logger.Debug("Loaded expired cache entry", loggerv2.String("file", cacheFile))
 		// Don't return expired entries - attempt to clean up expired file
 		if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
 			// Log warning but don't fail - expired entry won't be used anyway
-			cm.logger.Warnf("Failed to remove expired cache file %s: %v", cacheFile, err)
+			cm.logger.Warn("Failed to remove expired cache file",
+				loggerv2.Error(err),
+				loggerv2.String("file", cacheFile))
 		}
 		return nil
 	}
@@ -605,7 +629,7 @@ func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
 	// Check if file exists (outside lock)
 	if _, err := os.Stat(cacheFile); os.IsNotExist(err) {
 		if cm.logger != nil {
-			cm.logger.Debugf("Cache file does not exist: %s", cacheFile)
+			cm.logger.Debug("Cache file does not exist", loggerv2.String("file", cacheFile))
 		}
 		return nil
 	}
@@ -614,7 +638,7 @@ func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
 	entry := cm.loadFromFile(cacheFile)
 	if entry == nil {
 		if cm.logger != nil {
-			cm.logger.Debugf("Failed to load cache entry from disk: %s", cacheFile)
+			cm.logger.Debug("Failed to load cache entry from disk", loggerv2.String("file", cacheFile))
 		}
 		return nil
 	}
@@ -625,7 +649,9 @@ func (cm *CacheManager) ReloadFromDisk(cacheKey string) *CacheEntry {
 	cm.mu.Unlock()
 
 	if cm.logger != nil {
-		cm.logger.Debugf("Reloaded cache entry from disk: %s (tools: %d)", cacheKey, len(entry.Tools))
+		cm.logger.Debug("Reloaded cache entry from disk",
+			loggerv2.String("key", cacheKey),
+			loggerv2.Int("tools_count", len(entry.Tools)))
 	}
 
 	return entry
@@ -647,7 +673,9 @@ func (cm *CacheManager) getGeneratedDir() string {
 	// Ensure directory exists
 	if err := os.MkdirAll(generatedDir, 0755); err != nil {
 		if cm.logger != nil {
-			cm.logger.Warnf("Failed to create generated directory %s: %v", generatedDir, err)
+			cm.logger.Warn("Failed to create generated directory",
+				loggerv2.Error(err),
+				loggerv2.String("dir", generatedDir))
 		}
 	}
 	return generatedDir
@@ -663,7 +691,9 @@ func (cm *CacheManager) clearCacheDirectory() error {
 	for _, file := range files {
 		filePath := filepath.Join(cm.cacheDir, file.Name())
 		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-			cm.logger.Warnf("Failed to remove cache file %s: %v", filePath, err)
+			cm.logger.Warn("Failed to remove cache file",
+				loggerv2.Error(err),
+				loggerv2.String("file", filePath))
 		}
 	}
 

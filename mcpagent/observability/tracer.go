@@ -12,6 +12,7 @@ type SpanID string
 
 // UsageMetrics holds token usage information for LLM calls (mirrors Langfuse schema).
 // All fields are optional; zero-values mean unavailable.
+// Langfuse will automatically calculate costs based on model name and token usage.
 type UsageMetrics struct {
 	InputTokens  int    `json:"input,omitempty"`
 	OutputTokens int    `json:"output,omitempty"`

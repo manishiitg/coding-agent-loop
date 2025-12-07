@@ -18,7 +18,7 @@ import (
 	"mcpagent/agent/prompt"
 	"mcpagent/events"
 	"mcpagent/llm"
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpcache"
 	"mcpagent/mcpcache/codegen"
 	"mcpagent/mcpclient"
@@ -57,7 +57,7 @@ func WithMode(mode AgentMode) AgentOption {
 }
 
 // WithLogger sets a custom logger
-func WithLogger(logger logger.ExtendedLogger) AgentOption {
+func WithLogger(logger loggerv2.Logger) AgentOption {
 	return func(a *Agent) {
 		a.Logger = logger
 	}
@@ -252,8 +252,8 @@ type Agent struct {
 	// Custom tools that are handled as virtual tools
 	customTools map[string]CustomTool
 
-	// Custom logger (optional) - uses our ExtendedLogger interface for consistency
-	Logger logger.ExtendedLogger
+	// Custom logger (optional) - uses v2.Logger interface
+	Logger loggerv2.Logger
 
 	// Listeners for typed events
 	listeners []AgentEventListener
@@ -384,7 +384,9 @@ func (a *Agent) SetFolderGuardPaths(readPaths, writePaths []string) {
 	a.FolderGuardReadPaths = readPaths
 	a.FolderGuardWritePaths = writePaths
 	if a.Logger != nil {
-		a.Logger.Infof("🔒 [CODE_EXECUTION] Folder guard paths set - Read: %v, Write: %v", readPaths, writePaths)
+		a.Logger.Info("🔒 [CODE_EXECUTION] Folder guard paths set",
+			loggerv2.Any("read_paths", readPaths),
+			loggerv2.Any("write_paths", writePaths))
 	}
 }
 
@@ -394,9 +396,13 @@ func (a *Agent) GetFolderGuardPaths() (readPaths, writePaths []string) {
 }
 
 // NewAgent creates a new Agent with the given options
-func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, options ...AgentOption) (*Agent, error) {
+	// Use default logger if nil is passed
+	if logger == nil {
+		logger = loggerv2.NewDefault()
+	}
 
-	logger.Info("🔍 NewAgent started", map[string]interface{}{"config_path": configPath})
+	logger.Info("NewAgent started", loggerv2.String("config_path", configPath))
 
 	// Load merged MCP servers configuration (base + user)
 	config, err := mcpclient.LoadMergedConfig(configPath, logger)
@@ -404,20 +410,23 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
 	}
 
-	logger.Info("Merged config contains servers", map[string]interface{}{"server_count": len(config.MCPServers)})
+	logger.Debug("Merged config contains servers", loggerv2.Int("server_count", len(config.MCPServers)))
 	for name := range config.MCPServers {
-		logger.Info("Server found", map[string]interface{}{"server_name": name})
+		logger.Debug("Server found", loggerv2.String("server_name", name))
 	}
 
-	if tracer == nil {
-		tracer = observability.GetTracer("noop")
+	// If tracer is nil, don't use any tracer (empty tracers array)
+	// If traceID is empty when tracer is nil, that's fine - no tracing will occur
+	var tracers []observability.Tracer
+	if tracer != nil {
+		// Create streaming tracer that wraps the base tracer
+		streamingTracer := NewStreamingTracer(tracer, 100)
+		// Create tracers array with streaming tracer
+		tracers = []observability.Tracer{streamingTracer}
+	} else {
+		// No tracer provided - use empty array (no tracing)
+		tracers = []observability.Tracer{}
 	}
-
-	// Create streaming tracer that wraps the base tracer
-	streamingTracer := NewStreamingTracer(tracer, 100)
-
-	// Create tracers array with streaming tracer
-	tracers := []observability.Tracer{streamingTracer}
 
 	if llm == nil {
 		return nil, fmt.Errorf("LLM cannot be nil")
@@ -479,19 +488,10 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		option(ag)
 	}
 
-	// 🆕 DETAILED AGENT CONNECTION DEBUG LOGGING
-	logger.Infof("🤖 [DEBUG] About to call NewAgentConnection - Time: %v", time.Now())
-	logger.Infof("🤖 [DEBUG] NewAgentConnection params - ServerName: %s, ConfigPath: %s", serverName, configPath)
-	logger.Infof("🤖 [DEBUG] LLM details - Provider: %T, Model: %v", llm, llm != nil)
-
 	clients, toolToServer, allLLMTools, servers, prompts, resources, systemPrompt, err := NewAgentConnection(ctx, llm, serverName, configPath, string(traceID), tracers, logger)
 
-	// 🆕 POST-CONNECTION DEBUG LOGGING
-	logger.Infof("🤖 [DEBUG] NewAgentConnection completed - Time: %v", time.Now())
-	logger.Infof("🤖 [DEBUG] Connection results - Clients: %d, Tools: %d, Servers: %d, Error: %v", len(clients), len(allLLMTools), len(servers), err != nil)
-
 	if err != nil {
-		logger.Errorf("🤖 [DEBUG] NewAgentConnection failed - Error: %v, Error type: %T", err, err)
+		logger.Error("NewAgentConnection failed", err)
 		return nil, err
 	}
 
@@ -533,26 +533,17 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 		// serverName was specified and no filtering was configured via options
 		// Use the servers list from NewAgentConnection (which already filtered based on serverName)
 		ag.selectedServers = servers
-		if logger != nil {
-			logger.Infof("🔧 Set selectedServers from serverName parameter: %v (no selectedTools configured)", ag.selectedServers)
-		}
+		logger.Debug("Set selectedServers from serverName parameter",
+			loggerv2.Any("selected_servers", ag.selectedServers))
 	} else if len(ag.selectedServers) == 0 && len(ag.selectedTools) > 0 {
 		// selectedTools is set but selectedServers is not - respect the specific tool filtering
-		if logger != nil {
-			logger.Infof("🔧 Using selectedTools for filtering, not auto-assigning selectedServers (selectedTools: %v)", ag.selectedTools)
-		}
+		logger.Debug("Using selectedTools for filtering, not auto-assigning selectedServers",
+			loggerv2.Any("selected_tools", ag.selectedTools))
 	}
 
 	// Create unified ToolFilter for consistent filtering across both modes
 	// This filter is used by both LLM tool registration and discovery
 	customCategories := ag.GetCustomToolCategories()
-	if logger != nil {
-		logger.Infof("🔍 [DISCOVERY] Creating ToolFilter with configuration:")
-		logger.Infof("🔍 [DISCOVERY]   - selectedTools: %v (count: %d)", ag.selectedTools, len(ag.selectedTools))
-		logger.Infof("🔍 [DISCOVERY]   - selectedServers: %v (count: %d)", ag.selectedServers, len(ag.selectedServers))
-		logger.Infof("🔍 [DISCOVERY]   - customCategories: %v (count: %d)", customCategories, len(customCategories))
-		logger.Infof("🔍 [DISCOVERY]   - MCP clients: %d", len(clients))
-	}
 	ag.toolFilter = NewToolFilter(
 		ag.selectedTools,
 		ag.selectedServers,
@@ -566,7 +557,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	if ag.UseCodeExecutionMode {
 		// Code execution mode: Only include virtual tools (discover_code_files, write_code)
 		// Exclude all MCP server tools and custom tools (they'll be accessed via generated code)
-		logger.Infof("🔧 Code execution mode enabled - excluding MCP tools and custom tools from LLM (will use generated code)")
+		logger.Debug("Code execution mode enabled - excluding MCP tools and custom tools from LLM (will use generated code)")
 
 		// Build set of custom tool names for filtering
 		customToolNames := make(map[string]bool)
@@ -587,7 +578,8 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 				toolsToUse = append(toolsToUse, tool)
 			}
 		}
-		logger.Infof("🔧 Code execution mode: %d tools available (only virtual tools, MCP and custom tools excluded)", len(toolsToUse))
+		logger.Debug("Code execution mode: tools available (only virtual tools, MCP and custom tools excluded)",
+			loggerv2.Int("tool_count", len(toolsToUse)))
 	} else {
 		// Normal mode: Use all tools
 		toolsToUse = allLLMTools
@@ -602,7 +594,9 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// Non-empty means "use only matching tools"
 	// Also supports "server:*" pattern to explicitly request all tools from a server
 	if !ag.toolFilter.IsNoFilteringActive() {
-		logger.Infof("🔧 Tool filtering active: %d specific tools, %d servers selected", len(ag.selectedTools), len(ag.selectedServers))
+		logger.Debug("Tool filtering active",
+			loggerv2.Int("selected_tools", len(ag.selectedTools)),
+			loggerv2.Int("selected_servers", len(ag.selectedServers)))
 
 		// Build set of custom tool names for category determination
 		customToolNames := make(map[string]bool)
@@ -650,12 +644,15 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 			}
 		}
 
-		logger.Infof("🔧 Tool filtering complete: %d tools selected from %d total", len(filteredTools), len(toolsToUse))
+		logger.Debug("Tool filtering complete",
+			loggerv2.Int("selected_tools", len(filteredTools)),
+			loggerv2.Int("total_tools", len(toolsToUse)))
 		ag.Tools = filteredTools
 		ag.filteredTools = filteredTools
 	} else {
 		// No filtering active - use all available tools (already filtered by code execution mode if enabled)
-		logger.Infof("🔧 Using all available tools: %d tools (no filtering applied)", len(toolsToUse))
+		logger.Debug("Using all available tools (no filtering applied)",
+			loggerv2.Int("tool_count", len(toolsToUse)))
 		ag.Tools = toolsToUse
 		ag.filteredTools = toolsToUse
 	}
@@ -684,7 +681,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 			}
 		}
 		virtualTools = filteredVirtualTools
-		logger.Infof("🔧 Code execution mode: Filtered virtual tools - only discover_code_files and write_code available")
+		logger.Debug("Code execution mode: Filtered virtual tools - only discover_code_files and write_code available")
 	} else {
 		// In non-code execution mode, exclude discover_code_files and write_code
 		var filteredVirtualTools []llmtypes.Tool
@@ -698,7 +695,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 			}
 		}
 		virtualTools = filteredVirtualTools
-		logger.Infof("🔧 Non-code execution mode: Excluded discover_code_files and write_code from virtual tools")
+		logger.Debug("Non-code execution mode: Excluded discover_code_files and write_code from virtual tools")
 	}
 
 	ag.Tools = append(ag.Tools, virtualTools...)
@@ -726,9 +723,7 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// Use agent's ToolTimeout (same as used for normal tool calls)
 	toolTimeout := getToolExecutionTimeout(ag)
 	if err := codegen.GenerateVirtualToolsCode(virtualTools, generatedDir, logger, toolTimeout); err != nil {
-		if logger != nil {
-			logger.Warnf("Failed to generate Go code for virtual tools: %v", err)
-		}
+		logger.Warn("Failed to generate Go code for virtual tools", loggerv2.Error(err))
 		// Don't fail agent initialization if code generation fails
 	}
 
@@ -736,39 +731,20 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// - When cache entries are saved, code is generated automatically
 	// - When cache entries are loaded, code is generated if missing
 	// - No need to regenerate here - cache manager handles it
-	if ag.UseCodeExecutionMode && logger != nil {
-		logger.Debugf("🔧 [CODE_GEN] MCP server code generation handled by cache manager (no regeneration needed)")
+	if ag.UseCodeExecutionMode {
+		logger.Debug("MCP server code generation handled by cache manager (no regeneration needed)")
 	}
 
 	// In code execution mode, discover tool structure and include it in system prompt
 	var toolStructureJSON string
 	if ag.UseCodeExecutionMode {
-		if logger != nil {
-			logger.Infof("🔍 [DISCOVERY] Starting tool structure discovery for system prompt")
-			logger.Infof("🔍 [DISCOVERY] Filter configuration passed to agent:")
-			logger.Infof("🔍 [DISCOVERY]   - selectedServers: %v", ag.selectedServers)
-			logger.Infof("🔍 [DISCOVERY]   - selectedTools: %v", ag.selectedTools)
-			logger.Infof("🔍 [DISCOVERY]   - useCodeExecutionMode: %v", ag.UseCodeExecutionMode)
-		}
-
 		// Discover all available tools and include structure in system prompt
 		toolStructure, err := ag.discoverAllServersAndTools(generatedDir)
 		if err != nil {
-			if logger != nil {
-				logger.Warnf("🔍 [DISCOVERY] Failed to discover tool structure for system prompt: %v", err)
-			}
+			logger.Warn("Failed to discover tool structure for system prompt", loggerv2.Error(err))
 			// Continue without tool structure if discovery fails
 		} else {
 			toolStructureJSON = toolStructure
-			if logger != nil {
-				logger.Infof("🔍 [DISCOVERY] Tool structure discovered successfully (%d bytes)", len(toolStructureJSON))
-				// Log a preview of what was discovered
-				if len(toolStructureJSON) > 0 && len(toolStructureJSON) < 1000 {
-					logger.Debugf("🔍 [DISCOVERY] Tool structure content: %s", toolStructureJSON)
-				} else if len(toolStructureJSON) > 0 {
-					logger.Debugf("🔍 [DISCOVERY] Tool structure preview (first 500 chars): %s...", toolStructureJSON[:500])
-				}
-			}
 		}
 	}
 
@@ -776,48 +752,44 @@ func NewAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, m
 	// This ensures Simple agents get Simple prompts and ReAct agents get ReAct prompts
 	// In code execution mode, tool structure is automatically included
 	if !ag.hasCustomSystemPrompt {
-		if logger != nil && ag.UseCodeExecutionMode {
-			logger.Infof("🔍 [DISCOVERY] Building system prompt with tool structure (code execution mode)")
-			if toolStructureJSON != "" {
-				logger.Debugf("🔍 [DISCOVERY] Tool structure will be included in system prompt (%d bytes)", len(toolStructureJSON))
-			} else {
-				logger.Warnf("🔍 [DISCOVERY] No tool structure available - system prompt will not include tool structure")
-			}
-		}
 		ag.SystemPrompt = prompt.BuildSystemPromptWithoutTools(ag.prompts, ag.resources, string(ag.AgentMode), ag.DiscoverResource, ag.DiscoverPrompt, ag.UseCodeExecutionMode, toolStructureJSON, ag.Logger)
-		if logger != nil && ag.UseCodeExecutionMode {
-			logger.Infof("🔍 [DISCOVERY] System prompt built successfully (total length: %d bytes)", len(ag.SystemPrompt))
-		}
 	}
 
 	// 🎯 SMART ROUTING INITIALIZATION - Run AFTER all tools are loaded (including virtual tools)
 	// This ensures we have the complete tool count for accurate smart routing decisions
-	logger.Infof("🎯 [DEBUG] Smart routing check - EnableSmartRouting: %v, shouldUseSmartRouting: %v", ag.EnableSmartRouting, ag.shouldUseSmartRouting())
-	logger.Infof("🎯 [DEBUG] Smart routing context - Time: %v", time.Now())
 
 	if ag.shouldUseSmartRouting() {
 		// Get server count for logging
 		serverCount := len(ag.Clients)
 		serverType := "active"
 
-		logger.Infof("🎯 Smart routing enabled - determining relevant tools after full initialization")
-		logger.Infof("🎯 Total tools loaded: %d, %s servers: %d (thresholds: tools>%d, servers>%d)",
-			len(ag.Tools), serverType, serverCount, ag.SmartRoutingThreshold.MaxTools, ag.SmartRoutingThreshold.MaxServers)
+		logger.Info("Smart routing enabled - determining relevant tools after full initialization")
+		logger.Debug("Total tools loaded",
+			loggerv2.Int("tool_count", len(ag.Tools)),
+			loggerv2.String("server_type", serverType),
+			loggerv2.Int("server_count", serverCount),
+			loggerv2.Int("max_tools_threshold", ag.SmartRoutingThreshold.MaxTools),
+			loggerv2.Int("max_servers_threshold", ag.SmartRoutingThreshold.MaxServers))
 
 		// For now, use all tools since we don't have conversation context yet
 		// Smart routing will be re-evaluated in AskWithHistory with full conversation context
 		ag.filteredTools = ag.Tools
-		logger.Infof("🎯 Smart routing will be applied during conversation with full context")
+		logger.Debug("Smart routing will be applied during conversation with full context")
 	} else {
 		// Get server count for logging
 		serverCount := len(ag.Clients)
 		serverType := "active"
-		logger.Infof("🔧 DEBUG: Active mode - Clients map has %d entries", serverCount)
+		logger.Debug("Active mode",
+			loggerv2.Int("client_count", serverCount))
 
 		// No smart routing - use all tools
 		ag.filteredTools = ag.Tools
-		logger.Infof("🔧 Smart routing disabled - using all %d tools (%s servers: %d, thresholds: tools>%d, servers>%d)",
-			len(ag.Tools), serverType, serverCount, ag.SmartRoutingThreshold.MaxTools, ag.SmartRoutingThreshold.MaxServers)
+		logger.Debug("Smart routing disabled - using all tools",
+			loggerv2.Int("tool_count", len(ag.Tools)),
+			loggerv2.String("server_type", serverType),
+			loggerv2.Int("server_count", serverCount),
+			loggerv2.Int("max_tools_threshold", ag.SmartRoutingThreshold.MaxTools),
+			loggerv2.Int("max_servers_threshold", ag.SmartRoutingThreshold.MaxServers))
 	}
 
 	// No more event listeners - events go directly to tracer
@@ -837,7 +809,7 @@ func (a *Agent) SetCurrentQuery(query string) {
 func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
 	logger := getLogger(a)
 	startTime := time.Now()
-	logger.Infof("[ON-DEMAND CONNECTION] Creating connection for server: %s", serverName)
+	logger.Debug("Creating on-demand connection for server", loggerv2.String("server", serverName))
 
 	// Add a shorter timeout for on-demand connections (3 minutes instead of 10)
 	// This prevents hanging for too long and provides faster feedback
@@ -858,10 +830,14 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 				elapsed = time.Since(startTime)
 				remaining := connectTimeout - elapsed
 				if remaining > 0 {
-					logger.Infof("[ON-DEMAND CONNECTION] Still connecting to %s... (elapsed: %v, remaining: %v)",
-						serverName, elapsed.Round(time.Second), remaining.Round(time.Second))
+					logger.Debug("Still connecting to server",
+						loggerv2.String("server", serverName),
+						loggerv2.Any("elapsed", elapsed.Round(time.Second)),
+						loggerv2.Any("remaining", remaining.Round(time.Second)))
 				} else {
-					logger.Warnf("[ON-DEMAND CONNECTION] Connection to %s has exceeded timeout (%v)", serverName, connectTimeout)
+					logger.Warn("[ON-DEMAND CONNECTION] Connection exceeded timeout",
+						loggerv2.String("server", serverName),
+						loggerv2.Any("timeout", connectTimeout))
 				}
 			case <-connectCtx.Done():
 				return
@@ -872,7 +848,7 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 	}()
 
 	// Load the merged config to get server details
-	logger.Infof("[ON-DEMAND CONNECTION] Loading config for server: %s", serverName)
+	logger.Debug("Loading config for server", loggerv2.String("server", serverName))
 	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
 	if err != nil {
 		progressDone <- true
@@ -885,11 +861,7 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 		return nil, fmt.Errorf("server %s not found in config", serverName)
 	}
 
-	logger.Infof("[ON-DEMAND CONNECTION] Server config loaded: command=%s, args=%v, protocol=%s",
-		serverConfig.Command, serverConfig.Args, serverConfig.Protocol)
-
 	// Create a new client for this specific server
-	logger.Infof("[ON-DEMAND CONNECTION] Creating MCP client for server: %s", serverName)
 	client := mcpclient.New(mcpclient.MCPServerConfig{
 		Command:  serverConfig.Command,
 		Args:     serverConfig.Args,
@@ -899,7 +871,6 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 	}, logger)
 
 	// Connect to the server with timeout context
-	logger.Infof("[ON-DEMAND CONNECTION] Attempting to connect to server: %s (timeout: %v)", serverName, connectTimeout)
 	connectStartTime := time.Now()
 	if err := client.Connect(connectCtx); err != nil {
 		progressDone <- true
@@ -907,22 +878,26 @@ func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string)
 
 		// Check if it was a timeout
 		if connectCtx.Err() == context.DeadlineExceeded {
-			logger.Errorf("[ON-DEMAND CONNECTION] Connection to %s timed out after %v: %v",
-				serverName, connectDuration, err)
+			logger.Error("Connection timed out", err,
+				loggerv2.String("server", serverName),
+				loggerv2.Any("duration", connectDuration))
 			return nil, fmt.Errorf("connection to server %s timed out after %v: %w",
 				serverName, connectTimeout, err)
 		}
 
-		logger.Errorf("[ON-DEMAND CONNECTION] Failed to connect to server %s after %v: %v",
-			serverName, connectDuration, err)
+		logger.Error("Failed to connect to server", err,
+			loggerv2.String("server", serverName),
+			loggerv2.Any("duration", connectDuration))
 		return nil, fmt.Errorf("failed to connect to server %s: %w", serverName, err)
 	}
 
 	progressDone <- true
 	connectDuration := time.Since(connectStartTime)
 	totalDuration := time.Since(startTime)
-	logger.Infof("[ON-DEMAND CONNECTION] Successfully connected to server: %s (connect_time: %v, total_time: %v)",
-		serverName, connectDuration.Round(time.Millisecond), totalDuration.Round(time.Millisecond))
+	logger.Debug("Successfully connected to server",
+		loggerv2.String("server", serverName),
+		loggerv2.Any("connect_time", connectDuration.Round(time.Millisecond)),
+		loggerv2.Any("total_time", totalDuration.Round(time.Millisecond)))
 	return client, nil
 }
 
@@ -1068,44 +1043,14 @@ func (a *Agent) accumulateTokenUsage(ctx context.Context, usageMetrics events.Us
 		a.cacheEnabledCallCount++
 	}
 
-	// Detailed logging of tokens received from LLM provider
+	// Token usage is tracked via events - only log summary at debug level
 	logger := getLogger(a)
-	logger.Infof("📊 [TOKEN TRACKING] Turn %d - Tokens from LLM Provider:", turn)
-	logger.Infof("   Prompt/Input: %d, Completion/Output: %d, Total: %d",
-		usageMetrics.PromptTokens, usageMetrics.CompletionTokens, usageMetrics.TotalTokens)
-
-	if cacheTokens > 0 {
-		logger.Infof("   Cache Tokens: %d", cacheTokens)
-		// Log breakdown of cache tokens
-		if generationInfo != nil {
-			if generationInfo.CachedContentTokens != nil {
-				logger.Infof("      - CachedContentTokens: %d", *generationInfo.CachedContentTokens)
-			}
-			if generationInfo.Additional != nil {
-				if cacheRead, ok := generationInfo.Additional["CacheReadInputTokens"]; ok {
-					logger.Infof("      - CacheReadInputTokens: %v", cacheRead)
-				}
-				if cacheCreate, ok := generationInfo.Additional["CacheCreationInputTokens"]; ok {
-					logger.Infof("      - CacheCreationInputTokens: %v", cacheCreate)
-				}
-			}
-		}
-	}
-
-	if reasoningTokens > 0 {
-		logger.Infof("   Reasoning Tokens: %d", reasoningTokens)
-	}
-
-	if cacheDiscount > 0 {
-		logger.Infof("   Cache Discount: %.2f%%", cacheDiscount*100)
-	}
-
-	// Log cumulative totals
-	logger.Infof("📊 [TOKEN TRACKING] Cumulative Totals (after turn %d):", turn)
-	logger.Infof("   Prompt: %d, Completion: %d, Total: %d",
-		a.cumulativePromptTokens, a.cumulativeCompletionTokens, a.cumulativeTotalTokens)
-	logger.Infof("   Cache: %d, Reasoning: %d, LLM Calls: %d, Cache-Enabled Calls: %d",
-		a.cumulativeCacheTokens, a.cumulativeReasoningTokens, a.llmCallCount, a.cacheEnabledCallCount)
+	logger.Debug("Turn tokens",
+		loggerv2.Int("turn", turn),
+		loggerv2.Int("input_tokens", usageMetrics.PromptTokens),
+		loggerv2.Int("output_tokens", usageMetrics.CompletionTokens),
+		loggerv2.Int("total_tokens", usageMetrics.TotalTokens),
+		loggerv2.Int("cumulative_total", a.cumulativeTotalTokens))
 }
 
 // EndLLMGeneration ends the current LLM generation
@@ -1192,18 +1137,17 @@ func (a *Agent) emitTotalTokenUsageEvent(ctx context.Context, conversationDurati
 
 	a.EmitTypedEvent(ctx, totalTokenEvent)
 
-	// Log total token usage summary
+	// Log total token usage summary (debug level only - events track this in detail)
 	logger := getLogger(a)
-	logger.Infof("📊 [TOKEN TRACKING] ===== CONVERSATION TOTAL TOKEN USAGE =====")
-	logger.Infof("   Prompt/Input Tokens: %d", a.cumulativePromptTokens)
-	logger.Infof("   Completion/Output Tokens: %d", a.cumulativeCompletionTokens)
-	logger.Infof("   Total Tokens: %d", a.cumulativeTotalTokens)
-	logger.Infof("   Cache Tokens: %d", a.cumulativeCacheTokens)
-	logger.Infof("   Reasoning Tokens: %d", a.cumulativeReasoningTokens)
-	logger.Infof("   LLM Calls: %d", a.llmCallCount)
-	logger.Infof("   Cache-Enabled Calls: %d", a.cacheEnabledCallCount)
-	logger.Infof("   Conversation Duration: %v", conversationDuration)
-	logger.Infof("============================================================")
+	logger.Debug("Conversation token usage",
+		loggerv2.Int("total", a.cumulativeTotalTokens),
+		loggerv2.Int("input", a.cumulativePromptTokens),
+		loggerv2.Int("output", a.cumulativeCompletionTokens),
+		loggerv2.Int("cache", a.cumulativeCacheTokens),
+		loggerv2.Int("reasoning", a.cumulativeReasoningTokens),
+		loggerv2.Int("calls", a.llmCallCount))
+	logger.Info("Conversation duration", loggerv2.Any("duration", conversationDuration))
+	logger.Info("============================================================")
 }
 
 // GetTokenUsage returns the current cumulative token usage metrics
@@ -1261,20 +1205,19 @@ func (a *Agent) cleanupAgentGeneratedDir() {
 	// Remove the entire agent directory
 	if err := os.RemoveAll(agentDir); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("⚠️ Failed to cleanup agent directory %s: %v", agentDir, err)
+			a.Logger.Warn("⚠️ Failed to cleanup agent directory", loggerv2.Error(err), loggerv2.String("directory", agentDir))
 		}
 	} else if a.Logger != nil {
-		a.Logger.Infof("🧹 Cleaned up agent directory: %s", agentDir)
+		a.Logger.Info("🧹 Cleaned up agent directory", loggerv2.String("directory", agentDir))
 	}
 }
 
 // RebuildSystemPromptWithFilteredServers rebuilds the system prompt with only prompts/resources from relevant servers
 func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, relevantServers []string) error {
 	logger := a.Logger
-	logger.Info("🔄 Rebuilding system prompt with filtered servers", map[string]interface{}{
-		"relevant_servers": relevantServers,
-		"total_servers":    len(a.Clients),
-	})
+	logger.Info("🔄 Rebuilding system prompt with filtered servers",
+		loggerv2.Any("relevant_servers", relevantServers),
+		loggerv2.Int("total_servers", len(a.Clients)))
 
 	// Get fresh prompts and resources from unified cache using simple server names
 	filteredPrompts := make(map[string][]mcp.Prompt)
@@ -1283,7 +1226,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	// Load MCP configuration to get server configs for cache keys
 	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
 	if err != nil {
-		logger.Warnf("Failed to load MCP config for cache lookup: %w", err)
+		logger.Warn("Failed to load MCP config for cache lookup", loggerv2.Error(err))
 		return fmt.Errorf("failed to load MCP config: %w", err)
 	}
 
@@ -1294,7 +1237,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 		// Get server configuration for this server
 		serverConfig, exists := config.MCPServers[serverName]
 		if !exists {
-			logger.Warnf("Server configuration not found for %s, skipping cache lookup", serverName)
+			logger.Warn("Server configuration not found, skipping cache lookup", loggerv2.String("server", serverName))
 			continue
 		}
 
@@ -1304,12 +1247,12 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 		// Try to get cached data
 		cachedEntry, found := cacheManager.Get(cacheKey)
 		if !found {
-			logger.Debugf("Cache miss for server %s", serverName)
+			logger.Debug("Cache miss for server", loggerv2.String("server", serverName))
 			continue
 		}
 
 		if cachedEntry != nil && cachedEntry.IsValid {
-			logger.Infof("✅ Cache hit for server %s - using cached prompts and resources", serverName)
+			logger.Info("✅ Cache hit for server - using cached prompts and resources", loggerv2.String("server", serverName))
 
 			// Add cached prompts and resources to filtered collections
 			if len(cachedEntry.Prompts) > 0 {
@@ -1319,7 +1262,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 				filteredResources[serverName] = cachedEntry.Resources
 			}
 		} else {
-			logger.Debugf("Cache miss or invalid entry for server %s", serverName)
+			logger.Debug("Cache miss or invalid entry for server", loggerv2.String("server", serverName))
 		}
 	}
 
@@ -1331,7 +1274,7 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 		toolStructure, err := a.discoverAllServersAndTools(generatedDir)
 		if err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("Failed to rediscover tool structure after filtering: %v", err)
+				a.Logger.Warn("Failed to rediscover tool structure after filtering", loggerv2.Error(err))
 			}
 		} else {
 			toolStructureJSON = toolStructure
@@ -1351,30 +1294,16 @@ func (a *Agent) RebuildSystemPromptWithFilteredServers(ctx context.Context, rele
 	// Update the agent's system prompt
 	a.SystemPrompt = newSystemPrompt
 
-	logger.Info("✅ System prompt rebuilt with filtered servers", map[string]interface{}{
-		"filtered_prompts_count":   len(filteredPrompts),
-		"filtered_resources_count": len(filteredResources),
-		"new_prompt_length":        len(newSystemPrompt),
-	})
+	logger.Info("✅ System prompt rebuilt with filtered servers",
+		loggerv2.Int("filtered_prompts_count", len(filteredPrompts)),
+		loggerv2.Int("filtered_resources_count", len(filteredResources)),
+		loggerv2.Int("new_prompt_length", len(newSystemPrompt)))
 
 	return nil
 }
 
 // NewAgentWithObservability creates a new Agent with observability configuration
-func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, logger logger.ExtendedLogger, options ...AgentOption) (*Agent, error) {
-	logger.Info("[MCP AGENT DEBUG] Reading merged config from", map[string]interface{}{"config_path": configPath})
-
-	// Load merged MCP servers configuration (base + user)
-	config, err := mcpclient.LoadMergedConfig(configPath, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load merged MCP config: %w", err)
-	}
-
-	logger.Info("[MCP AGENT DEBUG] Merged config contains servers", map[string]interface{}{"server_count": len(config.MCPServers)})
-	for name := range config.MCPServers {
-		logger.Info("[MCP AGENT DEBUG] Server found", map[string]interface{}{"server_name": name})
-	}
-
+func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, logger loggerv2.Logger, options ...AgentOption) (*Agent, error) {
 	if llm == nil {
 		return nil, fmt.Errorf("LLM cannot be nil")
 	}
@@ -1417,7 +1346,10 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 
 	// Debug logging for virtual tools availability (observability version)
 	// Use the logger we created earlier
-	logger.Infof("🔍 Large output handling via virtual tools (observability) - virtual_tools_enabled: %v, total_clients: %d, client_names: %v", true, len(clients), getClientNames(clients))
+	logger.Info("🔍 Large output handling via virtual tools (observability)",
+		loggerv2.Any("virtual_tools_enabled", true),
+		loggerv2.Int("total_clients", len(clients)),
+		loggerv2.Any("client_names", getClientNames(clients)))
 
 	ag := &Agent{
 		Client:                        firstClient,
@@ -1456,7 +1388,7 @@ func NewAgentWithObservability(ctx context.Context, llm llmtypes.Model, serverNa
 }
 
 // Convenience constructors for common use cases
-func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger logger.ExtendedLogger, options ...AgentOption) (*Agent, error) {
+func NewSimpleAgent(ctx context.Context, llm llmtypes.Model, serverName, configPath, modelID string, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger, options ...AgentOption) (*Agent, error) {
 	return NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, logger, append(options, WithMode(SimpleAgent))...)
 }
 
@@ -1478,12 +1410,12 @@ func (a *Agent) AddEventListener(listener AgentEventListener) {
 	// 🆕 NEW: Enable streaming tracer when event listeners are added
 	// This provides streaming capabilities to external systems
 	if _, hasStreaming := a.GetStreamingTracer(); hasStreaming {
-		a.Logger.Infof("🔍 Streaming tracer enabled for event listener: %s", listener.Name())
+		a.Logger.Info("🔍 Streaming tracer enabled for event listener", loggerv2.String("listener", listener.Name()))
 
 		// The streaming tracer is already active and will forward events to all listeners
 		// No additional setup needed - events automatically flow through the streaming system
 	} else {
-		a.Logger.Warnf("Streaming tracer not available, using traditional event listener system")
+		a.Logger.Warn("Streaming tracer not available, using traditional event listener system")
 	}
 }
 
@@ -1593,7 +1525,7 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	// The streaming tracer will automatically forward events to subscribers
 	for _, tracer := range a.Tracers {
 		if err := tracer.EmitEvent(event); err != nil {
-			a.Logger.Warnf("Failed to emit event to tracer %T: %v", tracer, err)
+			a.Logger.Warn("Failed to emit event to tracer", loggerv2.Error(err), loggerv2.String("tracer_type", fmt.Sprintf("%T", tracer)))
 		}
 	}
 
@@ -1606,7 +1538,7 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 
 	for _, listener := range listeners {
 		if err := listener.HandleEvent(ctx, event); err != nil {
-			a.Logger.Warnf("Failed to emit event to listener %T: %v", listener, err)
+			a.Logger.Warn("Failed to emit event to listener", loggerv2.Error(err), loggerv2.String("listener_type", fmt.Sprintf("%T", listener)))
 		}
 	}
 }
@@ -1673,7 +1605,7 @@ func (a *Agent) Close() {
 	// Close all clients in the map
 	for serverName, client := range a.Clients {
 		if client != nil {
-			a.Logger.Info("🔌 Closing connection to %s", map[string]interface{}{"server_name": serverName})
+			a.Logger.Info("🔌 Closing connection", loggerv2.String("server_name", serverName))
 			client.Close()
 		}
 	}
@@ -2000,7 +1932,7 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 		toolStructure, err := a.discoverAllServersAndTools(generatedDir)
 		if err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("⚠️ [CODE_EXECUTION] Failed to discover tool structure for placeholder replacement: %v", err)
+				a.Logger.Warn("⚠️ [CODE_EXECUTION] Failed to discover tool structure for placeholder replacement", loggerv2.Error(err))
 			}
 			// Remove placeholder if discovery fails
 			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, "")
@@ -2019,14 +1951,14 @@ func (a *Agent) SetSystemPrompt(systemPrompt string) {
 				"</available_code>\n"
 			systemPrompt = strings.ReplaceAll(systemPrompt, prompt.ToolStructurePlaceholder, toolStructureSection)
 			if a.Logger != nil {
-				a.Logger.Infof("🔧 [CODE_EXECUTION] Replaced {{TOOL_STRUCTURE}} placeholder with tool structure (%d bytes)", len(toolStructure))
+				a.Logger.Info("🔧 [CODE_EXECUTION] Replaced {{TOOL_STRUCTURE}} placeholder with tool structure", loggerv2.Int("bytes", len(toolStructure)))
 			}
 		}
 	}
 
 	a.SystemPrompt = systemPrompt
 	if a.Logger != nil {
-		a.Logger.Debugf("✅ System prompt overwritten (length: %d chars)", len(systemPrompt))
+		a.Logger.Debug("✅ System prompt overwritten", loggerv2.Int("length_chars", len(systemPrompt)))
 	}
 	a.hasCustomSystemPrompt = true
 }
@@ -2053,7 +1985,7 @@ func (a *Agent) AppendSystemPrompt(additionalPrompt string) {
 		existingPrompt := prompt.RemoveAIStaffEngineerText(a.SystemPrompt)
 		a.SystemPrompt = existingPrompt + "\n\n" + additionalPrompt
 		if a.Logger != nil {
-			a.Logger.Debugf("✅ System prompt appended (length: %d chars) - AI Staff Engineer text removed", len(additionalPrompt))
+			a.Logger.Debug("✅ System prompt appended - AI Staff Engineer text removed", loggerv2.Int("length_chars", len(additionalPrompt)))
 		}
 	} else {
 		// If no existing system prompt, just set it
@@ -2081,7 +2013,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		// Category is required - return error
 		err := fmt.Errorf("tool %s registered without category - category is REQUIRED for all tools", name)
 		if a.Logger != nil {
-			a.Logger.Errorf("❌ [DISCOVERY] %v", err)
+			a.Logger.Error("❌ [DISCOVERY] Tool registered without category", err)
 		}
 		return err
 	}
@@ -2119,13 +2051,13 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 
 		if a.UseCodeExecutionMode && isStructuredOutputTool {
 			if a.Logger != nil {
-				a.Logger.Debugf("🔧 Code execution mode: Structured output tool %s added to LLM tools (required for orchestration)", name)
+				a.Logger.Debug("🔧 Code execution mode: Structured output tool added to LLM tools (required for orchestration)", loggerv2.String("tool", name))
 			}
 		}
 	} else {
 		// Code execution mode: Don't add to LLM tools, but still generate code and update registry
 		if a.Logger != nil {
-			a.Logger.Debugf("🔧 Code execution mode: Custom tool %s registered but not added to LLM tools (will use generated code)", name)
+			a.Logger.Debug("🔧 Code execution mode: Custom tool registered but not added to LLM tools (will use generated code)", loggerv2.String("tool", name))
 		}
 	}
 
@@ -2146,26 +2078,26 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		categoryCounts[category]++
 	}
 	if a.Logger != nil {
-		a.Logger.Infof("🔍 [DISCOVERY] Generating custom tools code for %d tools", len(customToolsForCodeGen))
+		a.Logger.Info("🔍 [DISCOVERY] Generating custom tools code", loggerv2.Int("tool_count", len(customToolsForCodeGen)))
 		for category, count := range categoryCounts {
-			a.Logger.Infof("🔍 [DISCOVERY]   - Category %s: %d tools", category, count)
+			a.Logger.Info("🔍 [DISCOVERY] Category tools", loggerv2.String("category", category), loggerv2.Int("count", count))
 		}
 	}
 	// Use agent's ToolTimeout (same as used for normal tool calls)
 	toolTimeout := getToolExecutionTimeout(a)
 	if err := codegen.GenerateCustomToolsCode(customToolsForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("🔍 [DISCOVERY] Failed to generate Go code for custom tools: %v", err)
+			a.Logger.Warn("🔍 [DISCOVERY] Failed to generate Go code for custom tools", loggerv2.Error(err))
 		}
 		// Don't fail tool registration if code generation fails
 	} else if a.Logger != nil {
-		a.Logger.Infof("🔍 [DISCOVERY] Successfully generated custom tools code")
+		a.Logger.Info("🔍 [DISCOVERY] Successfully generated custom tools code")
 		// Verify workspace_tools directory was created
 		workspaceToolsDir := filepath.Join(generatedDir, "workspace_tools")
 		if _, err := os.Stat(workspaceToolsDir); err == nil {
-			a.Logger.Infof("🔍 [DISCOVERY] Verified workspace_tools directory exists: %s", workspaceToolsDir)
+			a.Logger.Info("🔍 [DISCOVERY] Verified workspace_tools directory exists", loggerv2.String("directory", workspaceToolsDir))
 		} else {
-			a.Logger.Warnf("🔍 [DISCOVERY] workspace_tools directory not found after code generation: %s (error: %v)", workspaceToolsDir, err)
+			a.Logger.Warn("🔍 [DISCOVERY] workspace_tools directory not found after code generation", loggerv2.Error(err), loggerv2.String("directory", workspaceToolsDir))
 		}
 	}
 
@@ -2176,30 +2108,32 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			customToolExecutors[toolName] = customTool.Execution
 		}
 		if a.Logger != nil {
-			a.Logger.Debugf("🔧 [CODE_EXECUTION] Updating registry with %d custom tools (including %s)", len(customToolExecutors), name)
+			a.Logger.Debug("🔧 [CODE_EXECUTION] Updating registry with custom tools",
+				loggerv2.Int("count", len(customToolExecutors)),
+				loggerv2.String("including", name))
 			// Log all custom tool names for debugging
 			toolNames := make([]string, 0, len(customToolExecutors))
 			for toolName := range customToolExecutors {
 				toolNames = append(toolNames, toolName)
 			}
-			a.Logger.Debugf("🔧 [CODE_EXECUTION] Custom tools in registry: %v", toolNames)
+			a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools in registry", loggerv2.Any("tools", toolNames))
 		}
 		codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
 		if a.Logger != nil {
-			a.Logger.Debugf("🔧 [CODE_EXECUTION] Registry updated successfully for tool: %s", name)
+			a.Logger.Debug("🔧 [CODE_EXECUTION] Registry updated successfully for tool", loggerv2.String("tool", name))
 		}
 	} else {
 		if a.Logger != nil {
-			a.Logger.Warnf("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil for tool: %s", name)
+			a.Logger.Warn("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil for tool", loggerv2.String("tool", name))
 		}
 	}
 
 	// Debug logging
 	if a.Logger != nil {
-		a.Logger.Infof("🔧 Registered custom tool: %s (category: %s)", name, toolCategory)
-		a.Logger.Infof("🔧 Total custom tools registered: %d", len(a.customTools))
-		a.Logger.Infof("🔧 Total tools in agent: %d", len(a.Tools))
-		a.Logger.Infof("🔧 Total filtered tools: %d", len(a.filteredTools))
+		a.Logger.Info("🔧 Registered custom tool", loggerv2.String("tool", name), loggerv2.String("category", toolCategory))
+		a.Logger.Info("🔧 Total custom tools registered", loggerv2.Int("count", len(a.customTools)))
+		a.Logger.Info("🔧 Total tools in agent", loggerv2.Int("count", len(a.Tools)))
+		a.Logger.Info("🔧 Total filtered tools", loggerv2.Int("count", len(a.filteredTools)))
 	}
 
 	return nil
@@ -2243,7 +2177,7 @@ func (a *Agent) GetCustomTools() map[string]CustomTool {
 func (a *Agent) UpdateCodeExecutionRegistry() error {
 	if a.Clients == nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil")
+			a.Logger.Warn("⚠️ [CODE_EXECUTION] Cannot update registry - a.Clients is nil")
 		}
 		return fmt.Errorf("cannot update registry: Clients is nil")
 	}
@@ -2255,20 +2189,20 @@ func (a *Agent) UpdateCodeExecutionRegistry() error {
 	}
 
 	if a.Logger != nil {
-		a.Logger.Infof("🔧 [CODE_EXECUTION] Explicitly updating registry with %d custom tools", len(customToolExecutors))
+		a.Logger.Info("🔧 [CODE_EXECUTION] Explicitly updating registry with custom tools", loggerv2.Int("count", len(customToolExecutors)))
 		// Log all custom tool names for debugging
 		toolNames := make([]string, 0, len(customToolExecutors))
 		for toolName := range customToolExecutors {
 			toolNames = append(toolNames, toolName)
 		}
-		a.Logger.Debugf("🔧 [CODE_EXECUTION] Custom tools being registered: %v", toolNames)
+		a.Logger.Debug("🔧 [CODE_EXECUTION] Custom tools being registered", loggerv2.Any("tools", toolNames))
 	}
 
 	// Update the registry
 	codeexec.InitRegistry(a.Clients, customToolExecutors, a.toolToServer, a.Logger)
 
 	if a.Logger != nil {
-		a.Logger.Infof("✅ [CODE_EXECUTION] Registry updated successfully with %d custom tools", len(customToolExecutors))
+		a.Logger.Info("✅ [CODE_EXECUTION] Registry updated successfully with custom tools", loggerv2.Int("count", len(customToolExecutors)))
 	}
 
 	// 🔧 CRITICAL: Rebuild system prompt with updated tool structure in code execution mode
@@ -2276,12 +2210,12 @@ func (a *Agent) UpdateCodeExecutionRegistry() error {
 	if a.UseCodeExecutionMode {
 		if err := a.rebuildSystemPromptWithUpdatedToolStructure(); err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("⚠️ [CODE_EXECUTION] Failed to rebuild system prompt with updated tool structure: %v", err)
+				a.Logger.Warn("⚠️ [CODE_EXECUTION] Failed to rebuild system prompt with updated tool structure", loggerv2.Error(err))
 			}
 			// Don't fail registry update if system prompt rebuild fails
 		} else {
 			if a.Logger != nil {
-				a.Logger.Infof("✅ [CODE_EXECUTION] System prompt rebuilt with updated tool structure (workspace and human tools now included)")
+				a.Logger.Info("✅ [CODE_EXECUTION] System prompt rebuilt with updated tool structure (workspace and human tools now included)")
 			}
 		}
 	}
@@ -2318,7 +2252,9 @@ func (a *Agent) rebuildSystemPromptWithUpdatedToolStructure() error {
 	a.SystemPrompt = newSystemPrompt
 
 	if a.Logger != nil {
-		a.Logger.Debugf("🔧 [CODE_EXECUTION] System prompt rebuilt - length: %d bytes, tool structure: %d bytes", len(newSystemPrompt), len(toolStructure))
+		a.Logger.Debug("🔧 [CODE_EXECUTION] System prompt rebuilt",
+			loggerv2.Int("prompt_bytes", len(newSystemPrompt)),
+			loggerv2.Int("tool_structure_bytes", len(toolStructure)))
 	}
 
 	return nil
@@ -2377,7 +2313,7 @@ func (a *Agent) getGeneratedDir() string {
 	// Ensure directory exists
 	if err := os.MkdirAll(generatedDir, 0755); err != nil {
 		if a.Logger != nil {
-			a.Logger.Warnf("Failed to create generated directory %s: %v", generatedDir, err)
+			a.Logger.Warn("Failed to create generated directory", loggerv2.Error(err), loggerv2.String("directory", generatedDir))
 		}
 	}
 	return generatedDir

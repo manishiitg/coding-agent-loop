@@ -7,7 +7,7 @@ import (
 	"sort"
 	"sync"
 
-	"mcpagent/logger"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/mark3labs/mcp-go/client"
 )
@@ -17,7 +17,7 @@ type StdioManager struct {
 	command   string
 	args      []string
 	env       []string
-	logger    logger.ExtendedLogger
+	logger    loggerv2.Logger
 	pool      *StdioConnectionPool
 	serverKey string
 }
@@ -28,14 +28,16 @@ var (
 	poolOnce        sync.Once
 )
 
-// NewStdioManager creates a new stdio manager with our ExtendedLogger interface
-func NewStdioManager(command string, args []string, env []string, logger logger.ExtendedLogger) *StdioManager {
-	logger.Infof("🔧 [STDIO DEBUG] Creating StdioManager with command: %s, args: %v", command, args)
+// NewStdioManager creates a new stdio manager
+func NewStdioManager(command string, args []string, env []string, logger loggerv2.Logger) *StdioManager {
+	logger.Debug("Creating StdioManager",
+		loggerv2.String("command", command),
+		loggerv2.Any("args", args))
 
 	// Initialize global pool if not already done
 	poolOnce.Do(func() {
 		globalStdioPool = NewStdioConnectionPool(10, logger) // Max 10 connections
-		logger.Infof("🔧 [STDIO POOL] Global stdio connection pool initialized")
+		logger.Debug("Global stdio connection pool initialized")
 	})
 
 	// Create server key for this configuration
@@ -56,20 +58,20 @@ func NewStdioManager(command string, args []string, env []string, logger logger.
 // CreateClient creates a new stdio client with direct connection (DEPRECATED - use Connect instead)
 // This method is kept for backward compatibility but should not be used in new code
 func (s *StdioManager) CreateClient() (*client.Client, error) {
-	s.logger.Warnf("⚠️ [STDIO DEBUG] CreateClient is deprecated, use Connect() instead for connection pooling")
+	s.logger.Warn("CreateClient is deprecated, use Connect() instead for connection pooling")
 
 	// Skip the NPX test to avoid large output buffer issues
 	// The testNPXCommand function uses bufio.Scanner which has buffer limitations
 	// and can cause "token too long" errors with large browser outputs
-	s.logger.Infof("🔧 [STDIO DEBUG] Skipping NPX test to avoid large output buffer issues")
+	s.logger.Debug("Skipping NPX test to avoid large output buffer issues")
 
 	// Use NewStdioMCPClient which auto-starts the connection
 	mcpClient, err := client.NewStdioMCPClient(s.command, s.env, s.args...)
 	if err != nil {
-		s.logger.Errorf("❌ [STDIO DEBUG] Failed to create stdio client: %w", err)
+		s.logger.Error("Failed to create stdio client", err)
 		return nil, fmt.Errorf("failed to create stdio client: %w", err)
 	}
-	s.logger.Infof("✅ [STDIO DEBUG] Stdio client created successfully")
+	s.logger.Debug("Stdio client created successfully")
 
 	return mcpClient, nil
 }
@@ -108,16 +110,16 @@ func StopGlobalPool() {
 
 // Connect creates and starts a stdio client with connection pooling
 func (s *StdioManager) Connect(ctx context.Context) (*client.Client, error) {
-	s.logger.Infof("🔧 [STDIO DEBUG] Starting stdio connection process with pooling...")
+	s.logger.Debug("Starting stdio connection process with pooling")
 
 	// Use connection pool to get or create a connection
 	mcpClient, err := s.pool.GetConnection(ctx, s.serverKey, s.command, s.args, s.env)
 	if err != nil {
-		s.logger.Errorf("❌ [STDIO DEBUG] Failed to get stdio connection from pool: %w", err)
+		s.logger.Error("Failed to get stdio connection from pool", err)
 		return nil, fmt.Errorf("failed to get stdio connection from pool: %w", err)
 	}
 
-	s.logger.Infof("✅ [STDIO DEBUG] Stdio connection obtained from pool successfully")
+	s.logger.Debug("Stdio connection obtained from pool successfully")
 	return mcpClient, nil
 }
 

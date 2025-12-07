@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/observability"
-	"mcpagent/logger"
 	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"
+	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -27,7 +27,7 @@ import (
 // NewAgentConnection handles MCP config loading, server connection, tool discovery, and returns all connection artifacts for agent construction.
 // Now uses caching to avoid redundant connections and discoveries.
 // Always connects to servers even when using cached data.
-func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger logger.ExtendedLogger) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
+func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, configPath, traceID string, tracers []observability.Tracer, logger loggerv2.Logger) (map[string]mcpclient.ClientInterface, map[string]string, []llmtypes.Tool, []string, map[string][]mcp.Prompt, map[string][]mcp.Resource, string, error) {
 
 	// Start timing the entire connection process
 	connectionStartTime := time.Now()
@@ -47,17 +47,16 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(event); err != nil {
-				logger.Warnf("Failed to emit connection start event to tracer: %w", err)
+				logger.Warn("Failed to emit connection start event to tracer", loggerv2.Error(err))
 			}
 		}
 	}
 
-	logger.Info("🔍 NewAgentConnection started (with caching)", map[string]interface{}{
-		"server_name": serverName,
-		"config_path": configPath,
-		"trace_id":    traceID,
-		"start_time":  connectionStartTime.Format(time.RFC3339),
-	})
+	logger.Info("NewAgentConnection started (with caching)",
+		loggerv2.String("server_name", serverName),
+		loggerv2.String("config_path", configPath),
+		loggerv2.String("trace_id", traceID),
+		loggerv2.String("start_time", connectionStartTime.Format(time.RFC3339)))
 
 	// Try to get cached or fresh connection data (always connects to servers)
 	result, err := mcpcache.GetCachedOrFreshConnection(ctx, llm, serverName, configPath, tracers, logger)
@@ -80,12 +79,12 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 			for _, tracer := range tracers {
 				if err := tracer.EmitEvent(event); err != nil {
-					logger.Warnf("Failed to emit connection failure event to tracer: %w", err)
+					logger.Warn("Failed to emit connection failure event to tracer", loggerv2.Error(err))
 				}
 			}
 		}
 
-		logger.Errorf("❌ Connection failed: %w", err)
+		logger.Error("Connection failed", err)
 		return nil, nil, nil, nil, nil, nil, "", fmt.Errorf("connection failed: %w", err)
 	}
 
@@ -118,28 +117,26 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 	// Log comprehensive connection statistics
 	if result.CacheUsed {
-		logger.Info("✅ Using cached connection data", map[string]interface{}{
-			"cache_used":      result.CacheUsed,
-			"fresh_fallback":  result.FreshFallback,
-			"servers_count":   len(result.Clients),
-			"tools_count":     len(result.Tools),
-			"prompts_count":   totalPrompts,
-			"resources_count": totalResources,
-			"cache_key":       result.CacheKey,
-			"connection_time": connectionDuration.String(),
-			"connection_ms":   connectionDuration.Milliseconds(),
-		})
+		logger.Info("Using cached connection data",
+			loggerv2.Any("cache_used", result.CacheUsed),
+			loggerv2.Any("fresh_fallback", result.FreshFallback),
+			loggerv2.Int("servers_count", len(result.Clients)),
+			loggerv2.Int("tools_count", len(result.Tools)),
+			loggerv2.Int("prompts_count", totalPrompts),
+			loggerv2.Int("resources_count", totalResources),
+			loggerv2.String("cache_key", result.CacheKey),
+			loggerv2.String("connection_time", connectionDuration.String()),
+			loggerv2.Int("connection_ms", int(connectionDuration.Milliseconds())))
 	} else {
-		logger.Info("🔄 Using fresh connection data", map[string]interface{}{
-			"cache_used":      false,
-			"fresh_fallback":  true,
-			"servers_count":   len(result.Clients),
-			"tools_count":     len(result.Tools),
-			"prompts_count":   totalPrompts,
-			"resources_count": totalResources,
-			"connection_time": connectionDuration.String(),
-			"connection_ms":   connectionDuration.Milliseconds(),
-		})
+		logger.Info("Using fresh connection data",
+			loggerv2.Any("cache_used", false),
+			loggerv2.Any("fresh_fallback", true),
+			loggerv2.Int("servers_count", len(result.Clients)),
+			loggerv2.Int("tools_count", len(result.Tools)),
+			loggerv2.Int("prompts_count", totalPrompts),
+			loggerv2.Int("resources_count", totalResources),
+			loggerv2.String("connection_time", connectionDuration.String()),
+			loggerv2.Int("connection_ms", int(connectionDuration.Milliseconds())))
 	}
 
 	// Emit detailed connection completion event
@@ -175,7 +172,7 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(event); err != nil {
-				logger.Warnf("Failed to emit connection complete event to tracer: %w", err)
+				logger.Warn("Failed to emit connection complete event to tracer", loggerv2.Error(err))
 			}
 		}
 
@@ -194,7 +191,7 @@ func NewAgentConnection(ctx context.Context, llm llmtypes.Model, serverName, con
 
 		for _, tracer := range tracers {
 			if err := tracer.EmitEvent(discoveryEvent); err != nil {
-				logger.Warnf("Failed to emit discovery complete event to tracer: %w", err)
+				logger.Warn("Failed to emit discovery complete event to tracer", loggerv2.Error(err))
 			}
 		}
 	}

@@ -39,14 +39,36 @@ const (
 
 // StepTokenUsage represents accumulated token usage for a workflow step
 type StepTokenUsage struct {
-	PromptTokens          int
-	CompletionTokens      int
-	TotalTokens           int
+	InputTokens           int
+	OutputTokens          int
 	CacheTokens           int
 	ReasoningTokens       int
 	LLMCallCount          int
 	CacheEnabledCallCount int
 	CacheDiscountSum      float64 // Sum of cache discounts for averaging
+}
+
+// StepTokenData represents token data for a step to be persisted
+type StepTokenData struct {
+	Phase           string
+	Step            int
+	StepTitle       string
+	InputTokens     int
+	OutputTokens    int
+	CacheTokens     int
+	ReasoningTokens int
+	LLMCallCount    int
+}
+
+// ModelTokenData represents token data for a model to be persisted
+type ModelTokenData struct {
+	ModelID         string
+	Provider        string
+	InputTokens     int
+	OutputTokens    int
+	CacheTokens     int
+	ReasoningTokens int
+	LLMCallCount    int
 }
 
 // TokenUsageFile represents persisted token usage data per iteration
@@ -60,58 +82,55 @@ type TokenUsageFile struct {
 
 // TokenUsageSummary represents total token usage across all models and steps
 type TokenUsageSummary struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	CacheTokens      int `json:"cache_tokens"`
-	ReasoningTokens  int `json:"reasoning_tokens"`
-	LLMCallCount     int `json:"llm_call_count"`
-}
-
-// ModelTokenUsageInternal represents internal token usage accumulation (raw integers)
-type ModelTokenUsageInternal struct {
-	Provider         string
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	CacheTokens      int
-	ReasoningTokens  int
-	LLMCallCount     int
+	InputTokens     int `json:"input_tokens"`
+	OutputTokens    int `json:"output_tokens"`
+	CacheTokens     int `json:"cache_tokens"`
+	ReasoningTokens int `json:"reasoning_tokens"`
+	LLMCallCount    int `json:"llm_call_count"`
 }
 
 // ModelTokenUsage represents token usage for a specific model (JSON format)
-// Token counts are stored in millions for easier cost calculations (pricing is typically per million)
+// Stores both raw integers and string-formatted millions (with "M" suffix)
 type ModelTokenUsage struct {
-	Provider         string  `json:"provider"`
-	PromptTokens     float64 `json:"prompt_tokens"`     // in millions
-	CompletionTokens float64 `json:"completion_tokens"` // in millions
-	TotalTokens      float64 `json:"total_tokens"`      // in millions
-	CacheTokens      float64 `json:"cache_tokens"`      // in millions
-	ReasoningTokens  float64 `json:"reasoning_tokens"`  // in millions
-	LLMCallCount     int     `json:"llm_call_count"`    // count, not in millions
+	Provider         string `json:"provider"`
+	InputTokens      int    `json:"input_tokens"`       // raw count
+	OutputTokens     int    `json:"output_tokens"`      // raw count
+	InputTokensM     string `json:"input_tokens_m"`     // formatted as "17.016M"
+	OutputTokensM    string `json:"output_tokens_m"`    // formatted as "0.116M"
+	CacheTokens      int    `json:"cache_tokens"`       // raw count
+	CacheTokensM     string `json:"cache_tokens_m"`     // formatted as "4.546M"
+	ReasoningTokens  int    `json:"reasoning_tokens"`   // raw count
+	ReasoningTokensM string `json:"reasoning_tokens_m"` // formatted as "0.000M"
+	LLMCallCount     int    `json:"llm_call_count"`     // count
 }
 
 // StepTokenSummary represents token usage summary for a workflow step
-// Token counts are stored in millions for easier cost calculations (pricing is typically per million)
+// Stores both raw integers and string-formatted millions (with "M" suffix)
 type StepTokenSummary struct {
-	StepType         string  `json:"step_type"` // e.g., "execution", "validation", "learning"
-	StepTitle        string  `json:"step_title,omitempty"`
-	PromptTokens     float64 `json:"prompt_tokens"`     // in millions
-	CompletionTokens float64 `json:"completion_tokens"` // in millions
-	TotalTokens      float64 `json:"total_tokens"`      // in millions
-	CacheTokens      float64 `json:"cache_tokens"`      // in millions
-	ReasoningTokens  float64 `json:"reasoning_tokens"`  // in millions
-	LLMCallCount     int     `json:"llm_call_count"`    // count, not in millions
+	StepType         string `json:"step_type"` // e.g., "execution", "validation", "learning"
+	StepTitle        string `json:"step_title,omitempty"`
+	InputTokens      int    `json:"input_tokens"`       // raw count
+	OutputTokens     int    `json:"output_tokens"`      // raw count
+	InputTokensM     string `json:"input_tokens_m"`     // formatted as "17.016M"
+	OutputTokensM    string `json:"output_tokens_m"`    // formatted as "0.116M"
+	CacheTokens      int    `json:"cache_tokens"`       // raw count
+	CacheTokensM     string `json:"cache_tokens_m"`     // formatted as "4.546M"
+	ReasoningTokens  int    `json:"reasoning_tokens"`   // raw count
+	ReasoningTokensM string `json:"reasoning_tokens_m"` // formatted as "0.000M"
+	LLMCallCount     int    `json:"llm_call_count"`     // count
 }
 
 // StepTypeTokenUsage represents aggregated token usage for a step type across all steps
-// Token counts are stored in millions for easier cost calculations (pricing is typically per million)
+// Stores both raw integers and string-formatted millions (with "M" suffix)
 type StepTypeTokenUsage struct {
-	StepType         string  `json:"step_type"`         // e.g., "execution", "validation", "learning"
-	PromptTokens     float64 `json:"prompt_tokens"`     // in millions
-	CompletionTokens float64 `json:"completion_tokens"` // in millions
-	TotalTokens      float64 `json:"total_tokens"`      // in millions
-	CacheTokens      float64 `json:"cache_tokens"`      // in millions
-	ReasoningTokens  float64 `json:"reasoning_tokens"`  // in millions
-	LLMCallCount     int     `json:"llm_call_count"`    // count, not in millions
+	StepType         string `json:"step_type"`          // e.g., "execution", "validation", "learning"
+	InputTokens      int    `json:"input_tokens"`       // raw count
+	OutputTokens     int    `json:"output_tokens"`      // raw count
+	InputTokensM     string `json:"input_tokens_m"`     // formatted as "17.016M"
+	OutputTokensM    string `json:"output_tokens_m"`    // formatted as "0.116M"
+	CacheTokens      int    `json:"cache_tokens"`       // raw count
+	CacheTokensM     string `json:"cache_tokens_m"`     // formatted as "4.546M"
+	ReasoningTokens  int    `json:"reasoning_tokens"`   // raw count
+	ReasoningTokensM string `json:"reasoning_tokens_m"` // formatted as "0.000M"
+	LLMCallCount     int    `json:"llm_call_count"`     // count
 }

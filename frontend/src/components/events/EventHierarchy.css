@@ -166,3 +166,12 @@
 .dark-plus .event-children {
   border-left-color: hsl(0 0% 24%);  /* VS Code border #3c3c3c */
 }
+
+/* Reduce spacing between agent runs - when orchestrator_agent_end is followed by orchestrator_agent_start */
+.event-tree-node[data-event-type="orchestrator_agent_end"] + .event-tree-node[data-event-type="orchestrator_agent_start"] {
+  margin-top: -0.5rem;
+}
+
+.event-tree-node[data-event-type="orchestrator_agent_end"] + .event-tree-node[data-event-type="orchestrator_agent_start"] .event-tree-item {
+  padding-top: 0.25rem;
+}

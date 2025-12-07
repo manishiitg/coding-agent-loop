@@ -217,7 +217,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       .map(([sessionKey]) => sessionKey);
   }, [events, getAgentSessionKey, findEventsBetweenStartEnd]);
 
-  // Auto-collapse logic: Keep last 5 sessions open, collapse newest and older ones
+  // Auto-collapse logic: Keep 1-5 sessions expanded, collapse all except newest when 6+ sessions
   // This runs when new sessions complete or when session order changes
   React.useEffect(() => {
     if (getOrderedCompletedSessions.length === 0) {
@@ -272,30 +272,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
           }
         });
       } else {
-        // More than 5 sessions: keep last 5 expanded, collapse newest and older ones
+        // More than 5 sessions: collapse all except the newest session
         const newestSession = orderedSessions[n - 1]; // Current newest session (n)
-        const last5Sessions = orderedSessions.slice(-5); // Last 5 sessions (n-5, n-4, n-3, n-2, n-1)
-        const olderSessions = orderedSessions.slice(0, n - 6); // n-6 and earlier
+        const olderSessions = orderedSessions.slice(0, n - 1); // All sessions except the newest
         
-        // Keep last 5 sessions expanded (unless manually collapsed by user)
-        last5Sessions.forEach(sessionKey => {
-          if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
-            newCollapsed.delete(sessionKey);
-            hasChanges = true;
-          }
-        });
-        
-        // Collapse the newest session (n) unless manually expanded
+        // Keep the newest session expanded (unless manually collapsed by user)
         if (newestSession) {
-          if (!manuallyExpandedSessions.has(newestSession)) {
-            if (!newCollapsed.has(newestSession)) {
-              newCollapsed.add(newestSession);
-              hasChanges = true;
-            }
+          if (newCollapsed.has(newestSession) && !manuallyExpandedSessions.has(newestSession)) {
+            newCollapsed.delete(newestSession);
+            hasChanges = true;
           }
         }
         
-        // Collapse all older sessions (n-6 and earlier) unless manually expanded
+        // Collapse all older sessions unless manually expanded
         olderSessions.forEach(sessionKey => {
           // Only auto-collapse if user hasn't manually expanded it
           if (!manuallyExpandedSessions.has(sessionKey)) {
@@ -363,7 +352,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     const onToggleCollapse = sessionKey ? () => toggleAgentSession(sessionKey) : undefined;
     
     return (
-      <div key={event.id} className="event-tree-node">
+      <div key={event.id} className="event-tree-node" data-event-type={event.type}>
         <div 
           className="event-tree-item"
           style={{ marginLeft: `${indent}px` }}

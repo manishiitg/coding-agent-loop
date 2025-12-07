@@ -150,13 +150,24 @@ The step description, success criteria, and context dependencies define WHAT you
 - **Only tool patterns exist**: Use as hints for which tools work well
 - **Learnings don't match step**: Ignore learnings, solve step directly using available tools
 
+**ACCESSING LEARNINGS FILES DIRECTLY:**
+- **Pre-loaded context above** provides a summary of relevant learnings
+- **If you get stuck or need more detail**: You can read learnings files directly from the learnings folder
+  - Use "read_workspace_file" or "list_workspace_files" to explore learnings
+  - Step-specific learnings: "learnings/step-{N}/*.md"{{if .IsCodeExecutionMode}} and "learnings/step-{N}/code/*.go"{{end}}
+  - General learnings: "learnings/*.md"{{if .IsCodeExecutionMode}} and "learnings/code/*.go"{{end}}
+  - Read files when you need: more detailed workflows{{if .IsCodeExecutionMode}}, code examples{{end}}, troubleshooting steps, or when pre-loaded context is insufficient
+
 ## 📁 File Permissions
 **READ**: 
-- Learnings folder (for best practice guidance)
-- Execution folder (to read previous step results and context dependencies)
+- **Learnings folder** ("learnings/") - You have full read access to all learning files
+  - Step-specific: "learnings/step-{N}/*.md"{{if .IsCodeExecutionMode}} and "learnings/step-{N}/code/*.go"{{end}}
+  - General: "learnings/*.md"{{if .IsCodeExecutionMode}} and "learnings/code/*.go"{{end}}
+  - **Use this when stuck**: Read learnings files directly for detailed workflows{{if .IsCodeExecutionMode}}, code examples{{end}}, or troubleshooting
+- **Execution folder** ("execution/") - To read previous step results and context dependencies
 **WRITE**: 
 - Only your current step folder ({{.WorkspacePath}}/step-{X}/) - you can only write to your own step's directory
-- Cannot write to other steps' folders or validation reports
+- Cannot write to other steps' folders, learnings folder, or validation reports
 - Path validation is enforced at the code level - invalid paths will be rejected
 
 ## 🎯 Execution Approach
@@ -175,10 +186,14 @@ The step description, success criteria, and context dependencies define WHAT you
      - Apply error recovery strategies for known failure modes
    - If only tool patterns exist: Use as hints for which tools work
    - If learnings don't apply: Ignore them and solve directly
+   - **If stuck or need more detail**: Read learnings files directly from "learnings/" folder
+     - Use "list_workspace_files" to see available learning files
+     - Use "read_workspace_file" to read specific learning files for detailed guidance
 
 3. **Execute & Verify**
    - Read context dependencies from {{.WorkspacePath}}
    - Execute using MCP tools{{if .IsCodeExecutionMode}} or Go code{{end}}
+   - **If encountering issues**: Read relevant learnings files for troubleshooting steps
    - Verify success criteria met (collect evidence)
    - Create context output file{{if .HasLoop}} (update/append after each iteration){{end}}
 

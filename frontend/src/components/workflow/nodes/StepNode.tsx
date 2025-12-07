@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -134,6 +134,8 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_large_output_virtual_tools?: boolean
+    enable_prerequisite_detection?: boolean
+    prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
   } }
   
   // Get preset's default code execution mode
@@ -409,26 +411,30 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
 
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-bold">
-          {stepIndex + 1}
+      <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+        {/* First row: Step number and title */}
+        <div className="flex items-start gap-3 mb-2">
+          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-bold flex-shrink-0">
+            {stepIndex + 1}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-relaxed">
+              {title}
+            </h3>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight truncate">
-            {title}
-          </h3>
-        </div>
-        <div className="flex items-center gap-2">
+        {/* Second row: Action buttons */}
+        <div className="flex items-center gap-1.5">
           {/* Run from this step button */}
           {onRunFromStep ? (
             <button
               onClick={handleRunClick}
               disabled={isRunDisabled}
               className={`
-                flex items-center justify-center w-7 h-7 rounded-lg transition-all relative z-10
+                flex items-center justify-center w-8 h-8 rounded-md transition-all relative z-10
                 ${isRunDisabled
                   ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed opacity-50'
-                  : 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/60 hover:scale-105 cursor-pointer'
+                  : 'bg-emerald-500 dark:bg-emerald-600 text-white hover:bg-emerald-600 dark:hover:bg-emerald-500 hover:scale-105 cursor-pointer shadow-sm'
                 }
               `}
               title={
@@ -439,10 +445,10 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
                     : `Run step ${stepIndex + 1} only`
               }
             >
-              <Play className="w-3.5 h-3.5" />
+              <Play className="w-4 h-4" />
             </button>
           ) : (
-            <div className="w-7 h-7 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
+            <div className="w-8 h-8 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
               ⚠️
             </div>
           )}
@@ -450,22 +456,36 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
           {onOpenSidebar ? (
             <button
               onClick={handleSettingsClick}
-              className="flex items-center justify-center w-7 h-7 rounded-lg transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
+              className="flex items-center justify-center w-8 h-8 rounded-md transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
               title="Open step settings"
             >
-              <Settings className="w-3.5 h-3.5" />
+              <Settings className="w-4 h-4" />
             </button>
           ) : null}
           {/* Agent Mode Badge */}
           {useCodeExecutionMode ? (
-            <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold">
-              <Terminal className="w-3 h-3" />
+            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold border border-amber-200 dark:border-amber-800">
+              <Terminal className="w-3.5 h-3.5" />
               <span>Code</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">
-              <Code className="w-3 h-3" />
+            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 text-[10px] font-semibold border border-slate-200 dark:border-slate-700">
+              <Code className="w-3.5 h-3.5" />
               <span>Agent</span>
+            </div>
+          )}
+          {/* Prerequisite Detection Badge */}
+          {stepConfig?.agent_configs?.enable_prerequisite_detection && (
+            <div 
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-semibold border border-orange-200 dark:border-orange-800"
+              title={
+                stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0
+                  ? `Prerequisite detection enabled. ${stepConfig.agent_configs.prerequisite_rules.length} rule(s) configured`
+                  : 'Prerequisite detection enabled'
+              }
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Prereq</span>
             </div>
           )}
           {statusIcons[status]}
@@ -486,6 +506,27 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             <p className="text-xs text-green-700 dark:text-green-300 leading-relaxed">
               {success_criteria}
             </p>
+          </div>
+        )}
+
+        {/* Prerequisite Rules */}
+        {stepConfig?.agent_configs?.enable_prerequisite_detection && stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0 && (
+          <div className="space-y-2">
+            {stepConfig.agent_configs.prerequisite_rules.map((rule, ruleIndex) => (
+              <div key={ruleIndex} className="flex items-start gap-2 p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50">
+                <AlertTriangle className="w-3.5 h-3.5 text-orange-500 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="text-[10px] font-semibold text-orange-700 dark:text-orange-300 mb-1">
+                    Rule {ruleIndex + 1}: Depends on {rule.depends_on_step}
+                  </div>
+                  {rule.description && (
+                    <div className="mt-1 text-[10px] text-orange-600 dark:text-orange-400 italic leading-relaxed">
+                      "{rule.description}"
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -561,6 +602,29 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       />
 
       <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
+      
+      {/* Prerequisite target handles (bottom, for edges coming from validation nodes) */}
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="prereq-left"
+        style={{ left: '25%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="prereq-middle"
+        style={{ left: '50%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="prereq-right"
+        style={{ left: '75%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+      />
       
       {/* Retry Handle - for validation loop-back */}
       <Handle

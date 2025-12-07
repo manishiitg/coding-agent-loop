@@ -338,3 +338,35 @@ Inject emitter into context before calling executors:
 4. **Turn Number Default**: What should turn number be for orchestrator direct calls?
    - Recommendation: Use 0 or extract from context if available
 
+## Implementation Status (Updated)
+
+### ✅ COMPLETED - All Phases Implemented
+
+**Phase 1-2: Backend Event Infrastructure & Emission** - COMPLETE
+- Event type constant: `types.go` line 30
+- Event struct: `data.go` lines 411-439
+- All workspace tool handlers emit events
+
+**Phase 3: Emitter Injection** - COMPLETE (Fixed 2024-12-03)
+- Orchestrator methods inject `contextAwareBridge` (6 locations)
+- Folder guard wrapper injects emitter
+- Agent tool calls inject emitter via context
+
+**Critical Fix Applied**: The Agent struct now implements `HandleEvent` method to satisfy 
+the `WorkspaceEventEmitter` interface. Without this, type assertion in workspace_tools.go 
+would fail silently, and events would not emit from agent tool calls.
+
+```go
+// HandleEvent in mcpagent/agent/agent.go (around line 1590)
+func (a *Agent) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
+    if event != nil && event.Data != nil {
+        a.EmitTypedEvent(ctx, event.Data)
+    }
+    return nil
+}
+```
+
+**Phase 4: Frontend Event Handling** - COMPLETE
+- `useWorkspaceStore.ts` handles `workspace_file_operation` events (lines 516-609)
+- `ChatArea.tsx` calls `processWorkspaceEvent` for each event
+

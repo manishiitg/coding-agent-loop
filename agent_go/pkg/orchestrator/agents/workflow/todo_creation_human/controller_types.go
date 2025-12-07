@@ -30,6 +30,28 @@ type ExecutionOptions struct {
 	FastExecuteEndStep      int    `json:"fast_execute_end_step,omitempty"`      // 0-based last step for fast execute range
 	PlanChangeAction        string `json:"plan_change_action,omitempty"`         // "keep_old_progress" or "delete_old_progress"
 	AllStepsCompletedAction string `json:"all_steps_completed_action,omitempty"` // "fast_execute_again" or "skip_execution"
+
+	// Temporary LLM overrides (optional, overrides step-level configs for this execution only)
+	// Only applies to execution agents (not validation or learning agents)
+	// Takes highest priority over step configs, preset defaults, and orchestrator defaults for execution agents
+	TempOverrideLLM *AgentLLMConfig `json:"temp_override_llm,omitempty"` // Override LLM for execution agents only
+
+	// Fallback behavior when validation fails
+	FallbackToOriginalLLMOnFailure bool `json:"fallback_to_original_llm_on_failure,omitempty"` // If true, use original LLM (step config > preset > orchestrator) instead of temp override when validation fails
+
+	// Variable group execution options (for batch execution with multiple groups)
+	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
+}
+
+// BatchExecutionProgress tracks execution progress across multiple variable groups
+type BatchExecutionProgress struct {
+	TotalGroups     int                      `json:"total_groups"`     // Total number of enabled groups
+	EnabledGroups   []string                 `json:"enabled_groups"`   // Group IDs to execute
+	CompletedGroups []string                 `json:"completed_groups"` // Group IDs that finished
+	CurrentGroup    string                   `json:"current_group"`    // Currently executing group ID
+	GroupProgress   map[string]*StepProgress `json:"group_progress"`   // Per-group step progress
+	LastUpdated     time.Time                `json:"last_updated"`
+	IterationNumber int                      `json:"iteration_number"` // Current iteration number (e.g., 1 for iteration-1)
 }
 
 // ExecutionContext represents immutable execution configuration

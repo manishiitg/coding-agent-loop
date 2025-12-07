@@ -1038,6 +1038,42 @@ func InvalidateServerCache(configPath, serverName string, logger logger.Extended
 	return cacheManager.InvalidateByServer(configPath, serverName)
 }
 
+// GetFreshConnection creates a fresh MCP connection for a server, bypassing any cache
+// This is used for broken pipe recovery when existing connections are dead
+// It invalidates the cache first, then creates a new connection
+func GetFreshConnection(ctx context.Context, serverName, configPath string, logger logger.ExtendedLogger) (mcpclient.ClientInterface, error) {
+	logger.Infof("🔧 [FRESH CONNECTION] Creating fresh MCP client for server: %s", serverName)
+
+	// Invalidate cache first to force fresh connection
+	if invalidateErr := InvalidateServerCache(configPath, serverName, logger); invalidateErr != nil {
+		logger.Warnf("🔧 [FRESH CONNECTION] Failed to invalidate cache for server %s: %v (continuing anyway)", serverName, invalidateErr)
+	} else {
+		logger.Infof("🔧 [FRESH CONNECTION] Invalidated cache for server: %s", serverName)
+	}
+
+	// Get fresh connection using existing infrastructure
+	result, err := GetCachedOrFreshConnection(
+		ctx,
+		nil, // No LLM needed for tool execution
+		serverName,
+		configPath,
+		nil, // No tracers needed
+		logger,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get fresh connection for server %s: %w", serverName, err)
+	}
+
+	// Get the client from the Clients map
+	client, exists := result.Clients[serverName]
+	if !exists {
+		return nil, fmt.Errorf("server %s not found in fresh connection result", serverName)
+	}
+
+	logger.Infof("✅ [FRESH CONNECTION] Successfully created fresh MCP client for server: %s", serverName)
+	return client, nil
+}
+
 // ClearAllCache clears all cache entries
 func ClearAllCache(logger logger.ExtendedLogger) error {
 	cacheManager := GetCacheManager(logger)

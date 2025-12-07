@@ -24,7 +24,14 @@ import type {
   LLMGuidanceResponse,
   HumanFeedbackResponse,
   RunFoldersResponse,
+  CreateRunFolderResponse,
   ProgressResponse,
+  VariableGroupsResponse,
+  VariablesManifest,
+  SlackConfigRequest,
+  SlackConfigResponse,
+  SlackTestResponse,
+  SlackTestReplyResponse,
 } from './api-types'
 
 // Re-export types for other components to use
@@ -52,6 +59,7 @@ export type {
   LLMGuidanceResponse,
   HumanFeedbackResponse,
   RunFoldersResponse,
+  CreateRunFolderResponse,
   ProgressResponse,
 } from './api-types'
 
@@ -241,6 +249,42 @@ export const agentApi = {
       response: response
     })
     return apiResponse.data
+  },
+
+  // Slack Feedback Configuration
+  // Get Slack configuration
+  getSlackFeedbackConfig: async (): Promise<SlackConfigResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/slack/config')
+    return apiResponse.data
+  },
+
+  // Update Slack configuration
+  updateSlackFeedbackConfig: async (config: SlackConfigRequest): Promise<SlackConfigResponse> => {
+    const apiResponse = await api.post('/api/human-feedback/slack/config', config)
+    return apiResponse.data
+  },
+
+  // Test Slack connection (with optional config to test without saving)
+  testSlackConnection: async (config?: SlackConfigRequest): Promise<SlackTestResponse> => {
+    const apiResponse = await api.post('/api/human-feedback/slack/test', config || {})
+    return apiResponse.data
+  },
+
+  // Get test connection reply (polling)
+  getTestConnectionReply: async (testId: string): Promise<SlackTestReplyResponse | null> => {
+    try {
+      const apiResponse = await api.get(`/api/human-feedback/slack/test/reply?test_id=${testId}`)
+      return apiResponse.data
+    } catch (err: unknown) {
+      // 204 No Content means no reply yet
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosError = err as { response?: { status?: number } }
+        if (axiosError.response?.status === 204) {
+          return null
+        }
+      }
+      throw err
+    }
   },
 
   // Get tool list and status
@@ -566,6 +610,14 @@ export const agentApi = {
     return response.data
   },
 
+  // Create a new run folder (iteration)
+  createRunFolder: async (workspacePath: string): Promise<CreateRunFolderResponse> => {
+    const response = await api.post('/api/workflow/run-folder', null, {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
   // Get execution progress for a run folder
   getProgress: async (workspacePath: string, runFolder: string): Promise<ProgressResponse> => {
     const response = await api.get('/api/workflow/progress', {
@@ -578,6 +630,30 @@ export const agentApi = {
   deleteRunFolder: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; message: string }> => {
     const response = await api.delete('/api/workflow/run-folder', {
       params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
+    return response.data
+  },
+
+  // Delete learnings for a specific step
+  deleteStepLearnings: async (workspacePath: string, stepNumber: number): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete('/api/workflow/learnings', {
+      params: { workspace_path: workspacePath, step_number: stepNumber }
+    })
+    return response.data
+  },
+
+  // Get variable groups from variables.json
+  getVariableGroups: async (workspacePath: string): Promise<VariableGroupsResponse> => {
+    const response = await api.get('/api/workflow/variable-groups', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  // Update variable groups in variables.json
+  updateVariableGroups: async (workspacePath: string, manifest: VariablesManifest): Promise<{ success: boolean; message: string }> => {
+    const response = await api.put('/api/workflow/variable-groups', manifest, {
+      params: { workspace_path: workspacePath }
     })
     return response.data
   },

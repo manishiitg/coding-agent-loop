@@ -82,19 +82,25 @@ func NewPlanImprovementManager(
 // createPlanImprovementAgent creates and sets up a plan improvement agent with all necessary configuration
 // This method handles folder guard setup, LLM config selection, tool combination, and agent initialization
 func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: read-only access to runs/ folder, learnings/ folders, and planning/ folder
+	// Set folder guard paths: read-only access to runs/ folder, learnings/ folder, and planning/ folder
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
-	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", workspacePath)
 	planningPath := fmt.Sprintf("%s/planning", workspacePath)
 
-	// Agent has read-only access to runs/ folder for execution results, both learnings/ folders for learnings analysis,
+	// Agent has read-only access to runs/ folder for execution results, learnings/ folder for learnings analysis,
 	// and planning/ folder to read plan.json. Plan modifications are done via custom tools (not workspace tools),
 	// so the agent doesn't need write access - the tool executors handle file writing directly.
-	readPaths := []string{runsPath, learningsPath, learningCodeExecPath, planningPath}
+	readPaths := []string{runsPath, learningsPath, planningPath}
+
+	// When step-specific learnings is enabled, step-specific folders are at workspace root
+	useStepSpecific := pim.GetUseStepSpecificLearnings()
+	if useStepSpecific {
+		pim.GetLogger().Infof("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/step-*/ and learnings/step-*/")
+	}
+
 	writePaths := []string{} // No write access - plan updates are done via custom tool executors, not workspace tools
 	pim.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	pim.GetLogger().Infof("📊 Setting folder guard for plan improvement agent - Read paths: %v, Write paths: %v (read-only access to runs/, learnings/, learning_code_exec/, and planning/ folders. Plan updates via custom tools)", readPaths, writePaths)
+	pim.GetLogger().Infof("📊 Setting folder guard for plan improvement agent - Read paths: %v, Write paths: %v (read-only access to runs/, learnings/, learnings/, and planning/ folders. Plan updates via custom tools)", readPaths, writePaths)
 
 	// Determine LLM config: Priority: presetPlanImprovementLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -226,15 +232,16 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, work
 
 	// Prepare template variables
 	// Use actual workspace path so agent can navigate correctly (runs/ is a subdirectory)
-	// Explicitly list allowed paths for the agent (includes planning/ for reading plan.json, learning_code_exec/ for code execution mode learnings)
-	allowedPaths := "['runs/', 'learnings/', 'learning_code_exec/', 'planning/']"
+	// Explicitly list allowed paths for the agent (includes planning/ for reading plan.json, learnings/ for code execution mode learnings)
+	allowedPaths := "['runs/', 'learnings/', 'learnings/', 'planning/']"
 	planImprovementTemplateVars := map[string]string{
-		"WorkspacePath":           pim.GetWorkspacePath(),
-		"PlanJSON":                string(planJSONBytes),
-		"ExecutionResultsSummary": executionResultsSummary,
-		"AllowedPaths":            allowedPaths,
-		"SessionID":               pim.sessionID,
-		"WorkflowID":              pim.workflowID,
+		"WorkspacePath":            pim.GetWorkspacePath(),
+		"PlanJSON":                 string(planJSONBytes),
+		"ExecutionResultsSummary":  executionResultsSummary,
+		"AllowedPaths":             allowedPaths,
+		"SessionID":                pim.sessionID,
+		"WorkflowID":               pim.workflowID,
+		"UseStepSpecificLearnings": fmt.Sprintf("%t", pim.GetUseStepSpecificLearnings()),
 	}
 
 	// Execute plan improvement agent
@@ -290,7 +297,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
 	if allowedPaths == "" {
-		allowedPaths = "['runs/', 'learnings/', 'learning_code_exec/', 'planning/']"
+		allowedPaths = "['runs/', 'learnings/', 'learnings/', 'planning/']"
 	}
 
 	// Prepare template variables
@@ -473,6 +480,21 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 
 // planImprovementSystemPromptProcessor creates the system prompt for plan improvement
 func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementSystemPromptProcessor(templateVars map[string]string) string {
+	useStepSpecific := templateVars["UseStepSpecificLearnings"] == "true"
+
+	learningsLocationNote := ""
+	if useStepSpecific {
+		learningsLocationNote = `
+## LEARNING FILES LOCATION
+
+When step-specific learnings are enabled, learning files are stored in step-specific folders:
+- Shared learnings: {WorkspacePath}/learnings/ and {WorkspacePath}/learnings/
+- Step-specific learnings: {WorkspacePath}/learnings/step-{X}/ and {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
+
+Check BOTH locations when analyzing learnings. Use list_workspace_files to discover step-specific folders in runs/ directory.
+`
+	}
+
 	return `# Plan Improvement Agent
 
 ## PURPOSE
@@ -484,7 +506,7 @@ Use 'human_feedback' to ask: "What would you like to improve? Which run should I
 
 ## WORKFLOW
 1. **Ask User** → Use human_feedback first
-2. **Analyze** → Review plan structure, execution results (if requested)
+2. **Analyze** → Review plan structure, execution results (if requested)` + learningsLocationNote + `
 3. **Propose Changes** → Use human_feedback to describe proposed modifications
 4. **Interpret Response** → Approval ("yes", "go ahead") = proceed; Questions = answer; Rejection = adjust
 5. **Update** → After approval, use plan modification tools
@@ -522,7 +544,14 @@ Success criteria MUST be **file-verifiable** (validation agent checks files):
 ## RULES
 - **Access**: Only ` + templateVars["AllowedPaths"] + ` (cannot list root ".")
 - **Confirmation**: Always use human_feedback before modifying plan
-- **Paths**: Relative to workspace path
+- **Paths**: Relative to workspace path` + func() string {
+		if useStepSpecific {
+			return `
+- **Step-Specific Learnings**: When analyzing learnings, check both shared folders (learnings/, learnings/) and step-specific folders in learnings/step-{X}/ and learnings/step-{X}/ (at workspace root, not inside runs/)
+`
+		}
+		return ""
+	}() + `
 `
 }
 

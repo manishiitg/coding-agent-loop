@@ -17,7 +17,6 @@ export const OrchestratorContext: React.FC<OrchestratorContextProps> = ({
 
   const orchestratorPhase = metadata.orchestrator_phase as string;
   const step = metadata.orchestrator_step as number;
-  const iteration = metadata.orchestrator_iteration as number;
   const agentName = metadata.orchestrator_agent_name as string;
 
   if (!orchestratorPhase) {
@@ -66,16 +65,6 @@ export const OrchestratorContext: React.FC<OrchestratorContextProps> = ({
     return step !== undefined ? `Step ${step + 1}` : '';
   };
 
-  const getIterationDisplay = (phase: string, iteration: number) => {
-    // Todo Planner Orchestrator is iterative (up to 10 iterations)
-    if (phase.startsWith('todo_planner_')) {
-      return iteration !== undefined ? `Iteration ${iteration}/10` : '';
-    }
-    
-    // Default iteration display
-    return iteration !== undefined ? `Cycle ${iteration}` : '';
-  };
-
   const phaseInfo = getPhaseInfo(orchestratorPhase);
 
   const getPhaseColorClasses = (color: string) => {
@@ -106,11 +95,6 @@ export const OrchestratorContext: React.FC<OrchestratorContextProps> = ({
       {step !== undefined && (
         <span className="text-gray-500 dark:text-gray-500 mr-2">
           {getStepDisplay(orchestratorPhase, step)}
-        </span>
-      )}
-      {iteration !== undefined && (
-        <span className="text-gray-500 dark:text-gray-500">
-          {getIterationDisplay(orchestratorPhase, iteration)}
         </span>
       )}
     </div>

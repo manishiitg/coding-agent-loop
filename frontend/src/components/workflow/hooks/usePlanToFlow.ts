@@ -3,6 +3,8 @@ import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
+import type { VariablesManifest } from '../../../services/api-types'
+import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 
@@ -81,7 +83,7 @@ export interface LearningNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | LoopNodeData | ValidationNodeData | LearningNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | LoopNodeData | ValidationNodeData | LearningNodeData | VariablesNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -94,6 +96,7 @@ interface UsePlanToFlowResult {
 
 interface UsePlanToFlowOptions {
   showDependencyEdges?: boolean // Default: false (hide dependency edges for cleaner view)
+  showPrerequisiteEdges?: boolean // Default: false (hide prerequisite edges for cleaner view)
   changes?: PlanChanges | null  // Optional: highlight changes on nodes
   onRunFromStep?: OnRunFromStepCallback  // Callback for "run from step" button
   onOpenSidebar?: OnOpenSidebarCallback  // Callback for opening sidebar when settings icon is clicked
@@ -102,6 +105,9 @@ interface UsePlanToFlowOptions {
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>  // Step status from events
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
+  variablesManifest?: VariablesManifest | null  // Variables manifest for Variables node
+  onOpenVariablesSidebar?: () => void  // Callback for opening variables sidebar
+  isLoadingVariables?: boolean  // Whether variables are being loaded
 }
 
 // Dagre layout configuration
@@ -121,7 +127,8 @@ const NODE_DIMENSIONS = {
   validation: { width: 120, height: 50 },
   learning: { width: 120, height: 50 },
   start: { width: 80, height: 36 },
-  end: { width: 80, height: 36 }
+  end: { width: 80, height: 36 },
+  variables: { width: 260, height: 180 }
 }
 
 /**
@@ -619,13 +626,157 @@ function createDependencyEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
 }
 
 /**
+ * Create edges based on prerequisite dependencies
+ * Edges go from validation nodes to previous step nodes
+ * Uses handle-based routing to prevent overlapping edges
+ */
+function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
+  const edges: WorkflowEdge[] = []
+  
+  // Filter to validation nodes and step-type nodes
+  const validationNodes = nodes.filter(node => node.type === 'validation')
+  const stepNodes = nodes.filter(isStepTypeNode)
+  
+  // Create a map of step ID to step node ID
+  const stepIdToNodeMap = new Map<string, string>()
+  stepNodes.forEach(node => {
+    const step = node.data.step
+    if (step.id) {
+      stepIdToNodeMap.set(step.id, node.id)
+    }
+  })
+
+  // Create a map of step node ID to step (for getting prerequisite rules)
+  const stepNodeIdToStepMap = new Map<string, PlanStep>()
+  stepNodes.forEach(node => {
+    const step = node.data.step
+    if (step.id) {
+      stepNodeIdToStepMap.set(node.id, step as PlanStep)
+    }
+  })
+
+  // Track edges per target step to assign different handles and prevent overlapping
+  const targetEdgeCounts = new Map<string, number>()
+  
+  // For each validation node, check if its parent step has prerequisite rules
+  validationNodes.forEach(validationNode => {
+    const validationData = validationNode.data as ValidationNodeData
+    const parentStepId = validationData.parentStepId
+    
+    // Find the parent step node
+    const parentStepNode = stepNodes.find(node => node.id === parentStepId)
+    if (!parentStepNode) return
+    
+    // Get the step data to access prerequisite rules
+    const parentStep = stepNodeIdToStepMap.get(parentStepId)
+    if (!parentStep) return
+    
+    const agentConfigs = parentStep.agent_configs
+    if (agentConfigs?.enable_prerequisite_detection && agentConfigs?.prerequisite_rules) {
+      // Create edges from validation node to each dependency step
+      agentConfigs.prerequisite_rules.forEach((rule: { depends_on_step: string; description: string }) => {
+        const depStepId = rule.depends_on_step
+        if (depStepId) {
+          const targetStepNodeId = stepIdToNodeMap.get(depStepId)
+          if (targetStepNodeId && targetStepNodeId !== parentStepId) {
+            // Get current count for this target to assign handle position
+            const currentCount = targetEdgeCounts.get(targetStepNodeId) || 0
+            targetEdgeCounts.set(targetStepNodeId, currentCount + 1)
+            
+            // Assign handle positions to spread edges horizontally along bottom
+            // Use modulo to cycle through handle positions if many edges
+            const handlePositions = ['left', 'middle', 'right']
+            const handleIndex = currentCount % handlePositions.length
+            const targetHandle = `prereq-${handlePositions[handleIndex]}`
+            
+            // For source (validation node), use different handles based on rule index
+            const sourceHandleIndex = currentCount % 3
+            const sourceHandle = `prereq-${handlePositions[sourceHandleIndex]}`
+            
+            // Use description as label (truncate if too long, but allow more characters)
+            // Split long text into multiple lines for better readability
+            let label = rule.description
+            if (label.length > 60) {
+              // Try to break at word boundaries
+              const words = label.split(' ')
+              let line = ''
+              const lines: string[] = []
+              for (const word of words) {
+                if ((line + word).length > 50 && line.length > 0) {
+                  lines.push(line.trim())
+                  line = word + ' '
+                } else {
+                  line += word + ' '
+                }
+              }
+              if (line.trim().length > 0) {
+                lines.push(line.trim())
+              }
+              // If still too long, truncate the last line
+              if (lines.length > 2) {
+                label = lines.slice(0, 2).join('\n') + '...'
+              } else {
+                label = lines.join('\n')
+              }
+            }
+            
+            edges.push({
+              id: `prereq-${validationNode.id}-to-${targetStepNodeId}-${depStepId}-${currentCount}`,
+              source: validationNode.id,
+              target: targetStepNodeId,
+              sourceHandle: sourceHandle,
+              targetHandle: targetHandle,
+              type: 'smoothstep',
+              style: { stroke: '#f59e0b', strokeDasharray: '5,5', strokeWidth: 2, opacity: 0.8 },
+              animated: false,
+              label: label,
+              labelStyle: { 
+                fill: '#f59e0b', 
+                fontSize: 8, 
+                fontWeight: 600,
+                whiteSpace: 'pre-line',
+                textAlign: 'center',
+                maxWidth: '200px'
+              },
+              labelBgStyle: { 
+                fill: '#fef3c7', 
+                fillOpacity: 0.95,
+                stroke: '#f59e0b',
+                strokeWidth: 1
+              },
+              labelBgPadding: [6, 8] as [number, number],
+              labelBgBorderRadius: 4,
+              labelShowBg: true
+            })
+          }
+        }
+      })
+    }
+  })
+
+  return edges
+}
+
+/**
  * Hook to convert plan.json to React Flow nodes and edges
  */
 export function usePlanToFlow(
   plan: PlanningResponse | null, 
   options: UsePlanToFlowOptions = {}
 ): UsePlanToFlowResult {
-  const { showDependencyEdges = false, changes = null, onRunFromStep, onOpenSidebar, isExecuting = false, completedStepIndices = [], stepStatusMap } = options
+  const { 
+    showDependencyEdges = false,
+    showPrerequisiteEdges = true, // Always show prerequisite edges by default
+    changes = null, 
+    onRunFromStep, 
+    onOpenSidebar, 
+    isExecuting = false, 
+    completedStepIndices = [], 
+    stepStatusMap,
+    variablesManifest = null,
+    onOpenVariablesSidebar,
+    isLoadingVariables = false
+  } = options
   
   // Get preset for code execution mode default
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -688,6 +839,18 @@ export function usePlanToFlow(
       }
     }
 
+    // Add variables node (between start and first step)
+    const variablesNode: WorkflowNode = {
+      id: 'variables',
+      type: 'variables',
+      position: { x: 0, y: 0 },
+      data: {
+        manifest: variablesManifest,
+        onOpenSidebar: onOpenVariablesSidebar,
+        isLoading: isLoadingVariables
+      } as VariablesNodeData
+    }
+
     // Add end node
     const endNode: WorkflowNode = {
       id: 'end',
@@ -702,14 +865,26 @@ export function usePlanToFlow(
       }
     }
 
-    const nodes = [startNode, ...processedNodes, endNode]
+    // Node order: Start -> Variables -> Steps -> End
+    const nodes = [startNode, variablesNode, ...processedNodes, endNode]
 
-    // Create edge from start to first step
+    // Create edges: Start -> Variables -> First step (or End if no steps)
     const edges: WorkflowEdge[] = []
+    
+    // Start to Variables
+    edges.push({
+      id: 'start-to-variables',
+      source: 'start',
+      target: 'variables',
+      type: 'smoothstep',
+      style: { stroke: '#6b7280', strokeWidth: 2 }
+    })
+
+    // Variables to first step (or to End if no steps)
     if (processedNodes.length > 0) {
       edges.push({
-        id: 'start-to-first',
-        source: 'start',
+        id: 'variables-to-first',
+        source: 'variables',
         target: processedNodes[0].id,
         type: 'smoothstep',
         style: { stroke: '#6b7280', strokeWidth: 2 }
@@ -721,8 +896,14 @@ export function usePlanToFlow(
 
     // Create dependency edges (context flow) - only if enabled
     if (showDependencyEdges) {
-    const dependencyEdges = createDependencyEdges(processedNodes)
-    edges.push(...dependencyEdges)
+      const dependencyEdges = createDependencyEdges(processedNodes)
+      edges.push(...dependencyEdges)
+    }
+
+    // Create prerequisite edges - only if enabled
+    if (showPrerequisiteEdges) {
+      const prerequisiteEdges = createPrerequisiteEdges(processedNodes)
+      edges.push(...prerequisiteEdges)
     }
 
     // Find last node to connect to end (could be step, validation, or learning node)
@@ -781,13 +962,13 @@ export function usePlanToFlow(
             workspacePath: options.workspacePath,
             selectedRunFolder: options.selectedRunFolder
           }
-        }
+        } as WorkflowNode
       }
       return node
-    })
+    }) as WorkflowNode[]
     
     return layoutedResult
-  }, [plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMap, options.workspacePath, options.selectedRunFolder])
+  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables])
 }
 
 export default usePlanToFlow

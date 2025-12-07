@@ -68,13 +68,12 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 	// Get global feedback store
 	feedbackStore := GetHumanFeedbackStore()
 
-	// Create feedback request
-	if err := feedbackStore.CreateRequest(uniqueID, messageForUser); err != nil {
+	// Create feedback request (automatically sends notifications via notification manager)
+	// This will send to all enabled connectors (Slack, Gmail, WhatsApp, etc.)
+	// No button options for simple human_feedback tool (just text input)
+	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, messageForUser, "", nil); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
-
-	// TODO: Emit event to frontend to show UI
-	// This would need to be integrated with the event system
 
 	// Wait for user response (with timeout)
 	response, err := feedbackStore.WaitForResponse(uniqueID, 5*time.Minute)

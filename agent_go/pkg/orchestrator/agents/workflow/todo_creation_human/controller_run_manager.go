@@ -326,11 +326,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) shouldAskDeleteOldProgress(c
 func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsForFreshStart(ctx context.Context, workspacePath, runMode string) error {
 	hcpo.GetLogger().Infof("🧹 Starting cleanup of execution artifacts for fresh start (run_mode: %s)", runMode)
 
-	// Determine which run folder will be used (if any)
-	runFolderName, shouldCleanSpecificFolder, err := hcpo.determineRunFolderForCleanup(ctx, workspacePath, runMode)
-	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to determine run folder for cleanup: %v, will only clean old structure", err)
-		shouldCleanSpecificFolder = false
+	// Check if a specific run folder was already selected (from frontend or earlier resolution)
+	var runFolderName string
+	var shouldCleanSpecificFolder bool
+
+	if hcpo.selectedRunFolder != "" {
+		// Use the already-selected run folder (from frontend options)
+		runFolderName = hcpo.selectedRunFolder
+		shouldCleanSpecificFolder = true
+		hcpo.GetLogger().Infof("📁 Using already-selected run folder for cleanup: %s", runFolderName)
+	} else {
+		// Determine which run folder will be used (if any)
+		var err error
+		runFolderName, shouldCleanSpecificFolder, err = hcpo.determineRunFolderForCleanup(ctx, workspacePath, runMode)
+		if err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to determine run folder for cleanup: %v, will only clean old structure", err)
+			shouldCleanSpecificFolder = false
+		}
 	}
 
 	// Clean specific run folder if we're reusing it
@@ -338,20 +350,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsFor
 		hcpo.GetLogger().Infof("📁 Cleaning specific run folder: %s", runFolderName)
 		runFolderPath := fmt.Sprintf("%s/runs/%s", workspacePath, runFolderName)
 
-		// Clean execution directory in run folder
+		// Clean execution directory in run folder (this will recursively delete all step-* subdirectories)
 		executionDir := fmt.Sprintf("%s/execution", runFolderPath)
 		if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
 			hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory in run folder: %w", err)
 		} else {
-			hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory in run folder: %s", executionDir)
-		}
-
-		// Clean validation directory in run folder
-		validationDir := fmt.Sprintf("%s/validation", runFolderPath)
-		if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory in run folder: %w", err)
-		} else {
-			hcpo.GetLogger().Infof("🗑️ Cleaned up validation directory in run folder: %s", validationDir)
+			hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory in run folder: %s (including all step-* subdirectories)", executionDir)
 		}
 	} else {
 		hcpo.GetLogger().Infof("📁 No specific run folder to clean (will create new folder or use new structure)")
@@ -366,14 +370,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsFor
 		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup old execution directory: %w", err)
 	} else {
 		hcpo.GetLogger().Infof("🗑️ Cleaned up old execution directory: %s", oldExecutionDir)
-	}
-
-	// Clean old validation directory
-	oldValidationDir := fmt.Sprintf("%s/validation", workspacePath)
-	if err := hcpo.CleanupDirectory(ctx, oldValidationDir, "validation"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup old validation directory: %w", err)
-	} else {
-		hcpo.GetLogger().Infof("🗑️ Cleaned up old validation directory: %s", oldValidationDir)
 	}
 
 	hcpo.GetLogger().Infof("✅ Completed cleanup of execution artifacts for fresh start")

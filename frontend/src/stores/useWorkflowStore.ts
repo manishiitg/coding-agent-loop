@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { WorkflowPhase, StepProgress, ExecutionOptions } from '../services/api-types'
+import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest } from '../services/api-types'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 
@@ -11,6 +11,10 @@ export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_lear
 const STORAGE_KEY_PREFIX = 'workflow_settings_'
 const getStorageKey = (presetId: string, setting: 'iteration' | 'execution_mode' | 'start_point') =>
   `${STORAGE_KEY_PREFIX}${presetId}_${setting}`
+
+// Global localStorage key for temporary LLM override (persists across page refreshes)
+const TEMP_OVERRIDE_LLM_KEY = 'workflow_temp_override_llm'
+const FALLBACK_TO_ORIGINAL_LLM_KEY = 'workflow_fallback_to_original_llm_on_failure'
 
 export interface RunFolder {
   name: string
@@ -36,9 +40,19 @@ interface WorkflowStore {
   stepProgress: StepProgress | null
   isLoadingProgress: boolean
 
-  // Execution options
-  selectedExecutionMode: ExecutionModeType
-  selectedStartPoint: number // 0 = beginning, >0 = step number (1-based)
+      // Execution options
+      selectedExecutionMode: ExecutionModeType
+      selectedStartPoint: number // 0 = beginning, >0 = step number (1-based)
+  
+      // Temporary LLM override (persists across page refreshes via localStorage)
+      tempOverrideLLM: AgentLLMConfig | null
+      fallbackToOriginalLLMOnFailure: boolean  // If true, use original LLM instead of temp override when validation fails
+
+  // Variables manifest (for batch execution with multiple groups)
+  variablesManifest: VariablesManifest | null
+
+  // Current running group (for batch execution)
+  currentRunningGroupId: string | null
 
   // UI state
   activePhase: string | null // Currently running phase
@@ -64,6 +78,17 @@ interface WorkflowStore {
   setExecutionMode: (mode: ExecutionModeType) => void
   setStartPoint: (step: number) => void
   buildExecutionOptions: () => ExecutionOptions
+  
+  // Temporary LLM override
+  setTempOverrideLLM: (config: AgentLLMConfig | null) => void
+  clearTempOverrideLLM: () => void
+  setFallbackToOriginalLLMOnFailure: (enabled: boolean) => void
+
+  // Variables manifest
+  setVariablesManifest: (manifest: VariablesManifest | null) => void
+
+  // Current running group
+  setCurrentRunningGroupId: (groupId: string | null) => void
 
   // UI
   setActivePhase: (phase: string | null) => void
@@ -100,6 +125,45 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Execution options
       selectedExecutionMode: 'human_approval',
       selectedStartPoint: 0,
+      
+      // Temporary LLM override (persists across page refreshes via localStorage)
+      // Load from localStorage on initialization
+      tempOverrideLLM: (() => {
+        try {
+          const saved = localStorage.getItem(TEMP_OVERRIDE_LLM_KEY)
+          if (saved) {
+            const parsed = JSON.parse(saved) as AgentLLMConfig
+            if (parsed.provider && parsed.model_id) {
+              console.log(`[WorkflowStore] Loaded temp override from localStorage: ${parsed.provider}/${parsed.model_id}`)
+              return parsed
+            }
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load temp override from localStorage:', error)
+        }
+        return null
+      })(),
+      // Fallback to original LLM on failure (persists across page refreshes via localStorage)
+      // Load from localStorage on initialization
+      fallbackToOriginalLLMOnFailure: (() => {
+        try {
+          const saved = localStorage.getItem(FALLBACK_TO_ORIGINAL_LLM_KEY)
+          if (saved !== null) {
+            const parsed = JSON.parse(saved) as boolean
+            console.log(`[WorkflowStore] Loaded fallback to original LLM on failure from localStorage: ${parsed}`)
+            return parsed
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load fallback to original LLM on failure from localStorage:', error)
+        }
+        return false  // Default to false
+      })(),
+
+      // Variables manifest
+      variablesManifest: null,
+
+      // Current running group
+      currentRunningGroupId: null,
 
       // UI state
       activePhase: null,
@@ -210,13 +274,23 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // Validate current selection
           const currentSelection = get().selectedRunFolder
           if (currentSelection !== 'new' && !sorted.some(f => f.name === currentSelection)) {
-            // Saved folder no longer exists, default to newest or 'new'
-            const newSelection = sorted.length > 0 ? sorted[0].name : 'new'
-            set({ selectedRunFolder: newSelection })
+            // Check if the selection looks like a valid iteration folder (e.g., "iteration-3")
+            // This handles the case where a folder was just created but hasn't appeared in the list yet
+            const isValidIterationPattern = /^iteration-\d+/.test(currentSelection)
+            
+            if (isValidIterationPattern) {
+              // Preserve the selection even if not in list yet (it was likely just created)
+              // The folder should appear in the next refresh
+              console.log(`[WorkflowStore] Preserving selection "${currentSelection}" - folder may not be in list yet`)
+            } else {
+              // Saved folder no longer exists and doesn't match iteration pattern, default to newest or 'new'
+              const newSelection = sorted.length > 0 ? sorted[0].name : 'new'
+              set({ selectedRunFolder: newSelection })
 
-            // Load progress for new selection if it's not 'new'
-            if (newSelection !== 'new') {
-              get().loadProgress(workspacePath, newSelection)
+              // Load progress for new selection if it's not 'new'
+              if (newSelection !== 'new') {
+                get().loadProgress(workspacePath, newSelection)
+              }
             }
           }
         } catch (error) {
@@ -256,11 +330,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
               )
             }))
           } else {
-            set({ stepProgress: null, isLoadingProgress: false })
+            // No progress file exists - reset start point to 0 (start from beginning)
+            // This ensures that even if localStorage has a saved resume point, we reset it
+            // when there's no actual progress to resume from
+            set({ stepProgress: null, isLoadingProgress: false, selectedStartPoint: 0 })
+            console.log('[WorkflowStore] No progress file found, resetting selectedStartPoint to 0')
           }
         } catch (error) {
           console.error('[WorkflowStore] Failed to load progress:', error)
-          set({ stepProgress: null, isLoadingProgress: false })
+          // On error, also reset start point to 0 since we can't verify progress exists
+          set({ stepProgress: null, isLoadingProgress: false, selectedStartPoint: 0 })
         }
       },
 
@@ -331,11 +410,97 @@ export const useWorkflowStore = create<WorkflowStore>()(
           execution_strategy: executionStrategy,
         }
 
-        if (isResuming) {
+        // Only include resume_from_step if we're actually resuming
+        // Double-check: if strategy is start_from_beginning, don't include resume_from_step
+        if (isResuming && 
+            (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
+             executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
+             executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP ||
+             executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP)) {
           options.resume_from_step = state.selectedStartPoint
+        } else if (state.selectedStartPoint > 0) {
+          // Log warning if selectedStartPoint > 0 but strategy is not a resume strategy
+          console.warn('[WorkflowStore] selectedStartPoint is', state.selectedStartPoint, 
+            'but strategy is', executionStrategy, '- not including resume_from_step')
+        }
+        
+        // Include temporary LLM override if set
+        if (state.tempOverrideLLM) {
+          options.temp_override_llm = state.tempOverrideLLM
+        }
+        
+        // Include fallback to original LLM on failure if enabled
+        if (state.fallbackToOriginalLLMOnFailure) {
+          options.fallback_to_original_llm_on_failure = true
+          console.log('[WorkflowStore] Including fallback_to_original_llm_on_failure=true in execution options')
+        } else {
+          console.log('[WorkflowStore] fallbackToOriginalLLMOnFailure is false, not including in execution options')
+        }
+
+        // Include enabled group IDs from variables manifest (for batch execution)
+        // This ensures disabled groups are not executed even if the file is stale
+        if (state.variablesManifest) {
+          if (state.variablesManifest.groups && state.variablesManifest.groups.length > 0) {
+            // Multi-group mode: extract enabled group IDs
+            const enabledGroupIDs = state.variablesManifest.groups
+              .filter(g => g.enabled)
+              .map(g => g.group_id)
+            if (enabledGroupIDs.length > 0) {
+              options.enabled_group_ids = enabledGroupIDs
+            }
+          }
+          // Single-group mode: if no groups array, all variables are in one virtual group
+          // In this case, we don't need to set enabled_group_ids as the backend handles it
         }
 
         return options
+      },
+      
+      // Temporary LLM override actions
+      setTempOverrideLLM: (config: AgentLLMConfig | null) => {
+        set({ tempOverrideLLM: config })
+        try {
+          if (config) {
+            // Save to localStorage
+            localStorage.setItem(TEMP_OVERRIDE_LLM_KEY, JSON.stringify(config))
+            console.log(`[WorkflowStore] Temporary LLM override set: ${config.provider}/${config.model_id}`)
+          } else {
+            // Clear from localStorage
+            localStorage.removeItem(TEMP_OVERRIDE_LLM_KEY)
+            console.log('[WorkflowStore] Temporary LLM override cleared')
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save temp override to localStorage:', error)
+        }
+      },
+      
+      clearTempOverrideLLM: () => {
+        set({ tempOverrideLLM: null })
+        try {
+          localStorage.removeItem(TEMP_OVERRIDE_LLM_KEY)
+          console.log('[WorkflowStore] Temporary LLM override cleared')
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to clear temp override from localStorage:', error)
+        }
+      },
+      
+      setFallbackToOriginalLLMOnFailure: (enabled: boolean) => {
+        set({ fallbackToOriginalLLMOnFailure: enabled })
+        try {
+          // Save to localStorage
+          localStorage.setItem(FALLBACK_TO_ORIGINAL_LLM_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Fallback to original LLM on failure set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save fallback to original LLM on failure to localStorage:', error)
+        }
+      },
+
+      setVariablesManifest: (manifest: VariablesManifest | null) => {
+        set({ variablesManifest: manifest })
+      },
+
+      setCurrentRunningGroupId: (groupId: string | null) => {
+        set({ currentRunningGroupId: groupId })
       },
 
       setActivePhase: (phase: string | null) => {
@@ -392,12 +557,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Reset execution state (called when switching workflows)
       resetExecutionState: () => {
+        // Note: We don't clear tempOverrideLLM here because it's a global setting
+        // that should persist across workflow switches
         set({
           runFolders: [],
           selectedRunFolder: 'new',
           stepProgress: null,
           selectedExecutionMode: 'human_approval',
           selectedStartPoint: 0,
+          variablesManifest: null,
+          currentRunningGroupId: null,
           activePhase: null,
           showChatArea: false
         })

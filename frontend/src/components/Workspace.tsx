@@ -14,6 +14,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { 
   collectFolderPaths, 
   restoreExpandedFolders, 
@@ -556,6 +557,150 @@ export default function Workspace({
       autoExpandedWorkflowRef.current = null
     }
   }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id, expandedFolders, setExpandedFolders])
+  
+  // Auto-collapse other iterations when an iteration is selected
+  // Get selected iteration from workflow store
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  
+  useEffect(() => {
+    // Only run in workflow mode when we have filtered files and a selected iteration
+    if (selectedModeCategory !== 'workflow' || !workflowFolderPath || filteredFiles.length === 0 || !selectedRunFolder || selectedRunFolder === 'new') {
+      return
+    }
+    
+    // Helper to recursively find all iteration folders in the tree
+    // file.filepath is already the adjusted path (e.g., "runs/iteration-10")
+    const findIterationFolders = (fileList: PlannerFile[]): string[] => {
+      const iterationFolders: string[] = []
+      
+      for (const file of fileList) {
+        if (file.type === 'folder') {
+          // Check if this is an iteration folder (matches pattern: runs/iteration-* or iteration-*)
+          // Also handle group subfolders: runs/iteration-*/group-*
+          if (file.filepath.match(/^runs\/iteration-\d+(\/group-\d+)?$/) || file.filepath.match(/^iteration-\d+(\/group-\d+)?$/)) {
+            iterationFolders.push(file.filepath)
+          }
+          
+          // Recursively search children
+          if (file.children && file.children.length > 0) {
+            const childIterations = findIterationFolders(file.children)
+            iterationFolders.push(...childIterations)
+          }
+        }
+      }
+      
+      return iterationFolders
+    }
+    
+    // Find all iteration folders in the filtered tree
+    const allIterationFolders = findIterationFolders(filteredFiles)
+    
+    if (allIterationFolders.length === 0) {
+      return // No iteration folders found, nothing to do
+    }
+    
+    // Build the path for the selected iteration
+    // selectedRunFolder can be: "iteration-10" or "iteration-10/group-1"
+    // In filtered view, it appears as "runs/iteration-10" or "runs/iteration-10/group-1"
+    const selectedIterationPath = selectedRunFolder.startsWith('runs/') 
+      ? selectedRunFolder 
+      : `runs/${selectedRunFolder}`
+    
+    // Also check without "runs/" prefix in case paths are adjusted differently
+    const selectedIterationPathAlt = selectedRunFolder
+    
+    // Get current expanded folders
+    const currentExpanded = new Set(expandedFolders)
+    const newExpanded = new Set<string>()
+    
+    // Copy all non-iteration folders to keep them expanded
+    for (const folder of currentExpanded) {
+      // Check if this is NOT an iteration folder
+      // Match patterns: runs/iteration-*, iteration-*, or runs/iteration-*/group-*
+      const isIterationFolder = folder.match(/^runs\/iteration-\d+(\/group-\d+)?$/) || 
+                                 folder.match(/^iteration-\d+(\/group-\d+)?$/)
+      if (!isIterationFolder) {
+        newExpanded.add(folder)
+      }
+    }
+    
+    // Find the matching iteration folder path in the tree (may have different path format)
+    const matchingIterationPath = allIterationFolders.find(path => 
+      path === selectedIterationPath || 
+      path === selectedIterationPathAlt ||
+      path.endsWith(`/${selectedRunFolder}`) ||
+      path === selectedRunFolder
+    )
+    
+    // Collapse all iteration folders, then expand only the selected one
+    // Also expand parent folders needed to show the selected iteration
+    if (matchingIterationPath) {
+      newExpanded.add(matchingIterationPath)
+      
+      // Check if this is a group path (e.g., "iteration-10/group-1")
+      // If so, also expand the parent iteration folder to show all groups
+      const isGroupPath = selectedRunFolder.includes('/group-')
+      if (isGroupPath) {
+        // Extract parent iteration folder (e.g., "iteration-10" from "iteration-10/group-1")
+        const parentIterationName = selectedRunFolder.split('/')[0]
+        const parentIterationPath = selectedIterationPath.startsWith('runs/')
+          ? `runs/${parentIterationName}`
+          : parentIterationName
+        
+        // Helper to find folder in file tree by path
+        const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
+          for (const file of fileList) {
+            if (file.type === 'folder' && (file.filepath === targetPath || file.originalFilepath === targetPath)) {
+              return file
+            }
+            if (file.children && file.children.length > 0) {
+              const found = findFolderInTree(file.children, targetPath)
+              if (found) return found
+            }
+          }
+          return null
+        }
+        
+        // Find the parent iteration folder in the file tree (not just in allIterationFolders)
+        // This is needed because when groups exist, backend only returns group folders, not parent
+        const parentIterationFolder = findFolderInTree(filteredFiles, parentIterationPath) ||
+                                      findFolderInTree(filteredFiles, `runs/${parentIterationName}`) ||
+                                      findFolderInTree(filteredFiles, parentIterationName)
+        
+        if (parentIterationFolder) {
+          // Use the actual filepath from the tree (may have different format)
+          const parentPathToExpand = parentIterationFolder.filepath || parentIterationFolder.originalFilepath
+          if (parentPathToExpand) {
+            newExpanded.add(parentPathToExpand)
+            console.log('[Workspace] Expanding parent iteration to show all groups:', {
+              selectedGroup: matchingIterationPath,
+              parentIteration: parentPathToExpand
+            })
+          }
+        }
+      }
+      
+      // Also expand parent folders (e.g., "runs" if needed)
+      const pathParts = matchingIterationPath.split('/')
+      for (let i = 1; i < pathParts.length; i++) {
+        const parentPath = pathParts.slice(0, i).join('/')
+        newExpanded.add(parentPath)
+      }
+    }
+    
+    // Only update if something changed
+    if (newExpanded.size !== currentExpanded.size || 
+        Array.from(newExpanded).some(f => !currentExpanded.has(f)) ||
+        Array.from(currentExpanded).some(f => !newExpanded.has(f))) {
+      console.log('[Workspace] Auto-collapsing iterations:', {
+        selectedIteration: selectedIterationPath,
+        allIterations: allIterationFolders,
+        previousExpanded: Array.from(currentExpanded),
+        newExpanded: Array.from(newExpanded)
+      })
+      setExpandedFolders(newExpanded)
+    }
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, selectedRunFolder, expandedFolders, setExpandedFolders])
   
   // Close dropdown when clicking outside
   useEffect(() => {

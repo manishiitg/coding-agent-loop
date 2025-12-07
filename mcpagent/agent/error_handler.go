@@ -12,11 +12,11 @@ package mcpagent
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"mcpagent/events"
 	"mcpagent/logger"
+	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -39,16 +39,9 @@ func NewBrokenPipeHandler(agent *Agent) *BrokenPipeHandler {
 }
 
 // IsBrokenPipeError checks if an error is a broken pipe error
+// Delegates to mcpclient.IsBrokenPipeError for shared implementation
 func IsBrokenPipeError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errorMessage := err.Error()
-	return strings.Contains(errorMessage, "Broken pipe") ||
-		strings.Contains(errorMessage, "broken pipe") ||
-		strings.Contains(errorMessage, "[Errno 32]") ||
-		strings.Contains(errorMessage, "EOF") ||
-		strings.Contains(errorMessage, "connection reset")
+	return mcpclient.IsBrokenPipeError(err)
 }
 
 // HandleBrokenPipeError handles broken pipe errors by recreating the connection and retrying
@@ -66,15 +59,12 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	// Emit broken pipe detection event
 	h.emitBrokenPipeEvent(ctx, toolCall, serverName, originalErr)
 
-	// Create a fresh connection immediately
-	h.logger.Infof("🔧 [BROKEN PIPE] Creating fresh connection for server: %s", serverName)
-	freshClient, freshErr := h.agent.createOnDemandConnection(ctx, serverName)
+	// Create a fresh connection immediately using shared function
+	freshClient, freshErr := mcpcache.GetFreshConnection(ctx, serverName, h.agent.configPath, h.logger)
 	if freshErr != nil {
 		h.logger.Errorf("🔧 [BROKEN PIPE] Failed to create fresh connection: %v", freshErr)
 		return nil, time.Since(startTime), freshErr
 	}
-
-	h.logger.Infof("🔧 [BROKEN PIPE] Successfully created fresh connection for server: %s", serverName)
 
 	// Retry the tool call once with the fresh connection
 	return h.retryToolCall(ctx, toolCall, freshClient, serverName, startTime)

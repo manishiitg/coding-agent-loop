@@ -80,6 +80,12 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 	return &SQLiteDB{db: db}, nil
 }
 
+// GetDB returns the underlying *sql.DB connection
+// This is needed for integrations that require direct database access
+func (s *SQLiteDB) GetDB() *sql.DB {
+	return s.db
+}
+
 // CreateChatSession creates a new chat session
 func (s *SQLiteDB) CreateChatSession(ctx context.Context, req *CreateChatSessionRequest) (*ChatSession, error) {
 	query := `

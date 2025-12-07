@@ -316,9 +316,10 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     try {
       console.log('[WorkflowPlanUpdate] Fetching plan from:', planPath)
       const response = await agentApi.getPlannerFileContent(planPath)
-      console.log('[WorkflowPlanUpdate] Plan fetch response:', { success: response.success, hasData: !!response.data })
+      console.log('[WorkflowPlanUpdate] Plan fetch response:', { success: response.success, hasData: !!response.data, hasContent: !!response.data?.content })
       
-      if (response.success && response.data) {
+      // Check if response has data AND content exists and is a string
+      if (response.success && response.data && response.data.content && typeof response.data.content === 'string') {
         let planData: PlanningResponse = JSON.parse(response.data.content)
         console.log('[WorkflowPlanUpdate] Plan loaded:', { stepCount: planData.steps?.length || 0, hasSteps: !!planData.steps })
         
@@ -330,14 +331,16 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
             console.log('[StepConfigDebug] ⚠️ CRITICAL: step_config.json API response:', {
               success: stepConfigResponse.success,
               hasData: !!stepConfigResponse.data,
+              hasContent: !!stepConfigResponse.data?.content,
               dataKeys: stepConfigResponse.data ? Object.keys(stepConfigResponse.data) : [],
               responseStructure: stepConfigResponse
             })
-            if (stepConfigResponse.success && stepConfigResponse.data) {
+            // Check if step_config has content before parsing
+            if (stepConfigResponse.success && stepConfigResponse.data && stepConfigResponse.data.content && typeof stepConfigResponse.data.content === 'string') {
               console.log('[StepConfigDebug] ⚠️ CRITICAL: Raw file content BEFORE parsing:', {
-                contentLength: stepConfigResponse.data.content?.length || 0,
-                contentPreview: stepConfigResponse.data.content?.substring(0, 500) || 'NO CONTENT',
-                fullContent: stepConfigResponse.data.content || 'NO CONTENT'
+                contentLength: stepConfigResponse.data.content.length,
+                contentPreview: stepConfigResponse.data.content.substring(0, 500),
+                fullContent: stepConfigResponse.data.content
               })
               const rawStepConfig = JSON.parse(stepConfigResponse.data.content)
               console.log('[StepConfigDebug] ⚠️ CRITICAL: Raw step_config.json structure AFTER parsing:', {
@@ -536,7 +539,8 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       let stepConfigFile: StepConfigFile = { steps: [] }
       try {
         const response = await agentApi.getPlannerFileContent(stepConfigPath)
-        if (response.success && response.data) {
+        // Check if response has data AND content exists and is a string
+        if (response.success && response.data && response.data.content && typeof response.data.content === 'string') {
           const rawContent = JSON.parse(response.data.content)
           // Normalize to canonical format (handles array, flat, or canonical formats)
           stepConfigFile = normalizeStepConfigFile(rawContent)

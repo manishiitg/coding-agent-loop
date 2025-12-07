@@ -23,7 +23,18 @@ Both frontend and backend **read** multiple formats for backward compatibility, 
         "disable_validation": false,
         "disable_learning": false,
         "learning_detail_level": "general",
-        "enable_large_output_virtual_tools": false
+        "enable_large_output_virtual_tools": false,
+        "enable_prerequisite_detection": true,
+        "prerequisite_rules": [
+          {
+            "depends_on_step": "step-0",
+            "description": "If login session is missing or expired, go back to step 0"
+          },
+          {
+            "depends_on_step": "step-1",
+            "description": "If config file is missing, go back to step 1"
+          }
+        ]
       }
     }
   ]

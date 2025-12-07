@@ -187,11 +187,8 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
 
   // Show workflow components when in workflow mode
   // WorkflowPhaseHandler removed - phase selection now in WorkflowToolbar
-  if (agentMode === 'workflow') {
-    return <>{children}</>
-  }
-
-  // For non-workflow modes, just render children
+  // Note: This component is only rendered when selectedModeCategory === 'workflow' in ChatArea
+  // So we can safely render children here
   return <>{children}</>
 })
 

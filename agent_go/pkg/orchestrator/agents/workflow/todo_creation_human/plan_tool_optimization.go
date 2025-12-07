@@ -275,18 +275,24 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger utils.Exte
 // createPlanToolOptimizationAgent creates and sets up a plan tool optimization agent with all necessary configuration
 // This method handles folder guard setup, LLM config selection, tool combination, and agent initialization
 func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: read-only access to planning/ and both learnings folders, write access to planning/step_config.json only
+	// Set folder guard paths: read-only access to planning/ and learnings folder, write access to planning/step_config.json only
 	planningPath := fmt.Sprintf("%s/planning", workspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
-	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", workspacePath)
 
-	// Agent has read-only access to planning/ folder (for plan.json) and both learnings folders (for learning files)
+	// Agent has read-only access to planning/ folder (for plan.json) and learnings folder (for learning files)
 	// Write access to planning/step_config.json only
-	// Include both learnings folders since different steps may use different folders based on code execution mode
-	readPaths := []string{planningPath, learningsPath, learningCodeExecPath}
+	readPaths := []string{planningPath, learningsPath}
+
+	// When step-specific learnings is enabled, step-specific folders are at workspace root
+	useStepSpecific := ptom.GetUseStepSpecificLearnings()
+	if useStepSpecific {
+		// No need to add runs/ folder - step-specific learnings are at workspace root
+		ptom.GetLogger().Infof("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/step-*/ and learnings/step-*/")
+	}
+
 	writePaths := []string{planningPath} // Write access to planning/ folder (for step_config.json)
 	ptom.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	ptom.GetLogger().Infof("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/ and both learnings folders, write access to planning/step_config.json)", readPaths, writePaths)
+	ptom.GetLogger().Infof("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/ and learnings folder, write access to planning/step_config.json)", readPaths, writePaths)
 
 	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := ptom.GetLLMConfig()
@@ -476,7 +482,8 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 
 	// Create mapping of step IDs to their learnings folder paths based on code execution mode
 	presetCodeExecMode := ptom.GetUseCodeExecutionMode()
-	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigFile, existingPlan, presetCodeExecMode)
+	useStepSpecific := ptom.GetUseStepSpecificLearnings()
+	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigFile, existingPlan, presetCodeExecMode, useStepSpecific, ptom.GetWorkspacePath())
 	stepLearningsFolderMappingJSONBytes, err := json.MarshalIndent(stepLearningsFolderMapping, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal step learnings folder mapping to JSON: %w", err)
@@ -485,8 +492,11 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 
 	// Prepare template variables
 	// Use actual workspace path so agent can navigate correctly
-	// Explicitly list allowed paths for the agent (both learnings folders)
-	allowedPaths := "['planning/', 'learnings/', 'learning_code_exec/']"
+	// Explicitly list allowed paths for the agent (learnings folder)
+	allowedPaths := "['planning/', 'learnings/']"
+	if useStepSpecific {
+		allowedPaths = "['planning/', 'learnings/', 'learnings/', 'runs/']"
+	}
 	toolOptimizationTemplateVars := map[string]string{
 		"WorkspacePath":                  ptom.GetWorkspacePath(),
 		"PlanJSON":                       string(planJSONBytes),
@@ -498,6 +508,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 		"AllowedPaths":                   allowedPaths,
 		"SessionID":                      ptom.sessionID,
 		"WorkflowID":                     ptom.workflowID,
+		"UseStepSpecificLearnings":       fmt.Sprintf("%t", useStepSpecific),
 	}
 
 	// Add variable names if available (for context about variables in plan)
@@ -601,14 +612,15 @@ func createMinimalPlan(fullPlan *PlanningResponse, currentToolConfigsMap map[str
 // StepLearningsFolderMapping maps step IDs to their learnings folder paths
 type StepLearningsFolderMapping struct {
 	StepID        string `json:"step_id"`
-	LearningsPath string `json:"learnings_path"` // "learnings/" or "learning_code_exec/"
+	LearningsPath string `json:"learnings_path"` // Always "learnings/"
 	IsCodeExec    bool   `json:"is_code_exec"`   // true if step uses code execution mode
 }
 
 // createStepLearningsFolderMapping creates a mapping of step IDs to their learnings folder paths
 // based on UseCodeExecutionMode setting in step_config.json
+// When useStepSpecific is true, returns step-specific paths in learnings/step-{X}/ format (at workspace root, not inside runs/)
 // Recursively handles branch steps (if_true_steps, if_false_steps)
-func createStepLearningsFolderMapping(stepConfigFile *StepConfigFile, plan *PlanningResponse, presetCodeExecMode bool) []StepLearningsFolderMapping {
+func createStepLearningsFolderMapping(stepConfigFile *StepConfigFile, plan *PlanningResponse, presetCodeExecMode bool, useStepSpecific bool, workspacePath string) []StepLearningsFolderMapping {
 	// Create lookup map: step ID -> AgentConfigs
 	idConfigMap := make(map[string]*AgentConfigs)
 	for i := range stepConfigFile.Steps {
@@ -618,10 +630,12 @@ func createStepLearningsFolderMapping(stepConfigFile *StepConfigFile, plan *Plan
 	}
 
 	var mappings []StepLearningsFolderMapping
+	stepNumber := 0
 
 	var extractMappings func(steps []PlanStep)
 	extractMappings = func(steps []PlanStep) {
 		for _, step := range steps {
+			stepNumber++
 			agentConfigs := idConfigMap[step.ID]
 
 			// Determine code execution mode: step config > preset default
@@ -630,10 +644,14 @@ func createStepLearningsFolderMapping(stepConfigFile *StepConfigFile, plan *Plan
 				isCodeExec = *agentConfigs.UseCodeExecutionMode
 			}
 
-			// Determine learnings folder based on code execution mode
-			learningsPath := "learnings/"
-			if isCodeExec {
-				learningsPath = "learning_code_exec/"
+			// Determine learnings folder based on step-specific flag (always use learnings/)
+			var learningsPath string
+			if useStepSpecific {
+				// Step-specific paths: learnings/step-{X}/ (at workspace root, not inside runs/)
+				learningsPath = fmt.Sprintf("learnings/step-%d/", stepNumber)
+			} else {
+				// Shared paths: learnings/
+				learningsPath = "learnings/"
 			}
 
 			mappings = append(mappings, StepLearningsFolderMapping{
@@ -752,7 +770,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
 	if allowedPaths == "" {
-		allowedPaths = "['planning/', 'learnings/', 'learning_code_exec/']"
+		allowedPaths = "['planning/', 'learnings/', 'learnings/']"
 	}
 
 	// Prepare template variables
@@ -929,19 +947,36 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) toolOptimizati
 `
 	}
 
+	useStepSpecific := templateVars["UseStepSpecificLearnings"] == "true"
+
+	learningsLocationNote := ""
+	if useStepSpecific {
+		learningsLocationNote = `
+## LEARNING FILES LOCATION
+
+When step-specific learnings are enabled, learning files are stored in step-specific folders:
+- Shared learnings: {WorkspacePath}/learnings/ and {WorkspacePath}/learnings/
+- Step-specific learnings: {WorkspacePath}/learnings/step-{X}/ and {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
+
+The StepLearningsFolderMappingJSON provides step-specific paths when enabled. Check BOTH shared and step-specific locations when extracting tools.
+`
+	}
+
 	return `# Plan Tool Optimization Agent
 
 ## PURPOSE
 Analyze successful tool usage from learnings and optimize step_config.json. Extract tools ONLY from ✅ SUCCESS patterns.
 
-` + variablesSection + `## WORKFLOW
+` + variablesSection + learningsLocationNote + `## WORKFLOW
 
 1. **Ask User** - Use human_feedback to ask which step(s) to optimize
    - Present ALL steps (Title, Tool count, Has config)
    - Wait for response before proceeding
 
 2. **Extract Tools from Learnings**
-   - Use StepLearningsFolderMappingJSON: is_code_exec=true → learning_code_exec/, false → learnings/
+   - Use StepLearningsFolderMappingJSON to find learnings location for each step
+   - When step-specific learnings enabled: paths are in learnings/step-{X}/ or learnings/step-{X}/ (at workspace root, not inside runs/)
+   - When step-specific learnings disabled: paths are in learnings/ or learnings/
    - Extract ONLY from ✅ SUCCESS patterns, ignore ❌ failures
    - Filter OUT: read_large_output, search_large_output, query_large_output (use enable_large_output_virtual_tools flag instead)
 
@@ -985,7 +1020,14 @@ Recommend human_tools:human_feedback when step:
 - **Preset**: Servers ` + templateVars["PresetServers"] + `, Tools ` + templateVars["PresetTools"] + `
 - **Edge Cases**: No learnings → preserve config. Only failures → preserve config.
 - **Update only**: selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools
-- **Be conservative** with removals
+- **Be conservative** with removals` + func() string {
+		if useStepSpecific {
+			return `
+- **Step-Specific Learnings**: When step-specific learnings are enabled, check both shared folders (learnings/, learnings/) and step-specific folders in learnings/step-{X}/ and learnings/step-{X}/ (at workspace root, not inside runs/)
+`
+		}
+		return ""
+	}() + `
 `
 }
 

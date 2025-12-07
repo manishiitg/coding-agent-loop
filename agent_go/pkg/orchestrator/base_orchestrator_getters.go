@@ -110,6 +110,16 @@ func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
 	return bo.useCodeExecutionMode
 }
 
+// GetUseStepSpecificLearnings returns the step-specific learnings setting
+func (bo *BaseOrchestrator) GetUseStepSpecificLearnings() bool {
+	return bo.useStepSpecificLearnings
+}
+
+// SetUseStepSpecificLearnings sets the step-specific learnings setting
+func (bo *BaseOrchestrator) SetUseStepSpecificLearnings(enabled bool) {
+	bo.useStepSpecificLearnings = enabled
+}
+
 // GetLLMConfig returns the LLM configuration
 func (bo *BaseOrchestrator) GetLLMConfig() *LLMConfig {
 	return bo.llmConfig
@@ -129,4 +139,17 @@ func (bo *BaseOrchestrator) GetMaxTurns() int {
 // GetType returns the orchestrator type
 func (bo *BaseOrchestrator) GetType() string {
 	return string(bo.orchestratorType)
+}
+
+// SetIterationFolder sets the iteration folder and automatically applies it to the context-aware bridge
+// This ensures all agents created by this orchestrator automatically get the iteration folder for token persistence
+func (bo *BaseOrchestrator) SetIterationFolder(iterationFolder string) {
+	bo.iterationFolder = iterationFolder
+	bo.applyIterationFolderToBridge()
+	bo.GetLogger().Infof("📁 Set iteration folder for token persistence: %s (applied to all agents)", iterationFolder)
+}
+
+// GetIterationFolder returns the current iteration folder
+func (bo *BaseOrchestrator) GetIterationFolder() string {
+	return bo.iterationFolder
 }

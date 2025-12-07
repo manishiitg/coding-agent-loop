@@ -24,16 +24,21 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	bo.GetLogger().Infof("🤔 Requesting human feedback: %s", question)
 
 	// Emit human feedback request event
+	// Note: YesNoOnly is false to allow text feedback in frontend (textarea + "Approve & Continue" button)
+	// But we'll still send buttons to Slack for convenience
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Question:      question,
-		AllowFeedback: true,
+		AllowFeedback: true, // Allow text feedback in frontend
 		Context:       context,
 		SessionID:     sessionID,
 		WorkflowID:    workflowID,
 		RequestID:     requestID,
+		YesNoOnly:     false,                // false = frontend shows textarea + "Approve & Continue" button
+		YesLabel:      "Approve & Continue", // Button label for frontend and Slack
+		NoLabel:       "Reject",             // Default reject label
 	}
 
 	// Emit the event using the public method
@@ -57,10 +62,12 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	bo.GetLogger().Infof("✅ Successfully emitted blocking_human_feedback event: requestID=%s", requestID)
 
 	// Use HumanFeedbackStore to wait for response
+	// Note: blocking_human_feedback events do NOT send Slack notifications
+	// Only request_human_feedback events send Slack notifications
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
 
-	// Create feedback request (this registers it in the store)
-	if err := feedbackStore.CreateRequest(requestID, question); err != nil {
+	// Create feedback request without notifications (only registers in store for WaitForResponse)
+	if err := feedbackStore.CreateRequestWithoutNotification(requestID, question); err != nil {
 		return false, "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
@@ -75,8 +82,9 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	bo.GetLogger().Infof("▶️ Orchestrator resumed with human response: %s", response)
 
 	// Parse response
-	// Expected format: "Approve" or feedback text for revision
-	if strings.TrimSpace(response) == "Approve" {
+	// Expected format: "Approve & Continue", "Approve", or feedback text for revision
+	responseTrimmed := strings.TrimSpace(response)
+	if responseTrimmed == "Approve & Continue" || responseTrimmed == "Approve" {
 		bo.GetLogger().Infof("✅ User approved via button, continuing")
 		return true, "", nil
 	}
@@ -136,8 +144,11 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	}
 
 	// Wait for response
+	// Note: blocking_human_feedback events do NOT send Slack notifications
+	// Only request_human_feedback events send Slack notifications
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
-	if err := feedbackStore.CreateRequest(requestID, question); err != nil {
+	// Create feedback request without notifications (only registers in store for WaitForResponse)
+	if err := feedbackStore.CreateRequestWithoutNotification(requestID, question); err != nil {
 		return false, fmt.Errorf("failed to create feedback request: %w", err)
 	}
 
@@ -203,8 +214,11 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	}
 
 	// Wait for response
+	// Note: blocking_human_feedback events do NOT send Slack notifications
+	// Only request_human_feedback events send Slack notifications
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
-	if err := feedbackStore.CreateRequest(requestID, question); err != nil {
+	// Create feedback request without notifications (only registers in store for WaitForResponse)
+	if err := feedbackStore.CreateRequestWithoutNotification(requestID, question); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 

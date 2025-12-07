@@ -14,6 +14,7 @@ import {
   getToolsByCategory,
   getToolsByWorkspaceSubCategory,
 } from '../../../utils/customToolNames';
+import { PrerequisiteConfigPanel } from '../../workflow/canvas/PrerequisiteConfigPanel';
 
 interface StepEditPanelProps {
   step: TodoStepWithConfigs;
@@ -26,6 +27,7 @@ interface StepEditPanelProps {
   presetUseCodeExecutionMode?: boolean; // Preset's code execution mode (default value for step)
   isExpanded?: boolean; // Controlled expanded state from parent
   onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
+  planSteps?: import('../../../utils/stepConfigMatching').PlanStep[]; // All plan steps (for prerequisite detection)
 }
 
 const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100] as const;
@@ -40,6 +42,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   presetUseCodeExecutionMode = false,
   isExpanded: controlledIsExpanded,
   onToggleExpanded,
+  planSteps = [],
 }) => {
   const { availableLLMs, getCurrentLLMOption } = useLLMStore();
   const { currentPresetTools } = usePresetApplication();
@@ -1723,6 +1726,16 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 </label>
               </div>
             </div>
+
+            {/* Prerequisite Detection Configuration */}
+            <PrerequisiteConfigPanel
+              agentConfigs={agentConfigs}
+              onUpdate={(updatedConfigs) => {
+                setAgentConfigs(updatedConfigs);
+              }}
+              planSteps={planSteps}
+              currentStepIndex={stepIndex}
+            />
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">

@@ -38,16 +38,17 @@ type BaseOrchestrator struct {
 	startTime        time.Time
 
 	// Common configuration shared between orchestrators
-	provider             string
-	model                string
-	mcpConfigPath        string
-	temperature          float64
-	agentMode            string
-	selectedServers      []string
-	selectedTools        []string   // Selected tools in "server:tool" format
-	useCodeExecutionMode bool       // MCP code execution mode
-	llmConfig            *LLMConfig // LLM configuration
-	maxTurns             int        // Maximum turns for the orchestrator
+	provider                 string
+	model                    string
+	mcpConfigPath            string
+	temperature              float64
+	agentMode                string
+	selectedServers          []string
+	selectedTools            []string   // Selected tools in "server:tool" format
+	useCodeExecutionMode     bool       // MCP code execution mode
+	useStepSpecificLearnings bool       // Store learnings in step-specific folders (execution/learnings/step-{X}/)
+	llmConfig                *LLMConfig // LLM configuration
+	maxTurns                 int        // Maximum turns for the orchestrator
 
 	// Optional simple state (for workflow orchestrators)
 	objective     string
@@ -59,7 +60,15 @@ type BaseOrchestrator struct {
 
 	// Step token tracking
 	stepTokenAccumulator map[string]*StepTokenUsage // key format: "phase:step"
+	stepTokenTitles      map[string]string          // key format: "phase:step" -> step title
 	stepTokenMutex       sync.RWMutex
+
+	// Model token tracking (internal accumulation uses raw integers)
+	modelTokenAccumulator map[string]*ModelTokenUsageInternal // key: modelID
+	modelTokenMutex       sync.RWMutex
+
+	// Iteration folder for token persistence (workflow-specific)
+	iterationFolder string
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -95,24 +104,39 @@ func NewBaseOrchestrator(
 		orchestratorType:       orchestratorType,
 		startTime:              time.Now(),
 		// Common configuration
-		provider:             provider,
-		model:                model,
-		mcpConfigPath:        mcpConfigPath,
-		temperature:          temperature,
-		agentMode:            agentMode,
-		selectedServers:      selectedServers,
-		selectedTools:        selectedTools,        // NEW field
-		useCodeExecutionMode: useCodeExecutionMode, // NEW field
-		llmConfig:            llmConfig,
-		maxTurns:             maxTurns,
+		provider:                 provider,
+		model:                    model,
+		mcpConfigPath:            mcpConfigPath,
+		temperature:              temperature,
+		agentMode:                agentMode,
+		selectedServers:          selectedServers,
+		selectedTools:            selectedTools,        // NEW field
+		useCodeExecutionMode:     useCodeExecutionMode, // NEW field
+		useStepSpecificLearnings: true,                 // Default to true: store learnings in step-specific folders
+		llmConfig:                llmConfig,
+		maxTurns:                 maxTurns,
 		// Initialize step token tracking
 		stepTokenAccumulator: make(map[string]*StepTokenUsage),
+		stepTokenTitles:      make(map[string]string),
+		// Initialize model token tracking
+		modelTokenAccumulator: make(map[string]*ModelTokenUsageInternal),
 	}
 
 	// Set token accumulator on bridge for step token tracking
 	contextAwareBridge.SetTokenAccumulator(orchestrator)
 
 	return orchestrator, nil
+}
+
+// applyIterationFolderToBridge applies the stored iteration folder to the context-aware bridge
+// This ensures all agents created by this orchestrator automatically get the iteration folder
+func (bo *BaseOrchestrator) applyIterationFolderToBridge() {
+	if bo.iterationFolder != "" {
+		if bridge, ok := bo.contextAwareBridge.(*ContextAwareEventBridge); ok {
+			bridge.SetIterationFolder(bo.iterationFolder)
+			bo.GetLogger().Debugf("📁 Applied iteration folder to bridge: %s", bo.iterationFolder)
+		}
+	}
 }
 
 // getMapKeys returns all keys from a map as a slice (helper for logging)

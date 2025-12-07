@@ -334,9 +334,13 @@ func (vm *VariableManager) checkExistingVariables(ctx context.Context, variables
 	// Try to read variables.json
 	variablesContent, err := vm.ReadWorkspaceFile(ctx, variablesPath)
 	if err != nil {
-		// Check if it's a "file not found" error
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			vm.GetLogger().Infof("📋 No existing variables found: %w", err)
+		// Check if it's a "file not found" error (various error message formats)
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, "not found") ||
+			strings.Contains(errMsg, "no such file") ||
+			strings.Contains(errMsg, "does not exist") ||
+			strings.Contains(errMsg, "file does not exist") {
+			vm.GetLogger().Infof("📋 No existing variables found at %s - proceeding without variables", variablesPath)
 			return false, nil, nil
 		}
 		// Other errors should be returned

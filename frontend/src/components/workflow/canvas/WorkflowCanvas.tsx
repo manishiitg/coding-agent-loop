@@ -13,11 +13,16 @@ import '@xyflow/react/dist/style.css'
 import { nodeTypes } from '../nodes'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { StepSidebar } from './StepSidebar'
+import { VariablesSidebar } from './VariablesSidebar'
+import { StepLegend } from './StepLegend'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData } from '../hooks/usePlanToFlow'
+import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
+import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
+import type { VariablesManifest } from '../../../services/api-types'
 
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
@@ -30,6 +35,8 @@ interface WorkflowCanvasProps {
   currentPhase?: string
   onStartPhase?: (phaseId: string, executionOptions?: ExecutionOptions) => void
   onCreatePlan?: () => void
+  showChatArea?: boolean
+  onToggleChatArea?: () => void
   className?: string
 }
 
@@ -48,6 +55,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   currentPhase,
   onStartPhase,
   onCreatePlan,
+  showChatArea = false,
+  onToggleChatArea,
   className = ''
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -55,11 +64,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const { fitView, zoomIn, zoomOut, setViewport, getNode } = useReactFlow()
   const hasInitializedView = React.useRef(false)
 
-  // Show/hide dependency edges state (default: hidden for cleaner view)
-  const [showDependencyEdges, setShowDependencyEdges] = React.useState(false)
-  
   // Track completed step indices from selected iteration (for enabling/disabling run buttons)
   const [completedStepIndices, setCompletedStepIndices] = React.useState<number[]>([])
+  
+  // Variables state
+  const [variablesManifest, setVariablesManifest] = React.useState<VariablesManifest | null>(null)
+  const [isLoadingVariables, setIsLoadingVariables] = React.useState(false)
+  const [showVariablesSidebar, setShowVariablesSidebar] = React.useState(false)
+  
+  // Workflow store actions
+  const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
   
   // Callback for when progress changes in toolbar
   const handleProgressChange = useCallback((indices: number[]) => {
@@ -68,6 +82,52 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Load plan data with change detection
   const { plan, loading, error, changes, updateStep, deleteStep, refresh, clearChanges } = usePlanData(workspacePath)
+
+  // Load variables when workspace changes
+  React.useEffect(() => {
+    if (!workspacePath) {
+      setVariablesManifest(null)
+      setVariablesManifestInStore(null)
+      return
+    }
+
+    const loadVariables = async () => {
+      setIsLoadingVariables(true)
+      try {
+        const response = await agentApi.getVariableGroups(workspacePath)
+        if (response.success && response.manifest) {
+          setVariablesManifest(response.manifest)
+          // Also store in workflow store for buildExecutionOptions to access
+          setVariablesManifestInStore(response.manifest)
+        } else {
+          setVariablesManifest(null)
+          setVariablesManifestInStore(null)
+        }
+      } catch (err) {
+        console.error('[WorkflowCanvas] Failed to load variables:', err)
+        setVariablesManifest(null)
+        setVariablesManifestInStore(null)
+      } finally {
+        setIsLoadingVariables(false)
+      }
+    }
+
+    loadVariables()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspacePath])
+
+  // Callback for opening variables sidebar
+  const handleOpenVariablesSidebar = useCallback(() => {
+    setShowVariablesSidebar(true)
+    setSelectedNode(null) // Close step sidebar if open
+  }, [])
+
+  // Callback for when variables are updated
+  const handleVariablesUpdate = useCallback((manifest: VariablesManifest) => {
+    setVariablesManifest(manifest)
+    // Also update in workflow store for buildExecutionOptions to access
+    setVariablesManifestInStore(manifest)
+  }, [setVariablesManifestInStore])
 
   // Workflow execution
   const {
@@ -137,8 +197,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Handle opening sidebar for a node
   const handleOpenSidebar = useCallback((nodeId: string) => {
+    setShowVariablesSidebar(false) // Close variables sidebar if open
     focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 100 })
     console.log('[WorkflowCanvas] Opened sidebar and positioned viewport for node:', nodeId)
+  }, [focusNode])
+
+  // Handle navigating to a step from legend (without opening sidebar)
+  const handleNavigateToStep = useCallback((nodeId: string) => {
+    focusNode(nodeId, { topPadding: 150, selectNode: false, delay: 100 })
+    console.log('[WorkflowCanvas] Navigated to step from legend:', nodeId)
   }, [focusNode])
 
   // Store handleOpenSidebar in ref for early access
@@ -148,7 +215,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
-    showDependencyEdges,
+    // Prerequisite edges are always shown (default: true in usePlanToFlow)
     changes,  // Pass changes to highlight modified nodes
     onRunFromStep: (stepIndex: number, stepId: string) => {
       // Call the ref function if it's available
@@ -166,7 +233,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
     stepStatusMap: stepStatusMap,  // Pass step status map from events
     workspacePath,  // Pass workspace path for file opening
-    selectedRunFolder  // Pass selected run folder for file opening
+    selectedRunFolder,  // Pass selected run folder for file opening
+    variablesManifest,  // Pass variables manifest for Variables node
+    onOpenVariablesSidebar: handleOpenVariablesSidebar,  // Callback for opening variables sidebar
+    isLoadingVariables  // Whether variables are loading
   })
 
   // Helper function to highlight and position a specific step node
@@ -205,10 +275,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     
     if (onStartPhase) {
       // Create execution options to run only this single step
-      // Read from workflow store directly (single source of truth)
+      // Use buildExecutionOptions to include all flags (including fallback_to_original_llm_on_failure)
+      const buildExecutionOptions = useWorkflowStore.getState().buildExecutionOptions
+      const baseOptions = buildExecutionOptions()
       const executionOptions: ExecutionOptions = {
-        run_mode: selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
-        selected_run_folder: selectedRunFolder === 'new' ? undefined : selectedRunFolder,
+        ...baseOptions,  // Include all flags from buildExecutionOptions
         execution_strategy: 'run_single_step',
         resume_from_step: stepIndex + 1  // 1-based step number (target step)
       }
@@ -314,6 +385,21 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         if (node?.id !== newNode.id) return true
         // Check if status changed (important for completed steps highlighting)
         if (node?.data?.status !== newNode.data?.status) return true
+        
+        // Check if VariablesNode manifest changed
+        if (node?.type === 'variables' || newNode.type === 'variables') {
+          const oldData = node?.data as VariablesNodeData | undefined
+          const newData = newNode.data as VariablesNodeData | undefined
+          const oldManifest = oldData?.manifest
+          const newManifest = newData?.manifest
+          const oldManifestStr = JSON.stringify(oldManifest)
+          const newManifestStr = JSON.stringify(newManifest)
+          if (oldManifestStr !== newManifestStr) {
+            console.log(`[WorkflowPlanUpdate] Variables node manifest changed`)
+            return true
+          }
+        }
+        
         // Check if step data changed (especially agent_configs)
         // This is important when saving config in the side panel
         const oldData = node?.data as StepNodeData | ConditionalNodeData | LoopNodeData | undefined
@@ -618,9 +704,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
 
   // Handle toggle dependency edges
-  const handleToggleDependencyEdges = useCallback(() => {
-    setShowDependencyEdges(prev => !prev)
-  }, [])
 
   // Loading state
   if (loading) {
@@ -671,9 +754,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
           onFitView={handleFitView}
-          showDependencyEdges={showDependencyEdges}
-          onToggleDependencyEdges={handleToggleDependencyEdges}
           onProgressChange={handleProgressChange}
+          showChatArea={showChatArea}
+          onToggleChatArea={onToggleChatArea}
         />
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center gap-4 text-center">
@@ -718,14 +801,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onFitView={handleFitView}
-        showDependencyEdges={showDependencyEdges}
-        onToggleDependencyEdges={handleToggleDependencyEdges}
         onProgressChange={handleProgressChange}
+        showChatArea={showChatArea}
+        onToggleChatArea={onToggleChatArea}
       />
 
       {/* React Flow Canvas with Sidebar */}
       <div className="flex-1 relative flex">
-        <div className={`flex-1 transition-all duration-300 ${selectedNode ? 'mr-[600px]' : ''}`}>
+        <div className={`flex-1 transition-all duration-300 ${selectedNode ? 'mr-[600px]' : showVariablesSidebar ? 'mr-[450px]' : ''}`}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -739,7 +822,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           minZoom={0.1}
           maxZoom={2}
           defaultViewport={{ x: 100, y: 0, zoom: 0.9 }}
-          attributionPosition="bottom-left"
+          attributionPosition="bottom-right"
           className="bg-gray-50 dark:bg-gray-900"
         >
           <Background 
@@ -750,6 +833,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             className="dark:!bg-gray-900"
           />
         </ReactFlow>
+
+        {/* Step Legend - Bottom Left */}
+        {plan && plan.steps && plan.steps.length > 0 && (
+          <StepLegend
+            plan={plan}
+            nodes={nodes}
+            selectedNodeId={selectedNode?.id || null}
+            onStepClick={handleNavigateToStep}
+          />
+        )}
         </div>
 
         {/* Step Sidebar */}
@@ -766,6 +859,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             onStartPhase={handleStartPhaseForStep}
             plan={plan}
             completedStepIndices={completedStepIndices}
+          />
+        )}
+
+        {/* Variables Sidebar */}
+        {showVariablesSidebar && (
+          <VariablesSidebar
+            workspacePath={workspacePath}
+            onClose={() => setShowVariablesSidebar(false)}
+            onUpdate={handleVariablesUpdate}
           />
         )}
       </div>

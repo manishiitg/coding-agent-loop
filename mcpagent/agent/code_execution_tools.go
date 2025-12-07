@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -506,13 +507,39 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	}
 
 	// Parse code to find imported packages and set up Go workspace
+	// Try AST parsing first, with regex fallback if parsing fails (e.g., syntax errors)
 	importedPackages, err := a.parseImportedPackages(code)
-	if err != nil && a.Logger != nil {
-		a.Logger.Warnf("⚠️ Failed to parse imports from code: %v", err)
+	if err != nil {
+		if a.Logger != nil {
+			a.Logger.Warnf("⚠️ Failed to parse imports from code (both AST and regex methods): %v", err)
+		}
+		// Even if parsing completely fails, try to extract common packages from the code string
+		// This is a last resort to ensure workspace setup happens
+		importedPackages = a.extractImportsWithRegex(code)
+		if len(importedPackages) == 0 {
+			// Check if code mentions common packages even if imports aren't properly formatted
+			if strings.Contains(code, "workspace_tools") {
+				importedPackages = append(importedPackages, "workspace_tools")
+			}
+			if strings.Contains(code, "google_sheets_tools") {
+				importedPackages = append(importedPackages, "google_sheets_tools")
+			}
+			// Add other common package patterns
+			commonPackages := []string{"aws_tools", "github_tools", "filesystem_tools"}
+			for _, pkg := range commonPackages {
+				if strings.Contains(code, pkg) && !contains(importedPackages, pkg) {
+					importedPackages = append(importedPackages, pkg)
+				}
+			}
+		}
+		if a.Logger != nil && len(importedPackages) > 0 {
+			a.Logger.Infof("🔍 Extracted %d packages using fallback methods: %v", len(importedPackages), importedPackages)
+		}
 	}
 
 	// Set up Go workspace to import generated packages from their original location
 	// This is CRITICAL - if workspace setup fails, code execution will fail with "package not found" errors
+	// Always attempt workspace setup if we found any packages, even if parsing had issues
 	if len(importedPackages) > 0 {
 		if err := a.setupGoWorkspace(workspaceDir, importedPackages); err != nil {
 			if a.Logger != nil {
@@ -523,6 +550,11 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 			errorMsg := fmt.Sprintf("**❌ WORKSPACE SETUP FAILED**\n\nFailed to set up Go workspace (required for generated packages): %v\n\nThis error occurs when the workspace cannot be configured to find generated tool packages.\nPlease check that:\n- Generated packages exist in the generated/ directory\n- Package directories have go.mod files\n- File permissions allow creating go.work file", err)
 			return errorMsg, nil
 		}
+		if a.Logger != nil {
+			a.Logger.Infof("✅ Go workspace set up successfully with %d packages", len(importedPackages))
+		}
+	} else if a.Logger != nil {
+		a.Logger.Debugf("ℹ️ No generated packages detected in code, skipping workspace setup")
 	}
 
 	// Execute the Go code in-process and capture output
@@ -659,12 +691,91 @@ func formatCodeExecutionError(err error, code string) string {
 	return builder.String()
 }
 
-// parseImportedPackages parses Go code to find imported packages
+// extractImportsWithRegex extracts import statements using regex as a fallback when AST parsing fails
+// This is useful when code has syntax errors but we still need to set up the workspace
+func (a *Agent) extractImportsWithRegex(code string) []string {
+	var packages []string
+
+	// Pattern to match import statements: import "package_name" or import ("package1" "package2")
+	// This handles both single and multi-line import blocks
+	importPattern := regexp.MustCompile(`import\s+(?:\(([^)]+)\)|"([^"]+)")`)
+
+	// Find all import blocks
+	matches := importPattern.FindAllStringSubmatch(code, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			// Handle multi-line import block (match[1] contains the block content)
+			if match[1] != "" {
+				// Extract individual imports from the block
+				blockContent := match[1]
+				// Pattern to match individual quoted imports within the block
+				quotedImports := regexp.MustCompile(`"([^"]+)"`)
+				individualImports := quotedImports.FindAllStringSubmatch(blockContent, -1)
+				for _, imp := range individualImports {
+					if len(imp) > 1 {
+						importPath := imp[1]
+						if strings.HasSuffix(importPath, "_tools") || strings.Contains(importPath, "generated/") {
+							parts := strings.Split(importPath, "/")
+							packageName := parts[len(parts)-1]
+							packages = append(packages, packageName)
+						}
+					}
+				}
+			} else if len(match) > 2 && match[2] != "" {
+				// Handle single import statement
+				importPath := match[2]
+				if strings.HasSuffix(importPath, "_tools") || strings.Contains(importPath, "generated/") {
+					parts := strings.Split(importPath, "/")
+					packageName := parts[len(parts)-1]
+					packages = append(packages, packageName)
+				}
+			}
+		}
+	}
+
+	// Remove duplicates
+	seen := make(map[string]bool)
+	var uniquePackages []string
+	for _, pkg := range packages {
+		if !seen[pkg] {
+			seen[pkg] = true
+			uniquePackages = append(uniquePackages, pkg)
+		}
+	}
+
+	return uniquePackages
+}
+
+// contains checks if a string slice contains a specific string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 // Returns a list of package names that are likely generated packages (end with _tools)
+// Uses AST parsing first, falls back to regex if parsing fails (e.g., due to syntax errors)
 func (a *Agent) parseImportedPackages(code string) ([]string, error) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "", code, parser.ParseComments)
 	if err != nil {
+		// AST parsing failed - try regex fallback
+		if a.Logger != nil {
+			a.Logger.Debugf("⚠️ AST parsing failed, using regex fallback to extract imports: %v", err)
+		}
+		packages := a.extractImportsWithRegex(code)
+		if len(packages) > 0 {
+			if a.Logger != nil {
+				a.Logger.Debugf("✅ Regex fallback extracted %d packages: %v", len(packages), packages)
+			}
+			// Return packages even though parsing failed - this allows workspace setup to proceed
+			return packages, nil
+		}
+		// Both methods failed
 		return nil, fmt.Errorf("failed to parse code: %w", err)
 	}
 

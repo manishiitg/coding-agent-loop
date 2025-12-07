@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
+import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
@@ -48,7 +49,7 @@ export default function WorkspaceSidebar({
 
   return (
     <TooltipProvider>
-      <div className="w-full h-full bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-lg dark:shadow-2xl">
+      <div className="w-full h-full bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-lg dark:shadow-2xl relative z-30">
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex items-center justify-between h-16">
         {!minimized && <SidebarHeader />}
@@ -96,6 +97,11 @@ export default function WorkspaceSidebar({
 
             {/* LLM Configuration */}
             <LLMConfigurationSummary
+              minimized={minimized}
+            />
+
+            {/* Human Feedback Connectors */}
+            <HumanFeedbackConnectorsSection
               minimized={minimized}
             />
 
@@ -164,6 +170,11 @@ export default function WorkspaceSidebar({
 
           {/* LLM Configuration Icon */}
           <LLMConfigurationSummary
+            minimized={true}
+          />
+
+          {/* Human Feedback Connectors Icon */}
+          <HumanFeedbackConnectorsSection
             minimized={true}
           />
 

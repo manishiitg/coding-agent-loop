@@ -94,14 +94,6 @@ export DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE="0.0"
 
 # Obsidian configuration removed - now using workspace tools
 
-# Set Memory API configuration
-# Use Docker internal network URL if running in Docker, otherwise localhost
-if [ -n "$DOCKER_CONTAINER" ] || [ -n "$MEMORY_API_INTERNAL_URL" ]; then
-    export MEMORY_API_URL="http://memory-api:8000"
-else
-    export MEMORY_API_URL="http://localhost:8055"
-fi
-
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
@@ -131,7 +123,6 @@ echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" | tee -a "$LO
 echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" | tee -a "$LOG_FILE"
 echo "- Workspace tools: Enabled" | tee -a "$LOG_FILE"
-echo "- Memory API URL: $MEMORY_API_URL" | tee -a "$LOG_FILE"
 echo "=========================================" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
@@ -148,7 +139,6 @@ echo "🔄 OpenRouter Cross-Provider Fallback: $OPENROUTER_CROSS_FALLBACK_PROVID
 echo "🔄 Vertex Anthropic Fallback Models: $VERTEX_ANTHROPIC_FALLBACK_MODELS"
 echo "🔧 Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL"
 echo "📁 Workspace Tools: Enabled"
-echo "🧠 Memory API: $MEMORY_API_URL"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console

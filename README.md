@@ -252,7 +252,6 @@ mcp-agent-builder-go/
 │   ├── src/                 # React components
 │   └── public/              # Static assets
 ├── planner/                  # Planning agent
-├── memory/                   # Memory/vector database
 ├── scripts/                  # Utility scripts
 ├── .github/workflows/        # GitHub Actions
 └── docker-compose.yml       # Docker services

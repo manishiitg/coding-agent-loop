@@ -196,12 +196,6 @@ func (s *SlackService) SendFeedbackNotification(
 		return "", fmt.Errorf("slack service is not enabled")
 	}
 
-	log.Printf("[SLACK] SendFeedbackNotification - uniqueID=%s, buttonOptions is nil: %v", uniqueID, buttonOptions == nil)
-	if buttonOptions != nil {
-		log.Printf("[SLACK] SendFeedbackNotification - buttonOptions: YesNoOnly=%v, YesLabel=%s, NoLabel=%s, Options=%v",
-			buttonOptions.YesNoOnly, buttonOptions.YesLabel, buttonOptions.NoLabel, buttonOptions.Options)
-	}
-
 	// Format Slack message with blocks
 	blocks := formatSlackMessage(uniqueID, message, contextMsg, buttonOptions)
 
@@ -308,10 +302,7 @@ func formatSlackMessage(uniqueID, question, contextMsg string, buttonOptions *Bu
 	))
 
 	// Add interactive buttons if button options are provided
-	log.Printf("[SLACK] formatSlackMessage - buttonOptions is nil: %v, uniqueID: %s", buttonOptions == nil, uniqueID)
 	if buttonOptions != nil {
-		log.Printf("[SLACK] formatSlackMessage - buttonOptions: YesNoOnly=%v, YesLabel=%s, NoLabel=%s, Options=%v",
-			buttonOptions.YesNoOnly, buttonOptions.YesLabel, buttonOptions.NoLabel, buttonOptions.Options)
 		var buttonElements []slack.BlockElement
 
 		if buttonOptions.YesNoOnly {
@@ -467,9 +458,6 @@ func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *Sla
 	client := slack.New(config.BotToken)
 
 	// Test by getting channel info
-	log.Printf("[SLACK] Testing connection: token starts with 'xoxb-'=%v, token length=%d, channelID=%s",
-		len(config.BotToken) > 4 && config.BotToken[:4] == "xoxb-", len(config.BotToken), config.ChannelID)
-
 	_, err := client.GetConversationInfo(&slack.GetConversationInfoInput{
 		ChannelID:         config.ChannelID,
 		IncludeLocale:     false,
@@ -477,10 +465,8 @@ func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *Sla
 	})
 
 	if err != nil {
-		log.Printf("[SLACK] GetConversationInfo error: %v (type: %T)", err, err)
 		// Provide more helpful error messages based on Slack API errors
 		if slackErr, ok := err.(slack.SlackErrorResponse); ok {
-			log.Printf("[SLACK] Slack API error response: Err=%s, ResponseMetadata=%+v", slackErr.Err, slackErr.ResponseMetadata)
 			switch slackErr.Err {
 			case "invalid_auth":
 				return "", fmt.Errorf("invalid bot token: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions, not the App-Level Token")
@@ -509,10 +495,6 @@ func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *Sla
 
 	_, messageTS, err := client.PostMessage(config.ChannelID, slack.MsgOptionBlocks(testBlocks...))
 	if err != nil {
-		log.Printf("[SLACK] PostMessage error: %v (type: %T)", err, err)
-		if slackErr, ok := err.(slack.SlackErrorResponse); ok {
-			log.Printf("[SLACK] Slack API error response: Err=%s", slackErr.Err)
-		}
 		return "", fmt.Errorf("failed to send test message: %w", err)
 	}
 
@@ -529,13 +511,7 @@ func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *Sla
 	if s.db != nil {
 		if err := s.StoreMessageMapping(ctx, testUniqueID, messageTS, config.ChannelID); err != nil {
 			log.Printf("[SLACK] Warning: Failed to store test message mapping: %v", err)
-		} else {
-			log.Printf("[SLACK] ✅ Test message sent! Message TS: %s, Unique ID: %s", messageTS, testUniqueID)
-			log.Printf("[SLACK] 📝 Reply to this message in a thread to test Socket Mode functionality")
 		}
-	} else {
-		log.Printf("[SLACK] ✅ Test message sent! Message TS: %s", messageTS)
-		log.Printf("[SLACK] ⚠️  Note: Socket Mode testing requires database access")
 	}
 
 	return testUniqueID, nil
@@ -635,10 +611,7 @@ func (s *SlackService) SaveConfig(ctx context.Context, config *SlackConfig) erro
 	            app_token = excluded.app_token,
 	            updated_at = CURRENT_TIMESTAMP`
 
-	log.Printf("[SLACK] Saving config: enabled=%v, hasBotToken=%v, hasAppToken=%v, hasChannelID=%v",
-		config.Enabled, config.BotToken != "", config.AppToken != "", config.ChannelID != "")
-
-	result, err := s.db.ExecContext(ctx, query,
+	_, err := s.db.ExecContext(ctx, query,
 		config.Enabled,
 		config.BotToken,
 		config.ChannelID,
@@ -650,33 +623,11 @@ func (s *SlackService) SaveConfig(ctx context.Context, config *SlackConfig) erro
 		return fmt.Errorf("failed to save Slack config: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
-	log.Printf("[SLACK] Config saved successfully, rows affected: %d", rowsAffected)
-
-	// Verify the data was actually saved to the database
-	verifyQuery := `SELECT enabled, bot_token, channel_id, app_token 
-	                FROM slack_feedback_config 
-	                WHERE id = 'slack_config'`
-	var savedEnabled bool
-	var savedBotToken, savedChannelID, savedAppToken sql.NullString
-	err = s.db.QueryRowContext(ctx, verifyQuery).Scan(&savedEnabled, &savedBotToken, &savedChannelID, &savedAppToken)
-	if err != nil {
-		log.Printf("[SLACK] WARNING: Failed to verify saved config: %v", err)
-	} else {
-		log.Printf("[SLACK] Verified DB contents: enabled=%v, hasBotToken=%v, hasChannelID=%v, hasAppToken=%v",
-			savedEnabled, savedBotToken.Valid && savedBotToken.String != "",
-			savedChannelID.Valid && savedChannelID.String != "",
-			savedAppToken.Valid && savedAppToken.String != "")
-	}
-
 	// Reload config
 	if err := s.ReloadConfig(ctx); err != nil {
 		log.Printf("[SLACK] Failed to reload config after save: %v", err)
 		return fmt.Errorf("failed to reload config after save: %w", err)
 	}
-
-	log.Printf("[SLACK] Config reloaded: enabled=%v, hasBotToken=%v, hasAppToken=%v, hasChannelID=%v",
-		s.enabled, s.config != nil && s.config.BotToken != "", s.config != nil && s.config.AppToken != "", s.config != nil && s.config.ChannelID != "")
 
 	return nil
 }
@@ -717,8 +668,6 @@ func (s *SlackService) StartSocketMode(ctx context.Context) error {
 	s.socketClient = socketClient
 	s.socketCtx, s.socketCancel = context.WithCancel(context.Background())
 
-	log.Printf("[SLACK_SOCKET] 🔍 Socket Mode client created, starting connection...")
-
 	// Start Socket Mode connection with automatic reconnection
 	// Run() blocks, so run in goroutine with reconnection logic
 	go s.runSocketModeWithReconnect()
@@ -728,10 +677,7 @@ func (s *SlackService) StartSocketMode(ctx context.Context) error {
 
 	// Start event handler in goroutine
 	// Note: socketClient.Events channel is populated by Run()
-	log.Printf("[SLACK_SOCKET] 🔍 Starting event handler goroutine...")
 	go s.handleSocketModeEvents()
-
-	log.Printf("[SLACK] Socket Mode started (Run() and event handler in separate goroutines)")
 	return nil
 }
 
@@ -747,7 +693,6 @@ func (s *SlackService) runSocketModeWithReconnect() {
 		// Check if we should stop (context cancelled or service disabled)
 		select {
 		case <-s.socketCtx.Done():
-			log.Printf("[SLACK_SOCKET] 🔍 Context cancelled, stopping reconnection loop")
 			return
 		default:
 		}
@@ -759,7 +704,6 @@ func (s *SlackService) runSocketModeWithReconnect() {
 		s.socketMux.RUnlock()
 
 		if !shouldReconnect {
-			log.Printf("[SLACK_SOCKET] 🔍 Service disabled or client removed, stopping reconnection loop")
 			return
 		}
 
@@ -769,17 +713,17 @@ func (s *SlackService) runSocketModeWithReconnect() {
 			if delay > maxDelay {
 				delay = maxDelay
 			}
-			log.Printf("[SLACK_SOCKET] 🔄 Reconnecting in %v (attempt %d/%d)...", delay, retryCount, maxRetries)
+			// Only log first few reconnection attempts
+			if retryCount <= 3 {
+				log.Printf("[SLACK_SOCKET] 🔄 Reconnecting in %v (attempt %d/%d)...", delay, retryCount, maxRetries)
+			}
 
 			select {
 			case <-time.After(delay):
 				// Continue with reconnection
 			case <-s.socketCtx.Done():
-				log.Printf("[SLACK_SOCKET] 🔍 Context cancelled during reconnection delay")
 				return
 			}
-		} else {
-			log.Printf("[SLACK_SOCKET] 🔍 Starting Socket Mode Run()...")
 		}
 
 		// Run Socket Mode (this blocks until connection fails or is stopped)
@@ -787,7 +731,6 @@ func (s *SlackService) runSocketModeWithReconnect() {
 
 		if err == nil {
 			// Normal exit (shouldn't happen unless stopped)
-			log.Printf("[SLACK_SOCKET] ⚠️  Socket Mode Run() exited normally")
 			return
 		}
 
@@ -797,7 +740,6 @@ func (s *SlackService) runSocketModeWithReconnect() {
 		// Check if we should stop (context cancelled)
 		select {
 		case <-s.socketCtx.Done():
-			log.Printf("[SLACK_SOCKET] 🔍 Context cancelled after error, stopping reconnection")
 			return
 		default:
 		}
@@ -837,40 +779,24 @@ func (s *SlackService) handleSocketModeEvents() {
 		return
 	}
 
-	log.Printf("[SLACK_SOCKET] 🔍 Starting event handler loop...")
 	for evt := range s.socketClient.Events {
-		log.Printf("[SLACK_SOCKET] 🔍 Received event from channel: type=%s", evt.Type)
 		switch evt.Type {
-		case socketmode.EventTypeConnecting:
-			log.Printf("[SLACK] Connecting to Slack with Socket Mode...")
 		case socketmode.EventTypeConnectionError:
 			log.Printf("[SLACK] Socket Mode connection error: %v", evt.Data)
-		case socketmode.EventTypeConnected:
-			log.Printf("[SLACK] Connected to Slack with Socket Mode")
 		case socketmode.EventTypeEventsAPI:
-			log.Printf("[SLACK_SOCKET] 🔍 Processing EventsAPI event")
 			s.handleSocketModeEvent(evt)
 		case socketmode.EventTypeInteractive:
-			log.Printf("[SLACK_SOCKET] 🔍 Processing Interactive event (button click)")
 			s.handleSocketModeInteractive(evt)
-		default:
-			log.Printf("[SLACK_SOCKET] 🔍 Unhandled event type: %s", evt.Type)
 		}
 	}
-	log.Printf("[SLACK_SOCKET] ⚠️  Event handler loop ended (channel closed)")
 }
 
 // handleSocketModeEvent handles Events API events from Socket Mode
 func (s *SlackService) handleSocketModeEvent(evt socketmode.Event) {
-	log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Received Socket Mode event type: %s", evt.Type)
-
 	eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 	if !ok {
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Event data is not EventsAPIEvent, type: %T", evt.Data)
 		return
 	}
-
-	log.Printf("[SLACK_SOCKET] 🔍 DEBUG: EventsAPIEvent type: %s", eventsAPIEvent.Type)
 
 	// Acknowledge the event
 	if evt.Request != nil {
@@ -880,40 +806,19 @@ func (s *SlackService) handleSocketModeEvent(evt socketmode.Event) {
 	// Handle callback events (like message events)
 	if eventsAPIEvent.Type == slackevents.CallbackEvent {
 		innerEvent := eventsAPIEvent.InnerEvent
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Inner event type: %T", innerEvent.Data)
 		switch ev := innerEvent.Data.(type) {
 		case *slackevents.MessageEvent:
-			log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Processing MessageEvent")
 			s.handleSocketModeMessage(ev)
-		default:
-			log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Unhandled inner event type: %T", ev)
 		}
-	} else {
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Not a CallbackEvent, skipping")
 	}
 }
 
 // handleSocketModeMessage handles message events from Socket Mode
 func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
-	log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Received message event - BotID=%s, ThreadTS=%s, TS=%s, Channel=%s, User=%s, Text=%s",
-		ev.BotID, ev.ThreadTimeStamp, ev.TimeStamp, ev.Channel, ev.User, ev.Text)
-
 	// Only process thread replies (not bot messages)
-	if ev.BotID != "" {
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Skipping bot message (BotID=%s)", ev.BotID)
+	if ev.BotID != "" || ev.ThreadTimeStamp == "" || ev.ThreadTimeStamp == ev.TimeStamp {
 		return
 	}
-	if ev.ThreadTimeStamp == "" {
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Skipping non-thread message (no ThreadTS)")
-		return
-	}
-	if ev.ThreadTimeStamp == ev.TimeStamp {
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Skipping parent message (ThreadTS == TS)")
-		return
-	}
-
-	log.Printf("[SLACK_SOCKET] ✅ Processing thread reply: channel=%s, thread_ts=%s, user=%s, text=%s",
-		ev.Channel, ev.ThreadTimeStamp, ev.User, ev.Text)
 
 	// Get unique ID from thread
 	uniqueID, err := s.GetUniqueIDFromThread(
@@ -924,15 +829,6 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 	if err != nil {
 		log.Printf("[SLACK_SOCKET] ⚠️  Failed to get unique_id for thread %s: %v", ev.ThreadTimeStamp, err)
 		return
-	}
-
-	log.Printf("[SLACK_SOCKET] ✅ Found unique_id: %s for thread reply", uniqueID)
-
-	// Check if this is a test connection message
-	if uniqueID != "" && len(uniqueID) > 14 && uniqueID[:14] == "test-connection" {
-		log.Printf("[SLACK_SOCKET] 🧪 TEST: Received reply to test connection message!")
-		log.Printf("[SLACK_SOCKET] 🧪 TEST: Reply text: %s", ev.Text)
-		log.Printf("[SLACK_SOCKET] 🧪 TEST: Socket Mode is working correctly! ✅")
 	}
 
 	// Submit feedback through notification manager (which updates the feedback store)
@@ -947,18 +843,13 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 		log.Printf("[SLACK_SOCKET] ❌ Failed to submit feedback via notification manager: %v", err)
 		return
 	}
-
-	log.Printf("[SLACK_SOCKET] ✅ Successfully submitted feedback for unique_id: %s, text: %s", uniqueID, ev.Text)
 }
 
 // handleSocketModeInteractive handles interactive events (button clicks) from Socket Mode
 func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
-	log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Processing interactive event")
-
 	// Get the interaction callback
 	callback, ok := evt.Data.(slack.InteractionCallback)
 	if !ok {
-		log.Printf("[SLACK_SOCKET] ⚠️  Interactive event data is not InteractionCallback, type: %T", evt.Data)
 		if evt.Request != nil {
 			s.socketClient.Ack(*evt.Request)
 		}
@@ -972,14 +863,11 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 
 	// Only handle button actions
 	if callback.Type != slack.InteractionTypeBlockActions {
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Not a block action, type: %s", callback.Type)
 		return
 	}
 
 	// Process button clicks
 	for _, action := range callback.ActionCallback.BlockActions {
-		log.Printf("[SLACK_SOCKET] 🔍 DEBUG: Processing action - ActionID=%s, Value=%s, Text=%s",
-			action.ActionID, action.Value, action.Text.Text)
 
 		// Extract uniqueID from action_id
 		// Format: "feedback_yes_<uniqueID>", "feedback_no_<uniqueID>", or "feedback_option_<index>_<uniqueID>"
@@ -1013,8 +901,6 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 			continue
 		}
 
-		log.Printf("[SLACK_SOCKET] ✅ Button clicked - uniqueID=%s, response=%s", uniqueID, response)
-
 		// Submit response via notification manager
 		notificationManager := GetNotificationManager()
 		if notificationManager == nil {
@@ -1026,8 +912,6 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 			log.Printf("[SLACK_SOCKET] ❌ Failed to submit button response: %v", err)
 			continue
 		}
-
-		log.Printf("[SLACK_SOCKET] ✅ Successfully processed button click for unique_id: %s, response: %s", uniqueID, response)
 
 		// Update the message to show the button was clicked (optional - can disable buttons)
 		// For now, we'll just log it - Slack will automatically disable the button after click

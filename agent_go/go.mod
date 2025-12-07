@@ -23,7 +23,7 @@ replace workspace => ../workspace
 
 replace mcpagent => ../mcpagent
 
-replace github.com/manishiitg/multi-llm-provider-go => /Users/mipl/ai-work/multi-llm-provider-go
+replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

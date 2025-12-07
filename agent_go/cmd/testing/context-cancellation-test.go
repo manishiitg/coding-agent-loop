@@ -3,11 +3,14 @@ package testing
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
+	loggerv2 "mcpagent/logger/v2"
+	mcpagent "mcpagent/agent"
 	"mcpagent/llm"
-	"mcp-agent/agent_go/internal/utils"
-	"mcp-agent/agent_go/pkg/external"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -45,7 +48,7 @@ The test uses a long-running LLM operation to ensure cancellation can be observe
 			provider = "openai" // Default to OpenAI
 		}
 
-		logger.Infof("Using provider: %s", provider)
+		logger.Info(fmt.Sprintf("Using provider: %s", provider))
 
 		// Test context cancellation during LLM generation
 		logger.Info("\n--- Context Cancellation During LLM Generation ---")
@@ -59,7 +62,7 @@ The test uses a long-running LLM operation to ensure cancellation can be observe
 }
 
 // testContextCancellationDuringLLMGeneration tests that LLM calls get cancelled when context is cancelled
-func testContextCancellationDuringLLMGeneration(provider string, logger utils.ExtendedLogger) error {
+func testContextCancellationDuringLLMGeneration(provider string, logger loggerv2.Logger) error {
 	logger.Info("Creating external agent for LLM cancellation test...")
 
 	// Create agent config
@@ -73,22 +76,49 @@ func testContextCancellationDuringLLMGeneration(provider string, logger utils.Ex
 		llmProvider = llm.ProviderBedrock
 	}
 
-	config := external.Config{
+	// Initialize LLM
+	modelID := getModelID(provider)
+	var llmModel llmtypes.Model
+	var err error
+
+	// Get API keys from environment
+	apiKeys := &llm.ProviderAPIKeys{}
+	if provider == "openai" {
+		openAIKey := os.Getenv("OPENAI_API_KEY")
+		if openAIKey == "" {
+			return fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+		}
+		apiKeys.OpenAI = &openAIKey
+	} else if provider == "bedrock" {
+		// Bedrock uses AWS credentials from environment
+	} else if provider == "vertex" {
+		// Vertex uses GCP credentials from environment
+	}
+
+	llmModel, err = llm.InitializeLLM(llm.Config{
 		Provider:    llmProvider,
-		ModelID:     getModelID(provider),
+		ModelID:     modelID,
 		Temperature: 0.1,
-		AgentMode:   external.SimpleAgent,
-		MaxTurns:    5,
-		ServerName:  "filesystem",
-		ConfigPath:  "configs/mcp_servers_simple.json",
-		SystemPrompt: external.SystemPromptConfig{
-			Mode: "auto",
-		},
+		Logger:      nil, // Use default logger
+		APIKeys:     apiKeys,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize LLM: %w", err)
 	}
 
 	// Create agent with valid context first
 	ctx := context.Background()
-	agent, err := external.NewAgent(ctx, config)
+	agent, err := mcpagent.NewAgent(
+		ctx,
+		llmModel,
+		"filesystem",                      // server name
+		"configs/mcp_servers_simple.json", // config path
+		modelID,                           // model ID
+		nil,                               // tracer
+		"",                                // trace ID
+		nil,                               // logger (use default)
+		mcpagent.WithMaxTurns(5),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
@@ -119,7 +149,7 @@ func testContextCancellationDuringLLMGeneration(provider string, logger utils.Ex
 		examples of AI tools, their benefits and limitations, and future trends in the field." Please be thorough and 
 		comprehensive in your response, covering multiple aspects and providing concrete examples.`
 
-		result, err := agent.Invoke(ctx, complexPrompt)
+		result, err := agent.Ask(ctx, complexPrompt)
 		if err != nil {
 			errChan <- err
 			return
@@ -130,16 +160,16 @@ func testContextCancellationDuringLLMGeneration(provider string, logger utils.Ex
 	// Wait for either result or cancellation
 	select {
 	case result := <-resultChan:
-		logger.Warnf("⚠️ Unexpected: LLM generation completed before cancellation: %s", result[:100])
+		logger.Warn(fmt.Sprintf("⚠️ Unexpected: LLM generation completed before cancellation: %s", result[:100]))
 		return fmt.Errorf("LLM generation should have been cancelled")
 	case err := <-errChan:
 		if isContextCancelledError(err) {
-			logger.Infof("✅ LLM generation was properly cancelled: %w", err)
+			logger.Info(fmt.Sprintf("✅ LLM generation was properly cancelled: %w", err))
 			return nil
 		}
 		return fmt.Errorf("unexpected error during LLM generation: %w", err)
 	case <-time.After(5 * time.Second):
-		logger.Warnf("⚠️ Test timeout - LLM generation may not have been cancelled properly")
+		logger.Warn(fmt.Sprintf("⚠️ Test timeout - LLM generation may not have been cancelled properly"))
 		return fmt.Errorf("test timeout - LLM generation should have been cancelled within 5 seconds")
 	}
 }

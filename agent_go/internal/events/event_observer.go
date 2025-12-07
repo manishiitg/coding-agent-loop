@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
-	"mcpagent/events"
 	"mcp-agent/agent_go/pkg/logger"
-
-	"github.com/sirupsen/logrus"
+	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 )
 
 // EventObserver implements AgentEventListener to capture agent events
@@ -17,7 +15,7 @@ type EventObserver struct {
 	store      *EventStore
 	observerID string
 	sessionID  string
-	logger     utils.ExtendedLogger
+	logger     loggerv2.Logger
 }
 
 // NewEventObserver creates a new event observer
@@ -31,7 +29,7 @@ func NewEventObserver(store *EventStore, observerID, sessionID string) *EventObs
 }
 
 // NewEventObserverWithLogger creates a new event observer with an injected logger
-func NewEventObserverWithLogger(store *EventStore, observerID, sessionID string, logger utils.ExtendedLogger) *EventObserver {
+func NewEventObserverWithLogger(store *EventStore, observerID, sessionID string, logger loggerv2.Logger) *EventObserver {
 	return &EventObserver{
 		store:      store,
 		observerID: observerID,
@@ -74,7 +72,7 @@ func (eo *EventObserver) Name() string {
 }
 
 // createDefaultLogger creates a default logger for the event observer
-func createDefaultLogger() utils.ExtendedLogger {
+func createDefaultLogger() loggerv2.Logger {
 	loggerInstance, err := logger.CreateLogger("", "info", "text", true)
 	if err != nil {
 		// If we can't create a logger, create a minimal one that won't panic
@@ -83,20 +81,13 @@ func createDefaultLogger() utils.ExtendedLogger {
 	return loggerInstance
 }
 
-// minimalLogger is a fallback logger that implements ExtendedLogger
+// minimalLogger is a fallback logger that implements loggerv2.Logger
 type minimalLogger struct{}
 
-func (m *minimalLogger) Infof(format string, v ...any)                         {}
-func (m *minimalLogger) Errorf(format string, v ...any)                        {}
-func (m *minimalLogger) Info(args ...interface{})                              {}
-func (m *minimalLogger) Error(args ...interface{})                             {}
-func (m *minimalLogger) Debug(args ...interface{})                             {}
-func (m *minimalLogger) Debugf(format string, args ...interface{})             {}
-func (m *minimalLogger) Warn(args ...interface{})                              {}
-func (m *minimalLogger) Warnf(format string, args ...interface{})              {}
-func (m *minimalLogger) Fatal(args ...interface{})                             {}
-func (m *minimalLogger) Fatalf(format string, args ...interface{})             {}
-func (m *minimalLogger) WithField(key string, value interface{}) *logrus.Entry { return nil }
-func (m *minimalLogger) WithFields(fields logrus.Fields) *logrus.Entry         { return nil }
-func (m *minimalLogger) WithError(err error) *logrus.Entry                     { return nil }
+func (m *minimalLogger) Debug(msg string, fields ...loggerv2.Field)            {}
+func (m *minimalLogger) Info(msg string, fields ...loggerv2.Field)             {}
+func (m *minimalLogger) Warn(msg string, fields ...loggerv2.Field)             {}
+func (m *minimalLogger) Error(msg string, err error, fields ...loggerv2.Field) {}
+func (m *minimalLogger) Fatal(msg string, err error, fields ...loggerv2.Field) {}
+func (m *minimalLogger) With(fields ...loggerv2.Field) loggerv2.Logger         { return m }
 func (m *minimalLogger) Close() error                                          { return nil }

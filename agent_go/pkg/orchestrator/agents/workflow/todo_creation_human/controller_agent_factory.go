@@ -20,7 +20,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use the provided code execution mode (already computed with step-level priority) to ensure consistency
 	isCodeExecutionMode := codeExecutionMode
-	hcpo.GetLogger().Infof("🔧 Learning reading agent using code execution mode: %v (matches execution agent)", isCodeExecutionMode)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Learning reading agent using code execution mode: %v (matches execution agent)", isCodeExecutionMode))
 	// Always use learnings folder (unified folder for all learning types)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 
@@ -29,17 +29,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 	if isCodeExecutionMode && executionWorkspacePath != "" {
 		// Add execution workspace path for reading context dependency files
 		readPaths = append(readPaths, executionWorkspacePath)
-		hcpo.GetLogger().Infof("🔧 Learning reading agent: Added execution workspace path for context dependencies: %s", executionWorkspacePath)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Learning reading agent: Added execution workspace path for context dependencies: %s", executionWorkspacePath))
 	}
 	writePaths := []string{} // No write permissions for learning reading agent
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for learning reading agent - Read paths: %v, Write paths: %v (read-only)", readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for learning reading agent - Read paths: %v, Write paths: %v (read-only)", readPaths, writePaths))
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.ExecutionMaxTurns != nil {
 		maxTurns = *stepConfig.ExecutionMaxTurns
-		hcpo.GetLogger().Infof("🔧 Using step-specific learning reading max turns: %d", maxTurns)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning reading max turns: %d", maxTurns))
 	}
 
 	// Determine LLM config: Priority: preset learning reading default > preset execution default > orchestrator default
@@ -53,7 +53,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default learning reading LLM: %s/%s", hcpo.presetLearningReadingLLM.Provider, hcpo.presetLearningReadingLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning reading LLM: %s/%s", hcpo.presetLearningReadingLLM.Provider, hcpo.presetLearningReadingLLM.ModelID))
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetExecutionLLM.Provider,
@@ -61,10 +61,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset execution LLM as fallback for learning reading: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset execution LLM as fallback for learning reading: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Infof("🔧 Using orchestrator default learning reading LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default learning reading LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed
@@ -77,12 +77,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 	// Learning reading agent ALWAYS uses simple mode (direct MCP tool access) regardless of execution agent's mode
 	// CRITICAL: Override orchestrator-level code execution mode setting - learning reading agent always uses simple mode
 	config.UseCodeExecutionMode = false
-	hcpo.GetLogger().Infof("🔧 Learning reading agent always uses simple mode (direct MCP tool access)")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Learning reading agent always uses simple mode (direct MCP tool access)"))
 
 	// Set EnableLargeOutputVirtualTools if specified
 	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
 		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Infof("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
 	}
 
 	// Create agent using learning reading factory function
@@ -90,24 +90,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 
 	// Initialize and setup agent
 	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize learning reading agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize learning reading agent: %w", err), nil)
 	}
 
 	// Validate essentials and connect event bridge
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for %s", agentName), nil)
 	}
 
-	hcpo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for %s", agentName))
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for %s", agentName), nil)
 	}
 
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for %s", agentName), nil)
 	}
 
 	// Connect agent to orchestrator's main event bridge
@@ -115,9 +115,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
 		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Infof("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
 	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
 
 	// CRITICAL: Learning reading agent ONLY uses these two essential tools
@@ -138,32 +138,32 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 					executorsToUse[toolName] = executor
 				}
 				found = true
-				hcpo.GetLogger().Infof("✅ [LEARNING_READING] Found essential tool '%s'", toolName)
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ [LEARNING_READING] Found essential tool '%s'", toolName))
 				break
 			}
 		}
 		if !found {
-			hcpo.GetLogger().Warnf("⚠️ [LEARNING_READING] Essential tool '%s' not found in workspace tools - learning reading agent may not function correctly", toolName)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARNING_READING] Essential tool '%s' not found in workspace tools - learning reading agent may not function correctly", toolName))
 		}
 	}
-	hcpo.GetLogger().Infof("🔧 [LEARNING_READING] Learning reading agent will use ONLY these %d essential tools: %v", len(toolsToRegister), essentialTools)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 [LEARNING_READING] Learning reading agent will use ONLY these %d essential tools: %v", len(toolsToRegister), essentialTools))
 
 	if len(toolsToRegister) > 0 && len(executorsToUse) > 0 {
-		hcpo.GetLogger().Infof("🔧 [LEARNING_READING] Starting tool registration for %s agent", agentName)
-		hcpo.GetLogger().Infof("🔧 [LEARNING_READING] Tools to register: %d, Executors available: %d", len(toolsToRegister), len(executorsToUse))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [LEARNING_READING] Starting tool registration for %s agent", agentName))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [LEARNING_READING] Tools to register: %d, Executors available: %d", len(toolsToRegister), len(executorsToUse)))
 
 		// Wrap executors and enhance tool descriptions with folder guard (automatic)
 		toolsToRegister, wrappedExecutors := hcpo.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
-		hcpo.GetLogger().Infof("🔧 [LEARNING_READING] Wrapped executors: %d (after folder guard)", len(wrappedExecutors))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [LEARNING_READING] Wrapped executors: %d (after folder guard)", len(wrappedExecutors)))
 
-		hcpo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode()))
 
 		registeredCount := 0
 		skippedCount := 0
 		for _, tool := range toolsToRegister {
-			hcpo.GetLogger().Debugf("🔧 [LEARNING_READING] Processing tool: %s", tool.Function.Name)
+			hcpo.GetLogger().Debug(fmt.Sprintf("🔧 [LEARNING_READING] Processing tool: %s", tool.Function.Name))
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
-				hcpo.GetLogger().Debugf("🔧 [LEARNING_READING] Found executor for tool: %s", tool.Function.Name)
+				hcpo.GetLogger().Debug(fmt.Sprintf("🔧 [LEARNING_READING] Found executor for tool: %s", tool.Function.Name))
 				var params map[string]interface{}
 				if tool.Function.Parameters != nil {
 					paramsBytes, err := json.Marshal(tool.Function.Parameters)
@@ -172,7 +172,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 					}
 				}
 				if params == nil {
-					hcpo.GetLogger().Warnf("⚠️ [LEARNING_READING] Failed to convert parameters for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARNING_READING] Failed to convert parameters for tool %s", tool.Function.Name))
 					skippedCount++
 					continue
 				}
@@ -184,17 +184,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 						if cat, exists := hcpo.ToolCategories[tool.Function.Name]; exists {
 							toolCategory = cat
 						} else {
-							hcpo.GetLogger().Errorf("❌ [LEARNING_READING] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							hcpo.GetLogger().Error(fmt.Sprintf("❌ [LEARNING_READING] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name), nil)
 							skippedCount++
 							continue // Skip this tool
 						}
 					} else {
-						hcpo.GetLogger().Errorf("❌ [LEARNING_READING] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [LEARNING_READING] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name), nil)
 						skippedCount++
 						continue // Skip this tool
 					}
 
-					hcpo.GetLogger().Debugf("🔧 [LEARNING_READING] Registering tool %s with category %s", tool.Function.Name, toolCategory)
+					hcpo.GetLogger().Debug(fmt.Sprintf("🔧 [LEARNING_READING] Registering tool %s with category %s", tool.Function.Name, toolCategory))
 					if err := mcpAgent.RegisterCustomTool(
 						tool.Function.Name,
 						tool.Function.Description,
@@ -202,27 +202,25 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 						toolExecutor,
 						toolCategory,
 					); err != nil {
-						hcpo.GetLogger().Errorf("❌ [LEARNING_READING] Failed to register tool %s: %v", tool.Function.Name, err)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [LEARNING_READING] Failed to register tool %s: %v", tool.Function.Name, err), nil)
 						skippedCount++
 						continue // Skip this tool
 					}
 					registeredCount++
-					hcpo.GetLogger().Infof("✅ [LEARNING_READING] Successfully registered tool: %s (category: %s)", tool.Function.Name, toolCategory)
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ [LEARNING_READING] Successfully registered tool: %s (category: %s)", tool.Function.Name, toolCategory))
 				} else {
-					hcpo.GetLogger().Warnf("⚠️ [LEARNING_READING] Failed to convert executor for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARNING_READING] Failed to convert executor for tool %s", tool.Function.Name))
 					skippedCount++
 				}
 			} else {
-				hcpo.GetLogger().Warnf("⚠️ [LEARNING_READING] Executor not found in wrappedExecutors for tool: %s (available executors: %d)", tool.Function.Name, len(wrappedExecutors))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARNING_READING] Executor not found in wrappedExecutors for tool: %s (available executors: %d)", tool.Function.Name, len(wrappedExecutors)))
 				skippedCount++
 			}
 		}
 
-		hcpo.GetLogger().Infof("✅ [LEARNING_READING] Tool registration complete for %s agent - Registered: %d, Skipped: %d, Total: %d (%s mode)",
-			agentName, registeredCount, skippedCount, len(toolsToRegister), baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [LEARNING_READING] Tool registration complete for %s agent - Registered: %d, Skipped: %d, Total: %d (%s mode)", agentName, registeredCount, skippedCount, len(toolsToRegister), baseAgent.GetMode()))
 	} else {
-		hcpo.GetLogger().Warnf("⚠️ [LEARNING_READING] Cannot register tools - toolsToRegister=%v, executorsToUse=%v",
-			toolsToRegister != nil, executorsToUse != nil)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARNING_READING] Cannot register tools - toolsToRegister=%v, executorsToUse=%v", toolsToRegister != nil, executorsToUse != nil))
 	}
 
 	return agent, nil
@@ -245,10 +243,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	var isCodeExecutionMode bool
 	if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		isCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		hcpo.GetLogger().Infof("🔧 Using step-specific code execution mode: %v", isCodeExecutionMode)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v", isCodeExecutionMode))
 	} else {
 		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-		hcpo.GetLogger().Infof("🔧 Using preset code execution mode: %v", isCodeExecutionMode)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset code execution mode: %v", isCodeExecutionMode))
 	}
 	// Always use learnings folder (unified folder for all learning types)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
@@ -260,13 +258,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	readPaths := []string{learningsPath, executionWorkspacePath}
 	writePaths := []string{stepFolderPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/ and execution/, can only write to step-%d/)", readPaths, writePaths, step+1)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/ and execution/, can only write to step-%d/)", readPaths, writePaths, step+1))
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.ExecutionMaxTurns != nil {
 		maxTurns = *stepConfig.ExecutionMaxTurns
-		hcpo.GetLogger().Infof("🔧 Using step-specific execution-only max turns: %d", maxTurns)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d", maxTurns))
 	}
 
 	// Determine LLM config: Priority: temp override > step config > preset default > orchestrator default
@@ -274,10 +272,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
-	hcpo.GetLogger().Infof("🔍 [DEBUG] LLM selection - isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, tempOverrideLLM!=nil=%v",
-		isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hcpo.tempOverrideLLM != nil)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, tempOverrideLLM!=nil=%v", isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hcpo.tempOverrideLLM != nil))
 	if shouldSkipTempOverride && hcpo.tempOverrideLLM != nil {
-		hcpo.GetLogger().Infof("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)"))
 	}
 	if !shouldSkipTempOverride && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
 		// Temporary override takes highest priority (from ExecutionOptions)
@@ -287,7 +284,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 			FallbackModels: []string{},                    // Use empty fallback for temp override
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using TEMPORARY OVERRIDE execution LLM: %s/%s", hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE execution LLM: %s/%s", hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
 	} else if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.ExecutionLLM.Provider,
@@ -295,7 +292,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetExecutionLLM.Provider,
@@ -303,10 +300,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Infof("🔧 Using orchestrator default execution-only LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed
@@ -315,17 +312,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	// Use step-specific servers/tools if provided, otherwise use orchestrator defaults
 	if stepConfig != nil && len(stepConfig.SelectedServers) > 0 {
 		config.ServerNames = stepConfig.SelectedServers
-		hcpo.GetLogger().Infof("🔧 Using step-specific execution-only servers: %v", stepConfig.SelectedServers)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only servers: %v", stepConfig.SelectedServers))
 	} else if stepConfig != nil {
 		// Log when stepConfig exists but SelectedServers is empty (will use orchestrator defaults)
-		hcpo.GetLogger().Infof("🔧 Step config found but no SelectedServers specified - using orchestrator defaults")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but no SelectedServers specified - using orchestrator defaults"))
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
 		config.SelectedTools = stepConfig.SelectedTools
-		hcpo.GetLogger().Infof("🔧 Using step-specific execution-only tools: %v", stepConfig.SelectedTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only tools: %v", stepConfig.SelectedTools))
 	} else if stepConfig != nil {
 		// Log when stepConfig exists but SelectedTools is empty (will use orchestrator defaults)
-		hcpo.GetLogger().Infof("🔧 Step config found but no SelectedTools specified - using orchestrator defaults")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but no SelectedTools specified - using orchestrator defaults"))
 	}
 
 	// Code execution mode: Priority: step config > preset default (already resolved above)
@@ -333,15 +330,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	// We override it based on step config or preset default
 	config.UseCodeExecutionMode = isCodeExecutionMode
 	if isCodeExecutionMode {
-		hcpo.GetLogger().Infof("🔧 Code execution mode enabled for execution-only agent - MCP tools will be accessed via generated Go code")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled for execution-only agent - MCP tools will be accessed via generated Go code"))
 	} else {
-		hcpo.GetLogger().Infof("🔧 Code execution mode disabled for execution-only agent - MCP tools will be exposed directly")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode disabled for execution-only agent - MCP tools will be exposed directly"))
 	}
 
 	// Set EnableLargeOutputVirtualTools if specified
 	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
 		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Infof("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
 	}
 
 	// Create agent using execution-only factory function
@@ -349,24 +346,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 
 	// Initialize and setup agent
 	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize execution-only agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize execution-only agent: %w", err), nil)
 	}
 
 	// Validate essentials and connect event bridge
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for %s", agentName), nil)
 	}
 
-	hcpo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for %s", agentName))
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for %s", agentName), nil)
 	}
 
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for %s", agentName), nil)
 	}
 
 	// Connect agent to orchestrator's main event bridge
@@ -374,9 +371,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
 		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Infof("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
 	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
 
 	// Register custom tools - filter by enabled categories and/or specific tools if specified
@@ -395,7 +392,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 			hcpo.WorkspaceToolExecutors,
 			unifiedEnabledTools,
 		)
-		hcpo.GetLogger().Infof("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools))
 	} else {
 		// Backward compatible: use all tools if no filtering specified (default behavior)
 		toolsToRegister = hcpo.WorkspaceTools
@@ -406,7 +403,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 		// Wrap executors and enhance tool descriptions with folder guard (automatic)
 		toolsToRegister, wrappedExecutors := hcpo.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
 
-		hcpo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode()))
 
 		for _, tool := range toolsToRegister {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -418,7 +415,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 					}
 				}
 				if params == nil {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert parameters for tool %s", tool.Function.Name))
 					continue
 				}
 
@@ -429,11 +426,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 						if cat, exists := hcpo.ToolCategories[tool.Function.Name]; exists {
 							toolCategory = cat
 						} else {
-							hcpo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name), nil)
 							continue // Skip this tool
 						}
 					} else {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name), nil)
 						continue // Skip this tool
 					}
 
@@ -444,22 +441,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 						toolExecutor,
 						toolCategory,
 					); err != nil {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err), nil)
 						continue // Skip this tool
 					}
 				} else {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert executor for tool %s", tool.Function.Name))
 				}
 			}
 		}
 
-		hcpo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode()))
 
 		// Set folder guard paths on MCP agent (required for both code execution mode and simple mode)
 		// This ensures path validation works at the tool executor level
 		readPaths, writePaths := hcpo.GetFolderGuardPaths()
 		mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
-		hcpo.GetLogger().Infof("🔒 Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths))
 
 		// Update code execution registry with wrapped executors for folder guard to work (code execution mode only)
 		if isCodeExecutionMode {
@@ -467,9 +464,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 			// The registry generation uses these paths to create the path validation code
 			// This ensures LLM-generated Go code can only access paths within allowed boundaries
 			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for %s: %v", agentName, err))
 			} else {
-				hcpo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName)
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName))
 			}
 		}
 	}
@@ -494,13 +491,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 	readPaths := []string{executionPath}
 	writePaths := []string{} // No write permissions - validation agent only reads and returns structured JSON
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for validation agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for validation agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths))
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.ValidationMaxTurns != nil {
 		maxTurns = *stepConfig.ValidationMaxTurns
-		hcpo.GetLogger().Infof("🔧 Using step-specific validation max turns: %d", maxTurns)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific validation max turns: %d", maxTurns))
 	}
 
 	// Determine LLM config: Priority: step config > preset default > orchestrator default
@@ -514,7 +511,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using step-specific validation LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific validation LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
 	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetValidationLLM.Provider,
@@ -522,10 +519,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default validation LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default validation LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Infof("🔧 Using orchestrator default validation LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default validation LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed
@@ -537,12 +534,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 
 	// Code execution mode only applies to execution agents, not validation agents
 	config.UseCodeExecutionMode = false
-	hcpo.GetLogger().Infof("🔧 Disabling code execution mode for validation agent (only execution agents use MCP tools)")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for validation agent (only execution agents use MCP tools)"))
 
 	// Set EnableLargeOutputVirtualTools if specified
 	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
 		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Infof("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
 	}
 
 	// Create agent using provided factory function
@@ -550,24 +547,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 
 	// Initialize and setup agent (inlined from CreateAndSetupStandardAgent)
 	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize validation agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize validation agent: %w", err), nil)
 	}
 
 	// Validate essentials and connect event bridge
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for %s", agentName), nil)
 	}
 
-	hcpo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for %s", agentName))
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for %s", agentName), nil)
 	}
 
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for %s", agentName), nil)
 	}
 
 	// Connect agent to orchestrator's main event bridge
@@ -575,9 +572,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
 		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Infof("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
 	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
 
 	// Register custom tools - filter by enabled categories and/or specific tools if specified
@@ -596,7 +593,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 			hcpo.WorkspaceToolExecutors,
 			unifiedEnabledTools,
 		)
-		hcpo.GetLogger().Infof("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools))
 	} else {
 		// Backward compatible: use all tools if no filtering specified (default behavior)
 		toolsToRegister = hcpo.WorkspaceTools
@@ -607,7 +604,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 		// Wrap executors and enhance tool descriptions with folder guard (automatic)
 		toolsToRegister, wrappedExecutors := hcpo.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
 
-		hcpo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode()))
 
 		for _, tool := range toolsToRegister {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -619,7 +616,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 					}
 				}
 				if params == nil {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert parameters for tool %s", tool.Function.Name))
 					continue
 				}
 
@@ -630,11 +627,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 						if cat, exists := hcpo.ToolCategories[tool.Function.Name]; exists {
 							toolCategory = cat
 						} else {
-							hcpo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name), nil)
 							continue // Skip this tool
 						}
 					} else {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name), nil)
 						continue // Skip this tool
 					}
 
@@ -645,16 +642,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 						toolExecutor,
 						toolCategory,
 					); err != nil {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err), nil)
 						continue // Skip this tool
 					}
 				} else {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert executor for tool %s", tool.Function.Name))
 				}
 			}
 		}
 
-		hcpo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode()))
 
 		// Update code execution registry with wrapped executors for folder guard to work
 		if hcpo.GetUseCodeExecutionMode() {
@@ -663,12 +660,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 			// This ensures LLM-generated Go code can only access paths within allowed boundaries
 			readPaths, writePaths := hcpo.GetFolderGuardPaths()
 			mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
-			hcpo.GetLogger().Infof("🔒 [CODE_EXECUTION] Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 [CODE_EXECUTION] Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths))
 
 			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for %s: %v", agentName, err))
 			} else {
-				hcpo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName)
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName))
 			}
 		}
 	}
@@ -693,13 +690,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionA
 	readPaths := []string{executionPath}
 	writePaths := []string{} // No write permissions - prerequisite detection agent only reads and returns structured JSON
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for prerequisite detection agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for prerequisite detection agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths))
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.ValidationMaxTurns != nil {
 		maxTurns = *stepConfig.ValidationMaxTurns
-		hcpo.GetLogger().Infof("🔧 Using step-specific prerequisite detection max turns: %d", maxTurns)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific prerequisite detection max turns: %d", maxTurns))
 	}
 
 	// Determine LLM config: Priority: step config > preset default > orchestrator default
@@ -713,7 +710,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionA
 			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using step-specific prerequisite detection LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific prerequisite detection LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
 	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetValidationLLM.Provider,
@@ -721,10 +718,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionA
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default prerequisite detection LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default prerequisite detection LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Infof("🔧 Using orchestrator default prerequisite detection LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default prerequisite detection LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed
@@ -736,12 +733,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionA
 
 	// Code execution mode only applies to execution agents, not prerequisite detection agents
 	config.UseCodeExecutionMode = false
-	hcpo.GetLogger().Infof("🔧 Disabling code execution mode for prerequisite detection agent (only execution agents use MCP tools)")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for prerequisite detection agent (only execution agents use MCP tools)"))
 
 	// Set EnableLargeOutputVirtualTools if specified
 	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
 		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Infof("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
 	}
 
 	// Create agent using provided factory function
@@ -749,24 +746,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionA
 
 	// Initialize and setup agent (inlined from CreateAndSetupStandardAgent)
 	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize prerequisite detection agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize prerequisite detection agent: %w", err), nil)
 	}
 
 	// Validate essentials and connect event bridge
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for %s", agentName), nil)
 	}
 
-	hcpo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for %s", agentName))
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for %s", agentName), nil)
 	}
 
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for %s", agentName), nil)
 	}
 
 	// Connect agent to orchestrator's main event bridge
@@ -774,12 +771,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionA
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
 		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Infof("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
 	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
 
-	hcpo.GetLogger().Infof("✅ Prerequisite detection agent created successfully: %s", agentName)
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Prerequisite detection agent created successfully: %s", agentName))
 	return agent, nil
 }
 
@@ -801,30 +798,30 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 
 	// Use the provided step-specific code execution mode (already computed with step-level priority) to ensure consistency
 	wasCodeExecutionMode := isCodeExecutionMode
-	hcpo.GetLogger().Infof("🔧 Success learning agent using step-specific code execution mode: %v (matches execution agent)", wasCodeExecutionMode)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Success learning agent using step-specific code execution mode: %v (matches execution agent)", wasCodeExecutionMode))
 
 	// Step-specific learnings: write to learnings/step-{X} at workspace root (not inside runs/)
 	// step parameter is already 1-based (passed from runSuccessLearningPhase/runFailureLearningPhase)
 	stepNumber := step
 	learningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
-	hcpo.GetLogger().Infof("📁 Step-specific learnings - writing to step folder: %s", learningsPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - writing to step folder: %s", learningsPath))
 
 	// Build read paths: execution path + base learnings path (for reading existing learnings)
 	readPaths := []string{executionPath}
 	// Add base learnings path for reading existing learnings (we read from base but write to step folder)
 	baseLearningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 	readPaths = append(readPaths, baseLearningsPath)
-	hcpo.GetLogger().Infof("📁 Step-specific learnings: reading from base folder %s, writing to step folder %s", baseLearningsPath, learningsPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings: reading from base folder %s, writing to step folder %s", baseLearningsPath, learningsPath))
 
 	writePaths := []string{learningsPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for success learning agent - Read paths: %v, Write paths: %v", readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for success learning agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.LearningMaxTurns != nil {
 		maxTurns = *stepConfig.LearningMaxTurns
-		hcpo.GetLogger().Infof("🔧 Using step-specific learning max turns: %d", maxTurns)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning max turns: %d", maxTurns))
 	}
 
 	// Determine LLM config: Priority: step config > preset default > orchestrator default
@@ -838,7 +835,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
 	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetLearningLLM.Provider,
@@ -846,10 +843,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Infof("🔧 Using orchestrator default learning LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default learning LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed
@@ -864,19 +861,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 	originalCodeExecMode := config.UseCodeExecutionMode
 	config.UseCodeExecutionMode = false
 	if wasCodeExecutionMode {
-		hcpo.GetLogger().Infof("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)"))
 		if originalCodeExecMode {
-			hcpo.GetLogger().Warnf("⚠️ Code execution mode was enabled in config but disabled for learning agent (original: %v, new: %v)", originalCodeExecMode, config.UseCodeExecutionMode)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Code execution mode was enabled in config but disabled for learning agent (original: %v, new: %v)", originalCodeExecMode, config.UseCodeExecutionMode))
 		}
 	} else {
-		hcpo.GetLogger().Infof("🔧 Disabling code execution mode for success learning agent (only execution agents use MCP tools)")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for success learning agent (only execution agents use MCP tools)"))
 	}
-	hcpo.GetLogger().Infof("🔧 Learning agent code execution mode: %v (NoServers=%v, will be auto-disabled if needed)", config.UseCodeExecutionMode, config.ServerNames[0] == mcpclient.NoServers)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Learning agent code execution mode: %v (NoServers=%v, will be auto-disabled if needed)", config.UseCodeExecutionMode, config.ServerNames[0] == mcpclient.NoServers))
 
 	// Set EnableLargeOutputVirtualTools if specified
 	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
 		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Infof("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
 	}
 
 	// Create agent using appropriate factory function based on code execution mode
@@ -889,24 +886,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 
 	// Initialize and setup agent (inlined from CreateAndSetupStandardAgentWithCustomServers)
 	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize success learning agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize success learning agent: %w", err), nil)
 	}
 
 	// Validate essentials and connect event bridge
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for %s", agentName), nil)
 	}
 
-	hcpo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for %s", agentName))
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for %s", agentName), nil)
 	}
 
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for %s", agentName), nil)
 	}
 
 	// Connect agent to orchestrator's main event bridge
@@ -914,9 +911,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
 		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Infof("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
 	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
 
 	// Register custom tools - filter by enabled categories and/or specific tools if specified
@@ -935,7 +932,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 			hcpo.WorkspaceToolExecutors,
 			unifiedEnabledTools,
 		)
-		hcpo.GetLogger().Infof("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools))
 	} else {
 		// Backward compatible: use all tools if no filtering specified (default behavior)
 		toolsToRegister = hcpo.WorkspaceTools
@@ -946,7 +943,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 		// Wrap executors and enhance tool descriptions with folder guard (automatic)
 		toolsToRegister, wrappedExecutors := hcpo.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
 
-		hcpo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode()))
 
 		for _, tool := range toolsToRegister {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -958,7 +955,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 					}
 				}
 				if params == nil {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert parameters for tool %s", tool.Function.Name))
 					continue
 				}
 
@@ -969,11 +966,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 						if cat, exists := hcpo.ToolCategories[tool.Function.Name]; exists {
 							toolCategory = cat
 						} else {
-							hcpo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name), nil)
 							continue // Skip this tool
 						}
 					} else {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name), nil)
 						continue // Skip this tool
 					}
 
@@ -984,16 +981,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 						toolExecutor,
 						toolCategory,
 					); err != nil {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err), nil)
 						continue // Skip this tool
 					}
 				} else {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert executor for tool %s", tool.Function.Name))
 				}
 			}
 		}
 
-		hcpo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode()))
 
 		// Update code execution registry with wrapped executors for folder guard to work
 		if hcpo.GetUseCodeExecutionMode() {
@@ -1002,12 +999,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 			// This ensures LLM-generated Go code can only access paths within allowed boundaries
 			readPaths, writePaths := hcpo.GetFolderGuardPaths()
 			mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
-			hcpo.GetLogger().Infof("🔒 [CODE_EXECUTION] Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 [CODE_EXECUTION] Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths))
 
 			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for %s: %v", agentName, err))
 			} else {
-				hcpo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName)
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName))
 			}
 		}
 	}
@@ -1032,30 +1029,30 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 
 	// Use the provided step-specific code execution mode (already computed with step-level priority) to ensure consistency
 	wasCodeExecutionMode := isCodeExecutionMode
-	hcpo.GetLogger().Infof("🔧 Failure learning agent using step-specific code execution mode: %v (matches execution agent)", wasCodeExecutionMode)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Failure learning agent using step-specific code execution mode: %v (matches execution agent)", wasCodeExecutionMode))
 
 	// Step-specific learnings: write to learnings/step-{X} at workspace root (not inside runs/)
 	// step parameter is already 1-based (passed from runSuccessLearningPhase/runFailureLearningPhase)
 	stepNumber := step
 	learningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
-	hcpo.GetLogger().Infof("📁 Step-specific learnings - writing to step folder: %s", learningsPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - writing to step folder: %s", learningsPath))
 
 	// Build read paths: execution path + base learnings path (for reading existing learnings)
 	readPaths := []string{executionPath}
 	// Add base learnings path for reading existing learnings (we read from base but write to step folder)
 	baseLearningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 	readPaths = append(readPaths, baseLearningsPath)
-	hcpo.GetLogger().Infof("📁 Step-specific learnings: reading from base folder %s, writing to step folder %s", baseLearningsPath, learningsPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings: reading from base folder %s, writing to step folder %s", baseLearningsPath, learningsPath))
 
 	writePaths := []string{learningsPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for failure learning agent - Read paths: %v, Write paths: %v", readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for failure learning agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.LearningMaxTurns != nil {
 		maxTurns = *stepConfig.LearningMaxTurns
-		hcpo.GetLogger().Infof("🔧 Using step-specific learning max turns: %d", maxTurns)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning max turns: %d", maxTurns))
 	}
 
 	// Determine LLM config: Priority: step config > preset default > orchestrator default
@@ -1069,7 +1066,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
 	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetLearningLLM.Provider,
@@ -1077,10 +1074,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Infof("🔧 Using orchestrator default learning LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default learning LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed
@@ -1095,19 +1092,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 	originalCodeExecMode := config.UseCodeExecutionMode
 	config.UseCodeExecutionMode = false
 	if wasCodeExecutionMode {
-		hcpo.GetLogger().Infof("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)"))
 		if originalCodeExecMode {
-			hcpo.GetLogger().Warnf("⚠️ Code execution mode was enabled in config but disabled for learning agent (original: %v, new: %v)", originalCodeExecMode, config.UseCodeExecutionMode)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Code execution mode was enabled in config but disabled for learning agent (original: %v, new: %v)", originalCodeExecMode, config.UseCodeExecutionMode))
 		}
 	} else {
-		hcpo.GetLogger().Infof("🔧 Disabling code execution mode for failure learning agent (only execution agents use MCP tools)")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for failure learning agent (only execution agents use MCP tools)"))
 	}
-	hcpo.GetLogger().Infof("🔧 Learning agent code execution mode: %v (NoServers=%v, will be auto-disabled if needed)", config.UseCodeExecutionMode, config.ServerNames[0] == mcpclient.NoServers)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Learning agent code execution mode: %v (NoServers=%v, will be auto-disabled if needed)", config.UseCodeExecutionMode, config.ServerNames[0] == mcpclient.NoServers))
 
 	// Set EnableLargeOutputVirtualTools if specified
 	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
 		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Infof("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
 	}
 
 	// Create agent using appropriate factory function based on code execution mode
@@ -1120,24 +1117,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 
 	// Initialize and setup agent (inlined from CreateAndSetupStandardAgentWithCustomServers)
 	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize failure learning agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize failure learning agent: %w", err), nil)
 	}
 
 	// Validate essentials and connect event bridge
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for %s", agentName), nil)
 	}
 
-	hcpo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for %s", agentName))
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for %s", agentName), nil)
 	}
 
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for %s", agentName), nil)
 	}
 
 	// Connect agent to orchestrator's main event bridge
@@ -1145,9 +1142,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
 		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Infof("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
 	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
 
 	// Register custom tools - filter by enabled categories and/or specific tools if specified
@@ -1166,7 +1163,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 			hcpo.WorkspaceToolExecutors,
 			unifiedEnabledTools,
 		)
-		hcpo.GetLogger().Infof("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools))
 	} else {
 		// Backward compatible: use all tools if no filtering specified (default behavior)
 		toolsToRegister = hcpo.WorkspaceTools
@@ -1177,7 +1174,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 		// Wrap executors and enhance tool descriptions with folder guard (automatic)
 		toolsToRegister, wrappedExecutors := hcpo.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
 
-		hcpo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Registering %d custom tools for %s agent (%s mode)", len(toolsToRegister), agentName, baseAgent.GetMode()))
 
 		for _, tool := range toolsToRegister {
 			if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -1189,7 +1186,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 					}
 				}
 				if params == nil {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert parameters for tool %s", tool.Function.Name))
 					continue
 				}
 
@@ -1200,11 +1197,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 						if cat, exists := hcpo.ToolCategories[tool.Function.Name]; exists {
 							toolCategory = cat
 						} else {
-							hcpo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
+							hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name), nil)
 							continue // Skip this tool
 						}
 					} else {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name), nil)
 						continue // Skip this tool
 					}
 
@@ -1215,16 +1212,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 						toolExecutor,
 						toolCategory,
 					); err != nil {
-						hcpo.GetLogger().Errorf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Failed to register tool %s: %v", tool.Function.Name, err), nil)
 						continue // Skip this tool
 					}
 				} else {
-					hcpo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+					hcpo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert executor for tool %s", tool.Function.Name))
 				}
 			}
 		}
 
-		hcpo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode()))
 
 		// Update code execution registry with wrapped executors for folder guard to work
 		if hcpo.GetUseCodeExecutionMode() {
@@ -1233,12 +1230,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 			// This ensures LLM-generated Go code can only access paths within allowed boundaries
 			readPaths, writePaths := hcpo.GetFolderGuardPaths()
 			mcpAgent.SetFolderGuardPaths(readPaths, writePaths)
-			hcpo.GetLogger().Infof("🔒 [CODE_EXECUTION] Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 [CODE_EXECUTION] Folder guard paths set for %s agent - Read: %v, Write: %v", agentName, readPaths, writePaths))
 
 			if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for %s: %v", agentName, err))
 			} else {
-				hcpo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName)
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ [CODE_EXECUTION] Registry updated for %s agent - folder guard enabled", agentName))
 			}
 		}
 	}

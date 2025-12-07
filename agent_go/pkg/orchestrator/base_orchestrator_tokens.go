@@ -67,7 +67,7 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 	key := fmt.Sprintf("%s:%d", phase, step)
 	usage, exists := bo.stepTokenAccumulator[key]
 	if !exists {
-		bo.GetLogger().Warnf("⚠️ No token usage data found for step %s:%d", phase, step)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No token usage data found for step %s:%d", phase, step))
 		return
 	}
 
@@ -92,8 +92,7 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 		bo.stepTokenTitles[key] = stepTitle
 	}
 
-	bo.GetLogger().Infof("📊 Emitted step token usage for %s:%d - Total: %d tokens (Prompt: %d, Completion: %d, Cache: %d, Reasoning: %d, Calls: %d)",
-		phase, step, usage.TotalTokens, usage.PromptTokens, usage.CompletionTokens, usage.CacheTokens, usage.ReasoningTokens, usage.LLMCallCount)
+	// Removed verbose logging
 
 	// Clear accumulated data if requested
 	if clearAfterEmit {
@@ -172,7 +171,7 @@ func (bo *BaseOrchestrator) GetAllModelTokenUsage() map[string]*ModelTokenUsage 
 // and preserves the original CreatedAt timestamp.
 func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFolder string) error {
 	if iterationFolder == "" {
-		bo.GetLogger().Warnf("⚠️ No iteration folder provided, skipping token usage persistence")
+		// Removed verbose logging
 		return nil
 	}
 
@@ -180,7 +179,7 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 	workspacePath := bo.GetWorkspacePath()
 	filePath := filepath.Join(workspacePath, "runs", iterationFolder, "token_usage.json")
 
-	bo.GetLogger().Infof("💾 Persisting token usage to: %s", filePath)
+	// Removed verbose logging
 
 	// Read existing token usage file if it exists
 	var existingFile *TokenUsageFile
@@ -188,16 +187,16 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 	if err == nil && existingContent != "" {
 		// File exists, try to parse it
 		if err := json.Unmarshal([]byte(existingContent), &existingFile); err != nil {
-			bo.GetLogger().Warnf("⚠️ Failed to parse existing token_usage.json: %v (will create new file)", err)
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing token_usage.json: %v (will create new file)", err))
 			existingFile = nil
 		} else {
-			bo.GetLogger().Debugf("📖 Read existing token usage file with %d models, %d steps", len(existingFile.ByModel), len(existingFile.ByStep))
+			// Removed verbose logging
 		}
 	} else if err != nil {
 		// File doesn't exist or error reading - this is expected for new files
 		// Only log if it's not a "file not found" type error
 		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			bo.GetLogger().Debugf("📋 Token usage file does not exist yet (will create new): %s", filePath)
+			// Removed verbose logging
 		}
 		existingFile = nil
 	}
@@ -434,8 +433,7 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		stepTypeBreakdown = append(stepTypeBreakdown, fmt.Sprintf("%s:%.3fM", stepType, usage.TotalTokens))
 	}
 
-	bo.GetLogger().Infof("✅ Persisted token usage: %.3fM tokens across %d models, %d steps, %d step types (%s)",
-		totalTokens, len(tokenFile.ByModel), len(tokenFile.ByStep), len(tokenFile.ByStepType), strings.Join(stepTypeBreakdown, ", "))
+	// Removed verbose logging
 
 	return nil
 }

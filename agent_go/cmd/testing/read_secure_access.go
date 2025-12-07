@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
+	mcpagent "mcpagent/agent"
 	"mcpagent/llm"
-	"mcp-agent/agent_go/pkg/external"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
@@ -48,11 +51,11 @@ Example:
 		InitTestLogger(logFile, logLevel)
 		logger := GetTestLogger()
 
-		logger.Infof("=== Read Secure Access Check Image Test ===")
+		logger.Info(fmt.Sprintf("=== Read Secure Access Check Image Test ==="))
 
 		// Hardcoded image path
 		imagePath := "Downloads/secure_access_check.png"
-		logger.Infof("Testing with image: %s", imagePath)
+		logger.Info(fmt.Sprintf("Testing with image: %s", imagePath))
 
 		// Get provider and model from viper or use defaults
 		provider := viper.GetString("test.provider")
@@ -72,38 +75,69 @@ Example:
 			}
 		}
 
-		logger.Infof("Provider: %s, Model: %s", provider, model)
+		logger.Info(fmt.Sprintf("Provider: %s, Model: %s", provider, model))
 
 		// Convert provider string to llm.Provider type
 		llmProvider := llm.Provider(provider)
 
-		// Create agent configuration
-		agentConfig := external.DefaultConfig().
-			WithAgentMode(external.SimpleAgent).
-			WithServer("fileserver", "configs/mcp_servers_simple.json").
-			WithLLM(llmProvider, model, 0.7).
-			WithMaxTurns(10).
-			WithLogger(logger)
+		// Initialize LLM
+		var llmModel llmtypes.Model
+		var err error
 
-		logger.Infof("Agent configuration created - provider: %s, model: %s", provider, model)
+		// Get API keys from environment
+		apiKeys := &llm.ProviderAPIKeys{}
+		if provider == "openai" {
+			openAIKey := os.Getenv("OPENAI_API_KEY")
+			if openAIKey == "" {
+				return fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+			}
+			apiKeys.OpenAI = &openAIKey
+		} else if provider == "bedrock" {
+			// Bedrock uses AWS credentials from environment
+		} else if provider == "vertex" {
+			// Vertex uses GCP credentials from environment
+		}
+
+		llmModel, err = llm.InitializeLLM(llm.Config{
+			Provider:    llmProvider,
+			ModelID:     model,
+			Temperature: 0.7,
+			Logger:      nil, // Use default logger
+			APIKeys:     apiKeys,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialize LLM: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("Agent configuration created - provider: %s, model: %s", provider, model))
 
 		// Create the agent
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
-		agent, err := external.NewAgent(ctx, agentConfig)
+		agent, err := mcpagent.NewAgent(
+			ctx,
+			llmModel,
+			"fileserver",                      // server name
+			"configs/mcp_servers_simple.json", // config path
+			model,                             // model ID
+			nil,                               // tracer
+			"",                                // trace ID
+			nil,                               // logger (use default)
+			mcpagent.WithMaxTurns(10),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to create agent: %w", err)
 		}
 		defer agent.Close()
 
-		logger.Infof("✅ Agent created successfully")
+		logger.Info(fmt.Sprintf("✅ Agent created successfully"))
 
 		// Register workspace tools (including read_image)
 		workspaceTools := virtualtools.CreateWorkspaceTools()
 		workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
 
-		logger.Infof("Registering %d workspace tools", len(workspaceTools))
+		logger.Info(fmt.Sprintf("Registering %d workspace tools", len(workspaceTools)))
 
 		for _, tool := range workspaceTools {
 			toolName := tool.Function.Name
@@ -117,7 +151,7 @@ Example:
 					}
 				}
 				if params == nil {
-					logger.Warnf("Warning: Failed to convert parameters for tool %s", toolName)
+					logger.Warn(fmt.Sprintf("Warning: Failed to convert parameters for tool %s", toolName))
 					continue
 				}
 
@@ -128,27 +162,27 @@ Example:
 					params,
 					executor,
 				)
-				logger.Infof("✅ Registered workspace tool: %s", toolName)
+				logger.Info(fmt.Sprintf("✅ Registered workspace tool: %s", toolName))
 			}
 		}
 
-		logger.Infof("✅ All workspace tools registered")
+		logger.Info(fmt.Sprintf("✅ All workspace tools registered"))
 
 		// Test read_image tool with the specific image
 		prompt := fmt.Sprintf("Please read the file '%s' and describe what you see in it.", imagePath)
 
-		logger.Infof("📝 Invoking agent with prompt: %s", prompt)
-		logger.Infof("🔍 This should trigger the read_image tool")
+		logger.Info(fmt.Sprintf("📝 Invoking agent with prompt: %s", prompt))
+		logger.Info(fmt.Sprintf("🔍 This should trigger the read_image tool"))
 
 		// Invoke the agent
-		response, err := agent.Invoke(ctx, prompt)
+		response, err := agent.Ask(ctx, prompt)
 		if err != nil {
-			logger.Errorf("❌ Read secure access image test failed: %v", err)
+			logger.Error(fmt.Sprintf("❌ Read secure access image test failed: %v", err), nil)
 			return fmt.Errorf("read secure access image test failed: %w", err)
 		}
 
-		logger.Infof("✅ Read secure access image test successful")
-		logger.Infof("Response length: %d characters", len(response))
+		logger.Info(fmt.Sprintf("✅ Read secure access image test successful"))
+		logger.Info(fmt.Sprintf("Response length: %d characters", len(response)))
 
 		// Show response
 		fmt.Printf("\n" + strings.Repeat("=", 80) + "\n")
@@ -159,13 +193,12 @@ Example:
 		fmt.Printf(strings.Repeat("=", 80) + "\n")
 
 		// Show agent capabilities
-		capabilities := agent.GetCapabilities()
-		fmt.Printf("\n📊 Agent Capabilities:\n%s\n", capabilities)
+		servers := agent.GetServerNames()
+		fmt.Printf("\n📊 Connected Servers: %v\n", servers)
 
-		logger.Infof("✅ Read secure access image test completed successfully")
+		logger.Info(fmt.Sprintf("✅ Read secure access image test completed successfully"))
 		fmt.Println("\n🎉 Read secure access image test completed successfully!")
 
 		return nil
 	},
 }
-

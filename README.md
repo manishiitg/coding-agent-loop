@@ -137,8 +137,8 @@ cd agent_go
 ../bin/orchestrator orchestrator --query "Create a comprehensive security assessment of my AWS infrastructure"
 ```
 
-### **External Package Usage**
-The external package provides a clean Go API for integrating the MCP agent into your applications. See the [External Package Documentation](agent_go/pkg/external/README.md) for detailed usage examples.
+### **Using MCP Agent Directly**
+The MCP agent can be used directly in your Go applications. See the [MCP Agent Examples](mcpagent/examples/) for detailed usage examples.
 
 ## 🔧 **Configuration**
 
@@ -146,7 +146,7 @@ The external package provides a clean Go API for integrating the MCP agent into 
 Edit `agent_go/configs/mcp_server_actual.json` to configure your MCP servers. See the [Configuration Guide](agent_go/configs/) for detailed examples.
 
 ### **Agent Configuration**
-The agent supports flexible configuration through the external package. See the [External Package Documentation](agent_go/pkg/external/README.md) for detailed configuration options and examples.
+The agent supports flexible configuration through functional options. See the [MCP Agent Examples](mcpagent/examples/) for detailed configuration options and examples.
 
 ## 🧪 **Testing**
 
@@ -244,7 +244,6 @@ mcp-agent-builder-go/
 │   ├── pkg/
 │   │   ├── mcpagent/        # Core agent implementation
 │   │   ├── mcpclient/       # MCP client layer
-│   │   └── external/        # External package API
 │   ├── cmd/                 # CLI commands
 │   ├── configs/             # MCP server configurations
 │   └── internal/            # Internal packages

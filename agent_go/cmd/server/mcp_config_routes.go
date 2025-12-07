@@ -29,7 +29,7 @@ type MCPConfigResponse struct {
 func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
-		api.logger.Errorf("Failed to reload base MCP config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to reload base MCP config: %w", err), err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
 	}
@@ -40,7 +40,7 @@ func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		// User config doesn't exist yet, use empty config
 		userConfig = &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
-		api.logger.Debugf("No user config found at %s, using empty user config", userConfigPath)
+		api.logger.Debug(fmt.Sprintf("No user config found at %s, using empty user config", userConfigPath))
 	}
 
 	// Create ordered response with base servers first, then user servers
@@ -89,8 +89,8 @@ func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	api.logger.Debugf("Merged config: %d base servers + %d user servers = %d total",
-		len(api.mcpConfig.MCPServers), len(userConfig.MCPServers), len(orderedConfig.MCPServers))
+	api.logger.Debug(fmt.Sprintf("Merged config: %d base servers + %d user servers = %d total",
+		len(api.mcpConfig.MCPServers), len(userConfig.MCPServers), len(orderedConfig.MCPServers)))
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -139,7 +139,7 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 
 	// Reload base config to get current base servers
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
-		api.logger.Errorf("Failed to reload base config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to reload base config: %w", err), err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
 	}
@@ -154,7 +154,7 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 	// Save only user additions to user config file
 	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
 	if err := mcpclient.SaveConfig(userConfigPath, userAdditions); err != nil {
-		api.logger.Errorf("Failed to save user MCP config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to save user MCP config: %w", err), err)
 		http.Error(w, fmt.Sprintf("Failed to save user config: %w", err), http.StatusInternalServerError)
 		return
 	}
@@ -162,7 +162,7 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 	// Clear cache to force fresh discovery
 	cacheManager := mcpcache.GetCacheManager(api.logger)
 	if err := cacheManager.Clear(); err != nil {
-		api.logger.Warnf("Failed to clear cache: %w", err)
+		api.logger.Warn(fmt.Sprintf("Failed to clear cache: %w", err))
 	}
 
 	// Trigger background discovery
@@ -173,7 +173,7 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 	api.toolStatus = make(map[string]ToolStatus)
 	api.toolStatusMux.Unlock()
 
-	api.logger.Infof("✅ User MCP config saved successfully with %d user additions", len(userAdditions.MCPServers))
+	api.logger.Info(fmt.Sprintf("✅ User MCP config saved successfully with %d user additions", len(userAdditions.MCPServers)))
 
 	response := MCPConfigResponse{
 		Status:  "saved",
@@ -190,7 +190,7 @@ func (api *StreamingAPI) handleDiscoverServers(w http.ResponseWriter, r *http.Re
 	// Trigger background discovery
 	go api.triggerMCPDiscovery()
 
-	api.logger.Infof("🔄 MCP server discovery triggered manually")
+	api.logger.Info("🔄 MCP server discovery triggered manually")
 
 	response := MCPConfigResponse{
 		Status:  "discovery_started",
@@ -268,17 +268,17 @@ func (api *StreamingAPI) loadMergedConfig() (*mcpclient.MCPConfig, error) {
 
 	// Load user additions (if any)
 	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
-	api.logger.Debugf("🔍 Attempting to load user config from: %s", userConfigPath)
+	api.logger.Debug(fmt.Sprintf("🔍 Attempting to load user config from: %s", userConfigPath))
 
 	userConfig, err := mcpclient.LoadConfig(userConfigPath)
 	if err != nil {
 		// User config doesn't exist yet, use empty config
 		userConfig = &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
-		api.logger.Debugf("❌ No user config found at %s, using empty user config. Error: %v", userConfigPath, err)
+		api.logger.Debug(fmt.Sprintf("❌ No user config found at %s, using empty user config. Error: %v", userConfigPath, err))
 	} else {
-		api.logger.Debugf("✅ Successfully loaded user config from %s with %d servers", userConfigPath, len(userConfig.MCPServers))
+		api.logger.Debug(fmt.Sprintf("✅ Successfully loaded user config from %s with %d servers", userConfigPath, len(userConfig.MCPServers)))
 		for serverName := range userConfig.MCPServers {
-			api.logger.Debugf("  📋 User config server: %s", serverName)
+			api.logger.Debug(fmt.Sprintf("  📋 User config server: %s", serverName))
 		}
 	}
 
@@ -297,13 +297,13 @@ func (api *StreamingAPI) loadMergedConfig() (*mcpclient.MCPConfig, error) {
 		mergedConfig.MCPServers[name] = server
 	}
 
-	api.logger.Debugf("Merged config: %d base servers + %d user servers = %d total",
-		len(api.mcpConfig.MCPServers), len(userConfig.MCPServers), len(mergedConfig.MCPServers))
+	api.logger.Debug(fmt.Sprintf("Merged config: %d base servers + %d user servers = %d total",
+		len(api.mcpConfig.MCPServers), len(userConfig.MCPServers), len(mergedConfig.MCPServers)))
 
 	// Debug: List all servers in merged config
-	api.logger.Debugf("🔍 Final merged config servers:")
+	api.logger.Debug("🔍 Final merged config servers:")
 	for serverName := range mergedConfig.MCPServers {
-		api.logger.Debugf("  📋 Merged server: %s", serverName)
+		api.logger.Debug(fmt.Sprintf("  📋 Merged server: %s", serverName))
 	}
 
 	return mergedConfig, nil
@@ -335,7 +335,7 @@ func (api *StreamingAPI) createTempMergedConfig() (string, error) {
 
 // triggerMCPDiscovery triggers MCP server discovery in the background
 func (api *StreamingAPI) triggerMCPDiscovery() {
-	api.logger.Infof("🔄 Triggering MCP server discovery after config change")
+	api.logger.Info("🔄 Triggering MCP server discovery after config change")
 
 	// Use existing tool cache initialization
 	api.initializeToolCache()
@@ -349,14 +349,14 @@ func (api *StreamingAPI) triggerMCPDiscovery() {
 		api.startBackgroundDiscovery()
 	}
 
-	api.logger.Infof("✅ MCP discovery process initiated")
+	api.logger.Info("✅ MCP discovery process initiated")
 }
 
 // handleGetMCPConfigStatus handles GET requests to get config status
 func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
-		api.logger.Errorf("Failed to reload base MCP config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to reload base MCP config: %w", err), err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
 	}

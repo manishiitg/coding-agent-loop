@@ -36,7 +36,7 @@ var toolOutputHandlerTestCmd = &cobra.Command{
 		}
 		defer os.RemoveAll(testDir)
 
-		logger.Infof("Created test directory: %s", testDir)
+		logger.Info(fmt.Sprintf("Created test directory: %s", testDir))
 
 		// Test the extractActualContent function with MCP format
 		logger.Info("\n--- Test 1: Content Extraction ---")
@@ -103,7 +103,7 @@ func testContentExtraction() error {
 			return fmt.Errorf("content extraction test '%s' failed: expected '%s', got '%s'",
 				tc.name, tc.expected, result)
 		}
-		logger.Infof("✅ Content extraction test '%s' passed", tc.name)
+		logger.Info(fmt.Sprintf("✅ Content extraction test '%s' passed", tc.name))
 	}
 
 	return nil
@@ -131,7 +131,7 @@ func testFileCreationWithMCPFormat(testDir string) error {
 		return fmt.Errorf("failed to write tool output to file: %w", err)
 	}
 
-	logger.Infof("File written to: %s", filePath)
+	logger.Info(fmt.Sprintf("File written to: %s", filePath))
 
 	// Verify file exists and has content
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -144,8 +144,8 @@ func testFileCreationWithMCPFormat(testDir string) error {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	logger.Infof("File content length: %d", len(fileContent))
-	logger.Infof("File content: %s", string(fileContent))
+	logger.Info(fmt.Sprintf("File content length: %d", len(fileContent)))
+	logger.Info(fmt.Sprintf("File content: %s", string(fileContent)))
 
 	// Verify the content was extracted correctly (should not contain MCP wrapper)
 	if strings.Contains(string(fileContent), `"type":"text"`) {
@@ -157,7 +157,7 @@ func testFileCreationWithMCPFormat(testDir string) error {
 		return fmt.Errorf("file content is not valid JSON")
 	}
 
-	logger.Infof("✅ File creation test passed - content extracted correctly")
+	logger.Info(fmt.Sprintf("✅ File creation test passed - content extracted correctly"))
 
 	return nil
 }
@@ -180,19 +180,19 @@ func testLargeOutputVirtualTools(testDir string) error {
 
 	// Test 1: Check if large output virtual tools are enabled by default
 	logger.Info("Test 1: Default Configuration")
-	logger.Infof("EnableLargeOutputVirtualTools: %v", agent.EnableLargeOutputVirtualTools)
+	logger.Info(fmt.Sprintf("EnableLargeOutputVirtualTools: %v", agent.EnableLargeOutputVirtualTools))
 
 	// Test 2: Create virtual tools and check if large output tools are included
 	logger.Info("Test 2: Virtual Tools Creation")
 	virtualTools := agent.CreateVirtualTools()
-	logger.Infof("Total virtual tools: %d", len(virtualTools))
+	logger.Info(fmt.Sprintf("Total virtual tools: %d", len(virtualTools)))
 
 	largeOutputTools := agent.CreateLargeOutputVirtualTools()
-	logger.Infof("Large output virtual tools: %d", len(largeOutputTools))
+	logger.Info(fmt.Sprintf("Large output virtual tools: %d", len(largeOutputTools)))
 
 	for _, tool := range virtualTools {
 		if tool.Function != nil {
-			logger.Infof("- %s: %s", tool.Function.Name, tool.Function.Description)
+			logger.Info(fmt.Sprintf("- %s: %s", tool.Function.Name, tool.Function.Description))
 		}
 	}
 
@@ -200,7 +200,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 	logger.Info("Test 3: Disabled Configuration")
 	agent.EnableLargeOutputVirtualTools = false
 	disabledTools := agent.CreateLargeOutputVirtualTools()
-	logger.Infof("Large output virtual tools when disabled: %d", len(disabledTools))
+	logger.Info(fmt.Sprintf("Large output virtual tools when disabled: %d", len(disabledTools)))
 
 	// Test 4: Test file path building
 	logger.Info("Test 4: File Path Building")
@@ -212,11 +212,11 @@ func testLargeOutputVirtualTools(testDir string) error {
 
 	// Test valid filename
 	validPath := agent.BuildLargeOutputFilePath("tool_20250721_091511_tavily-search.json")
-	logger.Infof("Valid filename path: %s", validPath)
+	logger.Info(fmt.Sprintf("Valid filename path: %s", validPath))
 
 	// Test invalid filename
 	invalidPath := agent.BuildLargeOutputFilePath("invalid_filename.txt")
-	logger.Infof("Invalid filename path: %s", invalidPath)
+	logger.Info(fmt.Sprintf("Invalid filename path: %s", invalidPath))
 
 	// Test 5: Test virtual tool handling
 	logger.Info("Test 5: Virtual Tool Handling")
@@ -228,7 +228,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 		"server": "test-server",
 		"name":   "test-prompt",
 	})
-	logger.Infof("get_prompt result: %s, error: %v", result, err)
+	logger.Info(fmt.Sprintf("get_prompt result: %s, error: %v", result, err))
 
 	// Test large output tool when enabled (should work)
 	agent.EnableLargeOutputVirtualTools = true
@@ -254,7 +254,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 		"start":    float64(1),
 		"end":      float64(20),
 	})
-	logger.Infof("read_large_output when enabled: %s, error: %v", result, err)
+	logger.Info(fmt.Sprintf("read_large_output when enabled: %s, error: %v", result, err))
 
 	// Test large output tool when disabled (should fail)
 	agent.EnableLargeOutputVirtualTools = false
@@ -263,7 +263,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 		"start":    float64(1),
 		"end":      float64(100),
 	})
-	logger.Infof("read_large_output when disabled: %s, error: %v", result, err)
+	logger.Info(fmt.Sprintf("read_large_output when disabled: %s, error: %v", result, err))
 
 	logger.Info("✅ Large output virtual tools tests passed!")
 	return nil

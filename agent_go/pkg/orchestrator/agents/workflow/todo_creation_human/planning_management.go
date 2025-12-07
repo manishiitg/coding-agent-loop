@@ -34,7 +34,7 @@ type LearningFileInfo struct {
 func validatePlanStepIDs(steps []PlanStep) error {
 	for i := range steps {
 		if steps[i].ID == "" {
-			return fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, steps[i].Title)
+			return fmt.Errorf(fmt.Sprintf("step at index %d is missing required ID field. Step title: %q", i, steps[i].Title), nil)
 		}
 
 		// Recursively validate branch steps
@@ -56,7 +56,7 @@ func validatePlanStepIDs(steps []PlanStep) error {
 func validateBranchStepIDs(steps []PlanStep, parentTitle, branchType string) error {
 	for i := range steps {
 		if steps[i].ID == "" {
-			return fmt.Errorf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, steps[i].Title)
+			return fmt.Errorf(fmt.Sprintf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, steps[i].Title), nil)
 		}
 
 		// Recursively validate nested branch steps
@@ -91,27 +91,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	var planToUse *PlanningResponse
 	if existingPlan != nil {
 		planToUse = existingPlan
-		hcpo.GetLogger().Infof("📄 Using provided existing plan with %d steps (UPDATE mode)", len(existingPlan.Steps))
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Using provided existing plan with %d steps (UPDATE mode)", len(existingPlan.Steps)))
 	} else {
 		planToUse = nil
-		hcpo.GetLogger().Infof("📝 No existing plan provided - creating new plan (CREATE mode)")
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 No existing plan provided - creating new plan (CREATE mode)"))
 	}
 
 	// Serialize plan to JSON and pass in template (prevents agent from reading workspace)
 	if planToUse != nil {
 		existingPlanJSON, err := json.MarshalIndent(planToUse, "", "  ")
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to marshal existing plan to JSON: %v", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal existing plan to JSON: %v", err))
 		} else {
 			planningTemplateVars["ExistingPlanJSON"] = string(existingPlanJSON)
-			hcpo.GetLogger().Infof("✅ Passing plan contents in template (prevents workspace file reads)")
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Passing plan contents in template (prevents workspace file reads)"))
 		}
 	}
 
 	// Add variable names if available (planning agent should preserve variable placeholders)
 	if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {
 		planningTemplateVars["VariableNames"] = variableNames
-		hcpo.GetLogger().Infof("✅ Passing variable names to planning agent (for placeholder preservation)")
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Passing variable names to planning agent (for placeholder preservation)"))
 	}
 
 	// Determine user message based on mode
@@ -133,13 +133,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	// Create fresh planning agent with proper context
 	planningAgent, err := hcpo.createPlanningAgent(ctx, "planning", 0, iteration)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create planning agent: %w", err)
+		return nil, nil, fmt.Errorf(fmt.Sprintf("failed to create planning agent: %w", err), nil)
 	}
 
 	// Execute planning agent using structured output
 	planningAgentTyped, ok := planningAgent.(*HumanControlledTodoPlannerPlanningAgent)
 	if !ok {
-		return nil, nil, fmt.Errorf("failed to cast planning agent to correct type")
+		return nil, nil, fmt.Errorf(fmt.Sprintf("failed to cast planning agent to correct type"), nil)
 	}
 
 	// Determine if we're in UPDATE mode
@@ -150,7 +150,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 
 	if isUpdateMode {
 		// UPDATE mode: Use ExecuteStructuredUpdate (returns updated PlanningResponse directly)
-		hcpo.GetLogger().Infof("🔄 UPDATE mode: Using ExecuteStructuredUpdate")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔄 UPDATE mode: Using ExecuteStructuredUpdate"))
 		// Pass BaseOrchestrator's file operation methods and BaseOrchestrator to the planning agent
 		updatedPlan, updatedHistory, updateErr := planningAgentTyped.ExecuteStructuredUpdate(ctx, planningTemplateVars, conversationHistory, userMessage, hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile, hcpo.BaseOrchestrator)
 		if updateErr != nil {
@@ -160,29 +160,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 			// Plan is already updated in plan.json by the tools - just use it
 			planResponse = updatedPlan
 			updatedConversationHistory = updatedHistory
-			hcpo.GetLogger().Infof("✅ Plan updated via tools (%d total steps)", len(updatedPlan.Steps))
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Plan updated via tools (%d total steps)", len(updatedPlan.Steps)))
 		}
 	} else {
 		// CREATE mode: Use ExecuteStructured
-		hcpo.GetLogger().Infof("📝 CREATE mode: Using ExecuteStructured")
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 CREATE mode: Using ExecuteStructured"))
 		planResponse, updatedConversationHistory, err = planningAgentTyped.ExecuteStructured(ctx, planningTemplateVars, conversationHistory, userMessage)
 	}
 
 	if err != nil {
 		// Debug: Log the error type and message
-		hcpo.GetLogger().Infof("🔍 [DEBUG] Planning agent returned error: %T, message: %s", err, err.Error())
-		hcpo.GetLogger().Infof("🔍 [DEBUG] IsNonStructuredResponseError check: %v", agents.IsNonStructuredResponseError(err))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Planning agent returned error: %T, message: %s", err, err.Error()))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] IsNonStructuredResponseError check: %v", agents.IsNonStructuredResponseError(err)))
 
 		// Check if this is a non-structured response error (text response instead of structured output)
 		if agents.IsNonStructuredResponseError(err) {
-			hcpo.GetLogger().Infof("✅ [DEBUG] Detected NonStructuredResponseError in runPlanningPhase")
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] Detected NonStructuredResponseError in runPlanningPhase"))
 			var nonStructuredErr *agents.NonStructuredResponseError
 			if errors.As(err, &nonStructuredErr) {
 				// Display the text response to the user and request feedback
 				if isUpdateMode {
-					hcpo.GetLogger().Infof("📝 Planning agent returned conversational text instead of structured update. This is acceptable when user is just asking questions (no plan changes needed).")
+					hcpo.GetLogger().Info(fmt.Sprintf("📝 Planning agent returned conversational text instead of structured update. This is acceptable when user is just asking questions (no plan changes needed)."))
 				} else {
-					hcpo.GetLogger().Infof("📝 Planning agent returned conversational text instead of structured output. Displaying to user for feedback.")
+					hcpo.GetLogger().Info(fmt.Sprintf("📝 Planning agent returned conversational text instead of structured output. Displaying to user for feedback."))
 				}
 
 				// Generate unique request ID
@@ -207,52 +207,52 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 				)
 
 				if feedbackErr != nil {
-					return nil, nil, fmt.Errorf("failed to request human feedback for planning text response: %w", feedbackErr)
+					return nil, nil, fmt.Errorf(fmt.Sprintf("failed to request human feedback for planning text response: %w", feedbackErr), nil)
 				}
 
 				// If user approved (clicked Approve button), treat as no plan update needed (acceptable for UPDATE mode)
 				if approved {
 					if isUpdateMode {
-						hcpo.GetLogger().Infof("✅ User approved conversational response - no plan update needed. This is acceptable in UPDATE mode.")
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ User approved conversational response - no plan update needed. This is acceptable in UPDATE mode."))
 						// Return error to indicate no plan update (the loop will handle this appropriately)
-						return nil, nonStructuredErr.UpdatedHistory, fmt.Errorf("PLANNING_CONVERSATIONAL_APPROVED:no plan update needed")
+						return nil, nonStructuredErr.UpdatedHistory, fmt.Errorf(fmt.Sprintf("PLANNING_CONVERSATIONAL_APPROVED:no plan update needed"), nil)
 					} else {
-						hcpo.GetLogger().Infof("✅ User approved planning text response, but no structured plan was generated. This is unexpected - returning error.")
-						return nil, nil, fmt.Errorf("planning agent returned text response but user approved without providing feedback to generate structured plan")
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ User approved planning text response, but no structured plan was generated. This is unexpected - returning error."))
+						return nil, nil, fmt.Errorf(fmt.Sprintf("planning agent returned text response but user approved without providing feedback to generate structured plan"), nil)
 					}
 				}
 
 				// User provided feedback - return a special error that the loop can detect and handle
 				// Use a specific error prefix that the loop will recognize
 				// The updated history from the agent's response is included so conversation continues properly
-				feedbackError := fmt.Errorf("PLANNING_TEXT_RESPONSE_FEEDBACK:%s", feedback)
-				hcpo.GetLogger().Infof("🔄 [DEBUG] Returning feedback error from runPlanningPhase: %s", feedbackError.Error())
+				feedbackError := fmt.Errorf(fmt.Sprintf("PLANNING_TEXT_RESPONSE_FEEDBACK:%s", feedback), nil)
+				hcpo.GetLogger().Info(fmt.Sprintf("🔄 [DEBUG] Returning feedback error from runPlanningPhase: %s", feedbackError.Error()))
 				return nil, nonStructuredErr.UpdatedHistory, feedbackError
 			}
 		}
 		// For other errors, return as-is
-		return nil, nil, fmt.Errorf("planning failed: %w", err)
+		return nil, nil, fmt.Errorf(fmt.Sprintf("planning failed: %w", err), nil)
 	}
 
 	// Only save plan for CREATE mode - UPDATE mode already saved it via tools
 	if !isUpdateMode {
 		// Validate that all steps have IDs (planning agent should always generate them)
 		if err := validatePlanStepIDs(planResponse.Steps); err != nil {
-			return nil, nil, fmt.Errorf("plan validation failed: %w", err)
+			return nil, nil, fmt.Errorf(fmt.Sprintf("plan validation failed: %w", err), nil)
 		}
 
 		// Save JSON plan to file using shared helper (ensures mutex protection)
 		planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
 		if err := writePlanToFile(ctx, hcpo.GetWorkspacePath(), planResponse, nil, hcpo.WriteWorkspaceFile, hcpo.GetLogger()); err != nil {
-			return nil, nil, fmt.Errorf("failed to save plan.json: %w", err)
+			return nil, nil, fmt.Errorf(fmt.Sprintf("failed to save plan.json: %w", err), nil)
 		}
 
 		// Note: Learning integration cache removal no longer needed - execution agent auto-discovers files
 
-		hcpo.GetLogger().Infof("✅ JSON plan created successfully and saved to %s (%d steps, conversation has %d messages)", planPath, len(planResponse.Steps), len(updatedConversationHistory))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ JSON plan created successfully and saved to %s (%d steps, conversation has %d messages)", planPath, len(planResponse.Steps), len(updatedConversationHistory)))
 	} else {
 		// UPDATE mode: Plan already saved by tools, just log
-		hcpo.GetLogger().Infof("✅ Plan already saved by tools (%d steps, conversation has %d messages)", len(planResponse.Steps), len(updatedConversationHistory))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Plan already saved by tools (%d steps, conversation has %d messages)", len(planResponse.Steps), len(updatedConversationHistory)))
 	}
 
 	return planResponse, updatedConversationHistory, nil
@@ -269,7 +269,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	readPaths := []string{learningsPath}
 	writePaths := []string{planningPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Infof("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetPlanningLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -281,7 +281,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset default planning LLM: %s/%s", hcpo.presetPlanningLLM.Provider, hcpo.presetPlanningLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default planning LLM: %s/%s", hcpo.presetPlanningLLM.Provider, hcpo.presetPlanningLLM.ModelID))
 	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
 		// Fallback to learning LLM if planning LLM not set
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -290,10 +290,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Infof("🔧 Using preset learning LLM as fallback for planning: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for planning: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
-		hcpo.GetLogger().Infof("🔧 Using orchestrator default planning LLM: %s/%s", hcpo.GetProvider(), hcpo.GetModel())
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default planning LLM: %s/%s", hcpo.GetProvider(), hcpo.GetModel()))
 	}
 
 	// Use CreateAndSetupStandardAgentWithCustomServers instead of CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt
@@ -305,36 +305,36 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 
 	// Code execution mode only applies to execution agents, not planning agents
 	agentConfig.UseCodeExecutionMode = false
-	hcpo.GetLogger().Infof("🔧 Disabling code execution mode for planning agent (only execution agents use MCP tools)")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for planning agent (only execution agents use MCP tools)"))
 
 	// Disable large output virtual tools for planning agent
 	disabled := false
 	agentConfig.EnableLargeOutputVirtualTools = &disabled
-	hcpo.GetLogger().Infof("🔧 Disabling large output virtual tools for planning agent")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools for planning agent"))
 
 	// Create agent using provided factory function
 	agent := NewHumanControlledTodoPlannerPlanningAgent(agentConfig, hcpo.GetLogger(), hcpo.GetTracer(), hcpo.GetContextAwareBridge())
 
 	// Initialize and setup agent
 	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize planning agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize planning agent: %w", err), nil)
 	}
 
 	// Validate essentials and connect event bridge
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for planning agent")
+		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for planning agent"), nil)
 	}
 
-	hcpo.GetLogger().Infof("🔍 Checking agent structure for planning agent")
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for planning agent"))
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for planning agent")
+		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for planning agent"), nil)
 	}
 
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for planning agent")
+		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for planning agent"), nil)
 	}
 
 	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
@@ -344,10 +344,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	}); ok {
 		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(eventBridge)
-		hcpo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
 	} else {
 		mcpAgent.AddEventListener(eventBridge)
-		hcpo.GetLogger().Infof("🔗 Connected event bridge to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Connected event bridge to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName))
 	}
 
 	return agent, nil
@@ -356,28 +356,28 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 // checkExistingPlan checks if a plan.json file already exists in the workspace and returns the parsed plan if found
 // Uses the generic ReadWorkspaceFile function from base orchestrator
 func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingPlan(ctx context.Context, planPath string) (bool, *PlanningResponse, error) {
-	hcpo.GetLogger().Infof("🔍 Checking for existing plan at %s", planPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking for existing plan at %s", planPath))
 
 	// Use the generic ReadWorkspaceFile function from base orchestrator
 	planContent, err := hcpo.ReadWorkspaceFile(ctx, planPath)
 	if err != nil {
 		// Check if it's a "file not found" error vs other errors
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Infof("📋 No existing plan found: %v", err)
+			hcpo.GetLogger().Info(fmt.Sprintf("📋 No existing plan found: %v", err))
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing plan: %w", err), nil)
 	}
 
 	// Parse JSON content to PlanningResponse
 	var planResponse PlanningResponse
 	if err := json.Unmarshal([]byte(planContent), &planResponse); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to parse existing plan.json: %v", err)
-		return false, nil, fmt.Errorf("failed to parse plan.json: %w", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing plan.json: %v", err))
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to parse plan.json: %w", err), nil)
 	}
 
-	hcpo.GetLogger().Infof("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps)))
 	return true, &planResponse, nil
 }
 
@@ -387,7 +387,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestPlanApproval(
 	ctx context.Context,
 	revisionAttempt int,
 ) (bool, string, error) {
-	hcpo.GetLogger().Infof("⏸️ Requesting human approval for plan (attempt %d)", revisionAttempt)
+	hcpo.GetLogger().Info(fmt.Sprintf("⏸️ Requesting human approval for plan (attempt %d)", revisionAttempt))
 
 	// Generate unique request ID
 	requestID := fmt.Sprintf("plan_approval_%d_%d", time.Now().UnixNano(), revisionAttempt)
@@ -423,7 +423,7 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) ([]To
 			if step.Title != "" {
 				stepTitle = step.Title
 			}
-			return nil, fmt.Errorf("branch step at index %d is missing required ID field. Step title: %q", i, stepTitle)
+			return nil, fmt.Errorf(fmt.Sprintf("branch step at index %d is missing required ID field. Step title: %q", i, stepTitle), nil)
 		} else if stepConfigs != nil {
 			// Debug: Log what we're searching for
 			// Note: Can't use logger here, but we can add debug info later if needed
@@ -450,7 +450,7 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) ([]To
 			var err error
 			ifTrueSteps, err = convertBranchSteps(step.IfTrueSteps, stepConfigs)
 			if err != nil {
-				return nil, fmt.Errorf("failed to convert if_true branch steps: %w", err)
+				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_true branch steps: %w", err), nil)
 			}
 		}
 
@@ -459,7 +459,7 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) ([]To
 			var err error
 			ifFalseSteps, err = convertBranchSteps(step.IfFalseSteps, stepConfigs)
 			if err != nil {
-				return nil, fmt.Errorf("failed to convert if_false branch steps: %w", err)
+				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_false branch steps: %w", err), nil)
 			}
 		}
 
@@ -489,7 +489,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 	// Read step configs from step_config.json
 	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to read step_config.json: %v (using defaults for all steps)", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults for all steps)", err))
 		stepConfigs = &StepConfigFile{Steps: []StepConfig{}}
 	}
 
@@ -501,17 +501,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 				configIDs = append(configIDs, config.ID)
 			}
 		}
-		hcpo.GetLogger().Infof("📋 Available config IDs in step_config.json: %v", configIDs)
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 Available config IDs in step_config.json: %v", configIDs))
 	} else {
-		hcpo.GetLogger().Infof("📋 No step configs available (step_config.json is empty or not found)")
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 No step configs available (step_config.json is empty or not found)"))
 	}
 
 	// Match configs by step index (0-based)
 	matchedConfigs, err := MatchStepConfigs(planSteps, stepConfigs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to match step configs: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to match step configs: %w", err), nil)
 	}
-	hcpo.GetLogger().Infof("📋 Matched %d/%d step configs from step_config.json", len(matchedConfigs), len(planSteps))
+	hcpo.GetLogger().Info(fmt.Sprintf("📋 Matched %d/%d step configs from step_config.json", len(matchedConfigs), len(planSteps)))
 
 	todoSteps := make([]TodoStep, len(planSteps))
 	for i, step := range planSteps {
@@ -521,18 +521,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			agentConfigs = config
 			// Log code execution mode for debugging
 			if agentConfigs.UseCodeExecutionMode != nil {
-				hcpo.GetLogger().Infof("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: %v", step.Title, step.ID, *agentConfigs.UseCodeExecutionMode)
+				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: %v", step.Title, step.ID, *agentConfigs.UseCodeExecutionMode))
 			} else {
-				hcpo.GetLogger().Infof("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: nil (will use preset default)", step.Title, step.ID)
+				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: nil (will use preset default)", step.Title, step.ID))
 			}
 		} else {
-			hcpo.GetLogger().Infof("⚠️ Step '%s' (ID: %s) has NO config match in step_config.json - will use preset defaults", step.Title, step.ID)
+			hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Step '%s' (ID: %s) has NO config match in step_config.json - will use preset defaults", step.Title, step.ID))
 		}
 
 		// Validation is required for loop steps to check loop conditions
 		// Ensure validation is not disabled for loop steps
 		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation {
-			hcpo.GetLogger().Warnf("⚠️ Step '%s' is a loop step but has validation disabled - enabling validation (required for loop condition checks)", step.Title)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step '%s' is a loop step but has validation disabled - enabling validation (required for loop condition checks)", step.Title))
 			// Create a copy of configs with validation enabled
 			enabledConfigs := *agentConfigs
 			val := false
@@ -543,36 +543,36 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 		// Convert branch steps recursively
 		var ifTrueSteps []TodoStep
 		if len(step.IfTrueSteps) > 0 {
-			hcpo.GetLogger().Infof("🔍 Converting %d if_true branch steps for step '%s' (ID: %s)", len(step.IfTrueSteps), step.Title, step.ID)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting %d if_true branch steps for step '%s' (ID: %s)", len(step.IfTrueSteps), step.Title, step.ID))
 			var err error
 			ifTrueSteps, err = convertBranchSteps(step.IfTrueSteps, stepConfigs)
 			if err != nil {
-				return nil, fmt.Errorf("failed to convert if_true branch steps for step '%s': %w", step.Title, err)
+				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_true branch steps for step '%s': %w", step.Title, err), nil)
 			}
 			// Log config matching results for branch steps
 			for _, branchStep := range ifTrueSteps {
 				if branchStep.AgentConfigs != nil {
-					hcpo.GetLogger().Infof("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID)
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID))
 				} else {
-					hcpo.GetLogger().Infof("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID)
+					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID))
 				}
 			}
 		}
 
 		var ifFalseSteps []TodoStep
 		if len(step.IfFalseSteps) > 0 {
-			hcpo.GetLogger().Infof("🔍 Converting %d if_false branch steps for step '%s' (ID: %s)", len(step.IfFalseSteps), step.Title, step.ID)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting %d if_false branch steps for step '%s' (ID: %s)", len(step.IfFalseSteps), step.Title, step.ID))
 			var err error
 			ifFalseSteps, err = convertBranchSteps(step.IfFalseSteps, stepConfigs)
 			if err != nil {
-				return nil, fmt.Errorf("failed to convert if_false branch steps for step '%s': %w", step.Title, err)
+				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_false branch steps for step '%s': %w", step.Title, err), nil)
 			}
 			// Log config matching results for branch steps
 			for _, branchStep := range ifFalseSteps {
 				if branchStep.AgentConfigs != nil {
-					hcpo.GetLogger().Infof("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID)
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID))
 				} else {
-					hcpo.GetLogger().Infof("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID)
+					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID))
 				}
 			}
 		}
@@ -603,7 +603,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 // cleanupExistingPlanArtifacts deletes existing plan.json, steps_done.json, and all files in learnings/, execution/, and validation/ directories
 // This is called when user chooses to create a new plan instead of using existing one
 func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts(ctx context.Context, workspacePath string) error {
-	hcpo.GetLogger().Infof("🧹 Starting cleanup of existing plan artifacts")
+	hcpo.GetLogger().Info(fmt.Sprintf("🧹 Starting cleanup of existing plan artifacts"))
 
 	basePath := workspacePath
 
@@ -612,10 +612,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 	if err := hcpo.DeleteWorkspaceFile(ctx, planJSONPath); err != nil {
 		// Ignore "file not found" errors, but log others
 		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Warnf("⚠️ Failed to delete plan.json: %w", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete plan.json: %w", err))
 		}
 	} else {
-		hcpo.GetLogger().Infof("🗑️ Deleted plan.json: %s", planJSONPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted plan.json: %s", planJSONPath))
 	}
 
 	// 1.5. Delete plan_learnings.json cache (since plan structure will change)
@@ -623,10 +623,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 	if err := hcpo.DeleteWorkspaceFile(ctx, planLearningsPath); err != nil {
 		// Ignore "file not found" errors, but log others
 		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Warnf("⚠️ Failed to delete plan_learnings.json: %w", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete plan_learnings.json: %w", err))
 		}
 	} else {
-		hcpo.GetLogger().Infof("🗑️ Deleted plan_learnings.json: %s", planLearningsPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted plan_learnings.json: %s", planLearningsPath))
 	}
 
 	// 2. Clean all run folders (nuclear option - clean everything when creating new plan)
@@ -635,25 +635,25 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 	if exists {
 		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
 		if err == nil && len(existingFolders) > 0 {
-			hcpo.GetLogger().Infof("📁 Cleaning all run folders (%d found)", len(existingFolders))
+			hcpo.GetLogger().Info(fmt.Sprintf("📁 Cleaning all run folders (%d found)", len(existingFolders)))
 			for _, folder := range existingFolders {
 				runFolderPath := fmt.Sprintf("%s/runs/%s", basePath, folder)
 				// Clean execution directory in run folder
 				executionDir := fmt.Sprintf("%s/execution", runFolderPath)
 				if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory in run folder %s: %w", folder, err)
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup execution directory in run folder %s: %w", folder, err))
 				} else {
-					hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory in run folder: %s", executionDir)
+					hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up execution directory in run folder: %s", executionDir))
 				}
 				// Clean steps_done.json from run folder
 				stepsDonePath := fmt.Sprintf("%s/steps_done.json", runFolderPath)
 				if err := hcpo.DeleteWorkspaceFile(ctx, stepsDonePath); err != nil {
 					// Ignore "file not found" errors, but log others
 					if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-						hcpo.GetLogger().Warnf("⚠️ Failed to delete steps_done.json in run folder %s: %w", folder, err)
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete steps_done.json in run folder %s: %w", folder, err))
 					}
 				} else {
-					hcpo.GetLogger().Infof("🗑️ Deleted steps_done.json from run folder: %s", stepsDonePath)
+					hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted steps_done.json from run folder: %s", stepsDonePath))
 				}
 			}
 		}
@@ -664,12 +664,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 	// 5. Delete all files in old execution/ directory (backward compatibility)
 	executionDir := fmt.Sprintf("%s/execution", basePath)
 	if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory: %w", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup execution directory: %w", err))
 	}
 
 	// Note: steps_done.json is now cleaned from run folders above (step 2), no longer in workspace root
 
-	hcpo.GetLogger().Infof("✅ Cleanup of existing plan artifacts completed")
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Cleanup of existing plan artifacts completed"))
 	return nil
 }
 
@@ -703,14 +703,14 @@ func EmitTodoStepsExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrche
 	// Emit through the context-aware bridge
 	bridge := bo.GetContextAwareBridge()
 	if bridge == nil {
-		bo.GetLogger().Warnf("⚠️ [EmitTodoStepsExtractedEvent] ContextAwareBridge is nil, cannot emit event")
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ [EmitTodoStepsExtractedEvent] ContextAwareBridge is nil, cannot emit event"))
 		return
 	}
-	bo.GetLogger().Infof("📤 [EmitTodoStepsExtractedEvent] About to emit event through bridge (bridge type: %T)", bridge)
+	bo.GetLogger().Info(fmt.Sprintf("📤 [EmitTodoStepsExtractedEvent] About to emit event through bridge (bridge type: %T)", bridge))
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ [EmitTodoStepsExtractedEvent] Failed to emit todo steps extracted event: %w", err)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ [EmitTodoStepsExtractedEvent] Failed to emit todo steps extracted event: %w", err))
 	} else {
-		bo.GetLogger().Infof("✅ [EmitTodoStepsExtractedEvent] Successfully emitted todo steps extracted event: %d steps extracted", len(extractedSteps))
+		bo.GetLogger().Info(fmt.Sprintf("✅ [EmitTodoStepsExtractedEvent] Successfully emitted todo steps extracted event: %d steps extracted", len(extractedSteps)))
 	}
 }
 
@@ -777,38 +777,38 @@ func CheckAndEmitPlanUpdateEvent(
 		return
 	}
 
-	bo.GetLogger().Infof("🔍 [CheckAndEmitPlanUpdateEvent] Checking conversation history for plan modification tools (history length: %d)", len(conversationHistory))
+	bo.GetLogger().Info(fmt.Sprintf("🔍 [CheckAndEmitPlanUpdateEvent] Checking conversation history for plan modification tools (history length: %d)", len(conversationHistory)))
 
 	// Extract tool calls from conversation history
 	toolCalls := ExtractToolCallsFromMessages(conversationHistory)
-	bo.GetLogger().Infof("🔍 [CheckAndEmitPlanUpdateEvent] Extracted %d tool calls: %v", len(toolCalls), toolCalls)
+	bo.GetLogger().Info(fmt.Sprintf("🔍 [CheckAndEmitPlanUpdateEvent] Extracted %d tool calls: %v", len(toolCalls), toolCalls))
 
 	// Check if any plan or step_config modification tool was called
 	needsEvent := false
 	for _, name := range toolCalls {
 		if IsPlanModificationTool(name) || IsStepConfigModificationTool(name) {
 			needsEvent = true
-			bo.GetLogger().Infof("🔍 [CheckAndEmitPlanUpdateEvent] Found plan modification tool: %s", name)
+			bo.GetLogger().Info(fmt.Sprintf("🔍 [CheckAndEmitPlanUpdateEvent] Found plan modification tool: %s", name))
 			break
 		}
 	}
 
 	if !needsEvent {
-		bo.GetLogger().Infof("📋 [CheckAndEmitPlanUpdateEvent] No plan/step_config modification tools called, skipping event emission")
+		bo.GetLogger().Info(fmt.Sprintf("📋 [CheckAndEmitPlanUpdateEvent] No plan/step_config modification tools called, skipping event emission"))
 		return
 	}
 
-	bo.GetLogger().Infof("📋 Plan/step_config modification detected, emitting update event...")
+	bo.GetLogger().Info(fmt.Sprintf("📋 Plan/step_config modification detected, emitting update event..."))
 
 	// Read current plan
 	plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 	if err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to read plan for event emission: %v", err)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read plan for event emission: %v", err))
 		return
 	}
 
 	if plan == nil || len(plan.Steps) == 0 {
-		bo.GetLogger().Warnf("⚠️ Plan is empty, skipping event emission")
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Plan is empty, skipping event emission"))
 		return
 	}
 
@@ -836,14 +836,14 @@ func CheckAndEmitPlanUpdateEvent(
 
 	// Emit the event
 	EmitTodoStepsExtractedEvent(ctx, bo, todoSteps, "updated_plan", "agent_tool_modification", "", workspacePath)
-	bo.GetLogger().Infof("✅ Emitted plan update event: %d steps", len(todoSteps))
+	bo.GetLogger().Info(fmt.Sprintf("✅ Emitted plan update event: %d steps", len(todoSteps)))
 }
 
 // CreatePlanOnly runs only the planning phase (standalone, independent from CreateTodoList)
 // This is a separate workflow phase that can be run independently
 // Similar to ExtractVariablesOnly in variable_management.go
 func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.Context, objective, workspacePath string) (string, error) {
-	hcpo.GetLogger().Infof("📋 Starting standalone planning for objective: %s", objective)
+	hcpo.GetLogger().Info(fmt.Sprintf("📋 Starting standalone planning for objective: %s", objective))
 
 	// Set objective and workspace path
 	hcpo.SetObjective(objective)
@@ -854,7 +854,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	variablesExist, existingVariablesManifest, err := hcpo.variableManager.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
 		// Log error but continue without variables (for new workflows)
-		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing variables: %v - proceeding without variables", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing variables: %v - proceeding without variables", err))
 		variablesExist = false
 	}
 
@@ -863,10 +863,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 		hcpo.variablesManifest = existingVariablesManifest
 		templatedObjective := existingVariablesManifest.Objective
 		hcpo.SetObjective(templatedObjective)
-		hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective))
 	} else {
 		// No variables.json - create it with empty variables and the original objective
-		hcpo.GetLogger().Infof("📝 No variables.json found - creating new variables.json with original objective")
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 No variables.json found - creating new variables.json with original objective"))
 
 		// Create new VariablesManifest with original objective and empty variables
 		newManifest := &VariablesManifest{
@@ -879,15 +879,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 		// Write variables.json to workspace
 		variablesJSON, err := json.MarshalIndent(newManifest, "", "  ")
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to marshal variables manifest: %v - proceeding without variables", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal variables manifest: %v - proceeding without variables", err))
 			hcpo.variablesManifest = nil
 		} else {
 			if err := hcpo.WriteWorkspaceFile(ctx, variablesPath, string(variablesJSON)); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to create variables.json: %v - proceeding without variables", err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create variables.json: %v - proceeding without variables", err))
 				hcpo.variablesManifest = nil
 			} else {
 				hcpo.variablesManifest = newManifest
-				hcpo.GetLogger().Infof("✅ Created variables.json with original objective and empty variables")
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Created variables.json with original objective and empty variables"))
 			}
 		}
 	}
@@ -895,7 +895,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	// Load runtime variable values if provided
 	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %w", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load variable values: %w", err))
 	} else {
 		hcpo.variableValues = variableValues
 	}
@@ -904,7 +904,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
 	planExists, existingPlan, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing plan: %w", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing plan: %w", err))
 		planExists = false
 	}
 
@@ -918,12 +918,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	if planExists {
 		breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
 		if err != nil {
-			return "", fmt.Errorf("failed to convert existing plan steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to convert existing plan steps: %w", err), nil)
 		}
 		hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
 		eventEmitted = true
 		planSource = "existing_plan"
-		hcpo.GetLogger().Infof("📋 Emitted plan event for UI display (%d steps)", len(breakdownSteps))
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 Emitted plan event for UI display (%d steps)", len(breakdownSteps)))
 	}
 
 	// If plan exists, ask user if they want to use it, create new, or update existing
@@ -944,31 +944,31 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			hcpo.getWorkflowID(),
 		)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user decision for existing plan: %w", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user decision for existing plan: %w", err))
 			planChoice = "option0"
 		}
 
 		switch planChoice {
 		case "option0":
 			// Use existing plan
-			hcpo.GetLogger().Infof("✅ User chose to use existing plan")
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ User chose to use existing plan"))
 			approvedPlan = existingPlan
 			hcpo.approvedPlan = approvedPlan
 			// Event already emitted above when plan was found
 
 		case "option1":
 			// Create new plan - cleanup everything and create fresh plan
-			hcpo.GetLogger().Infof("🔄 User chose to create new plan, cleaning up existing plan and related files")
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 User chose to create new plan, cleaning up existing plan and related files"))
 			if err := hcpo.cleanupExistingPlanArtifacts(ctx, workspacePath); err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to cleanup existing plan artifacts: %v (will continue anyway)", err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup existing plan artifacts: %v (will continue anyway)", err))
 			} else {
-				hcpo.GetLogger().Infof("🗑️ Successfully cleaned up existing plan artifacts")
+				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Successfully cleaned up existing plan artifacts"))
 			}
 			planExists = false
 
 		case "option2":
 			// Update existing plan - create new plan but keep artifacts (no cleanup)
-			hcpo.GetLogger().Infof("🔄 User chose to update existing plan, creating new plan but keeping existing artifacts")
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 User chose to update existing plan, creating new plan but keeping existing artifacts"))
 
 			// Request human feedback about what they want to update in the plan
 			updateFeedbackID := fmt.Sprintf("plan_update_feedback_%d", time.Now().UnixNano())
@@ -981,16 +981,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 				hcpo.getWorkflowID(),
 			)
 			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err))
 				initialPlanningFeedback = ""
 			} else if approved {
-				hcpo.GetLogger().Infof("ℹ️ User approved without providing update feedback, will create updated plan without specific guidance")
+				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ User approved without providing update feedback, will create updated plan without specific guidance"))
 				initialPlanningFeedback = ""
 			} else if updateFeedback != "" {
-				hcpo.GetLogger().Infof("📝 Received update feedback: %s", updateFeedback)
+				hcpo.GetLogger().Info(fmt.Sprintf("📝 Received update feedback: %s", updateFeedback))
 				initialPlanningFeedback = updateFeedback
 			} else {
-				hcpo.GetLogger().Warnf("⚠️ Unexpected feedback state: approved=%v, feedback empty, proceeding without guidance", approved)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unexpected feedback state: approved=%v, feedback empty, proceeding without guidance", approved))
 				initialPlanningFeedback = ""
 			}
 
@@ -998,7 +998,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			existingPlanForFirstUpdate = existingPlan
 
 		default:
-			hcpo.GetLogger().Warnf("⚠️ Unknown plan choice: %s, defaulting to use existing plan", planChoice)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown plan choice: %s, defaulting to use existing plan", planChoice))
 			approvedPlan = existingPlan
 			hcpo.approvedPlan = approvedPlan
 		}
@@ -1006,14 +1006,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 
 	// Run planning phase if plan doesn't exist or user wants to create/update
 	if !planExists && approvedPlan == nil {
-		hcpo.GetLogger().Infof("🔄 Creating new plan to execute objective")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Creating new plan to execute objective"))
 
 		maxPlanRevisions := 20
 		humanFeedback := initialPlanningFeedback
 		var planningConversationHistory []llmtypes.MessageContent
 
 		for revisionAttempt := 1; revisionAttempt <= maxPlanRevisions; revisionAttempt++ {
-			hcpo.GetLogger().Infof("🔄 Plan creation/approval attempt %d/%d", revisionAttempt, maxPlanRevisions)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Plan creation/approval attempt %d/%d", revisionAttempt, maxPlanRevisions))
 
 			var existingPlanForUpdate *PlanningResponse
 			if revisionAttempt == 1 && existingPlanForFirstUpdate != nil {
@@ -1029,7 +1029,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 
 				// Check for conversational approval sentinel (UPDATE mode - no plan update needed)
 				if strings.HasPrefix(errMsg, "PLANNING_CONVERSATIONAL_APPROVED:") {
-					hcpo.GetLogger().Infof("✅ User approved conversational response - no plan update needed. Using existing plan.")
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ User approved conversational response - no plan update needed. Using existing plan."))
 					// Use existing plan since no update is needed
 					if existingPlanForUpdate != nil {
 						approvedPlan = existingPlanForUpdate
@@ -1037,8 +1037,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 						break
 					} else {
 						// This shouldn't happen in UPDATE mode, but handle gracefully
-						hcpo.GetLogger().Warnf("⚠️ Conversational approval received but no existing plan available")
-						return "", fmt.Errorf("conversational approval received but no existing plan to use")
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Conversational approval received but no existing plan available"))
+						return "", fmt.Errorf(fmt.Sprintf("conversational approval received but no existing plan to use"), nil)
 					}
 				}
 
@@ -1049,24 +1049,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 						extractedFeedback := strings.TrimSpace(parts[1])
 						humanFeedback = extractedFeedback
 						if revisionAttempt >= maxPlanRevisions {
-							return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
+							return "", fmt.Errorf(fmt.Sprintf("max plan revision attempts (%d) reached", maxPlanRevisions), nil)
 						}
 						continue
 					}
 				}
-				return "", fmt.Errorf("planning phase failed: %w", err)
+				return "", fmt.Errorf(fmt.Sprintf("planning phase failed: %w", err), nil)
 			}
 
 			if len(approvedPlan.Steps) == 0 {
-				return "", fmt.Errorf("new plan has no steps: planning agent returned empty steps array")
+				return "", fmt.Errorf(fmt.Sprintf("new plan has no steps: planning agent returned empty steps array"), nil)
 			}
 
 			// Convert approved plan steps to TodoStep format
 			breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
 			if err != nil {
-				return "", fmt.Errorf("failed to convert approved plan steps: %w", err)
+				return "", fmt.Errorf(fmt.Sprintf("failed to convert approved plan steps: %w", err), nil)
 			}
-			hcpo.GetLogger().Infof("✅ Converted new plan: %d steps extracted", len(breakdownSteps))
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Converted new plan: %d steps extracted", len(breakdownSteps)))
 
 			// Emit todo steps extracted event
 			hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "new_plan")
@@ -1076,19 +1076,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			// Request human approval for JSON plan
 			approvedInternal, feedbackInternal, err := hcpo.requestPlanApproval(ctx, revisionAttempt)
 			if err != nil {
-				return "", fmt.Errorf("plan approval request failed: %w", err)
+				return "", fmt.Errorf(fmt.Sprintf("plan approval request failed: %w", err), nil)
 			}
 
 			if approvedInternal {
-				hcpo.GetLogger().Infof("✅ JSON plan approved by human")
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ JSON plan approved by human"))
 				break
 			}
 
-			hcpo.GetLogger().Infof("🔄 Plan revision requested (attempt %d/%d): %s", revisionAttempt, maxPlanRevisions, feedbackInternal)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Plan revision requested (attempt %d/%d): %s", revisionAttempt, maxPlanRevisions, feedbackInternal))
 			humanFeedback = feedbackInternal
 
 			if revisionAttempt >= maxPlanRevisions {
-				return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
+				return "", fmt.Errorf(fmt.Sprintf("max plan revision attempts (%d) reached", maxPlanRevisions), nil)
 			}
 		}
 
@@ -1100,7 +1100,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	if approvedPlan != nil && !eventEmitted {
 		breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
 		if err != nil {
-			return "", fmt.Errorf("failed to convert approved plan steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to convert approved plan steps: %w", err), nil)
 		}
 		// Determine correct source if not already set
 		if planSource == "" {

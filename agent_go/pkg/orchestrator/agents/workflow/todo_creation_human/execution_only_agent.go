@@ -7,7 +7,7 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/agent/prompt"
@@ -44,7 +44,7 @@ type HumanControlledTodoPlannerExecutionOnlyAgent struct {
 }
 
 // NewHumanControlledTodoPlannerExecutionOnlyAgent creates a new execution-only agent
-func NewHumanControlledTodoPlannerExecutionOnlyAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerExecutionOnlyAgent {
+func NewHumanControlledTodoPlannerExecutionOnlyAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerExecutionOnlyAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,

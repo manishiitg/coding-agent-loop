@@ -19,7 +19,6 @@ import (
 	"github.com/spf13/viper"
 
 	"mcp-agent/agent_go/internal/events"
-	"mcp-agent/agent_go/internal/utils"
 	agent "mcp-agent/agent_go/pkg/agentwrapper"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/orchestrator"
@@ -28,6 +27,7 @@ import (
 	unifiedevents "mcpagent/events"
 	"mcpagent/executor"
 	"mcpagent/llm"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -225,7 +225,7 @@ type StreamingAPI struct {
 	discoveryTicker  *time.Ticker
 
 	// Logger for structured logging
-	logger utils.ExtendedLogger
+	logger loggerv2.Logger
 }
 
 // QueryRequest represents an agent query request
@@ -1966,7 +1966,7 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 // State management functions removed - orchestrator is now stateless
 
 // createServerLogger creates a logger instance for the server
-func createServerLogger() utils.ExtendedLogger {
+func createServerLogger() loggerv2.Logger {
 	serverLogger, err := logger.CreateLogger("", "info", "text", true)
 	if err != nil {
 		log.Fatalf("Failed to create server logger: %w", err)

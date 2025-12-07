@@ -7,7 +7,7 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
@@ -51,7 +51,7 @@ type HumanControlledTodoPlannerValidationAgent struct {
 }
 
 // NewHumanControlledTodoPlannerValidationAgent creates a new human-controlled todo planner validation agent
-func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerValidationAgent {
+func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerValidationAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -68,7 +68,7 @@ func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAge
 // Execute implements the OrchestratorAgent interface
 // NOTE: This method is NOT USED - use ExecuteStructured() instead
 func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	return "", nil, fmt.Errorf("Execute() is not used for validation agent - use ExecuteStructured() instead")
+	return "", nil, fmt.Errorf(fmt.Sprintf("Execute() is not used for validation agent - use ExecuteStructured() instead"), nil)
 }
 
 // ExecuteStructured executes the validation agent and returns structured output

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -31,7 +31,7 @@ type HumanControlledTodoPlannerAnonymizationAgent struct {
 }
 
 // NewHumanControlledTodoPlannerAnonymizationAgent creates a new anonymization agent
-func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerAnonymizationAgent {
+func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerAnonymizationAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -92,11 +92,11 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	useStepSpecific := am.GetUseStepSpecificLearnings()
 	if useStepSpecific {
 		// No need to add runs/ folder - step-specific learnings are at workspace root
-		am.GetLogger().Infof("📁 Step-specific learnings enabled - agent can access and modify step-specific folders in learnings/step-*/")
+		am.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access and modify step-specific folders in learnings/step-*/"))
 	}
 
 	am.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	am.GetLogger().Infof("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (learnings folder)", readPaths, writePaths)
+	am.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (learnings folder)", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetAnonymizationLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -109,7 +109,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
-		am.GetLogger().Infof("🔧 Using preset default anonymization LLM: %s/%s", am.presetAnonymizationLLM.Provider, am.presetAnonymizationLLM.ModelID)
+		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset default anonymization LLM: %s/%s", am.presetAnonymizationLLM.Provider, am.presetAnonymizationLLM.ModelID))
 	} else if am.presetLearningLLM != nil && am.presetLearningLLM.Provider != "" && am.presetLearningLLM.ModelID != "" {
 		// Fallback to learning LLM if anonymization LLM not set
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -119,10 +119,10 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
-		am.GetLogger().Infof("🔧 Using preset learning LLM as fallback for anonymization: %s/%s", am.presetLearningLLM.Provider, am.presetLearningLLM.ModelID)
+		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for anonymization: %s/%s", am.presetLearningLLM.Provider, am.presetLearningLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
-		am.GetLogger().Infof("🔧 Using orchestrator default anonymization LLM: %s/%s", am.GetProvider(), am.GetModel())
+		am.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default anonymization LLM: %s/%s", am.GetProvider(), am.GetModel()))
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -138,12 +138,12 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 
 	// Code execution mode only applies to execution agents, not anonymization agents
 	config.UseCodeExecutionMode = false
-	am.GetLogger().Infof("🔧 Disabling code execution mode for anonymization agent (only execution agents use MCP tools)")
+	am.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for anonymization agent (only execution agents use MCP tools)"))
 
 	// Large output virtual tools are enabled for anonymization (agent may generate large reports)
 
 	// Create wrapper function that returns OrchestratorAgent interface
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewHumanControlledTodoPlannerAnonymizationAgent(cfg, logger, tracer, eventBridge, am.BaseOrchestrator)
 	}
 
@@ -161,7 +161,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup anonymization agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup anonymization agent: %w", err), nil)
 	}
 
 	return agent, nil
@@ -170,7 +170,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 // AnonymizeLearningsOnly runs only the anonymization phase (standalone, independent from other phases)
 // This is a separate workflow phase that can be run independently
 func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, workspacePath string) (string, error) {
-	am.GetLogger().Infof("🔒 Starting standalone anonymization for workspace: %s", workspacePath)
+	am.GetLogger().Info(fmt.Sprintf("🔒 Starting standalone anonymization for workspace: %s", workspacePath))
 
 	// Set workspace path
 	am.SetWorkspacePath(workspacePath)
@@ -179,14 +179,14 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", am.GetWorkspacePath())
 	variablesExist, existingVariablesManifest, err := am.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to check for existing variables: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing variables: %w", err), nil)
 	}
 	if !variablesExist {
-		return "", fmt.Errorf("variables.json not found at %s - variable extraction must be run first as a separate phase", variablesPath)
+		return "", fmt.Errorf(fmt.Sprintf("variables.json not found at %s - variable extraction must be run first as a separate phase", variablesPath), nil)
 	}
 
 	// Variables exist - use them for anonymization
-	am.GetLogger().Infof("✅ Found %d variables for anonymization", len(existingVariablesManifest.Variables))
+	am.GetLogger().Info(fmt.Sprintf("✅ Found %d variables for anonymization", len(existingVariablesManifest.Variables)))
 
 	// Prepare variables data for template
 	var variableNames strings.Builder
@@ -199,13 +199,13 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 
 	variablesJSONBytes, err := json.MarshalIndent(existingVariablesManifest, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal variables to JSON: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to marshal variables to JSON: %w", err), nil)
 	}
 
 	// Create anonymization agent
 	anonymizationAgent, err := am.createAnonymizationAgent(ctx, am.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf("failed to create anonymization agent: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to create anonymization agent: %w", err), nil)
 	}
 
 	// Prepare template variables
@@ -219,14 +219,14 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 	}
 
 	// Execute anonymization agent
-	am.GetLogger().Infof("🔒 Executing anonymization agent...")
+	am.GetLogger().Info(fmt.Sprintf("🔒 Executing anonymization agent..."))
 	result, conversationHistory, err := anonymizationAgent.Execute(ctx, anonymizationTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf("anonymization agent execution failed: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("anonymization agent execution failed: %w", err), nil)
 	}
 
-	am.GetLogger().Infof("✅ Anonymization completed successfully")
-	am.GetLogger().Infof("📊 Anonymization result: %s", result)
+	am.GetLogger().Info(fmt.Sprintf("✅ Anonymization completed successfully"))
+	am.GetLogger().Info(fmt.Sprintf("📊 Anonymization result: %s", result))
 
 	_ = conversationHistory // Conversation history not used for standalone anonymization
 
@@ -235,28 +235,28 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 
 // checkExistingVariables checks if variables.json already exists and loads it
 func (am *AnonymizationManager) checkExistingVariables(ctx context.Context, variablesPath string) (bool, *VariablesManifest, error) {
-	am.GetLogger().Infof("🔍 Checking for existing variables at %s", variablesPath)
+	am.GetLogger().Info(fmt.Sprintf("🔍 Checking for existing variables at %s", variablesPath))
 
 	// Use the generic ReadWorkspaceFile function from base orchestrator
 	variablesContent, err := am.ReadWorkspaceFile(ctx, variablesPath)
 	if err != nil {
 		// Check if it's a "file not found" error vs other errors
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			am.GetLogger().Infof("📋 No existing variables found: %v", err)
+			am.GetLogger().Info(fmt.Sprintf("📋 No existing variables found: %v", err))
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing variables: %w", err)
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing variables: %w", err), nil)
 	}
 
 	// Parse JSON content to VariablesManifest
 	var variablesManifest VariablesManifest
 	if err := json.Unmarshal([]byte(variablesContent), &variablesManifest); err != nil {
-		am.GetLogger().Warnf("⚠️ Failed to parse existing variables.json: %v", err)
-		return false, nil, fmt.Errorf("failed to parse variables.json: %w", err)
+		am.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing variables.json: %v", err))
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
 	}
 
-	am.GetLogger().Infof("✅ Found existing variables at %s with %d variables", variablesPath, len(variablesManifest.Variables))
+	am.GetLogger().Info(fmt.Sprintf("✅ Found existing variables at %s with %d variables", variablesPath, len(variablesManifest.Variables)))
 	return true, &variablesManifest, nil
 }
 
@@ -287,7 +287,7 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 
 	// Get logger from base agent's MCP agent
 	baseAgent := agent.GetBaseAgent()
-	var logger utils.ExtendedLogger
+	var logger loggerv2.Logger
 	if baseAgent != nil {
 		mcpAgent := baseAgent.Agent()
 		if mcpAgent != nil && mcpAgent.Logger != nil {
@@ -309,7 +309,7 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 	for iteration < maxIterations {
 		iteration++
 		if logger != nil {
-			logger.Infof("🔒 Anonymization agent iteration %d/%d", iteration, maxIterations)
+			logger.Info(fmt.Sprintf("🔒 Anonymization agent iteration %d/%d", iteration, maxIterations))
 		}
 
 		// Create a simple input processor that returns the user message
@@ -329,7 +329,7 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {
-				logger.Infof("🔒 Anonymization agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations)
+				logger.Info(fmt.Sprintf("🔒 Anonymization agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations))
 			}
 
 			// Generate unique request ID
@@ -346,7 +346,7 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 			)
 			if err != nil {
 				if logger != nil {
-					logger.Warnf("⚠️ Failed to get user feedback: %v", err)
+					logger.Warn(fmt.Sprintf("⚠️ Failed to get user feedback: %v", err))
 				}
 				// Continue without blocking if feedback fails
 				break
@@ -355,7 +355,7 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 			// If user clicked Approve button, we're done
 			if approved {
 				if logger != nil {
-					logger.Infof("✅ User approved - anonymization complete")
+					logger.Info(fmt.Sprintf("✅ User approved - anonymization complete"))
 				}
 				break
 			}
@@ -363,7 +363,7 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 			// User provided feedback/question - always pass it to the agent and continue
 			if feedback != "" && strings.TrimSpace(feedback) != "" {
 				if logger != nil {
-					logger.Infof("📝 User provided feedback: %s", feedback)
+					logger.Info(fmt.Sprintf("📝 User provided feedback: %s", feedback))
 				}
 				// Use feedback directly as user message for next iteration
 				// Note: BaseAgent.Execute() will automatically add it to conversation history
@@ -371,20 +371,20 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 			} else {
 				// No feedback provided but not approved - continue with same message
 				if logger != nil {
-					logger.Infof("ℹ️ No feedback provided, continuing with same context")
+					logger.Info(fmt.Sprintf("ℹ️ No feedback provided, continuing with same context"))
 				}
 			}
 		} else {
 			// Reached max iterations or no base orchestrator
 			if logger != nil {
-				logger.Infof("🔒 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations)
+				logger.Info(fmt.Sprintf("🔒 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations))
 			}
 			break
 		}
 	}
 
 	if logger != nil {
-		logger.Infof("🔒 Anonymization completed after %d iterations", iteration)
+		logger.Info(fmt.Sprintf("🔒 Anonymization completed after %d iterations", iteration))
 	}
 
 	return currentResult, currentConversationHistory, nil

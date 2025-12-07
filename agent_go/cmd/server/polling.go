@@ -109,7 +109,7 @@ func (api *StreamingAPI) handleGetEvents(w http.ResponseWriter, r *http.Request)
 	}
 
 	for i, event := range events {
-		api.logger.Debugf("  [%d] %s", i, event.Type)
+		api.logger.Debug(fmt.Sprintf("  [%d] %s", i, event.Type))
 	}
 
 	response := GetEventsResponse{

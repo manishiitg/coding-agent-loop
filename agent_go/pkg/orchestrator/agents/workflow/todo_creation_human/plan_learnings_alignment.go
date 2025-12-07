@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -35,7 +35,7 @@ type HumanControlledTodoPlannerPlanLearningsAlignmentAgent struct {
 }
 
 // NewHumanControlledTodoPlannerPlanLearningsAlignmentAgent creates a new plan learnings alignment agent
-func NewHumanControlledTodoPlannerPlanLearningsAlignmentAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerPlanLearningsAlignmentAgent {
+func NewHumanControlledTodoPlannerPlanLearningsAlignmentAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerPlanLearningsAlignmentAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -97,10 +97,10 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 
 	// Step-specific learnings: step-specific folders are at workspace root (not inside runs/)
 	// Step-specific learnings are directly in learnings/step-*/
-	plam.GetLogger().Infof("📁 Step-specific learnings - agent can access step-specific folders in learnings/step-*/ (at workspace root)")
+	plam.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - agent can access step-specific folders in learnings/step-*/ (at workspace root)"))
 
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	plam.GetLogger().Infof("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/, write access to %s folder only)", readPaths, writePaths, selectedFolder)
+	plam.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/, write access to %s folder only)", readPaths, writePaths, selectedFolder))
 
 	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := plam.GetLLMConfig()
@@ -114,7 +114,7 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		plam.GetLogger().Infof("🔧 Using preset plan learnings alignment LLM: %s/%s", plam.presetPlanLearningsAlignmentLLM.Provider, plam.presetPlanLearningsAlignmentLLM.ModelID)
+		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset plan learnings alignment LLM: %s/%s", plam.presetPlanLearningsAlignmentLLM.Provider, plam.presetPlanLearningsAlignmentLLM.ModelID))
 	} else if plam.presetLearningLLM != nil && plam.presetLearningLLM.Provider != "" && plam.presetLearningLLM.ModelID != "" {
 		// Fallback to learning LLM if plan learnings alignment LLM not set
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -124,11 +124,11 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		plam.GetLogger().Infof("🔧 Using preset learning LLM as fallback for plan learnings alignment: %s/%s", plam.presetLearningLLM.Provider, plam.presetLearningLLM.ModelID)
+		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for plan learnings alignment: %s/%s", plam.presetLearningLLM.Provider, plam.presetLearningLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		plam.GetLogger().Infof("🔧 Using orchestrator default alignment LLM: %s/%s", plam.GetProvider(), plam.GetModel())
+		plam.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default alignment LLM: %s/%s", plam.GetProvider(), plam.GetModel()))
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -144,12 +144,12 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 
 	// Code execution mode only applies to execution agents, not plan learnings alignment agents
 	config.UseCodeExecutionMode = false
-	plam.GetLogger().Infof("🔧 Disabling code execution mode for plan learnings alignment agent (only execution agents use MCP tools)")
+	plam.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for plan learnings alignment agent (only execution agents use MCP tools)"))
 
 	// Large output virtual tools are enabled for alignment (agent may generate large reports)
 
 	// Create wrapper function that returns OrchestratorAgent interface
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewHumanControlledTodoPlannerPlanLearningsAlignmentAgent(cfg, logger, tracer, eventBridge, plam.BaseOrchestrator)
 	}
 
@@ -167,7 +167,7 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup plan learnings alignment agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup plan learnings alignment agent: %w", err), nil)
 	}
 
 	return agent, nil
@@ -176,7 +176,7 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 // CheckAlignmentOnly runs only the plan-learnings alignment check (standalone, independent from other phases)
 // This is a separate workflow phase that can be run independently
 func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Context, workspacePath string) (string, error) {
-	plam.GetLogger().Infof("🔍 Starting standalone plan-learnings alignment check for workspace: %s", workspacePath)
+	plam.GetLogger().Info(fmt.Sprintf("🔍 Starting standalone plan-learnings alignment check for workspace: %s", workspacePath))
 
 	// Set workspace path
 	plam.SetWorkspacePath(workspacePath)
@@ -185,33 +185,33 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 	planPath := fmt.Sprintf("%s/planning/plan.json", plam.GetWorkspacePath())
 	planExist, existingPlan, err := plam.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to check for existing plan: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing plan: %w", err), nil)
 	}
 	if !planExist {
-		return "", fmt.Errorf("plan.json not found at %s - planning must be run first as a separate phase", planPath)
+		return "", fmt.Errorf(fmt.Sprintf("plan.json not found at %s - planning must be run first as a separate phase", planPath), nil)
 	}
 
 	// Plan exists - use it for alignment check
-	plam.GetLogger().Infof("✅ Found plan.json with %d steps for alignment check", len(existingPlan.Steps))
+	plam.GetLogger().Info(fmt.Sprintf("✅ Found plan.json with %d steps for alignment check", len(existingPlan.Steps)))
 
 	// Always use learnings/ folder (unified folder for all learning types)
 	selectedFolder := "learnings/"
-	plam.GetLogger().Infof("✅ Using learnings/ folder (unified folder for all learning types)")
+	plam.GetLogger().Info(fmt.Sprintf("✅ Using learnings/ folder (unified folder for all learning types)"))
 
 	// No need to filter by execution mode - all learnings are in learnings/ folder
 	filteredPlan := existingPlan
-	plam.GetLogger().Infof("📋 Using plan with %d steps for alignment check", len(filteredPlan.Steps))
+	plam.GetLogger().Info(fmt.Sprintf("📋 Using plan with %d steps for alignment check", len(filteredPlan.Steps)))
 
 	// Prepare filtered plan JSON for template
 	planJSONBytes, err := json.MarshalIndent(filteredPlan, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal filtered plan to JSON: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to marshal filtered plan to JSON: %w", err), nil)
 	}
 
 	// Create alignment agent
 	alignmentAgent, err := plam.createPlanLearningsAlignmentAgent(ctx, plam.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf("failed to create plan learnings alignment agent: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to create plan learnings alignment agent: %w", err), nil)
 	}
 
 	// Prepare template variables
@@ -230,14 +230,14 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 	}
 
 	// Execute alignment agent
-	plam.GetLogger().Infof("🔍 Executing plan learnings alignment agent for folder: %s", selectedFolder)
+	plam.GetLogger().Info(fmt.Sprintf("🔍 Executing plan learnings alignment agent for folder: %s", selectedFolder))
 	result, conversationHistory, err := alignmentAgent.Execute(ctx, alignmentTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf("plan learnings alignment agent execution failed: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("plan learnings alignment agent execution failed: %w", err), nil)
 	}
 
-	plam.GetLogger().Infof("✅ Plan learnings alignment check completed successfully for folder: %s", selectedFolder)
-	plam.GetLogger().Infof("🔍 Alignment check result: %s", result)
+	plam.GetLogger().Info(fmt.Sprintf("✅ Plan learnings alignment check completed successfully for folder: %s", selectedFolder))
+	plam.GetLogger().Info(fmt.Sprintf("🔍 Alignment check result: %s", result))
 
 	_ = conversationHistory // Conversation history not used for standalone alignment check
 
@@ -248,7 +248,7 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 // Kept for backward compatibility but no longer prompts user
 func (plam *PlanLearningsAlignmentManager) requestFolderSelection(ctx context.Context) (string, error) {
 	// Always return learnings/ folder (unified folder for all learning types)
-	plam.GetLogger().Infof("✅ Using learnings/ folder for alignment check (unified folder)")
+	plam.GetLogger().Info(fmt.Sprintf("✅ Using learnings/ folder for alignment check (unified folder)"))
 	return "option0", nil
 }
 
@@ -258,7 +258,7 @@ func (plam *PlanLearningsAlignmentManager) filterPlanByExecutionMode(plan *Plann
 	// Read step configs to determine execution mode for each step
 	stepConfigs, err := readStepConfigFromFile(context.Background(), plam.GetWorkspacePath(), plam.ReadWorkspaceFile)
 	if err != nil {
-		plam.GetLogger().Warnf("⚠️ Failed to read step_config.json: %v (will filter based on preset default)", err)
+		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (will filter based on preset default)", err))
 		stepConfigs = &StepConfigFile{Steps: []StepConfig{}}
 	}
 
@@ -314,7 +314,7 @@ func (plam *PlanLearningsAlignmentManager) filterPlanByExecutionMode(plan *Plann
 // checkExistingPlan checks if a plan.json file already exists in the workspace and returns the parsed plan if found
 // Uses the shared readPlanFromFile helper which ensures thread-safe access via planFileMutex
 func (plam *PlanLearningsAlignmentManager) checkExistingPlan(ctx context.Context, planPath string) (bool, *PlanningResponse, error) {
-	plam.GetLogger().Infof("🔍 Checking for existing plan at %s", planPath)
+	plam.GetLogger().Info(fmt.Sprintf("🔍 Checking for existing plan at %s", planPath))
 
 	// Extract workspace path from planPath (planPath is workspacePath/planning/plan.json)
 	// readPlanFromFile expects workspacePath and constructs the path internally
@@ -326,14 +326,14 @@ func (plam *PlanLearningsAlignmentManager) checkExistingPlan(ctx context.Context
 		// Check if it's a "file not found" error vs other errors
 		errStr := err.Error()
 		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
-			plam.GetLogger().Infof("📋 No existing plan found: %v", err)
+			plam.GetLogger().Info(fmt.Sprintf("📋 No existing plan found: %v", err))
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing plan: %w", err), nil)
 	}
 
-	plam.GetLogger().Infof("✅ Found existing plan at %s with %d steps", planPath, len(plan.Steps))
+	plam.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(plan.Steps)))
 	return true, plan, nil
 }
 
@@ -385,7 +385,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 
 	// Get logger from base agent's MCP agent
 	baseAgent := agent.GetBaseAgent()
-	var logger utils.ExtendedLogger
+	var logger loggerv2.Logger
 	if baseAgent != nil {
 		mcpAgent := baseAgent.Agent()
 		if mcpAgent != nil && mcpAgent.Logger != nil {
@@ -407,7 +407,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	for iteration < maxIterations {
 		iteration++
 		if logger != nil {
-			logger.Infof("🔍 Plan learnings alignment agent iteration %d/%d", iteration, maxIterations)
+			logger.Info(fmt.Sprintf("🔍 Plan learnings alignment agent iteration %d/%d", iteration, maxIterations))
 		}
 
 		// Create a simple input processor that returns the user message
@@ -427,7 +427,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {
-				logger.Infof("🔍 Plan learnings alignment agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations)
+				logger.Info(fmt.Sprintf("🔍 Plan learnings alignment agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations))
 			}
 
 			// Generate unique request ID
@@ -444,7 +444,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 			)
 			if err != nil {
 				if logger != nil {
-					logger.Warnf("⚠️ Failed to get user feedback: %v", err)
+					logger.Warn(fmt.Sprintf("⚠️ Failed to get user feedback: %v", err))
 				}
 				// Continue without blocking if feedback fails
 				break
@@ -453,7 +453,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 			// If user clicked Approve button, we're done
 			if approved {
 				if logger != nil {
-					logger.Infof("✅ User approved - plan learnings alignment complete")
+					logger.Info(fmt.Sprintf("✅ User approved - plan learnings alignment complete"))
 				}
 				break
 			}
@@ -461,7 +461,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 			// User provided feedback/question - always pass it to the agent and continue
 			if feedback != "" && strings.TrimSpace(feedback) != "" {
 				if logger != nil {
-					logger.Infof("📝 User provided feedback: %s", feedback)
+					logger.Info(fmt.Sprintf("📝 User provided feedback: %s", feedback))
 				}
 				// Use feedback directly as user message for next iteration
 				// Note: BaseAgent.Execute() will automatically add it to conversation history
@@ -469,20 +469,20 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 			} else {
 				// No feedback provided but not approved - continue with same message
 				if logger != nil {
-					logger.Infof("ℹ️ No feedback provided, continuing with same context")
+					logger.Info(fmt.Sprintf("ℹ️ No feedback provided, continuing with same context"))
 				}
 			}
 		} else {
 			// Reached max iterations or no base orchestrator
 			if logger != nil {
-				logger.Infof("🔍 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations)
+				logger.Info(fmt.Sprintf("🔍 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations))
 			}
 			break
 		}
 	}
 
 	if logger != nil {
-		logger.Infof("🔍 Plan learnings alignment completed after %d iterations", iteration)
+		logger.Info(fmt.Sprintf("🔍 Plan learnings alignment completed after %d iterations", iteration))
 	}
 
 	return currentResult, currentConversationHistory, nil

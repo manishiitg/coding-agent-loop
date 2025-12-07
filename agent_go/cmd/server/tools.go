@@ -59,7 +59,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Load merged config to get server details
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -74,7 +74,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Create temporary merged config file for mcpcache
 	tmpConfigPath, err := api.createTempMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to create temp merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to create temp merged config: %w", err), err)
 		// Fallback to base config path
 		tmpConfigPath = api.mcpConfigPath
 	} else {
@@ -182,7 +182,7 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -224,7 +224,7 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	api.discoveryMux.RUnlock()
 
 	if !isRunning {
-		api.logger.Infof("🔄 Starting background discovery for missing servers...")
+		api.logger.Info("🔄 Starting background discovery for missing servers...")
 		api.startBackgroundDiscovery()
 	}
 
@@ -271,16 +271,16 @@ func (api *StreamingAPI) handleGetToolDetail(w http.ResponseWriter, r *http.Requ
 	cfg := api.mcpConfig
 	serverConfig, configErr := cfg.GetServer(serverName)
 	if configErr != nil {
-		api.logger.Warnf("⚠️ Failed to get server config for %s: %v", serverName, configErr)
+		api.logger.Warn(fmt.Sprintf("⚠️ Failed to get server config for %s: %v", serverName, configErr))
 		http.Error(w, "Server configuration error", http.StatusInternalServerError)
 		return
 	}
 
 	cacheEntry := api.convertToolStatusToCacheEntry(result, serverName)
 	if err := cacheManager.Put(cacheEntry, serverConfig); err != nil {
-		api.logger.Warnf("⚠️ Failed to write detailed cache for server %s: %v", serverName, err)
+		api.logger.Warn(fmt.Sprintf("⚠️ Failed to write detailed cache for server %s: %v", serverName, err))
 	} else {
-		api.logger.Infof("💾 Cached detailed tools for server: %s (%d tools)", serverName, len(result.Tools))
+		api.logger.Info(fmt.Sprintf("💾 Cached detailed tools for server: %s (%d tools)", serverName, len(result.Tools)))
 	}
 
 	// Also update in-memory cache for immediate API responses
@@ -359,7 +359,7 @@ func (api *StreamingAPI) handleRemoveServer(w http.ResponseWriter, r *http.Reque
 
 // initializeToolCache initializes the tool cache on server startup using existing mcpcache service
 func (api *StreamingAPI) initializeToolCache() {
-	api.logger.Infof("🚀 Initializing tool cache on server startup using existing mcpcache service...")
+	api.logger.Info("🚀 Initializing tool cache on server startup using existing mcpcache service...")
 
 	// Get the existing cache manager
 	cacheManager := mcpcache.GetCacheManager(api.logger)
@@ -367,7 +367,7 @@ func (api *StreamingAPI) initializeToolCache() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -394,18 +394,18 @@ func (api *StreamingAPI) initializeToolCache() {
 	}
 
 	if cachedServers > 0 {
-		api.logger.Infof("✅ Loaded %d servers from existing mcpcache", cachedServers)
+		api.logger.Info(fmt.Sprintf("✅ Loaded %d servers from existing mcpcache", cachedServers))
 	}
 
 	// Check if we need to discover more servers
 	totalServers := len(cfg.MCPServers)
 	if cachedServers < totalServers {
 		missingServers := totalServers - cachedServers
-		api.logger.Infof("🔄 Found %d cached servers, but config has %d servers. Starting background discovery for %d missing servers...",
-			cachedServers, totalServers, missingServers)
+		api.logger.Info(fmt.Sprintf("🔄 Found %d cached servers, but config has %d servers. Starting background discovery for %d missing servers...",
+			cachedServers, totalServers, missingServers))
 		api.startBackgroundDiscovery()
 	} else {
-		api.logger.Infof("✅ All %d servers found in cache, starting periodic refresh only", cachedServers)
+		api.logger.Info(fmt.Sprintf("✅ All %d servers found in cache, starting periodic refresh only", cachedServers))
 	}
 
 	// Always start periodic refresh to keep cache updated
@@ -476,7 +476,7 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 	// Convert ToolDetail to llmtypes.Tool format using the centralized conversion function
 	llmTools, err := mcpclient.ToolDetailsAsLLM(toolStatus.Tools)
 	if err != nil {
-		api.logger.Errorf("Failed to convert tool details to LLM tools: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to convert tool details to LLM tools: %w", err), err)
 		// Return empty cache entry on error
 		return &mcpcache.CacheEntry{
 			ServerName:   serverName,
@@ -550,7 +550,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		api.discoveryMux.Unlock()
 	}()
 
-	api.logger.Infof("🔄 Starting background tool discovery using mcpcache service...")
+	api.logger.Info("🔄 Starting background tool discovery using mcpcache service...")
 
 	// Use a longer timeout for background discovery (5 minutes)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -562,7 +562,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -573,7 +573,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		// Get server configuration for cache key generation
 		serverConfig, err := cfg.GetServer(serverName)
 		if err != nil {
-			api.logger.Warnf("⚠️ Server %s not found in config, skipping: %v", serverName, err)
+			api.logger.Warn(fmt.Sprintf("⚠️ Server %s not found in config, skipping: %v", serverName, err))
 			continue
 		}
 		// Check if we already have valid cached data using configuration-aware key
@@ -589,21 +589,21 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		}
 
 		// No valid cache, discover fresh data
-		api.logger.Infof("🔍 Discovering tools for server: %s", serverName)
+		api.logger.Info(fmt.Sprintf("🔍 Discovering tools for server: %s", serverName))
 
 		// Use the existing discoverServerToolsDetailed function
 		result, err := api.discoverServerToolsDetailed(ctx, serverName)
 		if err != nil {
-			api.logger.Warnf("⚠️ Failed to discover tools for server %s: %v", serverName, err)
+			api.logger.Warn(fmt.Sprintf("⚠️ Failed to discover tools for server %s: %v", serverName, err))
 			continue
 		}
 
 		// Convert ToolStatus to CacheEntry and write to mcpcache
 		cacheEntry := api.convertToolStatusToCacheEntry(result, serverName)
 		if err := cacheManager.Put(cacheEntry, serverConfig); err != nil {
-			api.logger.Warnf("⚠️ Failed to write cache for server %s: %v", serverName, err)
+			api.logger.Warn(fmt.Sprintf("⚠️ Failed to write cache for server %s: %v", serverName, err))
 		} else {
-			api.logger.Infof("💾 Cached tools for server: %s (%d tools)", serverName, len(result.Tools))
+			api.logger.Info(fmt.Sprintf("💾 Cached tools for server: %s (%d tools)", serverName, len(result.Tools)))
 		}
 
 		// Update in-memory cache for immediate API responses
@@ -615,7 +615,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	}
 
 	api.lastDiscovery = time.Now()
-	api.logger.Infof("✅ Background tool discovery completed: %d servers processed", discoveredServers)
+	api.logger.Info(fmt.Sprintf("✅ Background tool discovery completed: %d servers processed", discoveredServers))
 
 	// Start periodic refresh (every 10 minutes)
 	api.startPeriodicRefresh()
@@ -633,12 +633,12 @@ func (api *StreamingAPI) startPeriodicRefresh() {
 	api.discoveryTicker = time.NewTicker(10 * time.Minute)
 	go func() {
 		for range api.discoveryTicker.C {
-			api.logger.Infof("🔄 Starting periodic tool discovery refresh...")
+			api.logger.Info("🔄 Starting periodic tool discovery refresh...")
 			api.runBackgroundDiscovery()
 		}
 	}()
 
-	api.logger.Infof("⏰ Started periodic tool discovery refresh (every 10 minutes)")
+	api.logger.Info("⏰ Started periodic tool discovery refresh (every 10 minutes)")
 }
 
 // stopPeriodicRefresh stops the periodic refresh
@@ -649,7 +649,7 @@ func (api *StreamingAPI) stopPeriodicRefresh() {
 	if api.discoveryTicker != nil {
 		api.discoveryTicker.Stop()
 		api.discoveryTicker = nil
-		api.logger.Infof("⏹️ Stopped periodic tool discovery refresh")
+		api.logger.Info("⏹️ Stopped periodic tool discovery refresh")
 	}
 }
 

@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -46,7 +46,7 @@ type HumanControlledTodoPlannerPlanToolOptimizationAgent struct {
 }
 
 // NewHumanControlledTodoPlannerPlanToolOptimizationAgent creates a new plan tool optimization agent
-func NewHumanControlledTodoPlannerPlanToolOptimizationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerPlanToolOptimizationAgent {
+func NewHumanControlledTodoPlannerPlanToolOptimizationAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerPlanToolOptimizationAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -152,19 +152,19 @@ func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile 
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
 			return &StepConfigFile{Steps: []StepConfig{}}, nil
 		}
-		return nil, fmt.Errorf("failed to read step_config.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 	}
 
 	configFile, err := ParseStepConfigContent(content)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: %w", err), nil)
 	}
 
 	return configFile, nil
 }
 
 // writeStepConfigToFile writes StepConfigFile to step_config.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
-func writeStepConfigToFile(ctx context.Context, workspacePath string, config *StepConfigFile, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
+func writeStepConfigToFile(ctx context.Context, workspacePath string, config *StepConfigFile, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
 	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
 
 	stepConfigFileMutex.Lock()
@@ -172,11 +172,11 @@ func writeStepConfigToFile(ctx context.Context, workspacePath string, config *St
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal step_config.json: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json: %w", err), nil)
 	}
 
 	if err := writeFile(ctx, configPath, string(data)); err != nil {
-		return fmt.Errorf("failed to write step_config.json: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
 	}
 
 	return nil
@@ -214,29 +214,29 @@ func mergePartialStepConfigUpdate(existingConfig *StepConfig, partialUpdate Part
 }
 
 // createUpdateStepConfigToolsExecutor creates an executor function for update_step_config_tools tool
-func createUpdateStepConfigToolsExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Extract updated_steps from args
 		updatedStepsRaw, ok := args["updated_steps"].([]interface{})
 		if !ok {
-			return "", fmt.Errorf("invalid updated_steps argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid updated_steps argument"), nil)
 		}
 
 		// Convert to JSON and unmarshal to PartialStepConfigUpdate array
 		updatedStepsJSON, err := json.Marshal(updatedStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal updated_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal updated_steps: %w", err), nil)
 		}
 
 		var partialUpdates []PartialStepConfigUpdate
 		if err := json.Unmarshal(updatedStepsJSON, &partialUpdates); err != nil {
-			return "", fmt.Errorf("failed to parse updated_steps: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse updated_steps: %w", err), nil)
 		}
 
 		// Read current step_config.json
 		configFile, err := readStepConfigFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read step_config.json: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 		}
 
 		// Create map of existing step configs by ID
@@ -264,10 +264,10 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger utils.Exte
 
 		// Write updated step_config.json
 		if err := writeStepConfigToFile(ctx, workspacePath, configFile, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write step_config.json: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
 		}
 
-		logger.Infof("✅ Updated tool configurations for %d step(s) in step_config.json", len(partialUpdates))
+		logger.Info(fmt.Sprintf("✅ Updated tool configurations for %d step(s) in step_config.json", len(partialUpdates)))
 		return fmt.Sprintf("Successfully updated tool configurations for %d step(s) in step_config.json", len(partialUpdates)), nil
 	}
 }
@@ -287,12 +287,12 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	useStepSpecific := ptom.GetUseStepSpecificLearnings()
 	if useStepSpecific {
 		// No need to add runs/ folder - step-specific learnings are at workspace root
-		ptom.GetLogger().Infof("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/step-*/ and learnings/step-*/")
+		ptom.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/step-*/ and learnings/step-*/"))
 	}
 
 	writePaths := []string{planningPath} // Write access to planning/ folder (for step_config.json)
 	ptom.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	ptom.GetLogger().Infof("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/ and learnings folder, write access to planning/step_config.json)", readPaths, writePaths)
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/ and learnings folder, write access to planning/step_config.json)", readPaths, writePaths))
 
 	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := ptom.GetLLMConfig()
@@ -306,7 +306,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		ptom.GetLogger().Infof("🔧 Using preset plan tool optimization LLM: %s/%s", ptom.presetPlanToolOptimizationLLM.Provider, ptom.presetPlanToolOptimizationLLM.ModelID)
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset plan tool optimization LLM: %s/%s", ptom.presetPlanToolOptimizationLLM.Provider, ptom.presetPlanToolOptimizationLLM.ModelID))
 	} else if ptom.presetLearningLLM != nil && ptom.presetLearningLLM.Provider != "" && ptom.presetLearningLLM.ModelID != "" {
 		// Fallback to learning LLM if plan tool optimization LLM not set
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -316,11 +316,11 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		ptom.GetLogger().Infof("🔧 Using preset learning LLM as fallback for plan tool optimization: %s/%s", ptom.presetLearningLLM.Provider, ptom.presetLearningLLM.ModelID)
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for plan tool optimization: %s/%s", ptom.presetLearningLLM.Provider, ptom.presetLearningLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		ptom.GetLogger().Infof("🔧 Using orchestrator default tool optimization LLM: %s/%s", ptom.GetProvider(), ptom.GetModel())
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default tool optimization LLM: %s/%s", ptom.GetProvider(), ptom.GetModel()))
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -334,7 +334,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	// Explicitly disable code execution mode for tool optimization agent
 	// This agent only needs file read/write operations, not Go code generation
 	config.UseCodeExecutionMode = false
-	ptom.GetLogger().Infof("🔧 Code execution mode disabled for plan tool optimization agent - using direct tool access")
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode disabled for plan tool optimization agent - using direct tool access"))
 
 	// Tool optimization agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}
@@ -342,7 +342,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	// Large output virtual tools are enabled for tool optimization (agent may generate large analysis reports)
 
 	// Create wrapper function that returns OrchestratorAgent interface
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewHumanControlledTodoPlannerPlanToolOptimizationAgent(cfg, logger, tracer, eventBridge, ptom.BaseOrchestrator)
 	}
 
@@ -360,7 +360,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup plan tool optimization agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup plan tool optimization agent: %w", err), nil)
 	}
 
 	return agent, nil
@@ -370,7 +370,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 // This is a separate workflow phase that can be run independently
 // stepID is optional - if provided, the agent will focus only on that specific step
 func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Context, workspacePath string, stepID string) (string, error) {
-	ptom.GetLogger().Infof("🔧 Starting standalone plan tool optimization for workspace: %s", workspacePath)
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Starting standalone plan tool optimization for workspace: %s", workspacePath))
 
 	// Set workspace path
 	ptom.SetWorkspacePath(workspacePath)
@@ -379,26 +379,26 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	planPath := fmt.Sprintf("%s/planning/plan.json", ptom.GetWorkspacePath())
 	planExist, existingPlan, err := ptom.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to check for existing plan: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing plan: %w", err), nil)
 	}
 	if !planExist {
-		return "", fmt.Errorf("plan.json not found at %s - planning must be run first as a separate phase", planPath)
+		return "", fmt.Errorf(fmt.Sprintf("plan.json not found at %s - planning must be run first as a separate phase", planPath), nil)
 	}
 
 	// Plan exists - use it for tool optimization
-	ptom.GetLogger().Infof("✅ Found plan.json with %d steps for tool optimization", len(existingPlan.Steps))
+	ptom.GetLogger().Info(fmt.Sprintf("✅ Found plan.json with %d steps for tool optimization", len(existingPlan.Steps)))
 
 	// Read current step_config.json
 	stepConfigFile, err := readStepConfigFromFile(ctx, ptom.GetWorkspacePath(), ptom.ReadWorkspaceFile)
 	if err != nil {
-		return "", fmt.Errorf("failed to read step_config.json: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 	}
 
 	// Create mapping of step IDs to their current tool configurations
 	currentToolConfigsMap := createCurrentToolConfigsMapping(stepConfigFile, existingPlan)
 	currentToolConfigsJSONBytes, err := json.MarshalIndent(currentToolConfigsMap, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal current tool configs mapping to JSON: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to marshal current tool configs mapping to JSON: %w", err), nil)
 	}
 
 	// Create lookup map for tool counts (step ID -> StepCurrentToolConfig)
@@ -411,13 +411,13 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	minimalPlan := createMinimalPlan(existingPlan, toolConfigsLookup)
 	planJSONBytes, err := json.MarshalIndent(minimalPlan, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal minimal plan to JSON: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to marshal minimal plan to JSON: %w", err), nil)
 	}
 
 	// Prepare step_config.json for template
 	stepConfigJSONBytes, err := json.MarshalIndent(stepConfigFile, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal step_config.json to JSON: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json to JSON: %w", err), nil)
 	}
 
 	// Get preset tools info for context
@@ -432,40 +432,40 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	variablesContent, err := ptom.ReadWorkspaceFile(ctx, variablesPath)
 	if err != nil {
 		// Variables file doesn't exist - this is OK, tool optimization can proceed without variables
-		ptom.GetLogger().Infof("ℹ️ No variables.json found at %s - proceeding without variables", variablesPath)
+		ptom.GetLogger().Info(fmt.Sprintf("ℹ️ No variables.json found at %s - proceeding without variables", variablesPath))
 	} else {
 		// Parse variables.json
 		var manifest VariablesManifest
 		if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-			ptom.GetLogger().Warnf("⚠️ Failed to parse variables.json: %v - proceeding without variables", err)
+			ptom.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse variables.json: %v - proceeding without variables", err))
 		} else {
 			variablesManifest = &manifest
-			ptom.GetLogger().Infof("✅ Loaded %d variables for tool optimization context", len(manifest.Variables))
+			ptom.GetLogger().Info(fmt.Sprintf("✅ Loaded %d variables for tool optimization context", len(manifest.Variables)))
 		}
 	}
 
 	// Create tool optimization agent
 	toolOptimizationAgent, err := ptom.createPlanToolOptimizationAgent(ctx, ptom.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf("failed to create plan tool optimization agent: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to create plan tool optimization agent: %w", err), nil)
 	}
 
 	// Register custom tool for updating step_config.json
 	// Get the underlying MCP agent
 	baseAgent := toolOptimizationAgent.(*HumanControlledTodoPlannerPlanToolOptimizationAgent).GetBaseAgent()
 	if baseAgent == nil {
-		return "", fmt.Errorf("base agent is not initialized")
+		return "", fmt.Errorf(fmt.Sprintf("base agent is not initialized"), nil)
 	}
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return "", fmt.Errorf("MCP agent is not initialized")
+		return "", fmt.Errorf(fmt.Sprintf("MCP agent is not initialized"), nil)
 	}
 
 	// Parse schema and register the custom tool
 	updateSchema := getUpdateStepConfigToolsSchema()
 	updateParams, err := parseSchemaForToolParameters(updateSchema)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse update schema: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to parse update schema: %w", err), nil)
 	}
 
 	// Get logger from MCP agent
@@ -486,9 +486,9 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigFile, existingPlan, presetCodeExecMode, useStepSpecific, ptom.GetWorkspacePath())
 	stepLearningsFolderMappingJSONBytes, err := json.MarshalIndent(stepLearningsFolderMapping, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal step learnings folder mapping to JSON: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step learnings folder mapping to JSON: %w", err), nil)
 	}
-	ptom.GetLogger().Infof("✅ Created learnings folder mapping for %d steps (based on code execution mode)", len(stepLearningsFolderMapping))
+	ptom.GetLogger().Info(fmt.Sprintf("✅ Created learnings folder mapping for %d steps (based on code execution mode)", len(stepLearningsFolderMapping)))
 
 	// Prepare template variables
 	// Use actual workspace path so agent can navigate correctly
@@ -514,27 +514,27 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	// Add variable names if available (for context about variables in plan)
 	if variableNames := FormatVariableNames(variablesManifest); variableNames != "" {
 		toolOptimizationTemplateVars["VariableNames"] = variableNames
-		ptom.GetLogger().Infof("✅ Added variable names to tool optimization template vars")
+		ptom.GetLogger().Info(fmt.Sprintf("✅ Added variable names to tool optimization template vars"))
 	}
 
 	// Add step ID if provided (for step-specific execution)
 	if stepID != "" {
 		toolOptimizationTemplateVars["StepID"] = stepID
-		ptom.GetLogger().Infof("✅ Added step ID to tool optimization template vars: %s", stepID)
+		ptom.GetLogger().Info(fmt.Sprintf("✅ Added step ID to tool optimization template vars: %s", stepID))
 	}
 
 	// Execute tool optimization agent
-	ptom.GetLogger().Infof("🔧 Executing plan tool optimization agent...")
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Executing plan tool optimization agent..."))
 	if stepID != "" {
-		ptom.GetLogger().Infof("🔧 Step-specific execution for step: %s", stepID)
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Step-specific execution for step: %s", stepID))
 	}
 	result, conversationHistory, err := toolOptimizationAgent.Execute(ctx, toolOptimizationTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf("plan tool optimization agent execution failed: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("plan tool optimization agent execution failed: %w", err), nil)
 	}
 
-	ptom.GetLogger().Infof("✅ Plan tool optimization completed successfully")
-	ptom.GetLogger().Infof("🔧 Tool optimization result: %s", result)
+	ptom.GetLogger().Info(fmt.Sprintf("✅ Plan tool optimization completed successfully"))
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Tool optimization result: %s", result))
 
 	_ = conversationHistory // Conversation history not used for standalone tool optimization
 
@@ -733,7 +733,7 @@ func createCurrentToolConfigsMapping(stepConfigFile *StepConfigFile, plan *Plann
 // checkExistingPlan checks if a plan.json file already exists in the workspace and returns the parsed plan if found
 // Uses the shared readPlanFromFile helper which ensures thread-safe access via planFileMutex
 func (ptom *PlanToolOptimizationManager) checkExistingPlan(ctx context.Context, planPath string) (bool, *PlanningResponse, error) {
-	ptom.GetLogger().Infof("🔍 Checking for existing plan at %s", planPath)
+	ptom.GetLogger().Info(fmt.Sprintf("🔍 Checking for existing plan at %s", planPath))
 
 	// Extract workspace path from planPath (planPath is workspacePath/planning/plan.json)
 	// readPlanFromFile expects workspacePath and constructs the path internally
@@ -745,14 +745,14 @@ func (ptom *PlanToolOptimizationManager) checkExistingPlan(ctx context.Context, 
 		// Check if it's a "file not found" error vs other errors
 		errStr := err.Error()
 		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
-			ptom.GetLogger().Infof("📋 No existing plan found: %v", err)
+			ptom.GetLogger().Info(fmt.Sprintf("📋 No existing plan found: %v", err))
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing plan: %w", err), nil)
 	}
 
-	ptom.GetLogger().Infof("✅ Found existing plan at %s with %d steps", planPath, len(plan.Steps))
+	ptom.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(plan.Steps)))
 	return true, plan, nil
 }
 
@@ -807,7 +807,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 
 	// Get logger from base agent's MCP agent
 	baseAgent := agent.GetBaseAgent()
-	var logger utils.ExtendedLogger
+	var logger loggerv2.Logger
 	if baseAgent != nil {
 		mcpAgent := baseAgent.Agent()
 		if mcpAgent != nil && mcpAgent.Logger != nil {
@@ -829,7 +829,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 	for iteration < maxIterations {
 		iteration++
 		if logger != nil {
-			logger.Infof("🔧 Plan tool optimization agent iteration %d/%d", iteration, maxIterations)
+			logger.Info(fmt.Sprintf("🔧 Plan tool optimization agent iteration %d/%d", iteration, maxIterations))
 		}
 
 		// Create a simple input processor that returns the user message
@@ -861,7 +861,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 
 			if planUpdateToolCalled {
 				if logger != nil {
-					logger.Infof("🔍 [PlanToolOptimizationAgent] Plan/step_config modification tool detected in iteration %d, emitting event immediately", iteration)
+					logger.Info(fmt.Sprintf("🔍 [PlanToolOptimizationAgent] Plan/step_config modification tool detected in iteration %d, emitting event immediately", iteration))
 				}
 				CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, updatedConversationHistory, workspacePath, agent.baseOrchestrator.ReadWorkspaceFile)
 			}
@@ -870,7 +870,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {
-				logger.Infof("🔧 Plan tool optimization agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations)
+				logger.Info(fmt.Sprintf("🔧 Plan tool optimization agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations))
 			}
 
 			// Generate unique request ID
@@ -887,7 +887,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 			)
 			if err != nil {
 				if logger != nil {
-					logger.Warnf("⚠️ Failed to get user feedback: %v", err)
+					logger.Warn(fmt.Sprintf("⚠️ Failed to get user feedback: %v", err))
 				}
 				// Continue without blocking if feedback fails
 				break
@@ -896,7 +896,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 			// If user clicked Approve button, we're done
 			if approved {
 				if logger != nil {
-					logger.Infof("✅ User approved - plan tool optimization complete")
+					logger.Info(fmt.Sprintf("✅ User approved - plan tool optimization complete"))
 				}
 				break
 			}
@@ -904,7 +904,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 			// User provided feedback/question - always pass it to the agent and continue
 			if feedback != "" && strings.TrimSpace(feedback) != "" {
 				if logger != nil {
-					logger.Infof("📝 User provided feedback: %s", feedback)
+					logger.Info(fmt.Sprintf("📝 User provided feedback: %s", feedback))
 				}
 				// Use feedback directly as user message for next iteration
 				// Note: BaseAgent.Execute() will automatically add it to conversation history
@@ -912,20 +912,20 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) Execute(ctx co
 			} else {
 				// No feedback provided but not approved - continue with same message
 				if logger != nil {
-					logger.Infof("ℹ️ No feedback provided, continuing with same context")
+					logger.Info(fmt.Sprintf("ℹ️ No feedback provided, continuing with same context"))
 				}
 			}
 		} else {
 			// Reached max iterations or no base orchestrator
 			if logger != nil {
-				logger.Infof("🔧 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations)
+				logger.Info(fmt.Sprintf("🔧 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations))
 			}
 			break
 		}
 	}
 
 	if logger != nil {
-		logger.Infof("🔧 Plan tool optimization completed after %d iterations", iteration)
+		logger.Info(fmt.Sprintf("🔧 Plan tool optimization completed after %d iterations", iteration))
 	}
 
 	// Check if step_config modification tools were called and emit event if needed

@@ -26,19 +26,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 	// Default to "use_same_run" if runMode is empty
 	if runMode == "" {
 		runMode = "use_same_run"
-		hcpo.GetLogger().Infof("📁 No run_mode specified, defaulting to 'use_same_run'")
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 No run_mode specified, defaulting to 'use_same_run'"))
 	}
 
 	switch runMode {
 	case "use_same_run":
 		// If frontend provided a specific folder, use it directly
 		if selectedRunFolder != "" {
-			hcpo.GetLogger().Infof("📁 Using frontend-selected run folder: %s", selectedRunFolder)
+			hcpo.GetLogger().Info(fmt.Sprintf("📁 Using frontend-selected run folder: %s", selectedRunFolder))
 			// Ensure the folder exists
 			fullPath := fmt.Sprintf("%s/%s", runsPath, selectedRunFolder)
 			exists, _ := hcpo.workspaceFileExists(ctx, fullPath)
 			if !exists {
-				hcpo.GetLogger().Warnf("⚠️ Selected folder %s doesn't exist, creating it", selectedRunFolder)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Selected folder %s doesn't exist, creating it", selectedRunFolder))
 				if err := hcpo.createRunFolderStructure(ctx, fullPath); err != nil {
 					return "", err
 				}
@@ -47,9 +47,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 		}
 
 		// Check if runs directory exists
-		hcpo.GetLogger().Infof("🔍 DEBUG: Checking runs directory at: %s", runsPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Checking runs directory at: %s", runsPath))
 		exists, _ := hcpo.workspaceFileExists(ctx, runsPath)
-		hcpo.GetLogger().Infof("🔍 DEBUG: Runs directory exists: %v", exists)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Runs directory exists: %v", exists))
 		if !exists {
 			// Create iteration-1 run folder (not iteration-same)
 			selectedFolder := "iteration-1"
@@ -60,9 +60,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 		}
 
 		// List existing run folders
-		hcpo.GetLogger().Infof("🔍 DEBUG: About to list run folders in: %s", runsPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: About to list run folders in: %s", runsPath))
 		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
-		hcpo.GetLogger().Infof("🔍 DEBUG: listRunFolders returned: folders=%v, error=%v", existingFolders, err)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: listRunFolders returned: folders=%v, error=%v", existingFolders, err))
 		if err != nil || len(existingFolders) == 0 {
 			// Create iteration-1 folder if none exist (not iteration-same)
 			selectedFolder := "iteration-1"
@@ -76,7 +76,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 		// Note: iteration-same is deprecated but still supported for backward compatibility
 		var iterationFolders []string
 
-		hcpo.GetLogger().Infof("🔍 DEBUG: Found %d existing folders: %v", len(existingFolders), existingFolders)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Found %d existing folders: %v", len(existingFolders), existingFolders))
 
 		for _, folder := range existingFolders {
 			// Include all iteration-* folders (both numbered and legacy "iteration-same")
@@ -85,7 +85,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 			}
 		}
 
-		hcpo.GetLogger().Infof("🔍 DEBUG: iterationFolders count=%d: %v", len(iterationFolders), iterationFolders)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: iterationFolders count=%d: %v", len(iterationFolders), iterationFolders))
 
 		// Sort iteration folders by iteration number
 		// Supports formats: "iteration-N", "YYYY-MM-DD-iteration-N", or "YYYY-MM-DD-initial"
@@ -131,16 +131,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 			folderOptions = folderOptions[:10]
 		}
 
-		hcpo.GetLogger().Infof("🔍 DEBUG: folderOptions count=%d: %v", len(folderOptions), folderOptions)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: folderOptions count=%d: %v", len(folderOptions), folderOptions))
 
 		// If only one folder exists, use it directly
 		if len(folderOptions) == 1 {
-			hcpo.GetLogger().Infof("📁 Using the only existing run folder: %s", folderOptions[0])
+			hcpo.GetLogger().Info(fmt.Sprintf("📁 Using the only existing run folder: %s", folderOptions[0]))
 			return folderOptions[0], nil
 		}
 
 		// Multiple folders exist - ask user to select which one to use
-		hcpo.GetLogger().Infof("📁 Found %d existing run folders, presenting %d options to user", len(existingFolders), len(folderOptions))
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Found %d existing run folders, presenting %d options to user", len(existingFolders), len(folderOptions)))
 
 		// Ask user to select which run folder to use
 		requestID := fmt.Sprintf("select_run_folder_%d", time.Now().UnixNano())
@@ -174,7 +174,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 			hcpo.getWorkflowID(),
 		)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to get user selection for run folder: %w, defaulting to first option", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user selection for run folder: %w, defaulting to first option", err))
 			// Default to first option (highest iteration number)
 			return folderOptions[0], nil
 		}
@@ -183,18 +183,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 		// Extract the index from the choice string
 		var selectedIndex int
 		if _, err := fmt.Sscanf(choice, "option%d", &selectedIndex); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to parse folder choice '%s': %w, defaulting to first option", choice, err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse folder choice '%s': %w, defaulting to first option", choice, err))
 			return folderOptions[0], nil
 		}
 
 		// Validate index
 		if selectedIndex < 0 || selectedIndex >= len(folderOptions) {
-			hcpo.GetLogger().Warnf("⚠️ Invalid folder index %d (max: %d), defaulting to first option", selectedIndex, len(folderOptions)-1)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Invalid folder index %d (max: %d), defaulting to first option", selectedIndex, len(folderOptions)-1))
 			return folderOptions[0], nil
 		}
 
 		selectedFolder := folderOptions[selectedIndex]
-		hcpo.GetLogger().Infof("✅ User selected run folder: %s", selectedFolder)
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ User selected run folder: %s", selectedFolder))
 		return selectedFolder, nil
 
 	case "create_new_runs_always":
@@ -215,7 +215,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 		}
 
 	default:
-		return "", fmt.Errorf("unknown run mode: %s", runMode)
+		return "", fmt.Errorf(fmt.Sprintf("unknown run mode: %s", runMode), nil)
 	}
 }
 
@@ -261,11 +261,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createRunFolderStructure(ctx
 	// Create .keep file to ensure directory is created
 	keepFile := fmt.Sprintf("%s/.keep", runPath)
 	if err := hcpo.WriteWorkspaceFile(ctx, keepFile, "# This file ensures the run folder exists"); err != nil {
-		return fmt.Errorf("failed to create run folder: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to create run folder: %w", err), nil)
 	}
 
 	// The actual folder creation will happen when files are written
-	hcpo.GetLogger().Infof("✅ Created run folder structure: %s", runPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created run folder structure: %s", runPath))
 	return nil
 }
 
@@ -306,7 +306,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) determineRunFolderForCleanup
 		return "", false, nil
 
 	default:
-		return "", false, fmt.Errorf("unknown run mode: %s", runMode)
+		return "", false, fmt.Errorf(fmt.Sprintf("unknown run mode: %s", runMode), nil)
 	}
 }
 
@@ -315,7 +315,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) determineRunFolderForCleanup
 func (hcpo *HumanControlledTodoPlannerOrchestrator) shouldAskDeleteOldProgress(ctx context.Context, workspacePath, runMode string) bool {
 	_, shouldClean, err := hcpo.determineRunFolderForCleanup(ctx, workspacePath, runMode)
 	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to determine run folder for cleanup check: %v, defaulting to ask question", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to determine run folder for cleanup check: %v, defaulting to ask question", err))
 		return true // Default to asking if we can't determine
 	}
 	return shouldClean
@@ -324,7 +324,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) shouldAskDeleteOldProgress(c
 // cleanupExecutionArtifactsForFreshStart cleans execution and validation artifacts based on run mode
 // This handles both new runs folder structure and old structure for backward compatibility
 func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsForFreshStart(ctx context.Context, workspacePath, runMode string) error {
-	hcpo.GetLogger().Infof("🧹 Starting cleanup of execution artifacts for fresh start (run_mode: %s)", runMode)
+	hcpo.GetLogger().Info(fmt.Sprintf("🧹 Starting cleanup of execution artifacts for fresh start (run_mode: %s)", runMode))
 
 	// Check if a specific run folder was already selected (from frontend or earlier resolution)
 	var runFolderName string
@@ -334,44 +334,44 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsFor
 		// Use the already-selected run folder (from frontend options)
 		runFolderName = hcpo.selectedRunFolder
 		shouldCleanSpecificFolder = true
-		hcpo.GetLogger().Infof("📁 Using already-selected run folder for cleanup: %s", runFolderName)
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Using already-selected run folder for cleanup: %s", runFolderName))
 	} else {
 		// Determine which run folder will be used (if any)
 		var err error
 		runFolderName, shouldCleanSpecificFolder, err = hcpo.determineRunFolderForCleanup(ctx, workspacePath, runMode)
 		if err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to determine run folder for cleanup: %v, will only clean old structure", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to determine run folder for cleanup: %v, will only clean old structure", err))
 			shouldCleanSpecificFolder = false
 		}
 	}
 
 	// Clean specific run folder if we're reusing it
 	if shouldCleanSpecificFolder && runFolderName != "" {
-		hcpo.GetLogger().Infof("📁 Cleaning specific run folder: %s", runFolderName)
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Cleaning specific run folder: %s", runFolderName))
 		runFolderPath := fmt.Sprintf("%s/runs/%s", workspacePath, runFolderName)
 
 		// Clean execution directory in run folder (this will recursively delete all step-* subdirectories)
 		executionDir := fmt.Sprintf("%s/execution", runFolderPath)
 		if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-			hcpo.GetLogger().Warnf("⚠️ Failed to cleanup execution directory in run folder: %w", err)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup execution directory in run folder: %w", err))
 		} else {
-			hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory in run folder: %s (including all step-* subdirectories)", executionDir)
+			hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up execution directory in run folder: %s (including all step-* subdirectories)", executionDir))
 		}
 	} else {
-		hcpo.GetLogger().Infof("📁 No specific run folder to clean (will create new folder or use new structure)")
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 No specific run folder to clean (will create new folder or use new structure)"))
 	}
 
 	// Always clean old structure for backward compatibility
-	hcpo.GetLogger().Infof("🧹 Cleaning old structure for backward compatibility")
+	hcpo.GetLogger().Info(fmt.Sprintf("🧹 Cleaning old structure for backward compatibility"))
 
 	// Clean old execution directory
 	oldExecutionDir := fmt.Sprintf("%s/execution", workspacePath)
 	if err := hcpo.CleanupDirectory(ctx, oldExecutionDir, "execution"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup old execution directory: %w", err)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup old execution directory: %w", err))
 	} else {
-		hcpo.GetLogger().Infof("🗑️ Cleaned up old execution directory: %s", oldExecutionDir)
+		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up old execution directory: %s", oldExecutionDir))
 	}
 
-	hcpo.GetLogger().Infof("✅ Completed cleanup of execution artifacts for fresh start")
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed cleanup of execution artifacts for fresh start"))
 	return nil
 }

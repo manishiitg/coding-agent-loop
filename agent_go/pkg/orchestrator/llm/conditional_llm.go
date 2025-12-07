@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	"mcpagent/observability"
@@ -32,7 +32,7 @@ type ConditionalLLM struct {
 // NewConditionalLLMWithEventBridge creates a new conditional LLM instance with mandatory event bridge
 func NewConditionalLLMWithEventBridge(
 	llm llmtypes.Model,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
 ) *ConditionalLLM {
@@ -48,9 +48,7 @@ func (cl *ConditionalLLM) SetEventEmitter(emitter func(context.Context, events.E
 
 // Decide makes a true/false decision based on context and question
 func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, stepIndex, iteration int) (*ConditionalResponse, error) {
-	startTime := time.Now()
-
-	cl.GetLogger().Infof("🤔 Making conditional decision: %s", question)
+	cl.GetLogger().Info(fmt.Sprintf("🤔 Making conditional decision: %s", question))
 
 	// Emit orchestrator agent start event
 	if cl.GetEventEmitter() != nil {
@@ -77,86 +75,27 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 		ValidateOutput: true,
 		MaxRetries:     2,
 	}
-	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(cl.GetLLM(), config, cl.GetLogger())
+	// Convert loggerv2.Logger to loggerv2.Logger
+	var v2Logger loggerv2.Logger
+	if cl.GetLogger() != nil {
+		v2Logger = cl.GetLogger()
+	} else {
+		v2Logger = loggerv2.NewDefault()
+	}
 
-	// Generate structured output
+	// Create structured output generator with logger
+	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(cl.GetLLM(), config, v2Logger)
 	jsonOutput, err := generator.GenerateStructuredOutput(ctx, prompt, schema)
 	if err != nil {
-		duration := time.Since(startTime)
-		cl.GetLogger().Errorf("❌ Conditional decision failed: %w", err)
-
-		// Emit orchestrator agent error event
-		if cl.GetEventEmitter() != nil {
-			errorEvent := &events.OrchestratorAgentErrorEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				AgentType: "conditional",
-				AgentName: "conditional-llm",
-				Objective: fmt.Sprintf("Conditional decision: %s", question),
-				Error:     err.Error(),
-				Duration:  duration,
-				StepIndex: stepIndex,
-				Iteration: iteration,
-			}
-			cl.GetEventEmitter()(ctx, errorEvent)
-		}
-
-		return nil, fmt.Errorf("failed to make conditional decision: %w", err)
+		return nil, err
 	}
-
-	// Parse JSON
-	var result ConditionalResponse
-	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
-		duration := time.Since(startTime)
-		cl.GetLogger().Errorf("❌ Failed to parse conditional response: %w", err)
-
-		// Emit orchestrator agent error event
-		if cl.GetEventEmitter() != nil {
-			errorEvent := &events.OrchestratorAgentErrorEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp: time.Now(),
-				},
-				AgentType: "conditional",
-				AgentName: "conditional-llm",
-				Objective: fmt.Sprintf("Conditional decision: %s", question),
-				Error:     err.Error(),
-				Duration:  duration,
-				StepIndex: stepIndex,
-				Iteration: iteration,
-			}
-			cl.GetEventEmitter()(ctx, errorEvent)
-		}
-
+	
+	// Parse JSON output into ConditionalResponse
+	var response ConditionalResponse
+	if err := json.Unmarshal([]byte(jsonOutput), &response); err != nil {
 		return nil, fmt.Errorf("failed to parse conditional response: %w", err)
 	}
-
-	duration := time.Since(startTime)
-	cl.GetLogger().Infof("✅ Conditional decision made: result=%t, reason=%s", result.Result, result.Reason)
-
-	// Emit orchestrator agent end event
-	if cl.GetEventEmitter() != nil {
-		resultText := fmt.Sprintf("Decision: %t, Reason: %s", result.Result, result.Reason)
-		endEvent := &events.OrchestratorAgentEndEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp: time.Now(),
-			},
-			AgentType: "conditional",
-			AgentName: "conditional-llm",
-			Objective: fmt.Sprintf("Conditional decision: %s", question),
-			InputData: map[string]string{
-				"context":  context,
-				"question": question,
-			},
-			Result:    resultText,
-			Duration:  duration,
-			StepIndex: stepIndex,
-			Iteration: iteration,
-		}
-		cl.GetEventEmitter()(ctx, endEvent)
-	}
-
-	return &result, nil
+	return &response, nil
 }
 
 // Close cleans up resources

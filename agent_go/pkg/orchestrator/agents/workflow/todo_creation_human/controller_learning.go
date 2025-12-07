@@ -19,9 +19,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	learningDetailLevel := "general" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
 		learningDetailLevel = step.AgentConfigs.LearningDetailLevel
-		hcpo.GetLogger().Infof("📝 Using step-specific learning detail level: '%s'", learningDetailLevel)
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
 	} else {
-		hcpo.GetLogger().Infof("📝 No step-specific learning detail level set, using default: 'general'")
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'general'"))
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -29,11 +29,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
-		hcpo.GetLogger().Infof("⏭️ Skipping success learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps)
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping success learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps))
 		return "", nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) {
-		hcpo.GetLogger().Infof("🔧 Code execution mode enabled - forcing success learning for step %d/%d (overriding step config)", stepNumber, totalSteps)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing success learning for step %d/%d (overriding step config)", stepNumber, totalSteps))
 		// Override learning detail level to "general" if it was "none"
 		if learningDetailLevel == "none" {
 			learningDetailLevel = "general"
@@ -42,7 +42,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 
 	// Success learning agent ALWAYS runs - it writes learnings (creates folder if needed)
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
-	hcpo.GetLogger().Infof("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
+	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title))
 
 	// Create success learning agent
 	// Resolve variables in step title before using in agent name
@@ -56,7 +56,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	successLearningAgentName := fmt.Sprintf("step-%d-success-learning-%s-%s", stepNumber, sanitizedTitle, learningMode)
 	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", stepNumber, 1, successLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
-		return "", fmt.Errorf("failed to create success learning agent: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to create success learning agent: %w", err), nil)
 	}
 
 	// Format validation result for template
@@ -103,19 +103,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumber, step.Title, isCodeExecutionMode)
 	if existingLearningFilePath != "" {
 		successLearningTemplateVars["ExistingLearningFilePath"] = existingLearningFilePath
-		hcpo.GetLogger().Infof("📄 Found existing learning file: %s", existingLearningFilePath)
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Found existing learning file: %s", existingLearningFilePath))
 	} else {
 		successLearningTemplateVars["ExistingLearningFilePath"] = ""
-		hcpo.GetLogger().Infof("📄 No existing learning file found for step %d", stepNumber)
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for step %d", stepNumber))
 	}
 
 	// Execute success learning agent and capture output
 	successLearningOutput, _, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
-		return "", fmt.Errorf("success learning analysis failed: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("success learning analysis failed: %w", err), nil)
 	}
 
-	hcpo.GetLogger().Infof("✅ Success learning analysis completed for step %d (detail level: %s)", stepNumber, learningDetailLevel)
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for step %d (detail level: %s)", stepNumber, learningDetailLevel))
 	return successLearningOutput, nil
 }
 
@@ -126,9 +126,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	learningDetailLevel := "general" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
 		learningDetailLevel = step.AgentConfigs.LearningDetailLevel
-		hcpo.GetLogger().Infof("📝 Using step-specific learning detail level: '%s'", learningDetailLevel)
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
 	} else {
-		hcpo.GetLogger().Infof("📝 No step-specific learning detail level set, using default: 'general'")
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'general'"))
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -136,11 +136,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
-		hcpo.GetLogger().Infof("⏭️ Skipping failure learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps)
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping failure learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps))
 		return "", "", nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) {
-		hcpo.GetLogger().Infof("🔧 Code execution mode enabled - forcing failure learning for step %d/%d (overriding step config)", stepNumber, totalSteps)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing failure learning for step %d/%d (overriding step config)", stepNumber, totalSteps))
 		// Override learning detail level to "general" if it was "none"
 		if learningDetailLevel == "none" {
 			learningDetailLevel = "general"
@@ -149,7 +149,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 
 	// Failure learning agent ALWAYS runs - it writes learnings (creates folder if needed)
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
-	hcpo.GetLogger().Infof("🧠 Starting failure learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title)
+	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting failure learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title))
 
 	// Create failure learning agent
 	// Resolve variables in step title before using in agent name
@@ -163,7 +163,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	failureLearningAgentName := fmt.Sprintf("step-%d-failure-learning-%s-%s", stepNumber, sanitizedTitle, learningMode)
 	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", stepNumber, 1, failureLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create failure learning agent: %w", err)
+		return "", "", fmt.Errorf(fmt.Sprintf("failed to create failure learning agent: %w", err), nil)
 	}
 
 	// Format validation result for template
@@ -210,23 +210,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumber, step.Title, isCodeExecutionMode)
 	if existingLearningFilePath != "" {
 		failureLearningTemplateVars["ExistingLearningFilePath"] = existingLearningFilePath
-		hcpo.GetLogger().Infof("📄 Found existing learning file: %s", existingLearningFilePath)
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Found existing learning file: %s", existingLearningFilePath))
 	} else {
 		failureLearningTemplateVars["ExistingLearningFilePath"] = ""
-		hcpo.GetLogger().Infof("📄 No existing learning file found for step %d", stepNumber)
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for step %d", stepNumber))
 	}
 
 	// Execute failure learning agent and capture output
 	failureLearningOutput, _, err := failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
-		return "", "", fmt.Errorf("failure learning analysis failed: %w", err)
+		return "", "", fmt.Errorf(fmt.Sprintf("failure learning analysis failed: %w", err), nil)
 	}
 
 	// Extract refined task description from the output
 	refinedTaskDescription := hcpo.extractRefinedTaskDescription(failureLearningOutput)
 	learningAnalysis := failureLearningOutput // Use the full output as learning analysis
 
-	hcpo.GetLogger().Infof("✅ Failure learning analysis completed for step %d (detail level: %s)", stepNumber, learningDetailLevel)
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for step %d (detail level: %s)", stepNumber, learningDetailLevel))
 	return refinedTaskDescription, learningAnalysis, nil
 }
 
@@ -375,7 +375,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx co
 	// List all files in the step folder
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list files in %s: %w", stepLearningsPath, err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to list files in %s: %w", stepLearningsPath, err), nil)
 	}
 
 	// Read all .md files from the step folder
@@ -384,7 +384,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx co
 			filePath := filepath.Join(stepLearningsPath, file)
 			content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
 			if err != nil {
-				hcpo.GetLogger().Warnf("⚠️ Failed to read learning file %s: %v", filePath, err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning file %s: %v", filePath, err))
 				continue
 			}
 			learningFiles[file] = content
@@ -403,7 +403,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx co
 				filePath := filepath.Join(codeSubfolderPath, file)
 				content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
 				if err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to read code learning file %s: %v", filePath, err)
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read code learning file %s: %v", filePath, err))
 					continue
 				}
 				// Prefix with "code/" to indicate it's from the code subfolder
@@ -412,7 +412,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx co
 			}
 		}
 		if goFileCount > 0 {
-			hcpo.GetLogger().Infof("📁 Read %d .go file(s) from code/ subfolder", goFileCount)
+			hcpo.GetLogger().Info(fmt.Sprintf("📁 Read %d .go file(s) from code/ subfolder", goFileCount))
 		}
 	}
 	// Note: If code/ subfolder doesn't exist or is empty, that's fine - it's optional

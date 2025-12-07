@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -33,7 +33,7 @@ type HumanControlledTodoPlannerPlanImprovementAgent struct {
 }
 
 // NewHumanControlledTodoPlannerPlanImprovementAgent creates a new plan improvement agent
-func NewHumanControlledTodoPlannerPlanImprovementAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerPlanImprovementAgent {
+func NewHumanControlledTodoPlannerPlanImprovementAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerPlanImprovementAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -96,12 +96,12 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	// When step-specific learnings is enabled, step-specific folders are at workspace root
 	useStepSpecific := pim.GetUseStepSpecificLearnings()
 	if useStepSpecific {
-		pim.GetLogger().Infof("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/step-*/ and learnings/step-*/")
+		pim.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/step-*/ and learnings/step-*/"))
 	}
 
 	writePaths := []string{} // No write access - plan updates are done via custom tool executors, not workspace tools
 	pim.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	pim.GetLogger().Infof("📊 Setting folder guard for plan improvement agent - Read paths: %v, Write paths: %v (read-only access to runs/, learnings/, learnings/, and planning/ folders. Plan updates via custom tools)", readPaths, writePaths)
+	pim.GetLogger().Info(fmt.Sprintf("📊 Setting folder guard for plan improvement agent - Read paths: %v, Write paths: %v (read-only access to runs/, learnings/, learnings/, and planning/ folders. Plan updates via custom tools)", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetPlanImprovementLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -126,7 +126,7 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 			CrossProviderFallback: crossProviderFallback, // Preserve cross-provider fallback (or nil if orchestrator config is nil)
 			APIKeys:               apiKeys,               // Preserve API keys from orchestrator (or nil if orchestrator config is nil)
 		}
-		pim.GetLogger().Infof("🔧 Using preset default plan improvement LLM: %s/%s", pim.presetPlanImprovementLLM.Provider, pim.presetPlanImprovementLLM.ModelID)
+		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset default plan improvement LLM: %s/%s", pim.presetPlanImprovementLLM.Provider, pim.presetPlanImprovementLLM.ModelID))
 	} else if pim.presetLearningLLM != nil && pim.presetLearningLLM.Provider != "" && pim.presetLearningLLM.ModelID != "" {
 		// Fallback to learning LLM if plan improvement LLM not set
 		var fallbackModels []string
@@ -147,10 +147,10 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 			CrossProviderFallback: crossProviderFallback,
 			APIKeys:               apiKeys,
 		}
-		pim.GetLogger().Infof("🔧 Using preset learning LLM as fallback for plan improvement: %s/%s", pim.presetLearningLLM.Provider, pim.presetLearningLLM.ModelID)
+		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for plan improvement: %s/%s", pim.presetLearningLLM.Provider, pim.presetLearningLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
-		pim.GetLogger().Infof("🔧 Using orchestrator default plan improvement LLM: %s/%s", pim.GetProvider(), pim.GetModel())
+		pim.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default plan improvement LLM: %s/%s", pim.GetProvider(), pim.GetModel()))
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -166,12 +166,12 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 
 	// Code execution mode only applies to execution agents, not plan improvement agents
 	config.UseCodeExecutionMode = false
-	pim.GetLogger().Infof("🔧 Disabling code execution mode for plan improvement agent (only execution agents use MCP tools)")
+	pim.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for plan improvement agent (only execution agents use MCP tools)"))
 
 	// Large output virtual tools are enabled for plan improvement (agent may generate large feedback reports)
 
 	// Create wrapper function that returns OrchestratorAgent interface
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewHumanControlledTodoPlannerPlanImprovementAgent(cfg, logger, tracer, eventBridge, pim.BaseOrchestrator)
 	}
 
@@ -189,7 +189,7 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup plan improvement agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup plan improvement agent: %w", err), nil)
 	}
 
 	return agent, nil
@@ -198,7 +198,7 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 // PlanImprovementOnly runs only the plan improvement phase (standalone, independent from other phases)
 // This is a separate workflow phase that can be run independently
 func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, workspacePath string) (string, error) {
-	pim.GetLogger().Infof("📊 Starting standalone plan improvement for workspace: %s", workspacePath)
+	pim.GetLogger().Info(fmt.Sprintf("📊 Starting standalone plan improvement for workspace: %s", workspacePath))
 
 	// Set workspace path
 	pim.SetWorkspacePath(workspacePath)
@@ -207,19 +207,19 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, work
 	planPath := fmt.Sprintf("%s/planning/plan.json", pim.GetWorkspacePath())
 	planExist, existingPlan, err := pim.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to check for existing plan: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing plan: %w", err), nil)
 	}
 	if !planExist {
-		return "", fmt.Errorf("plan.json not found at %s - planning must be run first as a separate phase", planPath)
+		return "", fmt.Errorf(fmt.Sprintf("plan.json not found at %s - planning must be run first as a separate phase", planPath), nil)
 	}
 
 	// Plan exists - use it for plan improvement
-	pim.GetLogger().Infof("✅ Found plan.json with %d steps for plan improvement", len(existingPlan.Steps))
+	pim.GetLogger().Info(fmt.Sprintf("✅ Found plan.json with %d steps for plan improvement", len(existingPlan.Steps)))
 
 	// Prepare plan JSON for template
 	planJSONBytes, err := json.MarshalIndent(existingPlan, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal plan to JSON: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to marshal plan to JSON: %w", err), nil)
 	}
 
 	// Don't pre-check execution results - let the agent explore runs/ folder itself using its tools
@@ -228,7 +228,7 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, work
 	// Create plan improvement agent
 	planImprovementAgent, err := pim.createPlanImprovementAgent(ctx, pim.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf("failed to create plan improvement agent: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to create plan improvement agent: %w", err), nil)
 	}
 
 	// Prepare template variables
@@ -246,14 +246,14 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, work
 	}
 
 	// Execute plan improvement agent
-	pim.GetLogger().Infof("📊 Executing plan improvement agent...")
+	pim.GetLogger().Info(fmt.Sprintf("📊 Executing plan improvement agent..."))
 	result, conversationHistory, err := planImprovementAgent.Execute(ctx, planImprovementTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf("plan improvement agent execution failed: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("plan improvement agent execution failed: %w", err), nil)
 	}
 
-	pim.GetLogger().Infof("✅ Plan improvement completed successfully")
-	pim.GetLogger().Infof("📊 Plan improvement result: %s", result)
+	pim.GetLogger().Info(fmt.Sprintf("✅ Plan improvement completed successfully"))
+	pim.GetLogger().Info(fmt.Sprintf("📊 Plan improvement result: %s", result))
 
 	_ = conversationHistory // Conversation history not used for standalone plan improvement
 
@@ -263,28 +263,28 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, work
 // checkExistingPlan checks if a plan.json file already exists in the workspace and returns the parsed plan if found
 // Uses the generic ReadWorkspaceFile function from base orchestrator
 func (pim *PlanImprovementManager) checkExistingPlan(ctx context.Context, planPath string) (bool, *PlanningResponse, error) {
-	pim.GetLogger().Infof("🔍 Checking for existing plan at %s", planPath)
+	pim.GetLogger().Info(fmt.Sprintf("🔍 Checking for existing plan at %s", planPath))
 
 	// Use the generic ReadWorkspaceFile function from base orchestrator
 	planContent, err := pim.ReadWorkspaceFile(ctx, planPath)
 	if err != nil {
 		// Check if it's a "file not found" error vs other errors
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			pim.GetLogger().Infof("📋 No existing plan found: %v", err)
+			pim.GetLogger().Info(fmt.Sprintf("📋 No existing plan found: %v", err))
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing plan: %w", err), nil)
 	}
 
 	// Parse JSON content to PlanningResponse
 	var planResponse PlanningResponse
 	if err := json.Unmarshal([]byte(planContent), &planResponse); err != nil {
-		pim.GetLogger().Warnf("⚠️ Failed to parse existing plan.json: %v", err)
-		return false, nil, fmt.Errorf("failed to parse plan.json: %w", err)
+		pim.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing plan.json: %v", err))
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to parse plan.json: %w", err), nil)
 	}
 
-	pim.GetLogger().Infof("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps))
+	pim.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps)))
 	return true, &planResponse, nil
 }
 
@@ -319,7 +319,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 
 	// Get logger and MCP agent from base agent
 	baseAgent := agent.BaseOrchestratorAgent.BaseAgent()
-	var logger utils.ExtendedLogger
+	var logger loggerv2.Logger
 	var mcpAgent *mcpagent.Agent
 	if baseAgent != nil {
 		mcpAgent = baseAgent.Agent()
@@ -329,7 +329,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	}
 
 	if mcpAgent == nil {
-		return "", nil, fmt.Errorf("MCP agent is not initialized")
+		return "", nil, fmt.Errorf(fmt.Sprintf("MCP agent is not initialized"), nil)
 	}
 
 	// Get readFile and writeFile functions from base orchestrator
@@ -341,7 +341,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 		readFile = agent.baseOrchestrator.ReadWorkspaceFile
 		writeFile = agent.baseOrchestrator.WriteWorkspaceFile
 	} else {
-		return "", nil, fmt.Errorf("base orchestrator is not initialized")
+		return "", nil, fmt.Errorf(fmt.Sprintf("base orchestrator is not initialized"), nil)
 	}
 
 	// Register all plan modification tools using shared function
@@ -383,7 +383,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 				Data:      startedEvent,
 			})
 			if logger != nil {
-				logger.Infof("📤 Emitted plan improvement started event")
+				logger.Info(fmt.Sprintf("📤 Emitted plan improvement started event"))
 			}
 		}
 	}
@@ -392,7 +392,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	for iteration < maxIterations {
 		iteration++
 		if logger != nil {
-			logger.Infof("📊 Plan improvement agent iteration %d/%d", iteration, maxIterations)
+			logger.Info(fmt.Sprintf("📊 Plan improvement agent iteration %d/%d", iteration, maxIterations))
 		}
 
 		// Create a simple input processor that returns the user message
@@ -424,7 +424,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 
 			if planUpdateToolCalled {
 				if logger != nil {
-					logger.Infof("🔍 [PlanImprovementAgent] Plan modification tool detected in iteration %d, emitting event immediately", iteration)
+					logger.Info(fmt.Sprintf("🔍 [PlanImprovementAgent] Plan modification tool detected in iteration %d, emitting event immediately", iteration))
 				}
 				CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, updatedConversationHistory, workspacePath, readFile)
 			}
@@ -433,7 +433,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {
-				logger.Infof("📊 Plan improvement agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations)
+				logger.Info(fmt.Sprintf("📊 Plan improvement agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations))
 			}
 
 			// Generate unique request ID
@@ -450,7 +450,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 			)
 			if err != nil {
 				if logger != nil {
-					logger.Warnf("⚠️ Failed to get user feedback: %v", err)
+					logger.Warn(fmt.Sprintf("⚠️ Failed to get user feedback: %v", err))
 				}
 				// Continue without blocking if feedback fails
 				break
@@ -459,7 +459,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 			// If user clicked Approve button, we're done
 			if approved {
 				if logger != nil {
-					logger.Infof("✅ User approved - plan improvement complete")
+					logger.Info(fmt.Sprintf("✅ User approved - plan improvement complete"))
 				}
 				break
 			}
@@ -467,7 +467,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 			// User provided feedback/question - always pass it to the agent and continue
 			if feedback != "" && strings.TrimSpace(feedback) != "" {
 				if logger != nil {
-					logger.Infof("📝 User provided feedback: %s", feedback)
+					logger.Info(fmt.Sprintf("📝 User provided feedback: %s", feedback))
 				}
 				// Use feedback directly as user message for next iteration
 				// Note: BaseAgent.Execute() will automatically add it to conversation history
@@ -475,30 +475,30 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 			} else {
 				// No feedback provided but not approved - continue with same message
 				if logger != nil {
-					logger.Infof("ℹ️ No feedback provided, continuing with same context")
+					logger.Info(fmt.Sprintf("ℹ️ No feedback provided, continuing with same context"))
 				}
 			}
 		} else {
 			// Reached max iterations or no base orchestrator
 			if logger != nil {
-				logger.Infof("📊 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations)
+				logger.Info(fmt.Sprintf("📊 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations))
 			}
 			break
 		}
 	}
 
 	if logger != nil {
-		logger.Infof("📊 Plan improvement completed after %d iterations", iteration)
+		logger.Info(fmt.Sprintf("📊 Plan improvement completed after %d iterations", iteration))
 	}
 
 	// Check if plan modification tools were called and emit event if needed
 	// This ensures the frontend is notified of plan changes
 	if logger != nil {
-		logger.Infof("🔍 [PlanImprovementAgent] Calling CheckAndEmitPlanUpdateEvent (baseOrchestrator: %v, conversationHistory length: %d)", agent.baseOrchestrator != nil, len(currentConversationHistory))
+		logger.Info(fmt.Sprintf("🔍 [PlanImprovementAgent] Calling CheckAndEmitPlanUpdateEvent (baseOrchestrator: %v, conversationHistory length: %d)", agent.baseOrchestrator != nil, len(currentConversationHistory)))
 	}
 	CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, currentConversationHistory, workspacePath, readFile)
 	if logger != nil {
-		logger.Infof("🔍 [PlanImprovementAgent] CheckAndEmitPlanUpdateEvent call completed")
+		logger.Info(fmt.Sprintf("🔍 [PlanImprovementAgent] CheckAndEmitPlanUpdateEvent call completed"))
 	}
 
 	// Emit plan improvement completed event
@@ -523,7 +523,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 				Data:      completedEvent,
 			})
 			if logger != nil {
-				logger.Infof("📤 Emitted plan improvement completed event")
+				logger.Info(fmt.Sprintf("📤 Emitted plan improvement completed event"))
 			}
 		}
 	}

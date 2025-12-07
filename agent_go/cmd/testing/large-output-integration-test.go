@@ -35,7 +35,7 @@ var largeOutputIntegrationTestCmd = &cobra.Command{
 		}
 		defer os.RemoveAll(testDir)
 
-		logger.Infof("Created test directory: %s", testDir)
+		logger.Info(fmt.Sprintf("Created test directory: %s", testDir))
 
 		// Test 1: Test with a tool that produces large output
 		logger.Info("\n--- Test 1: Large Tool Output Detection ---")
@@ -83,7 +83,7 @@ func testLargeToolOutputDetection(testDir string) error {
 		return fmt.Errorf("large output was not detected as large (size: %d, token_count: %d, threshold: %d)", len(largeOutput), tokenCount, handler.Threshold)
 	}
 
-	logger.Infof("✅ Large output detected correctly (size: %d, threshold: %d)", len(largeOutput), handler.Threshold)
+	logger.Info(fmt.Sprintf("✅ Large output detected correctly (size: %d, threshold: %d)", len(largeOutput), handler.Threshold))
 
 	// Test file writing
 	filePath, err := handler.WriteToolOutputToFile(largeOutput, "test_large_tool")
@@ -91,7 +91,7 @@ func testLargeToolOutputDetection(testDir string) error {
 		return fmt.Errorf("failed to write large output to file: %w", err)
 	}
 
-	logger.Infof("✅ Large output written to file: %s", filePath)
+	logger.Info(fmt.Sprintf("✅ Large output written to file: %s", filePath))
 
 	// Verify file exists and has correct content
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -158,7 +158,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 	if len(result) != 100 {
 		return fmt.Errorf("read_large_output returned wrong length: expected 100, got %d", len(result))
 	}
-	logger.Infof("✅ read_large_output works correctly (read %d characters)", len(result))
+	logger.Info(fmt.Sprintf("✅ read_large_output works correctly (read %d characters)", len(result)))
 
 	// Test 2: search_large_output tool
 	logger.Info("Testing search_large_output tool...")
@@ -171,7 +171,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 	if err != nil {
 		return fmt.Errorf("search_large_output failed: %w", err)
 	}
-	logger.Infof("✅ search_large_output works correctly: %s", result)
+	logger.Info(fmt.Sprintf("✅ search_large_output works correctly: %s", result))
 
 	// Test 3: query_large_output tool (JSON query)
 	logger.Info("Testing query_large_output tool...")
@@ -189,8 +189,8 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 		"raw":      true,
 	})
 	if err != nil {
-		logger.Infof("⚠️ query_large_output failed: %w", err)
-		logger.Infof("⚠️ This is expected if jq is not available or if there are permission issues")
+		logger.Info(fmt.Sprintf("⚠️ query_large_output failed: %w", err))
+		logger.Info(fmt.Sprintf("⚠️ This is expected if jq is not available or if there are permission issues"))
 		logger.Info("✅ Skipping query_large_output test (not critical for core functionality)")
 	} else {
 		// Trim whitespace and newlines from the result
@@ -198,7 +198,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 		if result != "test1" {
 			return fmt.Errorf("query_large_output failed: %w", err)
 		}
-		logger.Infof("✅ query_large_output works correctly: %s", result)
+		logger.Info(fmt.Sprintf("✅ query_large_output works correctly: %s", result))
 	}
 
 	return nil
@@ -229,7 +229,7 @@ func testRealAgentConversation(testDir string) error {
 		return fmt.Errorf("failed to write large output to file: %w", err)
 	}
 
-	logger.Infof("✅ Large tool output written to file: %s", filePath)
+	logger.Info(fmt.Sprintf("✅ Large tool output written to file: %s", filePath))
 
 	// Check if the file was created
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -246,7 +246,7 @@ func testRealAgentConversation(testDir string) error {
 		return fmt.Errorf("file content size mismatch: expected %d, got %d", len(largeOutput), len(fileContent))
 	}
 
-	logger.Infof("✅ Large tool output file verified correctly (size: %d)", len(fileContent))
+	logger.Info(fmt.Sprintf("✅ Large tool output file verified correctly (size: %d)", len(fileContent)))
 
 	return nil
 }

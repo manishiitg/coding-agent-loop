@@ -169,13 +169,9 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning LLM: step config > preset learning_llm > preset default (or execution LLM in code exec mode)
+  // Learning LLM: step config > preset learning_llm > preset default
+  // Always use learning_llm config (not execution_llm), even in code exec mode
   const learningLLM = useMemo(() => {
-    // In code execution mode, learning uses execution LLM
-    if (useCodeExecutionMode) {
-      return executionLLM
-    }
-    
     // Check if learning is disabled
     if (stepConfig?.agent_configs?.disable_learning === true) {
       return null
@@ -192,7 +188,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs, useCodeExecutionMode, executionLLM])
+  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs])
 
   // Learning detail level (defaults to 'general', but 'exact' in code exec mode)
   const learningDetailLevel = useMemo(() => {

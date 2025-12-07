@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
@@ -30,7 +30,7 @@ type HumanControlledTodoPlannerLearningAgent struct {
 }
 
 // NewHumanControlledTodoPlannerLearningAgent creates a new learning agent that handles both success and failure cases
-func NewHumanControlledTodoPlannerLearningAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerLearningAgent {
+func NewHumanControlledTodoPlannerLearningAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerLearningAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -45,7 +45,7 @@ func NewHumanControlledTodoPlannerLearningAgent(config *agents.OrchestratorAgent
 }
 
 // NewHumanControlledTodoPlannerSuccessLearningAgent is a compatibility alias for the unified learning agent
-func NewHumanControlledTodoPlannerSuccessLearningAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerLearningAgent {
+func NewHumanControlledTodoPlannerSuccessLearningAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerLearningAgent {
 	return NewHumanControlledTodoPlannerLearningAgent(config, logger, tracer, eventBridge)
 }
 

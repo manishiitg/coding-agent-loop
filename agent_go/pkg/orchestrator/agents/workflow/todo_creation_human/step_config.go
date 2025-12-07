@@ -98,7 +98,7 @@ func ParseStepConfigContent(content string) (*StepConfigFile, error) {
 			stepID = flatObj.ID
 		}
 		if stepID == "" {
-			return nil, fmt.Errorf("flat format missing step_id or id field")
+			return nil, fmt.Errorf(fmt.Sprintf("flat format missing step_id or id field"), nil)
 		}
 
 		agentConfigs := &AgentConfigs{}
@@ -127,7 +127,7 @@ func ParseStepConfigContent(content string) (*StepConfigFile, error) {
 	}
 
 	// If all parsing attempts failed, return the original error
-	return nil, fmt.Errorf("failed to parse step_config.json: unsupported format")
+	return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: unsupported format"), nil)
 }
 
 // ReadStepConfigs reads step_config.json from the workspace
@@ -140,9 +140,9 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 		// Run folder config exists - use it
 		configFile, err := ParseStepConfigContent(content)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse run folder step_config.json: %w", err)
+			return nil, fmt.Errorf(fmt.Sprintf("failed to parse run folder step_config.json: %w", err), nil)
 		}
-		bo.GetLogger().Infof("📁 Using run-specific step_config.json from: %s", runConfigPath)
+		bo.GetLogger().Info(fmt.Sprintf("📁 Using run-specific step_config.json from: %s", runConfigPath))
 		return configFile, nil
 	}
 
@@ -153,18 +153,18 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 	if err != nil {
 		// File doesn't exist yet - return empty structure
 		if os.IsNotExist(err) {
-			bo.GetLogger().Infof("📁 No step_config.json found (neither run-specific nor default) - using defaults")
+			bo.GetLogger().Info(fmt.Sprintf("📁 No step_config.json found (neither run-specific nor default) - using defaults"))
 			return &StepConfigFile{Steps: []StepConfig{}}, nil
 		}
-		return nil, fmt.Errorf("failed to read step_config.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 	}
 
 	configFile, err := ParseStepConfigContent(content)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: %w", err), nil)
 	}
 
-	bo.GetLogger().Infof("📁 Using default step_config.json from: %s", configPath)
+	bo.GetLogger().Info(fmt.Sprintf("📁 Using default step_config.json from: %s", configPath))
 	return configFile, nil
 }
 
@@ -176,11 +176,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) ReadStepConfigs(ctx context.
 	var runWorkspacePath string
 	if hcpo.selectedRunFolder != "" {
 		runWorkspacePath = filepath.Join(workspacePath, "runs", hcpo.selectedRunFolder)
-		hcpo.GetLogger().Infof("📁 Reading step_config.json - will try run folder first: %s/planning/step_config.json", runWorkspacePath)
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Reading step_config.json - will try run folder first: %s/planning/step_config.json", runWorkspacePath))
 	} else {
 		// No run folder selected yet - use base workspace path
 		runWorkspacePath = workspacePath
-		hcpo.GetLogger().Infof("📁 Reading step_config.json - no run folder selected, using base workspace: %s/planning/step_config.json", workspacePath)
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Reading step_config.json - no run folder selected, using base workspace: %s/planning/step_config.json", workspacePath))
 	}
 	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath)
 }
@@ -194,16 +194,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 	// Ensure planning directory exists
 	planningDir := filepath.Join(workspacePath, "planning")
 	if err := os.MkdirAll(planningDir, 0750); err != nil {
-		return fmt.Errorf("failed to create planning directory: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to create planning directory: %w", err), nil)
 	}
 
 	jsonData, err := json.MarshalIndent(configs, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal step_config.json: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json: %w", err), nil)
 	}
 
 	if err := hcpo.WriteWorkspaceFile(ctx, configPath, string(jsonData)); err != nil {
-		return fmt.Errorf("failed to write step_config.json: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
 	}
 
 	return nil
@@ -236,7 +236,7 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) (map[int]
 			if newSteps[i].Title != "" {
 				stepTitle = newSteps[i].Title
 			}
-			return nil, fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, stepTitle)
+			return nil, fmt.Errorf(fmt.Sprintf("step at index %d is missing required ID field. Step title: %q", i, stepTitle), nil)
 		}
 
 		// Match config by ID

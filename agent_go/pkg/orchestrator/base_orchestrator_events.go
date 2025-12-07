@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"mcpagent/events"
@@ -18,13 +19,13 @@ func (bo *BaseOrchestrator) emitEvent(ctx context.Context, eventType events.Even
 
 	// Emit through event bridge
 	if err := bo.contextAwareBridge.HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit event %s: %w", eventType, err)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit event %s: %v", eventType, err))
 	}
 }
 
 // EmitOrchestratorStart emits an orchestrator start event
 func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective string, agentsCount int, executionMode string) {
-	bo.GetLogger().Infof("📤 Emitting orchestrator start event")
+	// Removed verbose logging
 
 	eventData := &events.OrchestratorStartEvent{
 		BaseEventData: events.BaseEventData{
@@ -42,7 +43,7 @@ func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective
 
 // EmitOrchestratorEnd emits an orchestrator end event
 func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, result, status, message string, executionMode string) {
-	bo.GetLogger().Infof("📤 Emitting orchestrator end event: %s", status)
+	// Removed verbose logging
 
 	duration := time.Since(bo.startTime)
 	eventData := &events.OrchestratorEndEvent{
@@ -62,7 +63,7 @@ func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, 
 
 // EmitUnifiedCompletionEvent emits a unified completion event
 func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agentType, agentMode, question, finalResult, status string, turns int) {
-	bo.GetLogger().Infof("📤 Emitting unified completion event: %s", status)
+	// Removed verbose logging
 
 	duration := time.Since(bo.startTime)
 	completionEventData := events.NewUnifiedCompletionEvent(
@@ -79,6 +80,6 @@ func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agen
 
 	// Emit through event bridge directly
 	if err := bo.contextAwareBridge.HandleEvent(ctx, agentEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit unified completion event: %w", err)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit unified completion event: %v", err))
 	}
 }

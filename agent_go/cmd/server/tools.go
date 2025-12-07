@@ -11,7 +11,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcpagent/agent/codeexec"
 	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"
 
@@ -60,7 +59,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Load merged config to get server details
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -75,7 +74,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Create temporary merged config file for mcpcache
 	tmpConfigPath, err := api.createTempMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to create temp merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to create temp merged config: %w", err), err)
 		// Fallback to base config path
 		tmpConfigPath = api.mcpConfigPath
 	} else {
@@ -183,7 +182,7 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -225,7 +224,7 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	api.discoveryMux.RUnlock()
 
 	if !isRunning {
-		api.logger.Infof("🔄 Starting background discovery for missing servers...")
+		api.logger.Info("🔄 Starting background discovery for missing servers...")
 		api.startBackgroundDiscovery()
 	}
 
@@ -272,16 +271,16 @@ func (api *StreamingAPI) handleGetToolDetail(w http.ResponseWriter, r *http.Requ
 	cfg := api.mcpConfig
 	serverConfig, configErr := cfg.GetServer(serverName)
 	if configErr != nil {
-		api.logger.Warnf("⚠️ Failed to get server config for %s: %v", serverName, configErr)
+		api.logger.Warn(fmt.Sprintf("⚠️ Failed to get server config for %s: %v", serverName, configErr))
 		http.Error(w, "Server configuration error", http.StatusInternalServerError)
 		return
 	}
 
 	cacheEntry := api.convertToolStatusToCacheEntry(result, serverName)
 	if err := cacheManager.Put(cacheEntry, serverConfig); err != nil {
-		api.logger.Warnf("⚠️ Failed to write detailed cache for server %s: %v", serverName, err)
+		api.logger.Warn(fmt.Sprintf("⚠️ Failed to write detailed cache for server %s: %v", serverName, err))
 	} else {
-		api.logger.Infof("💾 Cached detailed tools for server: %s (%d tools)", serverName, len(result.Tools))
+		api.logger.Info(fmt.Sprintf("💾 Cached detailed tools for server: %s (%d tools)", serverName, len(result.Tools)))
 	}
 
 	// Also update in-memory cache for immediate API responses
@@ -360,7 +359,7 @@ func (api *StreamingAPI) handleRemoveServer(w http.ResponseWriter, r *http.Reque
 
 // initializeToolCache initializes the tool cache on server startup using existing mcpcache service
 func (api *StreamingAPI) initializeToolCache() {
-	api.logger.Infof("🚀 Initializing tool cache on server startup using existing mcpcache service...")
+	api.logger.Info("🚀 Initializing tool cache on server startup using existing mcpcache service...")
 
 	// Get the existing cache manager
 	cacheManager := mcpcache.GetCacheManager(api.logger)
@@ -368,7 +367,7 @@ func (api *StreamingAPI) initializeToolCache() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -395,18 +394,18 @@ func (api *StreamingAPI) initializeToolCache() {
 	}
 
 	if cachedServers > 0 {
-		api.logger.Infof("✅ Loaded %d servers from existing mcpcache", cachedServers)
+		api.logger.Info(fmt.Sprintf("✅ Loaded %d servers from existing mcpcache", cachedServers))
 	}
 
 	// Check if we need to discover more servers
 	totalServers := len(cfg.MCPServers)
 	if cachedServers < totalServers {
 		missingServers := totalServers - cachedServers
-		api.logger.Infof("🔄 Found %d cached servers, but config has %d servers. Starting background discovery for %d missing servers...",
-			cachedServers, totalServers, missingServers)
+		api.logger.Info(fmt.Sprintf("🔄 Found %d cached servers, but config has %d servers. Starting background discovery for %d missing servers...",
+			cachedServers, totalServers, missingServers))
 		api.startBackgroundDiscovery()
 	} else {
-		api.logger.Infof("✅ All %d servers found in cache, starting periodic refresh only", cachedServers)
+		api.logger.Info(fmt.Sprintf("✅ All %d servers found in cache, starting periodic refresh only", cachedServers))
 	}
 
 	// Always start periodic refresh to keep cache updated
@@ -477,7 +476,7 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 	// Convert ToolDetail to llmtypes.Tool format using the centralized conversion function
 	llmTools, err := mcpclient.ToolDetailsAsLLM(toolStatus.Tools)
 	if err != nil {
-		api.logger.Errorf("Failed to convert tool details to LLM tools: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to convert tool details to LLM tools: %w", err), err)
 		// Return empty cache entry on error
 		return &mcpcache.CacheEntry{
 			ServerName:   serverName,
@@ -551,7 +550,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		api.discoveryMux.Unlock()
 	}()
 
-	api.logger.Infof("🔄 Starting background tool discovery using mcpcache service...")
+	api.logger.Info("🔄 Starting background tool discovery using mcpcache service...")
 
 	// Use a longer timeout for background discovery (5 minutes)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -563,7 +562,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Errorf("Failed to load merged config: %w", err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
 		cfg = api.mcpConfig
@@ -574,7 +573,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		// Get server configuration for cache key generation
 		serverConfig, err := cfg.GetServer(serverName)
 		if err != nil {
-			api.logger.Warnf("⚠️ Server %s not found in config, skipping: %v", serverName, err)
+			api.logger.Warn(fmt.Sprintf("⚠️ Server %s not found in config, skipping: %v", serverName, err))
 			continue
 		}
 		// Check if we already have valid cached data using configuration-aware key
@@ -590,21 +589,21 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		}
 
 		// No valid cache, discover fresh data
-		api.logger.Infof("🔍 Discovering tools for server: %s", serverName)
+		api.logger.Info(fmt.Sprintf("🔍 Discovering tools for server: %s", serverName))
 
 		// Use the existing discoverServerToolsDetailed function
 		result, err := api.discoverServerToolsDetailed(ctx, serverName)
 		if err != nil {
-			api.logger.Warnf("⚠️ Failed to discover tools for server %s: %v", serverName, err)
+			api.logger.Warn(fmt.Sprintf("⚠️ Failed to discover tools for server %s: %v", serverName, err))
 			continue
 		}
 
 		// Convert ToolStatus to CacheEntry and write to mcpcache
 		cacheEntry := api.convertToolStatusToCacheEntry(result, serverName)
 		if err := cacheManager.Put(cacheEntry, serverConfig); err != nil {
-			api.logger.Warnf("⚠️ Failed to write cache for server %s: %v", serverName, err)
+			api.logger.Warn(fmt.Sprintf("⚠️ Failed to write cache for server %s: %v", serverName, err))
 		} else {
-			api.logger.Infof("💾 Cached tools for server: %s (%d tools)", serverName, len(result.Tools))
+			api.logger.Info(fmt.Sprintf("💾 Cached tools for server: %s (%d tools)", serverName, len(result.Tools)))
 		}
 
 		// Update in-memory cache for immediate API responses
@@ -616,7 +615,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	}
 
 	api.lastDiscovery = time.Now()
-	api.logger.Infof("✅ Background tool discovery completed: %d servers processed", discoveredServers)
+	api.logger.Info(fmt.Sprintf("✅ Background tool discovery completed: %d servers processed", discoveredServers))
 
 	// Start periodic refresh (every 10 minutes)
 	api.startPeriodicRefresh()
@@ -634,12 +633,12 @@ func (api *StreamingAPI) startPeriodicRefresh() {
 	api.discoveryTicker = time.NewTicker(10 * time.Minute)
 	go func() {
 		for range api.discoveryTicker.C {
-			api.logger.Infof("🔄 Starting periodic tool discovery refresh...")
+			api.logger.Info("🔄 Starting periodic tool discovery refresh...")
 			api.runBackgroundDiscovery()
 		}
 	}()
 
-	api.logger.Infof("⏰ Started periodic tool discovery refresh (every 10 minutes)")
+	api.logger.Info("⏰ Started periodic tool discovery refresh (every 10 minutes)")
 }
 
 // stopPeriodicRefresh stops the periodic refresh
@@ -650,366 +649,11 @@ func (api *StreamingAPI) stopPeriodicRefresh() {
 	if api.discoveryTicker != nil {
 		api.discoveryTicker.Stop()
 		api.discoveryTicker = nil
-		api.logger.Infof("⏹️ Stopped periodic tool discovery refresh")
+		api.logger.Info("⏹️ Stopped periodic tool discovery refresh")
 	}
 }
 
-// --- MCP EXECUTION API ---
-
-// MCPExecuteRequest represents a request to execute an MCP tool
-type MCPExecuteRequest struct {
-	Server string                 `json:"server"` // MCP server name (e.g., "aws", "gdrive")
-	Tool   string                 `json:"tool"`   // Tool name (e.g., "list_buckets")
-	Args   map[string]interface{} `json:"args"`   // Tool arguments
-}
-
-// MCPExecuteResponse represents the response from an MCP tool execution
-type MCPExecuteResponse struct {
-	Success bool   `json:"success"`
-	Result  string `json:"result,omitempty"`
-	Error   string `json:"error,omitempty"`
-}
-
-// handleMCPExecute handles the /api/mcp/execute endpoint
-// POST /api/mcp/execute
-// Body: {"server": "aws", "tool": "list_buckets", "args": {...}}
-// Response: {"success": true, "result": "..."}
-func (api *StreamingAPI) handleMCPExecute(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// Parse request
-	var req MCPExecuteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		api.logger.Warnf("Failed to decode MCP execute request: %v", err)
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Invalid request body: %v", err),
-		})
-		return
-	}
-
-	api.logger.Infof("🔧 MCP Execute request: server=%s, tool=%s", req.Server, req.Tool)
-
-	// Validate request
-	if req.Server == "" {
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
-			Success: false,
-			Error:   "server parameter is required",
-		})
-		return
-	}
-
-	if req.Tool == "" {
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
-			Success: false,
-			Error:   "tool parameter is required",
-		})
-		return
-	}
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-
-	// Get or create MCP client for this server using existing cache system
-	client, err := api.getOrCreateMCPClient(ctx, req.Server)
-	if err != nil {
-		api.logger.Errorf("Failed to get MCP client for server %s: %v", req.Server, err)
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Failed to connect to server %s: %v", req.Server, err),
-		})
-		return
-	}
-
-	// Execute tool
-	api.logger.Infof("🚀 Executing tool %s on server %s with args: %v", req.Tool, req.Server, req.Args)
-	result, err := client.CallTool(ctx, req.Tool, req.Args)
-
-	// 🔧 BROKEN PIPE DETECTION AND RETRY
-	if err != nil && mcpclient.IsBrokenPipeError(err) {
-		api.logger.Infof("🔧 [BROKEN PIPE] Detected for tool %s on server %s, getting fresh connection...", req.Tool, req.Server)
-
-		// Get fresh connection using shared function (bypasses cache by invalidating)
-		freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, api.mcpConfigPath, api.logger)
-		if freshErr == nil {
-			api.logger.Infof("🔧 [BROKEN PIPE] Retrying tool %s with fresh connection...", req.Tool)
-			result, err = freshClient.CallTool(ctx, req.Tool, req.Args)
-			if err == nil {
-				api.logger.Infof("🔧 [BROKEN PIPE] Retry successful for tool %s", req.Tool)
-			} else {
-				api.logger.Errorf("🔧 [BROKEN PIPE] Retry failed for tool %s: %v", req.Tool, err)
-			}
-		} else {
-			api.logger.Errorf("🔧 [BROKEN PIPE] Failed to get fresh connection for server %s: %v", req.Server, freshErr)
-		}
-	}
-
-	if err != nil {
-		api.logger.Errorf("Tool execution failed for %s on %s: %v", req.Tool, req.Server, err)
-		json.NewEncoder(w).Encode(MCPExecuteResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Tool execution failed: %v", err),
-		})
-		return
-	}
-
-	// Convert result to string
-	resultStr := api.convertMCPResultToString(result)
-
-	api.logger.Infof("✅ Tool %s executed successfully, result length: %d bytes", req.Tool, len(resultStr))
-
-	// Return success response
-	json.NewEncoder(w).Encode(MCPExecuteResponse{
-		Success: true,
-		Result:  resultStr,
-	})
-}
-
-// getOrCreateMCPClient gets an existing MCP client or creates a new one using the cache system
-func (api *StreamingAPI) getOrCreateMCPClient(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
-	// Use mcpcache to get cached or fresh connection
-	// This reuses the existing caching infrastructure
-	tmpConfigPath, err := api.createTempMergedConfig()
-	if err != nil {
-		api.logger.Warnf("Failed to create temp merged config, using base config: %v", err)
-		tmpConfigPath = api.mcpConfigPath
-	} else {
-		// Clean up temp file when done with deterministic cleanup
-		defer func() {
-			if err := os.Remove(tmpConfigPath); err != nil {
-				api.logger.Warnf("Failed to remove temp config file %s: %v", tmpConfigPath, err)
-			}
-		}()
-	}
-
-	result, err := mcpcache.GetCachedOrFreshConnection(
-		ctx,
-		nil, // No LLM needed for tool execution
-		serverName,
-		tmpConfigPath,
-		nil, // No tracers needed
-		api.logger,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection for server %s: %w", serverName, err)
-	}
-
-	// Get the client from the Clients map
-	client, exists := result.Clients[serverName]
-	if !exists {
-		return nil, fmt.Errorf("server %s not found in connection result", serverName)
-	}
-
-	return client, nil
-}
-
-// convertMCPResultToString converts MCP CallToolResult to string
-func (api *StreamingAPI) convertMCPResultToString(result *mcp.CallToolResult) string {
-	if result == nil {
-		return ""
-	}
-
-	// Extract all text content directly
-	var textParts []string
-	for _, content := range result.Content {
-		// Try both pointer and value type assertions
-		if textContent, ok := content.(*mcp.TextContent); ok {
-			textParts = append(textParts, textContent.Text)
-		} else if textContent, ok := content.(mcp.TextContent); ok {
-			textParts = append(textParts, textContent.Text)
-		} else if embedded, ok := content.(*mcp.EmbeddedResource); ok {
-			// Extract text from embedded resources
-			switch r := embedded.Resource.(type) {
-			case *mcp.TextResourceContents:
-				textParts = append(textParts, r.Text)
-			}
-		}
-	}
-
-	joined := ""
-	if len(textParts) > 0 {
-		joined = textParts[0]
-		for i := 1; i < len(textParts); i++ {
-			joined += "\n" + textParts[i]
-		}
-	}
-
-	if result.IsError {
-		if joined == "" {
-			return "Tool execution error (no error details available)"
-		}
-		return fmt.Sprintf("Error: %s", joined)
-	}
-
-	if joined == "" {
-		return "Tool execution completed (no output returned)"
-	}
-
-	return joined
-}
-
-// --- CUSTOM TOOL EXECUTION API ---
-
-// CustomExecuteRequest represents a request to execute a custom tool
-type CustomExecuteRequest struct {
-	Tool string                 `json:"tool"` // Tool name (e.g., "read_workspace_file")
-	Args map[string]interface{} `json:"args"` // Tool arguments
-}
-
-// CustomExecuteResponse represents the response from a custom tool execution
-type CustomExecuteResponse struct {
-	Success bool   `json:"success"`
-	Result  string `json:"result,omitempty"`
-	Error   string `json:"error,omitempty"`
-}
-
-// handleCustomExecute handles the /api/custom/execute endpoint
-// POST /api/custom/execute
-// Body: {"tool": "read_workspace_file", "args": {...}}
-// Response: {"success": true, "result": "..."}
-func (api *StreamingAPI) handleCustomExecute(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// Parse request
-	var req CustomExecuteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		api.logger.Warnf("Failed to decode custom execute request: %v", err)
-		json.NewEncoder(w).Encode(CustomExecuteResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Invalid request body: %v", err),
-		})
-		return
-	}
-
-	api.logger.Infof("🔧 Custom Execute request: tool=%s", req.Tool)
-
-	// Validate request
-	if req.Tool == "" {
-		json.NewEncoder(w).Encode(CustomExecuteResponse{
-			Success: false,
-			Error:   "tool parameter is required",
-		})
-		return
-	}
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-
-	// Execute custom tool using codeexec registry
-	api.logger.Infof("🚀 Executing custom tool %s with args: %v", req.Tool, req.Args)
-	result, err := codeexec.CallCustomTool(ctx, req.Tool, req.Args)
-	if err != nil {
-		api.logger.Errorf("Custom tool execution failed for %s: %v", req.Tool, err)
-		json.NewEncoder(w).Encode(CustomExecuteResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Custom tool execution failed: %v", err),
-		})
-		return
-	}
-
-	api.logger.Infof("✅ Custom tool %s executed successfully, result length: %d bytes", req.Tool, len(result))
-
-	// Return success response
-	json.NewEncoder(w).Encode(CustomExecuteResponse{
-		Success: true,
-		Result:  result,
-	})
-}
-
-// --- VIRTUAL TOOL EXECUTION API ---
-
-// VirtualExecuteRequest represents a request to execute a virtual tool
-type VirtualExecuteRequest struct {
-	Tool string                 `json:"tool"` // Tool name (e.g., "discover_code_structure")
-	Args map[string]interface{} `json:"args"` // Tool arguments
-}
-
-// VirtualExecuteResponse represents the response from a virtual tool execution
-type VirtualExecuteResponse struct {
-	Success bool   `json:"success"`
-	Result  string `json:"result,omitempty"`
-	Error   string `json:"error,omitempty"`
-}
-
-// handleVirtualExecute handles the /api/virtual/execute endpoint
-// POST /api/virtual/execute
-// Body: {"tool": "discover_code_structure", "args": {...}}
-// Response: {"success": true, "result": "..."}
-func (api *StreamingAPI) handleVirtualExecute(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// Parse request
-	var req VirtualExecuteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		api.logger.Warnf("Failed to decode virtual execute request: %v", err)
-		json.NewEncoder(w).Encode(VirtualExecuteResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Invalid request body: %v", err),
-		})
-		return
-	}
-
-	api.logger.Infof("🔧 Virtual Execute request: tool=%s", req.Tool)
-
-	// Validate request
-	if req.Tool == "" {
-		json.NewEncoder(w).Encode(VirtualExecuteResponse{
-			Success: false,
-			Error:   "tool parameter is required",
-		})
-		return
-	}
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-
-	// Execute virtual tool using codeexec registry
-	api.logger.Infof("🚀 Executing virtual tool %s with args: %v", req.Tool, req.Args)
-	result, err := codeexec.CallVirtualTool(ctx, req.Tool, req.Args)
-	if err != nil {
-		api.logger.Errorf("Virtual tool execution failed for %s: %v", req.Tool, err)
-		json.NewEncoder(w).Encode(VirtualExecuteResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Virtual tool execution failed: %v", err),
-		})
-		return
-	}
-
-	api.logger.Infof("✅ Virtual tool %s executed successfully, result length: %d bytes", req.Tool, len(result))
-
-	// Return success response
-	json.NewEncoder(w).Encode(VirtualExecuteResponse{
-		Success: true,
-		Result:  result,
-	})
-}
+// --- MCP/CUSTOM/VIRTUAL EXECUTION APIs MOVED TO mcpagent/executor ---
+// These handlers are now provided by the mcpagent/executor library.
+// See: mcpagent/executor/handlers.go
+// Routes are wired in server.go using executor.NewExecutorHandlers()

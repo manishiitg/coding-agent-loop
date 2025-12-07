@@ -11,9 +11,9 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -167,7 +167,7 @@ type VariableExtractionAgent struct {
 // NewVariableExtractionAgent creates a new variable extraction agent
 func NewVariableExtractionAgent(
 	config *agents.OrchestratorAgentConfig,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
 ) *VariableExtractionAgent {
@@ -418,19 +418,19 @@ func readVariablesFromFile(ctx context.Context, workspacePath string, readFile f
 
 	content, err := readFile(ctx, variablesPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read variables.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to read variables.json: %w", err), nil)
 	}
 
 	var manifest VariablesManifest
 	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
-		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
 	}
 
 	return &manifest, nil
 }
 
 // writeVariablesToFile writes VariablesManifest to variables.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
-func writeVariablesToFile(ctx context.Context, workspacePath string, manifest *VariablesManifest, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger utils.ExtendedLogger) error {
+func writeVariablesToFile(ctx context.Context, workspacePath string, manifest *VariablesManifest, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
 	variablesPath := filepath.Join(workspacePath, "variables", "variables.json")
 
 	variablesFileMutex.Lock()
@@ -438,11 +438,11 @@ func writeVariablesToFile(ctx context.Context, workspacePath string, manifest *V
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal variables: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to marshal variables: %w", err), nil)
 	}
 
 	if err := writeFile(ctx, variablesPath, string(data)); err != nil {
-		return fmt.Errorf("failed to write variables.json: %w", err)
+		return fmt.Errorf(fmt.Sprintf("failed to write variables.json: %w", err), nil)
 	}
 
 	return nil
@@ -494,19 +494,19 @@ func getUpdateObjectiveSchema() string {
 }
 
 // createUpdateVariableExecutor creates an executor function for update_variable tool
-func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Extract action
 		actionRaw, ok := args["action"].(string)
 		if !ok {
-			return "", fmt.Errorf("invalid action argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid action argument"), nil)
 		}
 		action := actionRaw
 
 		// Read current variables
 		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read variables: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read variables: %w", err), nil)
 		}
 
 		switch action {
@@ -514,7 +514,7 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 			// Extract new variable fields
 			nameRaw, ok := args["name"].(string)
 			if !ok || nameRaw == "" {
-				return "", fmt.Errorf("name is required for add action")
+				return "", fmt.Errorf(fmt.Sprintf("name is required for add action"), nil)
 			}
 			name := nameRaw
 
@@ -527,7 +527,7 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 			// Check if variable already exists
 			for _, v := range manifest.Variables {
 				if v.Name == name {
-					return "", fmt.Errorf("variable %s already exists", name)
+					return "", fmt.Errorf(fmt.Sprintf("variable %s already exists", name), nil)
 				}
 			}
 
@@ -538,13 +538,13 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 				Description: description,
 			}
 			manifest.Variables = append(manifest.Variables, newVar)
-			logger.Infof("✅ Added new variable: %s", name)
+			logger.Info(fmt.Sprintf("✅ Added new variable: %s", name))
 
 		case "update":
 			// Extract existing variable name
 			existingNameRaw, ok := args["existing_variable_name"].(string)
 			if !ok || existingNameRaw == "" {
-				return "", fmt.Errorf("existing_variable_name is required for update action")
+				return "", fmt.Errorf(fmt.Sprintf("existing_variable_name is required for update action"), nil)
 			}
 			existingName := existingNameRaw
 
@@ -559,7 +559,7 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 						if nameRaw != existingName {
 							for _, v := range manifest.Variables {
 								if v.Name == nameRaw {
-									return "", fmt.Errorf("variable %s already exists, cannot rename to it", nameRaw)
+									return "", fmt.Errorf(fmt.Sprintf("variable %s already exists, cannot rename to it", nameRaw), nil)
 								}
 							}
 						}
@@ -571,19 +571,19 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 					if descriptionRaw, ok := args["description"].(string); ok {
 						manifest.Variables[i].Description = descriptionRaw
 					}
-					logger.Infof("✅ Updated variable: %s", existingName)
+					logger.Info(fmt.Sprintf("✅ Updated variable: %s", existingName))
 					break
 				}
 			}
 			if !found {
-				return "", fmt.Errorf("variable %s not found", existingName)
+				return "", fmt.Errorf(fmt.Sprintf("variable %s not found", existingName), nil)
 			}
 
 		case "delete":
 			// Extract existing variable name
 			existingNameRaw, ok := args["existing_variable_name"].(string)
 			if !ok || existingNameRaw == "" {
-				return "", fmt.Errorf("existing_variable_name is required for delete action")
+				return "", fmt.Errorf(fmt.Sprintf("existing_variable_name is required for delete action"), nil)
 			}
 			existingName := existingNameRaw
 
@@ -598,13 +598,13 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 				}
 			}
 			if !found {
-				return "", fmt.Errorf("variable %s not found", existingName)
+				return "", fmt.Errorf(fmt.Sprintf("variable %s not found", existingName), nil)
 			}
 			manifest.Variables = filtered
-			logger.Infof("✅ Deleted variable: %s", existingName)
+			logger.Info(fmt.Sprintf("✅ Deleted variable: %s", existingName))
 
 		default:
-			return "", fmt.Errorf("invalid action: %s (must be 'add', 'update', or 'delete')", action)
+			return "", fmt.Errorf(fmt.Sprintf("invalid action: %s (must be 'add', 'update', or 'delete')", action), nil)
 		}
 
 		// Preserve extraction_date
@@ -614,7 +614,7 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 
 		// Write updated variables
 		if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write variables: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write variables: %w", err), nil)
 		}
 
 		return fmt.Sprintf("Successfully performed %s action on variables", action), nil
@@ -622,19 +622,19 @@ func createUpdateVariableExecutor(workspacePath string, logger utils.ExtendedLog
 }
 
 // createUpdateObjectiveExecutor creates an executor function for update_objective tool
-func createUpdateObjectiveExecutor(workspacePath string, logger utils.ExtendedLogger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+func createUpdateObjectiveExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Extract objective
 		objectiveRaw, ok := args["objective"].(string)
 		if !ok || objectiveRaw == "" {
-			return "", fmt.Errorf("invalid objective argument")
+			return "", fmt.Errorf(fmt.Sprintf("invalid objective argument"), nil)
 		}
 		objective := objectiveRaw
 
 		// Read current variables
 		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read variables: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to read variables: %w", err), nil)
 		}
 
 		// Update objective
@@ -647,10 +647,10 @@ func createUpdateObjectiveExecutor(workspacePath string, logger utils.ExtendedLo
 
 		// Write updated variables
 		if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write variables: %w", err)
+			return "", fmt.Errorf(fmt.Sprintf("failed to write variables: %w", err), nil)
 		}
 
-		logger.Infof("✅ Updated objective in variables.json")
+		logger.Info(fmt.Sprintf("✅ Updated objective in variables.json"))
 		return "Successfully updated objective", nil
 	}
 }
@@ -661,30 +661,30 @@ func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context,
 	// Get workspace path from template vars
 	workspacePath := templateVars["WorkspacePath"]
 	if workspacePath == "" {
-		return nil, nil, fmt.Errorf("WorkspacePath not found in template vars")
+		return nil, nil, fmt.Errorf(fmt.Sprintf("WorkspacePath not found in template vars"), nil)
 	}
 
 	// Get the underlying MCP agent
 	baseAgent := vea.BaseOrchestratorAgent.BaseAgent()
 	if baseAgent == nil {
-		return nil, nil, fmt.Errorf("base agent is not initialized")
+		return nil, nil, fmt.Errorf(fmt.Sprintf("base agent is not initialized"), nil)
 	}
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, nil, fmt.Errorf("MCP agent is not initialized")
+		return nil, nil, fmt.Errorf(fmt.Sprintf("MCP agent is not initialized"), nil)
 	}
 
 	// Parse schemas and register the 2 custom tools
 	updateVariableSchema := getUpdateVariableSchema()
 	updateVariableParams, err := parseSchemaForToolParameters(updateVariableSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse update_variable schema: %w", err)
+		return nil, nil, fmt.Errorf(fmt.Sprintf("failed to parse update_variable schema: %w", err), nil)
 	}
 
 	updateObjectiveSchema := getUpdateObjectiveSchema()
 	updateObjectiveParams, err := parseSchemaForToolParameters(updateObjectiveSchema)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse update_objective schema: %w", err)
+		return nil, nil, fmt.Errorf(fmt.Sprintf("failed to parse update_objective schema: %w", err), nil)
 	}
 
 	// Get logger from MCP agent (it has a Logger field)
@@ -701,8 +701,8 @@ func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context,
 		createUpdateVariableExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		logger.Errorf("❌ Failed to register update_variable tool: %v", err)
-		return nil, nil, fmt.Errorf("failed to register update_variable tool: %w", err)
+		logger.Error(fmt.Sprintf("❌ Failed to register update_variable tool: %v", err), nil)
+		return nil, nil, fmt.Errorf(fmt.Sprintf("failed to register update_variable tool: %w", err), nil)
 	}
 
 	if err := mcpAgent.RegisterCustomTool(
@@ -712,8 +712,8 @@ func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context,
 		createUpdateObjectiveExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		logger.Errorf("❌ Failed to register update_objective tool: %v", err)
-		return nil, nil, fmt.Errorf("failed to register update_objective tool: %w", err)
+		logger.Error(fmt.Sprintf("❌ Failed to register update_objective tool: %v", err), nil)
+		return nil, nil, fmt.Errorf(fmt.Sprintf("failed to register update_objective tool: %w", err), nil)
 	}
 
 	// Generate system prompt for update mode
@@ -722,7 +722,7 @@ func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context,
 	// Execute the agent with normal Execute (not StructuredOutputViaTool)
 	_, updatedHistory, err := baseAgent.Execute(ctx, userMessage, conversationHistory, systemPrompt, false)
 	if err != nil {
-		return nil, updatedHistory, fmt.Errorf("agent execution failed: %w", err)
+		return nil, updatedHistory, fmt.Errorf(fmt.Sprintf("agent execution failed: %w", err), nil)
 	}
 
 	// Check if any of our custom tools were called
@@ -739,18 +739,18 @@ func (vea *VariableExtractionAgent) ExecuteStructuredUpdate(ctx context.Context,
 	// If tools were called, variables.json was updated. If not, we return the current variables unchanged.
 	currentVariables, err := readVariablesFromFile(ctx, workspacePath, readFile)
 	if err != nil {
-		return nil, updatedHistory, fmt.Errorf("failed to read variables: %w", err)
+		return nil, updatedHistory, fmt.Errorf(fmt.Sprintf("failed to read variables: %w", err), nil)
 	}
 
 	if !variableUpdateToolCalled {
 		// No tools called - this is a normal conversational response, not an error
 		// Return the current variables (unchanged) so conversation can continue
-		logger.Infof("📝 Variable extraction agent in UPDATE mode: Conversational response (no variable changes). Returning current variables.")
+		logger.Info(fmt.Sprintf("📝 Variable extraction agent in UPDATE mode: Conversational response (no variable changes). Returning current variables."))
 		return currentVariables, updatedHistory, nil
 	}
 
 	// Tools were called - variables.json was updated
-	logger.Infof("✅ Variables updated via tools (%d variables)", len(currentVariables.Variables))
+	logger.Info(fmt.Sprintf("✅ Variables updated via tools (%d variables)", len(currentVariables.Variables)))
 	return currentVariables, updatedHistory, nil
 }
 

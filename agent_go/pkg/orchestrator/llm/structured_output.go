@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	"mcpagent/observability"
 	"time"
+
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -37,7 +38,7 @@ type StructuredOutputLLM struct {
 // NewStructuredOutputLLMWithEventBridge creates a new structured output LLM with mandatory event bridge
 func NewStructuredOutputLLMWithEventBridge(
 	llm llmtypes.Model,
-	logger utils.ExtendedLogger,
+	logger loggerv2.Logger,
 	tracer observability.Tracer,
 	eventBridge mcpagent.AgentEventListener,
 ) *StructuredOutputLLM {
@@ -66,53 +67,24 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 	}
 
 	// Create structured output generator
+	var v2Logger loggerv2.Logger
+	if s.GetLogger() != nil {
+		v2Logger = s.GetLogger()
+	} else {
+		v2Logger = loggerv2.NewDefault()
+	}
+
 	config := mcpagent.LangchaingoStructuredOutputConfig{
 		UseJSONMode:    true,
 		ValidateOutput: true,
 		MaxRetries:     2,
 	}
-	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(s.GetLLM(), config, s.GetLogger())
-
-	// Generate structured output
-	result, err := generator.GenerateStructuredOutput(ctx, prompt, schema)
+	generator := mcpagent.NewLangchaingoStructuredOutputGenerator(s.GetLLM(), config, v2Logger)
+	jsonOutput, err := generator.GenerateStructuredOutput(ctx, prompt, schema)
 	if err != nil {
-		// Emit error event
-		if s.GetEventEmitter() != nil {
-			errorEventData := &events.StructuredOutputEvent{
-				BaseEventData: events.BaseEventData{
-					Timestamp:     time.Now(),
-					CorrelationID: correlationID,
-					Component:     "llm",
-				},
-				Operation: "generate_structured_output",
-				EventType: "structured_output_error",
-				Error:     err.Error(),
-			}
-			s.GetEventEmitter()(ctx, errorEventData)
-		}
-		return "", fmt.Errorf("failed to generate structured output: %w", err)
+		return "", err
 	}
-
-	duration := time.Since(startTime)
-
-	// Emit end event
-	if s.GetEventEmitter() != nil {
-		endEventData := &events.StructuredOutputEvent{
-			BaseEventData: events.BaseEventData{
-				Timestamp:     time.Now(),
-				IsEndEvent:    true,
-				CorrelationID: correlationID,
-				Component:     "llm",
-			},
-			Operation: "generate_structured_output",
-			EventType: "structured_output_end",
-			Duration:  duration.String(),
-		}
-		s.GetEventEmitter()(ctx, endEventData)
-	}
-
-	s.GetLogger().Infof("✅ Successfully generated structured output in %v", duration)
-	return result, nil
+	return jsonOutput, nil
 }
 
 // ParseGenericStructuredResponse parses JSON output into a generic structured response

@@ -12,8 +12,10 @@ const STORAGE_KEY_PREFIX = 'workflow_settings_'
 const getStorageKey = (presetId: string, setting: 'iteration' | 'execution_mode' | 'start_point') =>
   `${STORAGE_KEY_PREFIX}${presetId}_${setting}`
 
-// Global localStorage key for temporary LLM override (persists across page refreshes)
+// Global localStorage key for temporary LLM overrides (persists across page refreshes)
 const TEMP_OVERRIDE_LLM_KEY = 'workflow_temp_override_llm'
+const TEMP_OVERRIDE_LLM2_KEY = 'workflow_temp_override_llm2'
+const TEMP_OVERRIDE_LLM_ENABLED_KEY = 'workflow_temp_override_llm_enabled'
 const FALLBACK_TO_ORIGINAL_LLM_KEY = 'workflow_fallback_to_original_llm_on_failure'
 
 export interface RunFolder {
@@ -44,8 +46,11 @@ interface WorkflowStore {
       selectedExecutionMode: ExecutionModeType
       selectedStartPoint: number // 0 = beginning, >0 = step number (1-based)
   
-      // Temporary LLM override (persists across page refreshes via localStorage)
-      tempOverrideLLM: AgentLLMConfig | null
+      // Temporary LLM overrides (persists across page refreshes via localStorage)
+      // Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
+      tempOverrideLLM: AgentLLMConfig | null  // First override LLM (used on first attempt)
+      tempOverrideLLM2: AgentLLMConfig | null  // Second override LLM (used on second attempt if tempLLM1 fails)
+      tempOverrideLLMEnabled: boolean  // Whether temp LLM overrides are enabled (configs are preserved when disabled)
       fallbackToOriginalLLMOnFailure: boolean  // If true, use original LLM instead of temp override when validation fails
 
   // Variables manifest (for batch execution with multiple groups)
@@ -79,9 +84,12 @@ interface WorkflowStore {
   setStartPoint: (step: number) => void
   buildExecutionOptions: () => ExecutionOptions
   
-  // Temporary LLM override
+  // Temporary LLM overrides
   setTempOverrideLLM: (config: AgentLLMConfig | null) => void
   clearTempOverrideLLM: () => void
+  setTempOverrideLLM2: (config: AgentLLMConfig | null) => void
+  clearTempOverrideLLM2: () => void
+  setTempOverrideLLMEnabled: (enabled: boolean) => void
   setFallbackToOriginalLLMOnFailure: (enabled: boolean) => void
 
   // Variables manifest
@@ -126,7 +134,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       selectedExecutionMode: 'human_approval',
       selectedStartPoint: 0,
       
-      // Temporary LLM override (persists across page refreshes via localStorage)
+      // Temporary LLM overrides (persists across page refreshes via localStorage)
       // Load from localStorage on initialization
       tempOverrideLLM: (() => {
         try {
@@ -134,14 +142,48 @@ export const useWorkflowStore = create<WorkflowStore>()(
           if (saved) {
             const parsed = JSON.parse(saved) as AgentLLMConfig
             if (parsed.provider && parsed.model_id) {
-              console.log(`[WorkflowStore] Loaded temp override from localStorage: ${parsed.provider}/${parsed.model_id}`)
+              console.log(`[WorkflowStore] Loaded temp override LLM1 from localStorage: ${parsed.provider}/${parsed.model_id}`)
               return parsed
             }
           }
         } catch (error) {
-          console.error('[WorkflowStore] Failed to load temp override from localStorage:', error)
+          console.error('[WorkflowStore] Failed to load temp override LLM1 from localStorage:', error)
         }
         return null
+      })(),
+      tempOverrideLLM2: (() => {
+        try {
+          const saved = localStorage.getItem(TEMP_OVERRIDE_LLM2_KEY)
+          if (saved) {
+            const parsed = JSON.parse(saved) as AgentLLMConfig
+            if (parsed.provider && parsed.model_id) {
+              console.log(`[WorkflowStore] Loaded temp override LLM2 from localStorage: ${parsed.provider}/${parsed.model_id}`)
+              return parsed
+            }
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load temp override LLM2 from localStorage:', error)
+        }
+        return null
+      })(),
+      // Temp LLM override enabled state (persists across page refreshes via localStorage)
+      // Defaults to true if any temp LLM is configured, false otherwise
+      tempOverrideLLMEnabled: (() => {
+        try {
+          const saved = localStorage.getItem(TEMP_OVERRIDE_LLM_ENABLED_KEY)
+          if (saved !== null) {
+            const parsed = JSON.parse(saved) as boolean
+            console.log(`[WorkflowStore] Loaded temp override LLM enabled state from localStorage: ${parsed}`)
+            return parsed
+          }
+          // Default to true if we have any temp LLM configured
+          const hasLLM1 = localStorage.getItem(TEMP_OVERRIDE_LLM_KEY)
+          const hasLLM2 = localStorage.getItem(TEMP_OVERRIDE_LLM2_KEY)
+          return !!(hasLLM1 || hasLLM2)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load temp override LLM enabled state from localStorage:', error)
+          return false
+        }
       })(),
       // Fallback to original LLM on failure (persists across page refreshes via localStorage)
       // Load from localStorage on initialization
@@ -424,9 +466,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
             'but strategy is', executionStrategy, '- not including resume_from_step')
         }
         
-        // Include temporary LLM override if set
-        if (state.tempOverrideLLM) {
-          options.temp_override_llm = state.tempOverrideLLM
+        // Include temporary LLM overrides if enabled and set (cascading fallback: tempLLM1 → tempLLM2 → step LLM)
+        if (state.tempOverrideLLMEnabled) {
+          if (state.tempOverrideLLM) {
+            options.temp_override_llm = state.tempOverrideLLM
+          }
+          if (state.tempOverrideLLM2) {
+            options.temp_override_llm2 = state.tempOverrideLLM2
+          }
         }
         
         // Include fallback to original LLM on failure if enabled
@@ -493,7 +540,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           if (config) {
             // Save to localStorage
             localStorage.setItem(TEMP_OVERRIDE_LLM_KEY, JSON.stringify(config))
-            console.log(`[WorkflowStore] Temporary LLM override set: ${config.provider}/${config.model_id}`)
+            console.log(`[WorkflowStore] Temporary LLM override 1 set: ${config.provider}/${config.model_id}`)
           } else {
             // Clear from localStorage
             localStorage.removeItem(TEMP_OVERRIDE_LLM_KEY)
@@ -508,9 +555,46 @@ export const useWorkflowStore = create<WorkflowStore>()(
         set({ tempOverrideLLM: null })
         try {
           localStorage.removeItem(TEMP_OVERRIDE_LLM_KEY)
-          console.log('[WorkflowStore] Temporary LLM override cleared')
+          console.log('[WorkflowStore] Temporary LLM override 1 cleared')
         } catch (error) {
-          console.error('[WorkflowStore] Failed to clear temp override from localStorage:', error)
+          console.error('[WorkflowStore] Failed to clear temp override 1 from localStorage:', error)
+        }
+      },
+      
+      setTempOverrideLLM2: (config: AgentLLMConfig | null) => {
+        set({ tempOverrideLLM2: config })
+        try {
+          if (config) {
+            // Save to localStorage
+            localStorage.setItem(TEMP_OVERRIDE_LLM2_KEY, JSON.stringify(config))
+            console.log(`[WorkflowStore] Temporary LLM override 2 set: ${config.provider}/${config.model_id}`)
+          } else {
+            // Clear from localStorage
+            localStorage.removeItem(TEMP_OVERRIDE_LLM2_KEY)
+            console.log('[WorkflowStore] Temporary LLM override 2 cleared')
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save temp override 2 to localStorage:', error)
+        }
+      },
+      
+      clearTempOverrideLLM2: () => {
+        set({ tempOverrideLLM2: null })
+        try {
+          localStorage.removeItem(TEMP_OVERRIDE_LLM2_KEY)
+          console.log('[WorkflowStore] Temporary LLM override 2 cleared')
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to clear temp override 2 from localStorage:', error)
+        }
+      },
+      
+      setTempOverrideLLMEnabled: (enabled: boolean) => {
+        set({ tempOverrideLLMEnabled: enabled })
+        try {
+          localStorage.setItem(TEMP_OVERRIDE_LLM_ENABLED_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Temp override LLM enabled state set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save temp override LLM enabled state to localStorage:', error)
         }
       },
       

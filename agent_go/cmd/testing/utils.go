@@ -3,8 +3,8 @@ package testing
 import (
 	"os"
 
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
-	"mcp-agent/agent_go/internal/utils"
 )
 
 // InitializeTracer initializes the appropriate tracer based on environment configuration.
@@ -28,11 +28,11 @@ import (
 //
 //	tracer := InitializeTracer(logger)
 //	// Use tracer for event emission, tracing, etc.
-func InitializeTracer(logger utils.ExtendedLogger) observability.Tracer {
+func InitializeTracer(logger loggerv2.Logger) observability.Tracer {
 	// Check if Langfuse is enabled via environment
 	tracingProvider := os.Getenv("TRACING_PROVIDER")
 	if tracingProvider == "langfuse" {
-		logger.Info("🔍 Initializing Langfuse tracer for test monitoring...")
+		// Removed verbose logging
 
 		// Check if Langfuse credentials are available
 		publicKey := os.Getenv("LANGFUSE_PUBLIC_KEY")
@@ -40,17 +40,15 @@ func InitializeTracer(logger utils.ExtendedLogger) observability.Tracer {
 
 		if publicKey != "" && secretKey != "" {
 			tracer := observability.GetTracerWithLogger("langfuse", logger)
-			logger.Info("✅ Langfuse tracer initialized successfully")
-			logger.Info("📊 Langfuse tracing enabled for this test session")
+			// Removed verbose logging
 			return tracer
 		} else {
-			logger.Warn("⚠️  Langfuse credentials not found, falling back to noop tracer")
-			logger.Info("💡 To enable Langfuse tracing, set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY environment variables")
+			// Removed verbose logging
 		}
 	}
 
 	// Default to noop tracer
-	logger.Info("📊 Using noop tracer (set TRACING_PROVIDER=langfuse to enable Langfuse)")
+	// Removed verbose logging
 	return observability.GetTracerWithLogger("noop", logger)
 }
 
@@ -72,3 +70,5 @@ func GetTracingInfo() map[string]interface{} {
 		"has_credentials":  publicKey != "" && secretKey != "",
 	}
 }
+
+// Removed adapter - logger is already loggerv2.Logger

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
@@ -70,15 +70,15 @@ func NewVariableManager(
 // In UPDATE mode: If successful, variables were already approved via human_feedback tool, so caller should skip requestVariableApproval
 func (vm *VariableManager) runVariableExtractionPhase(ctx context.Context, objective string, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent, existingVariables *VariablesManifest) (*VariablesManifest, string, []llmtypes.MessageContent, error) {
 	if existingVariables != nil {
-		vm.GetLogger().Infof("🔍 Starting variable extraction in UPDATE mode (attempt %d)", iteration)
+		vm.GetLogger().Info(fmt.Sprintf("🔍 Starting variable extraction in UPDATE mode (attempt %d)", iteration))
 	} else {
-		vm.GetLogger().Infof("🔍 Starting variable extraction from objective (attempt %d)", iteration)
+		vm.GetLogger().Info(fmt.Sprintf("🔍 Starting variable extraction from objective (attempt %d)", iteration))
 	}
 
 	// Create variable extraction agent (uses default orchestrator LLM config)
 	extractionAgent, err := vm.createVariableExtractionAgent(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create variable extraction agent: %w", err)
+		return nil, "", nil, fmt.Errorf(fmt.Sprintf("failed to create variable extraction agent: %w", err), nil)
 	}
 
 	// Prepare template variables
@@ -91,10 +91,10 @@ func (vm *VariableManager) runVariableExtractionPhase(ctx context.Context, objec
 	if existingVariables != nil {
 		existingVariablesJSON, err := json.MarshalIndent(existingVariables, "", "  ")
 		if err != nil {
-			vm.GetLogger().Warnf("⚠️ Failed to marshal existing variables to JSON: %v", err)
+			vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal existing variables to JSON: %v", err))
 		} else {
 			extractionTemplateVars["ExistingVariablesJSON"] = string(existingVariablesJSON)
-			vm.GetLogger().Infof("✅ Passing existing variables contents in template (UPDATE mode)")
+			vm.GetLogger().Info(fmt.Sprintf("✅ Passing existing variables contents in template (UPDATE mode)"))
 		}
 	}
 
@@ -105,17 +105,17 @@ func (vm *VariableManager) runVariableExtractionPhase(ctx context.Context, objec
 	if humanFeedback != "" && strings.TrimSpace(humanFeedback) != "" {
 		// Revision attempt: Use human feedback as user message
 		userMessage = humanFeedback
-		vm.GetLogger().Infof("📝 Using human feedback as user message for variable extraction (attempt %d)", iteration)
+		vm.GetLogger().Info(fmt.Sprintf("📝 Using human feedback as user message for variable extraction (attempt %d)", iteration))
 	} else {
 		// First attempt: Use static instruction
 		userMessage = "Extract variables from the objective and call submit_variable_extraction_response tool with the structured output."
-		vm.GetLogger().Infof("📝 Using default instruction for variable extraction (attempt %d)", iteration)
+		vm.GetLogger().Info(fmt.Sprintf("📝 Using default instruction for variable extraction (attempt %d)", iteration))
 	}
 
 	// Execute variable extraction - use ExecuteStructuredUpdate in UPDATE mode, ExecuteStructured in CREATE mode
 	extractionAgentTyped, ok := extractionAgent.(*VariableExtractionAgent)
 	if !ok {
-		return nil, "", nil, fmt.Errorf("failed to cast variable extraction agent to correct type")
+		return nil, "", nil, fmt.Errorf(fmt.Sprintf("failed to cast variable extraction agent to correct type"), nil)
 	}
 
 	var manifest *VariablesManifest
@@ -144,18 +144,18 @@ func (vm *VariableManager) runVariableExtractionPhase(ctx context.Context, objec
 					if strings.Contains(errMsg, "human feedback requested") {
 						// Agent called human_feedback but hasn't called update tools yet - this is expected behavior
 						// User approves via human_feedback tool, then agent calls update tools in same or next turn
-						vm.GetLogger().Infof("📝 Variable extraction agent in UPDATE mode: human_feedback called, waiting for user approval. Continuing conversation.")
-						feedbackError := fmt.Errorf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", "Please continue with the variable updates after reviewing the proposed changes.")
+						vm.GetLogger().Info(fmt.Sprintf("📝 Variable extraction agent in UPDATE mode: human_feedback called, waiting for user approval. Continuing conversation."))
+						feedbackError := fmt.Errorf(fmt.Sprintf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", "Please continue with the variable updates after reviewing the proposed changes."), nil)
 						return nil, "", nonStructuredErr.UpdatedHistory, feedbackError
 					}
 					// Other conversational responses in UPDATE mode - continue conversation
-					vm.GetLogger().Infof("📝 Variable extraction agent in UPDATE mode returned conversational response. Continuing conversation.")
-					feedbackError := fmt.Errorf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", nonStructuredErr.TextResponse)
+					vm.GetLogger().Info(fmt.Sprintf("📝 Variable extraction agent in UPDATE mode returned conversational response. Continuing conversation."))
+					feedbackError := fmt.Errorf(fmt.Sprintf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", nonStructuredErr.TextResponse), nil)
 					return nil, "", nonStructuredErr.UpdatedHistory, feedbackError
 				}
 
 				// CREATE mode: Display the text response to the user and request feedback
-				vm.GetLogger().Infof("📝 Variable extraction agent returned conversational text instead of structured output. Displaying to user for feedback.")
+				vm.GetLogger().Info(fmt.Sprintf("📝 Variable extraction agent returned conversational text instead of structured output. Displaying to user for feedback."))
 
 				// Generate unique request ID
 				requestID := fmt.Sprintf("variable_extraction_text_response_%d_%d", iteration, time.Now().UnixNano())
@@ -171,26 +171,26 @@ func (vm *VariableManager) runVariableExtractionPhase(ctx context.Context, objec
 				)
 
 				if feedbackErr != nil {
-					return nil, "", nil, fmt.Errorf("failed to request human feedback for variable extraction text response: %w", feedbackErr)
+					return nil, "", nil, fmt.Errorf(fmt.Sprintf("failed to request human feedback for variable extraction text response: %w", feedbackErr), nil)
 				}
 
 				// If user approved (clicked Approve button), treat as no feedback and continue
 				// Otherwise, use the feedback for next attempt
 				if approved {
-					vm.GetLogger().Infof("✅ User approved variable extraction text response, but no structured output was generated. This is unexpected - returning error.")
-					return nil, "", nil, fmt.Errorf("variable extraction agent returned text response but user approved without providing feedback to generate structured output")
+					vm.GetLogger().Info(fmt.Sprintf("✅ User approved variable extraction text response, but no structured output was generated. This is unexpected - returning error."))
+					return nil, "", nil, fmt.Errorf(fmt.Sprintf("variable extraction agent returned text response but user approved without providing feedback to generate structured output"), nil)
 				}
 
 				// User provided feedback - return a special error that the loop can detect and handle
 				// Use a specific error prefix that the loop will recognize
 				// The updated history from the agent's response is included so conversation continues properly
-				feedbackError := fmt.Errorf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", feedback)
-				vm.GetLogger().Infof("🔄 [DEBUG] Returning feedback error from runVariableExtractionPhase: %s", feedbackError.Error())
+				feedbackError := fmt.Errorf(fmt.Sprintf("VARIABLE_EXTRACTION_TEXT_RESPONSE_FEEDBACK:%s", feedback), nil)
+				vm.GetLogger().Info(fmt.Sprintf("🔄 [DEBUG] Returning feedback error from runVariableExtractionPhase: %s", feedbackError.Error()))
 				return nil, "", nonStructuredErr.UpdatedHistory, feedbackError
 			}
 		}
 		// For other errors, return as-is
-		return nil, "", nil, fmt.Errorf("variable extraction failed: %w", err)
+		return nil, "", nil, fmt.Errorf(fmt.Sprintf("variable extraction failed: %w", err), nil)
 	}
 
 	// In UPDATE mode, variables.json is already updated by the tools, so we don't need to save again
@@ -200,26 +200,26 @@ func (vm *VariableManager) runVariableExtractionPhase(ctx context.Context, objec
 		variablesPath := fmt.Sprintf("%s/variables/variables.json", vm.GetWorkspacePath())
 		variablesJSON, err := json.MarshalIndent(manifest, "", "  ")
 		if err != nil {
-			vm.GetLogger().Warnf("⚠️ Failed to marshal variables manifest to JSON: %v (continuing anyway)", err)
+			vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal variables manifest to JSON: %v (continuing anyway)", err))
 		} else {
 			if err := vm.WriteWorkspaceFile(ctx, variablesPath, string(variablesJSON)); err != nil {
-				vm.GetLogger().Warnf("⚠️ Failed to save variables.json to file: %v (continuing anyway)", err)
+				vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save variables.json to file: %v (continuing anyway)", err))
 			} else {
-				vm.GetLogger().Infof("💾 Saved variables.json to %s for persistence", variablesPath)
+				vm.GetLogger().Info(fmt.Sprintf("💾 Saved variables.json to %s for persistence", variablesPath))
 			}
 		}
 	} else {
 		// UPDATE mode: Variables were already updated by update_variable/update_objective tools
-		vm.GetLogger().Infof("✅ Variables updated via tools in UPDATE mode (conversation has %d messages)", len(updatedHistory))
+		vm.GetLogger().Info(fmt.Sprintf("✅ Variables updated via tools in UPDATE mode (conversation has %d messages)", len(updatedHistory)))
 	}
 
-	vm.GetLogger().Infof("✅ Extracted %d variables from objective (conversation has %d messages)", len(manifest.Variables), len(updatedHistory))
+	vm.GetLogger().Info(fmt.Sprintf("✅ Extracted %d variables from objective (conversation has %d messages)", len(manifest.Variables), len(updatedHistory)))
 	return manifest, manifest.Objective, updatedHistory, nil
 }
 
 // requestVariableApproval requests human approval for extracted variables
 func (vm *VariableManager) requestVariableApproval(ctx context.Context, manifest *VariablesManifest, revisionAttempt int) (bool, string, error) {
-	vm.GetLogger().Infof("⏸️ Requesting human approval for extracted variables (attempt %d)", revisionAttempt)
+	vm.GetLogger().Info(fmt.Sprintf("⏸️ Requesting human approval for extracted variables (attempt %d)", revisionAttempt))
 
 	// Format variables for display
 	var variablesSummary strings.Builder
@@ -258,7 +258,7 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 	readPaths := []string{baseWorkspacePath}
 	writePaths := []string{variablesPath}
 	vm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	vm.GetLogger().Infof("🔒 Setting folder guard for variable extraction agent - Read paths: %v, Write paths: %v", readPaths, writePaths)
+	vm.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for variable extraction agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetVariableExtractionLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -271,7 +271,7 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
-		vm.GetLogger().Infof("🔧 Using preset default variable extraction LLM: %s/%s", vm.presetVariableExtractionLLM.Provider, vm.presetVariableExtractionLLM.ModelID)
+		vm.GetLogger().Info(fmt.Sprintf("🔧 Using preset default variable extraction LLM: %s/%s", vm.presetVariableExtractionLLM.Provider, vm.presetVariableExtractionLLM.ModelID))
 	} else if vm.presetLearningLLM != nil && vm.presetLearningLLM.Provider != "" && vm.presetLearningLLM.ModelID != "" {
 		// Fallback to learning LLM if variable extraction LLM not set
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -281,10 +281,10 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
-		vm.GetLogger().Infof("🔧 Using preset learning LLM as fallback for variable extraction: %s/%s", vm.presetLearningLLM.Provider, vm.presetLearningLLM.ModelID)
+		vm.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for variable extraction: %s/%s", vm.presetLearningLLM.Provider, vm.presetLearningLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
-		vm.GetLogger().Infof("🔧 Using orchestrator default variable extraction LLM: %s/%s", vm.GetProvider(), vm.GetModel())
+		vm.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default variable extraction LLM: %s/%s", vm.GetProvider(), vm.GetModel()))
 	}
 
 	// Create agent config with the selected LLM config
@@ -293,17 +293,17 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 	// Disable large output virtual tools for variable extraction agent
 	disabled := false
 	config.EnableLargeOutputVirtualTools = &disabled
-	vm.GetLogger().Infof("🔧 Disabling large output virtual tools for variable extraction agent")
+	vm.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools for variable extraction agent"))
 
 	// Variable extraction agent doesn't need MCP servers - pure LLM extraction
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	// Code execution mode only applies to execution agents, not variable extraction agents
 	config.UseCodeExecutionMode = false
-	vm.GetLogger().Infof("🔧 Disabling code execution mode for variable extraction agent (only execution agents use MCP tools)")
+	vm.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for variable extraction agent (only execution agents use MCP tools)"))
 
 	// Wrapper function to match OrchestratorAgent interface
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewVariableExtractionAgent(cfg, logger, tracer, eventBridge)
 	}
 
@@ -321,7 +321,7 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 		true, // overwriteSystemPrompt: true - replace default prompt with agent-specific prompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create variable extraction agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to create variable extraction agent: %w", err), nil)
 	}
 
 	return agent, nil
@@ -329,7 +329,7 @@ func (vm *VariableManager) createVariableExtractionAgent(ctx context.Context) (a
 
 // checkExistingVariables checks if variables.json already exists and loads it
 func (vm *VariableManager) checkExistingVariables(ctx context.Context, variablesPath string) (bool, *VariablesManifest, error) {
-	vm.GetLogger().Infof("🔍 Checking for existing variables at %s", variablesPath)
+	vm.GetLogger().Info(fmt.Sprintf("🔍 Checking for existing variables at %s", variablesPath))
 
 	// Try to read variables.json
 	variablesContent, err := vm.ReadWorkspaceFile(ctx, variablesPath)
@@ -340,21 +340,21 @@ func (vm *VariableManager) checkExistingVariables(ctx context.Context, variables
 			strings.Contains(errMsg, "no such file") ||
 			strings.Contains(errMsg, "does not exist") ||
 			strings.Contains(errMsg, "file does not exist") {
-			vm.GetLogger().Infof("📋 No existing variables found at %s - proceeding without variables", variablesPath)
+			vm.GetLogger().Info(fmt.Sprintf("📋 No existing variables found at %s - proceeding without variables", variablesPath))
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf("failed to check existing variables: %w", err)
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing variables: %w", err), nil)
 	}
 
 	// Parse the existing variables manifest
 	var manifest VariablesManifest
 	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-		vm.GetLogger().Warnf("⚠️ Failed to parse existing variables.json: %w", err)
-		return false, nil, fmt.Errorf("failed to parse variables.json: %w", err)
+		vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing variables.json: %w", err))
+		return false, nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
 	}
 
-	vm.GetLogger().Infof("✅ Found existing variables.json with %d variables", len(manifest.Variables))
+	vm.GetLogger().Info(fmt.Sprintf("✅ Found existing variables.json with %d variables", len(manifest.Variables)))
 	return true, &manifest, nil
 }
 
@@ -374,17 +374,17 @@ func LoadVariableValues(ctx context.Context, bo *orchestrator.BaseOrchestrator, 
 		// Fallback to workspace folder
 		variablesContent, err = bo.ReadWorkspaceFile(ctx, workspaceVariablesPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read variables.json from both locations: %w", err)
+			return nil, fmt.Errorf(fmt.Sprintf("failed to read variables.json from both locations: %w", err), nil)
 		}
-		bo.GetLogger().Infof("📁 Loaded variables from workspace folder: %s", workspaceVariablesPath)
+		bo.GetLogger().Info(fmt.Sprintf("📁 Loaded variables from workspace folder: %s", workspaceVariablesPath))
 	} else {
-		bo.GetLogger().Infof("📁 Loaded variables from runs folder: %s", runVariablesPath)
+		bo.GetLogger().Info(fmt.Sprintf("📁 Loaded variables from runs folder: %s", runVariablesPath))
 	}
 
 	// Parse variables.json to get current values
 	var manifest VariablesManifest
 	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
 	}
 
 	// Load values into the variableValues map
@@ -393,7 +393,7 @@ func LoadVariableValues(ctx context.Context, bo *orchestrator.BaseOrchestrator, 
 		variableValues[variable.Name] = variable.Value
 	}
 
-	bo.GetLogger().Infof("✅ Loaded variable values from variables.json: %d variables", len(variableValues))
+	bo.GetLogger().Info(fmt.Sprintf("✅ Loaded variable values from variables.json: %d variables", len(variableValues)))
 	return variableValues, nil
 }
 
@@ -491,9 +491,9 @@ func EmitVariablesExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrche
 	// Emit through the context-aware bridge
 	bridge := bo.GetContextAwareBridge()
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		bo.GetLogger().Warnf("⚠️ Failed to emit variables extracted event: %w", err)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit variables extracted event: %w", err))
 	} else {
-		bo.GetLogger().Infof("✅ Emitted variables extracted event: %d variables", len(variables))
+		bo.GetLogger().Info(fmt.Sprintf("✅ Emitted variables extracted event: %d variables", len(variables)))
 	}
 }
 
@@ -506,7 +506,7 @@ func (vm *VariableManager) emitVariablesExtractedEvent(ctx context.Context, vari
 // ExtractVariablesOnly runs only the variable extraction phase (standalone, independent from CreateTodoList)
 // This is a separate workflow phase that can be run independently
 func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, workspacePath string) (string, error) {
-	vm.GetLogger().Infof("🔍 Starting standalone variable extraction for objective: %s", objective)
+	vm.GetLogger().Info(fmt.Sprintf("🔍 Starting standalone variable extraction for objective: %s", objective))
 
 	// Set objective and workspace path
 	vm.SetObjective(objective)
@@ -516,7 +516,7 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", vm.GetWorkspacePath())
 	variablesExist, existingVariablesManifest, err := vm.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
-		vm.GetLogger().Warnf("⚠️ Failed to check for existing variables: %w", err)
+		vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing variables: %w", err))
 		variablesExist = false
 	}
 
@@ -526,7 +526,7 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 	// If variables exist, emit event immediately so UI can display them while user decides what to do
 	if variablesExist {
 		vm.emitVariablesExtractedEvent(ctx, existingVariablesManifest.Variables, existingVariablesManifest.Objective)
-		vm.GetLogger().Infof("🔍 Emitted variables event for UI display (%d variables)", len(existingVariablesManifest.Variables))
+		vm.GetLogger().Info(fmt.Sprintf("🔍 Emitted variables event for UI display (%d variables)", len(existingVariablesManifest.Variables)))
 	}
 
 	// If variables exist, ask user if they want to use them, extract new ones, or update existing
@@ -547,7 +547,7 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 			vm.workflowID,
 		)
 		if err != nil {
-			vm.GetLogger().Warnf("⚠️ Failed to get user decision for existing variables: %w", err)
+			vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user decision for existing variables: %w", err))
 			// Default to using existing variables
 			variableChoice = "option0"
 		}
@@ -555,7 +555,7 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 		switch variableChoice {
 		case "option0":
 			// Use existing variables
-			vm.GetLogger().Infof("✅ User chose to use existing variables")
+			vm.GetLogger().Info(fmt.Sprintf("✅ User chose to use existing variables"))
 			variablesManifest = existingVariablesManifest
 			// Note: variablesManifest is returned, caller should manage state
 			templatedObjective = existingVariablesManifest.Objective
@@ -563,17 +563,17 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 
 		case "option1":
 			// Extract new variables - cleanup everything and extract fresh
-			vm.GetLogger().Infof("🔄 User chose to extract new variables, cleaning up existing variables file")
+			vm.GetLogger().Info(fmt.Sprintf("🔄 User chose to extract new variables, cleaning up existing variables file"))
 			if err := vm.DeleteWorkspaceFile(ctx, variablesPath); err != nil {
-				vm.GetLogger().Warnf("⚠️ Failed to delete existing variables file: %v (will be overwritten during extraction)", err)
+				vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete existing variables file: %v (will be overwritten during extraction)", err))
 			} else {
-				vm.GetLogger().Infof("🗑️ Deleted existing variables file: %s", variablesPath)
+				vm.GetLogger().Info(fmt.Sprintf("🗑️ Deleted existing variables file: %s", variablesPath))
 			}
 			variablesExist = false // Trigger variable extraction
 
 		case "option2":
 			// Update existing variables - request feedback and update with existing context
-			vm.GetLogger().Infof("🔄 User chose to update existing variables, requesting update feedback")
+			vm.GetLogger().Info(fmt.Sprintf("🔄 User chose to update existing variables, requesting update feedback"))
 
 			// Format existing variables for display
 			var variablesSummary strings.Builder
@@ -596,10 +596,10 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 				vm.workflowID,
 			)
 			if err != nil {
-				vm.GetLogger().Warnf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err)
+				vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get update feedback: %v, proceeding without specific update guidance", err))
 				updateFeedback = ""
 			} else if approved {
-				vm.GetLogger().Infof("ℹ️ User approved without providing update feedback, will update variables without specific guidance")
+				vm.GetLogger().Info(fmt.Sprintf("ℹ️ User approved without providing update feedback, will update variables without specific guidance"))
 				updateFeedback = ""
 			}
 
@@ -616,10 +616,10 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 
 			// Use initial update feedback for first attempt
 			variableFeedback = initialUpdateFeedback
-			vm.GetLogger().Infof("📝 Using initial update feedback for first extraction attempt: %s", variableFeedback)
+			vm.GetLogger().Info(fmt.Sprintf("📝 Using initial update feedback for first extraction attempt: %s", variableFeedback))
 
 			for revisionAttempt := 1; revisionAttempt <= maxVariableRevisions; revisionAttempt++ {
-				vm.GetLogger().Infof("🔄 Variable extraction attempt %d/%d", revisionAttempt, maxVariableRevisions)
+				vm.GetLogger().Info(fmt.Sprintf("🔄 Variable extraction attempt %d/%d", revisionAttempt, maxVariableRevisions))
 
 				var err error
 				variablesManifest, templatedObjective, variableConversationHistory, err = vm.runVariableExtractionPhase(ctx, objective, revisionAttempt, variableFeedback, variableConversationHistory, existingVariablesForUpdate)
@@ -632,14 +632,14 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 							extractedFeedback := strings.TrimSpace(parts[1])
 							variableFeedback = extractedFeedback
 							if revisionAttempt >= maxVariableRevisions {
-								vm.GetLogger().Warnf("⚠️ Max variable extraction revision attempts (%d) reached", maxVariableRevisions)
+								vm.GetLogger().Warn(fmt.Sprintf("⚠️ Max variable extraction revision attempts (%d) reached", maxVariableRevisions))
 								templatedObjective = objective
 								break
 							}
 							continue
 						}
 					}
-					vm.GetLogger().Warnf("⚠️ Variable extraction failed: %v", err)
+					vm.GetLogger().Warn(fmt.Sprintf("⚠️ Variable extraction failed: %v", err))
 					templatedObjective = objective
 					break
 				}
@@ -647,13 +647,13 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 				// Request human approval for extracted variables
 				approved, feedback, err := vm.requestVariableApproval(ctx, variablesManifest, revisionAttempt)
 				if err != nil {
-					vm.GetLogger().Warnf("⚠️ Variable approval request failed: %v, will retry", err)
+					vm.GetLogger().Warn(fmt.Sprintf("⚠️ Variable approval request failed: %v, will retry", err))
 					approved = false
 					feedback = fmt.Sprintf("Error getting approval: %v", err)
 				}
 
 				if approved {
-					vm.GetLogger().Infof("✅ Variables approved by human")
+					vm.GetLogger().Info(fmt.Sprintf("✅ Variables approved by human"))
 					vm.emitVariablesExtractedEvent(ctx, variablesManifest.Variables, templatedObjective)
 					// Mark variables as existing so the CREATE mode loop doesn't run again
 					variablesExist = true
@@ -661,11 +661,11 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 				}
 
 				// Variables rejected with feedback for revision
-				vm.GetLogger().Infof("🔄 Variable revision requested (attempt %d/%d): %s", revisionAttempt, maxVariableRevisions, feedback)
+				vm.GetLogger().Info(fmt.Sprintf("🔄 Variable revision requested (attempt %d/%d): %s", revisionAttempt, maxVariableRevisions, feedback))
 				variableFeedback = feedback
 
 				if revisionAttempt >= maxVariableRevisions {
-					vm.GetLogger().Warnf("⚠️ Max variable revision attempts (%d) reached", maxVariableRevisions)
+					vm.GetLogger().Warn(fmt.Sprintf("⚠️ Max variable revision attempts (%d) reached", maxVariableRevisions))
 					break
 				}
 			}
@@ -679,7 +679,7 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 		var variableConversationHistory []llmtypes.MessageContent
 
 		for revisionAttempt := 1; revisionAttempt <= maxVariableRevisions; revisionAttempt++ {
-			vm.GetLogger().Infof("🔄 Variable extraction attempt %d/%d", revisionAttempt, maxVariableRevisions)
+			vm.GetLogger().Info(fmt.Sprintf("🔄 Variable extraction attempt %d/%d", revisionAttempt, maxVariableRevisions))
 
 			var err error
 			variablesManifest, templatedObjective, variableConversationHistory, err = vm.runVariableExtractionPhase(ctx, objective, revisionAttempt, variableFeedback, variableConversationHistory, nil)
@@ -692,14 +692,14 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 						extractedFeedback := strings.TrimSpace(parts[1])
 						variableFeedback = extractedFeedback
 						if revisionAttempt >= maxVariableRevisions {
-							vm.GetLogger().Warnf("⚠️ Max variable extraction revision attempts (%d) reached", maxVariableRevisions)
+							vm.GetLogger().Warn(fmt.Sprintf("⚠️ Max variable extraction revision attempts (%d) reached", maxVariableRevisions))
 							templatedObjective = objective
 							break
 						}
 						continue
 					}
 				}
-				vm.GetLogger().Warnf("⚠️ Variable extraction failed: %v", err)
+				vm.GetLogger().Warn(fmt.Sprintf("⚠️ Variable extraction failed: %v", err))
 				templatedObjective = objective
 				break
 			}
@@ -707,23 +707,23 @@ func (vm *VariableManager) ExtractVariablesOnly(ctx context.Context, objective, 
 			// Request human approval for extracted variables
 			approved, feedback, err := vm.requestVariableApproval(ctx, variablesManifest, revisionAttempt)
 			if err != nil {
-				vm.GetLogger().Warnf("⚠️ Variable approval request failed: %v, will retry", err)
+				vm.GetLogger().Warn(fmt.Sprintf("⚠️ Variable approval request failed: %v, will retry", err))
 				approved = false
 				feedback = fmt.Sprintf("Error getting approval: %v", err)
 			}
 
 			if approved {
-				vm.GetLogger().Infof("✅ Variables approved by human")
+				vm.GetLogger().Info(fmt.Sprintf("✅ Variables approved by human"))
 				vm.emitVariablesExtractedEvent(ctx, variablesManifest.Variables, templatedObjective)
 				break
 			}
 
 			// Variables rejected with feedback for revision
-			vm.GetLogger().Infof("🔄 Variable revision requested (attempt %d/%d): %s", revisionAttempt, maxVariableRevisions, feedback)
+			vm.GetLogger().Info(fmt.Sprintf("🔄 Variable revision requested (attempt %d/%d): %s", revisionAttempt, maxVariableRevisions, feedback))
 			variableFeedback = feedback
 
 			if revisionAttempt >= maxVariableRevisions {
-				vm.GetLogger().Warnf("⚠️ Max variable revision attempts (%d) reached", maxVariableRevisions)
+				vm.GetLogger().Warn(fmt.Sprintf("⚠️ Max variable revision attempts (%d) reached", maxVariableRevisions))
 				break
 			}
 		}

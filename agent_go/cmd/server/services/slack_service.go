@@ -661,7 +661,7 @@ func (s *SlackService) StartSocketMode(ctx context.Context) error {
 	// Create Socket Mode client
 	socketClient := socketmode.New(
 		api,
-		socketmode.OptionDebug(true), // Enable debug logging
+		socketmode.OptionDebug(false), // Disable debug logging to reduce ping message noise
 		socketmode.OptionLog(log.New(os.Stdout, "[SLACK_SOCKET] ", log.Lshortfile|log.LstdFlags)),
 	)
 

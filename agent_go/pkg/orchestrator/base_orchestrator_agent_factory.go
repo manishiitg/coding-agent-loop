@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -27,7 +27,7 @@ func (bo *BaseOrchestrator) CreateStandardAgentConfigWithCustomServers(agentName
 	// Override the server names with custom servers
 	config.ServerNames = customServers
 
-	bo.GetLogger().Infof("🔧 Created agent config for %s with custom MCP servers: %v", agentName, customServers)
+	// Removed verbose logging
 	return config
 }
 
@@ -53,8 +53,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	if llmConfig != nil {
 		llmProvider = llmConfig.Provider
 		llmModel = llmConfig.ModelID
-		bo.GetLogger().Infof("🔧 Using detailed LLM config for %s agent - Provider: %s, Model: %s",
-			agentName, llmProvider, llmModel)
+		// Removed verbose logging
 	}
 
 	config.Provider = llmProvider
@@ -117,7 +116,7 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 		return fmt.Errorf("context-aware event bridge is nil for %s", agentName)
 	}
 
-	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	// Removed verbose logging
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
 		return fmt.Errorf("base agent is nil for %s", agentName)
@@ -136,8 +135,7 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 		// This ensures all agents automatically get the iteration folder if it's been set
 		bo.applyIterationFolderToBridge()
 		mcpAgent.AddEventListener(cab)
-		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
-		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+		// Removed verbose logging
 	} else {
 		// Fallback for interface-based bridge
 		if cab, ok := eventBridge.(interface {
@@ -147,8 +145,8 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 			// Ensure iteration folder is applied to bridge (for token persistence)
 			bo.applyIterationFolderToBridge()
 			mcpAgent.AddEventListener(eventBridge)
-			bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
-			bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+			bo.GetLogger().Info(fmt.Sprintf("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
+			bo.GetLogger().Info(fmt.Sprintf("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase))
 		} else {
 			return fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
 		}
@@ -178,33 +176,14 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 		if tool.Function != nil && !bo.ShouldFilterWriteTool(tool.Function.Name) {
 			filteredTools = append(filteredTools, tool)
 		} else if tool.Function != nil && bo.ShouldFilterWriteTool(tool.Function.Name) {
-			bo.GetLogger().Infof("🚫 Filtering out write tool %s (no write access)", tool.Function.Name)
+			// Removed verbose logging
 		}
 	}
 
 	// Wrap executors and enhance tool descriptions with folder guard (automatic)
 	filteredTools, wrappedExecutors := bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
 
-	bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode)", len(customTools), agentName, baseAgent.GetMode())
-	if bo.ToolCategories != nil {
-		bo.GetLogger().Infof("🔍 [DISCOVERY] ToolCategories map has %d entries", len(bo.ToolCategories))
-		// Log ALL entries for debugging (not just first 10)
-		for toolName, category := range bo.ToolCategories {
-			bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s -> %s", toolName, category)
-		}
-	} else {
-		bo.GetLogger().Warnf("🔍 [DISCOVERY] ToolCategories map is nil - all tools will default to 'custom' category")
-	}
-
-	// Also log all tool names being registered for comparison
-	bo.GetLogger().Infof("🔍 [DISCOVERY] Tools being registered (count: %d):", len(customTools))
-	for _, tool := range customTools {
-		if tool.Function != nil {
-			bo.GetLogger().Infof("🔍 [DISCOVERY]   - Tool name: %s", tool.Function.Name)
-		}
-	}
-
-	bo.GetLogger().Infof("🔧 Registering %d custom tools for %s agent (%s mode) (filtered from %d)", len(filteredTools), agentName, baseAgent.GetMode(), len(customTools))
+	// Removed excessive discovery logging
 
 	for _, tool := range filteredTools {
 		if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -214,13 +193,13 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 				paramsBytes, err := json.Marshal(tool.Function.Parameters)
 				if err == nil {
 					if err := json.Unmarshal(paramsBytes, &params); err != nil {
-						bo.GetLogger().Warnf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err)
+						bo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to unmarshal parameters for tool %s: %v", tool.Function.Name, err))
 						params = nil
 					}
 				}
 			}
 			if params == nil {
-				bo.GetLogger().Warnf("Warning: Failed to convert parameters for tool %s", tool.Function.Name)
+				bo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert parameters for tool %s", tool.Function.Name))
 				continue
 			}
 
@@ -232,16 +211,16 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 				if bo.ToolCategories != nil {
 					if cat, exists := bo.ToolCategories[tool.Function.Name]; exists {
 						toolCategory = cat
-						bo.GetLogger().Infof("🔍 [DISCOVERY] Tool %s assigned category: %s", tool.Function.Name, toolCategory)
+						// Removed verbose logging
 					} else {
 						// Tool not found in map - throw error
-						bo.GetLogger().Errorf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name)
-						bo.GetLogger().Errorf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories))
-						bo.GetLogger().Errorf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name))
+						bo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Tool %s not found in ToolCategories map - category is REQUIRED!", tool.Function.Name), nil)
+						bo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Available keys in ToolCategories map: %v", getMapKeys(bo.ToolCategories)), nil)
+						bo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] Tool name being looked up: '%s' (len=%d)", tool.Function.Name, len(tool.Function.Name)), nil)
 						return fmt.Errorf("tool %s not found in ToolCategories map - category is REQUIRED", tool.Function.Name)
 					}
 				} else {
-					bo.GetLogger().Errorf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name)
+					bo.GetLogger().Error(fmt.Sprintf("❌ [DISCOVERY] ToolCategories map is nil - category is REQUIRED for tool %s!", tool.Function.Name), nil)
 					return fmt.Errorf("ToolCategories map is nil - category is REQUIRED for tool %s", tool.Function.Name)
 				}
 
@@ -260,40 +239,19 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 					return fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
 				}
 			} else {
-				bo.GetLogger().Warnf("Warning: Failed to convert executor for tool %s", tool.Function.Name)
+				bo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert executor for tool %s", tool.Function.Name))
 			}
 		}
 	}
 
-	// Log summary of category assignments
-	categorySummary := make(map[string]int)
-	for _, tool := range customTools {
-		if tool.Function != nil {
-			toolName := tool.Function.Name
-			category := "custom"
-			if bo.ToolCategories != nil {
-				if cat, exists := bo.ToolCategories[toolName]; exists {
-					category = cat
-				}
-			}
-			categorySummary[category]++
-		}
-	}
-	bo.GetLogger().Infof("🔍 [DISCOVERY] Category assignment summary:")
-	for category, count := range categorySummary {
-		bo.GetLogger().Infof("🔍 [DISCOVERY]   - %s: %d tools", category, count)
-	}
-
-	bo.GetLogger().Infof("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode())
+	// Removed excessive category summary logging
 
 	// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
 	// This ensures workspace and human tools are available in code execution mode
 	if bo.GetUseCodeExecutionMode() {
 		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
-			bo.GetLogger().Warnf("⚠️ Failed to update code execution registry for %s: %v", agentName, err)
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for %s: %v", agentName, err))
 			// Don't fail agent creation if registry update fails, but log the warning
-		} else {
-			bo.GetLogger().Infof("✅ [CODE_EXECUTION] Registry updated for %s agent - workspace and human tools are now available", agentName)
 		}
 	}
 
@@ -308,7 +266,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	step, iteration int,
 	maxTurns int,
 	outputFormat agents.OutputFormat,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
@@ -336,7 +294,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
 	maxTurns int,
 	outputFormat agents.OutputFormat,
 	customServers []string,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
@@ -362,7 +320,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	config *agents.OrchestratorAgentConfig,
 	phase string,
 	step, iteration int,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	overwriteSystemPrompt bool,
@@ -392,7 +350,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 	outputFormat agents.OutputFormat,
 	systemPromptProcessor func(map[string]string) string,
 	userMessageProcessor func(map[string]string) string,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, utils.ExtendedLogger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
+	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) (agents.OrchestratorAgent, error) {
@@ -413,9 +371,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 	if userMessageProcessor != nil {
 		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
 			settable.SetUserMessageProcessor(userMessageProcessor)
-			bo.GetLogger().Infof("✅ User message processor set for %s", agentName)
+			// Removed verbose logging
 		} else {
-			bo.GetLogger().Warnf("⚠️ Could not set user message processor for %s - agent does not implement UserMessageProcessorSetter", agentName)
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not set user message processor for %s - agent does not implement UserMessageProcessorSetter", agentName))
 		}
 	}
 
@@ -426,7 +384,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
 	}
 
-	bo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	// Removed verbose logging
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
 		return nil, fmt.Errorf("base agent is nil for %s", agentName)
@@ -445,8 +403,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 		// This ensures all agents automatically get the iteration folder if it's been set
 		bo.applyIterationFolderToBridge()
 		mcpAgent.AddEventListener(cab)
-		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
-		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
+		// Removed verbose logging
 	} else {
 		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
 	}

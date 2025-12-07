@@ -1,16 +1,16 @@
 package orchestrator
 
 import (
+	"fmt"
 	"time"
 
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
-
-	"mcp-agent/agent_go/internal/utils"
 )
 
 // GetLogger returns the orchestrator's logger
-func (bo *BaseOrchestrator) GetLogger() utils.ExtendedLogger {
+func (bo *BaseOrchestrator) GetLogger() loggerv2.Logger {
 	return bo.logger
 }
 
@@ -52,11 +52,11 @@ func (bo *BaseOrchestrator) SetWorkspacePathForFolderGuard(readPaths []string, w
 		// Empty arrays disable folder guard
 		bo.folderGuardReadPaths = nil
 		bo.folderGuardWritePaths = nil
-		bo.GetLogger().Infof("🔓 Folder guard disabled (empty read/write paths)")
+		bo.GetLogger().Info("🔓 Folder guard disabled (empty read/write paths)")
 	} else {
 		bo.folderGuardReadPaths = readPaths
 		bo.folderGuardWritePaths = writePaths
-		bo.GetLogger().Infof("🔒 Folder guard enabled - Read paths: %v, Write paths: %v", readPaths, writePaths)
+		bo.GetLogger().Info(fmt.Sprintf("🔒 Folder guard enabled - Read paths: %v, Write paths: %v", readPaths, writePaths))
 	}
 }
 
@@ -146,7 +146,7 @@ func (bo *BaseOrchestrator) GetType() string {
 func (bo *BaseOrchestrator) SetIterationFolder(iterationFolder string) {
 	bo.iterationFolder = iterationFolder
 	bo.applyIterationFolderToBridge()
-	bo.GetLogger().Infof("📁 Set iteration folder for token persistence: %s (applied to all agents)", iterationFolder)
+	bo.GetLogger().Info(fmt.Sprintf("📁 Set iteration folder for token persistence: %s (applied to all agents)", iterationFolder))
 }
 
 // GetIterationFolder returns the current iteration folder

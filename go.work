@@ -2,6 +2,8 @@ go 1.24.4
 
 use (
 	./agent_go
-	./mcpagent
+	../mcpagent
 	./workspace
 )
+
+replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go

@@ -41,7 +41,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	if logFile != "" {
 		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			log.Fatalf("Failed to open log file: %w", err)
+			log.Fatal(fmt.Sprintf("Failed to open log file: %w", err), nil)
 		}
 		defer file.Close()
 		log.SetOutput(file)
@@ -66,7 +66,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Parse servers
 	servers := parseServers(serversFlag)
 	if len(servers) == 0 {
-		log.Fatalf("❌ No valid servers specified")
+		log.Fatal(fmt.Sprintf("❌ No valid servers specified"), nil)
 	}
 
 	// Test 1: Test without max_tokens (flexible handling)

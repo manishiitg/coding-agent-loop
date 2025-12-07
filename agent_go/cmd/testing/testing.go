@@ -24,38 +24,15 @@ streaming, embeddings, etc.), use the multi-llm-provider-go test suite:
   See: https://github.com/manishiitg/multi-llm-provider-go
 
 Examples:
-  # Test agent with different providers
-  orchestrator test agent --simple --provider bedrock
-  orchestrator test agent --simple --provider openai  
-  orchestrator test agent --simple --provider anthropic
-  orchestrator test agent --simple --provider openrouter
-
-  # Test with specific config
-  orchestrator test agent --simple --provider openrouter --config configs/mcp_servers_simple.json
-
-  # Comprehensive testing
-  orchestrator test agent --comprehensive-aws --provider bedrock
-  orchestrator test agent --complex --provider openai
-  
-  # Simple comprehensive testing
-  orchestrator test comprehensive-simple --provider openrouter
-  orchestrator test comprehensive-simple --provider bedrock --verbose
-  
   # Max tokens flexibility testing
-  orchestrator test max-tokens-flexibility --provider bedrock --verbose
-  
-  # Context cancellation testing
-  orchestrator test context-cancellation --provider bedrock --log-file logs/context-cancellation.log`,
+  orchestrator test max-tokens-flexibility --provider bedrock --verbose`,
 }
 
 // Common flags for all testing commands
 var (
-	verbose    bool
-	showOutput bool
-	timeout    string
-	provider   string
-	config     string
-	// Remove duplicate logFile, logLevel, logFormat variables - let them inherit from root
+	verbose  bool
+	provider string
+	// showOutput, timeout, and config are accessed via viper, not directly
 )
 
 func init() {
@@ -64,10 +41,11 @@ func init() {
 
 	// Add common flags for all testing commands
 	TestingCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose test output")
-	TestingCmd.PersistentFlags().BoolVar(&showOutput, "show-output", true, "show detailed test output")
-	TestingCmd.PersistentFlags().StringVar(&timeout, "timeout", "5m", "test timeout duration")
 	TestingCmd.PersistentFlags().StringVar(&provider, "provider", "bedrock", "LLM provider for tests")
-	TestingCmd.PersistentFlags().StringVar(&config, "config", "mcp.yaml", "MCP config file to use for tests")
+	// show-output, timeout, and config flags are defined but accessed via viper
+	TestingCmd.PersistentFlags().Bool("show-output", true, "show detailed test output")
+	TestingCmd.PersistentFlags().String("timeout", "5m", "test timeout duration")
+	TestingCmd.PersistentFlags().String("config", "mcp.yaml", "MCP config file to use for tests")
 
 	// Remove duplicate logging flag definitions - let them inherit from root command
 	// The root command already defines and binds these flags:
@@ -93,27 +71,9 @@ func initTestingCommands() {
 	// Add subcommands explicitly to ensure they're registered
 	// Note: LLM provider tests (anthropic, bedrock, openai, vertex, etc.) are now in github.com/manishiitg/multi-llm-provider-go
 	// Use ./bin/llm-test for comprehensive provider testing
-	TestingCmd.AddCommand(agentCmd)
-	TestingCmd.AddCommand(comprehensiveSimpleCmd)
-	TestingCmd.AddCommand(langfuseCmd)
-	TestingCmd.AddCommand(awsTestCmd)
-	TestingCmd.AddCommand(mcpCacheTestCmd) // MCP Connection Caching Test
-	TestingCmd.AddCommand(exaTestCmd)
 	TestingCmd.AddCommand(sseCmd)
-	// TestingCmd.AddCommand(structuredOutputTestCmd) // Removed - replaced by agentStructuredOutputTestCmd
-	TestingCmd.AddCommand(agentStructuredOutputTestCmd)
 	TestingCmd.AddCommand(maxTokensFlexibilityCmd)
-	TestingCmd.AddCommand(openaiEmptyParamsTestCmd) // Agent/MCP integration test for empty parameter schemas
-	TestingCmd.AddCommand(genaiMultiTurnToolTestCmd)
-	TestingCmd.AddCommand(genaiMultiToolComplexTestCmd)
-	TestingCmd.AddCommand(debugExternalCmd)
 	TestingCmd.AddCommand(customToolsTestCmd)
-	TestingCmd.AddCommand(streamingTracerCmd)
-	TestingCmd.AddCommand(contextCancellationTestCmd)
-	TestingCmd.AddCommand(bufioScannerBugTestCmd)
-	TestingCmd.AddCommand(codegenTestCmd)
-	TestingCmd.AddCommand(codeExecutionTestCmd)
 	TestingCmd.AddCommand(readImageTestCmd)
 	TestingCmd.AddCommand(readSecureAccessTestCmd)
-	TestingCmd.AddCommand(toolFilterTestCmd) // Unified ToolFilter test
 }

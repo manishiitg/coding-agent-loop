@@ -21,6 +21,9 @@ interface AppState {
   sidebarMinimized: boolean
   workspaceMinimized: boolean
   
+  // Code execution mode (for chat mode when no preset is active)
+  useCodeExecutionMode: boolean
+  
   // Actions
   setAgentMode: (mode: AgentMode) => void
   
@@ -44,6 +47,7 @@ interface AppState {
   // UI actions
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
+  setUseCodeExecutionMode: (enabled: boolean) => void
   
   // Helper methods
   isFileInContext: (path: string) => boolean
@@ -64,6 +68,7 @@ export const useAppStore = create<AppState>()(
         selectedPresetId: null,
         sidebarMinimized: false,
         workspaceMinimized: false,
+        useCodeExecutionMode: true, // Default to enabled
 
         // Actions
         setAgentMode: (mode) => {
@@ -142,6 +147,10 @@ export const useAppStore = create<AppState>()(
           set({ workspaceMinimized: minimized })
         },
 
+        setUseCodeExecutionMode: (enabled) => {
+          set({ useCodeExecutionMode: enabled })
+        },
+
         // Helper methods
         isFileInContext: (path) => {
           const state = get()
@@ -161,7 +170,8 @@ export const useAppStore = create<AppState>()(
         sidebarMinimized: state.sidebarMinimized,
         workspaceMinimized: state.workspaceMinimized,
         chatFileContext: state.chatFileContext,
-        selectedPresetId: state.selectedPresetId
+        selectedPresetId: state.selectedPresetId,
+        useCodeExecutionMode: state.useCodeExecutionMode
         // Note: requiresNewChat is not persisted as it's temporary state
         })
       }

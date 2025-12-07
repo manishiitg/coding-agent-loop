@@ -3,9 +3,9 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"mcp-agent/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"sync"
 )
 
@@ -23,7 +23,7 @@ type ContextAwareEventBridge struct {
 	currentStep      int
 	currentAgentName string
 	mu               sync.RWMutex
-	logger           utils.ExtendedLogger
+	logger           loggerv2.Logger
 }
 
 // Name implements the EventBridge interface
@@ -32,7 +32,7 @@ func (c *ContextAwareEventBridge) Name() string {
 }
 
 // NewContextAwareEventBridge creates a new context-aware event bridge
-func NewContextAwareEventBridge(underlyingBridge mcpagent.AgentEventListener, logger utils.ExtendedLogger) *ContextAwareEventBridge {
+func NewContextAwareEventBridge(underlyingBridge mcpagent.AgentEventListener, logger loggerv2.Logger) *ContextAwareEventBridge {
 	return &ContextAwareEventBridge{
 		underlyingBridge: underlyingBridge,
 		logger:           logger,
@@ -51,7 +51,7 @@ func (c *ContextAwareEventBridge) SetIterationFolder(iterationFolder string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.iterationFolder = iterationFolder
-	c.logger.Debugf("📁 Set iteration folder for token persistence: %s", iterationFolder)
+	c.logger.Debug(fmt.Sprintf("📁 Set iteration folder for token persistence: %s", iterationFolder))
 }
 
 // SetOrchestratorContext sets the current orchestrator context
@@ -63,7 +63,7 @@ func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int,
 	c.currentStep = step
 	c.currentAgentName = agentName
 
-	c.logger.Infof("🎯 Set orchestrator context: %s (step %d)", phase, step+1)
+	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d)", phase, step+1))
 }
 
 // ClearOrchestratorContext clears the orchestrator context
@@ -75,12 +75,12 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 	c.currentStep = 0
 	c.currentAgentName = ""
 
-	c.logger.Infof("🧹 Cleared orchestrator context")
+	c.logger.Info("🧹 Cleared orchestrator context")
 }
 
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	c.logger.Infof("🔍 ContextAwareBridge: Received event %s (type: %s)", event.Type, event.Type)
+	c.logger.Info(fmt.Sprintf("🔍 ContextAwareBridge: Received event %s (type: %s)", event.Type, event.Type))
 
 	// Copy orchestrator context while holding read lock
 	c.mu.RLock()
@@ -91,38 +91,38 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 
 	// Early return if no current phase
 	if currentPhase == "" {
-		c.logger.Debugf("🔍 DEBUG: Skipping metadata addition - no currentPhase set")
+		c.logger.Debug("🔍 DEBUG: Skipping metadata addition - no currentPhase set")
 	} else {
-		c.logger.Debugf("🔍 ContextAwareBridge: Processing event %s with phase %s", event.Type, currentPhase)
+		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with phase %s", event.Type, currentPhase))
 
 		// Add orchestrator context to metadata
 		// We need to check if the event data has a BaseEventData field
-		c.logger.Debugf("🔍 DEBUG: About to check type assertion for event.Data of type %T", event.Data)
+		c.logger.Debug(fmt.Sprintf("🔍 DEBUG: About to check type assertion for event.Data of type %T", event.Data))
 
 		if eventData, ok := event.Data.(interface {
 			GetBaseEventData() *events.BaseEventData
 		}); ok {
-			c.logger.Debugf("🔍 DEBUG: Type assertion succeeded for %T", eventData)
+			c.logger.Debug(fmt.Sprintf("🔍 DEBUG: Type assertion succeeded for %T", eventData))
 			baseData := eventData.GetBaseEventData()
 
 			// Nil check before accessing Metadata
 			if baseData == nil {
-				c.logger.Warnf("⚠️ ContextAwareBridge: GetBaseEventData returned nil for event %s", event.Type)
+				c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: GetBaseEventData returned nil for event %s", event.Type))
 			} else {
-				c.logger.Debugf("🔍 DEBUG: Got BaseEventData, metadata present: %t", baseData.Metadata != nil)
+				c.logger.Debug(fmt.Sprintf("🔍 DEBUG: Got BaseEventData, metadata present: %t", baseData.Metadata != nil))
 
 				if baseData.Metadata == nil {
 					baseData.Metadata = make(map[string]any)
-					c.logger.Debugf("🔍 DEBUG: Created new metadata map")
+					c.logger.Debug("🔍 DEBUG: Created new metadata map")
 				}
 				baseData.Metadata["orchestrator_phase"] = currentPhase
 				baseData.Metadata["orchestrator_step"] = currentStep
 				baseData.Metadata["orchestrator_agent_name"] = currentAgentName
 
-				c.logger.Debugf("✅ ContextAwareBridge: Added metadata to event %s, metadata keys count: %d", event.Type, len(baseData.Metadata))
+				c.logger.Debug(fmt.Sprintf("✅ ContextAwareBridge: Added metadata to event %s, metadata keys count: %d", event.Type, len(baseData.Metadata)))
 			}
 		} else {
-			c.logger.Warnf("⚠️ ContextAwareBridge: Event data %T does not have GetBaseEventData method", event.Data)
+			c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: Event data %T does not have GetBaseEventData method", event.Data))
 		}
 	}
 
@@ -172,9 +172,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				// Persist asynchronously to avoid blocking event processing
 				go func() {
 					if err := persister.PersistTokenUsage(ctx, iterationFolder, stepTokenData, modelTokenData); err != nil {
-						c.logger.Warnf("⚠️ Failed to persist token usage: %v", err)
+						c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist token usage: %v", err))
 					} else {
-						c.logger.Debugf("💾 Persisted token usage directly to file")
+						c.logger.Debug(fmt.Sprintf("💾 Persisted token usage directly to file"))
 					}
 				}()
 			}
@@ -182,16 +182,16 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	}
 
 	// Forward to underlying bridge
-	c.logger.Infof("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type)
+	c.logger.Info(fmt.Sprintf("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type))
 	if c.underlyingBridge == nil {
-		c.logger.Errorf("❌ ContextAwareBridge: Underlying bridge is nil, cannot forward event %s", event.Type)
+		c.logger.Error(fmt.Sprintf("❌ ContextAwareBridge: Underlying bridge is nil, cannot forward event %s", event.Type), nil)
 		return fmt.Errorf("underlying bridge is nil")
 	}
 	err := c.underlyingBridge.HandleEvent(ctx, event)
 	if err != nil {
-		c.logger.Warnf("⚠️ ContextAwareBridge: Error forwarding event %s: %w", event.Type, err)
+		c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: Error forwarding event %s: %w", event.Type, err))
 	} else {
-		c.logger.Infof("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type)
+		c.logger.Info(fmt.Sprintf("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type))
 	}
 	return err
 }

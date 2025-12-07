@@ -7,7 +7,7 @@ import (
 	"text/template"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
+	loggerv2 "mcpagent/logger/v2"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
@@ -31,7 +31,7 @@ type HumanControlledTodoPlannerLearningReadingAgent struct {
 }
 
 // NewHumanControlledTodoPlannerLearningReadingAgent creates a new learning reading agent
-func NewHumanControlledTodoPlannerLearningReadingAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerLearningReadingAgent {
+func NewHumanControlledTodoPlannerLearningReadingAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerLearningReadingAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,

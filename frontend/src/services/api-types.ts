@@ -316,6 +316,19 @@ export interface CreateFolderResponse {
   created: boolean;
 }
 
+export interface CopyFolderRequest {
+  source_path: string;
+  destination_path: string;
+  commit_message?: string;
+}
+
+export interface CopyFolderResponse {
+  source_path: string;
+  destination_path: string;
+  files_copied: number;
+  dirs_created: number;
+}
+
 // Git Sync types
 export interface GitSyncStatus {
   is_connected: boolean;
@@ -713,9 +726,11 @@ export interface ExecutionOptions {
   plan_change_action?: 'keep_old_progress' | 'delete_old_progress';
   all_steps_completed_action?: 'fast_execute_again' | 'skip_execution';
   
-  // Temporary LLM override (optional, overrides step-level configs for this execution only)
+  // Temporary LLM overrides (optional, overrides step-level configs for this execution only)
   // Only applies to execution agents (not validation or learning agents)
-  temp_override_llm?: AgentLLMConfig;
+  // Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
+  temp_override_llm?: AgentLLMConfig;  // First override LLM (used on first attempt)
+  temp_override_llm2?: AgentLLMConfig;  // Second override LLM (used on second attempt if tempLLM1 fails)
   
   // Fallback behavior when validation fails
   fallback_to_original_llm_on_failure?: boolean;  // If true, use original LLM instead of temp override when validation fails

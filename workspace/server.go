@@ -130,6 +130,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 		// Folder operations
 		api.POST("/folders", handlers.CreateFolder)
+		api.POST("/folders/copy", handlers.CopyFolder)
 		api.DELETE("/folders/*folderpath", handlers.DeleteFolder)
 
 		// Document operations with filepath (catch-all route handles all document operations)

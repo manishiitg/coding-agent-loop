@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -29,7 +29,7 @@ type HumanControlledTodoPlannerLearningConsolidationAgent struct {
 }
 
 // NewHumanControlledTodoPlannerLearningConsolidationAgent creates a new learning consolidation agent
-func NewHumanControlledTodoPlannerLearningConsolidationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerLearningConsolidationAgent {
+func NewHumanControlledTodoPlannerLearningConsolidationAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerLearningConsolidationAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -90,10 +90,10 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 
 	// Step-specific learnings are at workspace root, not inside runs/
 	// Step-specific folders are directly in learnings/step-*/
-	lcm.GetLogger().Infof("🔍 Step-specific learnings are at workspace root (learnings/step-*/)")
+	lcm.GetLogger().Info(fmt.Sprintf("🔍 Step-specific learnings are at workspace root (learnings/step-*/)"))
 
 	lcm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	lcm.GetLogger().Infof("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to learnings/ folder only)", readPaths, writePaths)
+	lcm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to learnings/ folder only)", readPaths, writePaths))
 
 	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := lcm.GetLLMConfig()
@@ -107,7 +107,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		lcm.GetLogger().Infof("🔧 Using preset learning consolidation LLM: %s/%s", lcm.presetLearningConsolidationLLM.Provider, lcm.presetLearningConsolidationLLM.ModelID)
+		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning consolidation LLM: %s/%s", lcm.presetLearningConsolidationLLM.Provider, lcm.presetLearningConsolidationLLM.ModelID))
 	} else if lcm.presetLearningLLM != nil && lcm.presetLearningLLM.Provider != "" && lcm.presetLearningLLM.ModelID != "" {
 		// Fallback to learning LLM if learning consolidation LLM not set
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -117,11 +117,11 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		lcm.GetLogger().Infof("🔧 Using preset learning LLM as fallback for learning consolidation: %s/%s", lcm.presetLearningLLM.Provider, lcm.presetLearningLLM.ModelID)
+		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for learning consolidation: %s/%s", lcm.presetLearningLLM.Provider, lcm.presetLearningLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		lcm.GetLogger().Infof("🔧 Using orchestrator default consolidation LLM: %s/%s", lcm.GetProvider(), lcm.GetModel())
+		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default consolidation LLM: %s/%s", lcm.GetProvider(), lcm.GetModel()))
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -137,14 +137,14 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 
 	// Code execution mode only applies to execution agents, not learning consolidation agents
 	config.UseCodeExecutionMode = false
-	lcm.GetLogger().Infof("🔧 Disabling code execution mode for learning consolidation agent (only execution agents use MCP tools)")
+	lcm.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for learning consolidation agent (only execution agents use MCP tools)"))
 
 	// Large output virtual tools are enabled for consolidation (agent may generate large reports)
 	enabled := true
 	config.EnableLargeOutputVirtualTools = &enabled
 
 	// Create wrapper function that returns OrchestratorAgent interface
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewHumanControlledTodoPlannerLearningConsolidationAgent(cfg, logger, tracer, eventBridge, lcm.BaseOrchestrator)
 	}
 
@@ -162,7 +162,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup learning consolidation agent: %w", err)
+		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup learning consolidation agent: %w", err), nil)
 	}
 
 	return agent, nil
@@ -171,7 +171,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 // ConsolidateLearningsOnly runs only the learning consolidation check (standalone, independent from other phases)
 // This is a separate workflow phase that can be run independently
 func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Context, workspacePath string) (string, error) {
-	lcm.GetLogger().Infof("🔍 Starting standalone learning consolidation for workspace: %s", workspacePath)
+	lcm.GetLogger().Info(fmt.Sprintf("🔍 Starting standalone learning consolidation for workspace: %s", workspacePath))
 
 	// Set workspace path
 	lcm.SetWorkspacePath(workspacePath)
@@ -179,12 +179,12 @@ func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Co
 	// Always consolidate learnings/ folder (unified folder for all learning types)
 	allowedPaths := "['learnings/']"
 	selectedFolder := "learnings/"
-	lcm.GetLogger().Infof("✅ Consolidating learnings/ folder")
+	lcm.GetLogger().Info(fmt.Sprintf("✅ Consolidating learnings/ folder"))
 
 	// Create consolidation agent
 	consolidationAgent, err := lcm.createLearningConsolidationAgent(ctx, lcm.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf("failed to create learning consolidation agent: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("failed to create learning consolidation agent: %w", err), nil)
 	}
 
 	// Prepare template variables with selected folder only
@@ -198,14 +198,14 @@ func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Co
 	}
 
 	// Execute consolidation agent
-	lcm.GetLogger().Infof("🔍 Executing learning consolidation agent for folder: %s", selectedFolder)
+	lcm.GetLogger().Info(fmt.Sprintf("🔍 Executing learning consolidation agent for folder: %s", selectedFolder))
 	result, conversationHistory, err := consolidationAgent.Execute(ctx, consolidationTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf("learning consolidation agent execution failed: %w", err)
+		return "", fmt.Errorf(fmt.Sprintf("learning consolidation agent execution failed: %w", err), nil)
 	}
 
-	lcm.GetLogger().Infof("✅ Learning consolidation completed successfully for folder: %s", selectedFolder)
-	lcm.GetLogger().Infof("🔍 Consolidation result: %s", result)
+	lcm.GetLogger().Info(fmt.Sprintf("✅ Learning consolidation completed successfully for folder: %s", selectedFolder))
+	lcm.GetLogger().Info(fmt.Sprintf("🔍 Consolidation result: %s", result))
 
 	_ = conversationHistory // Conversation history not used for standalone consolidation
 
@@ -216,7 +216,7 @@ func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Co
 // Kept for backward compatibility but no longer prompts user
 func (lcm *LearningConsolidationManager) requestFolderSelection(ctx context.Context) (string, error) {
 	// Always return learnings/ folder (unified folder for all learning types)
-	lcm.GetLogger().Infof("✅ Using learnings/ folder for consolidation (unified folder)")
+	lcm.GetLogger().Info(fmt.Sprintf("✅ Using learnings/ folder for consolidation (unified folder)"))
 	return "option0", nil
 }
 
@@ -257,7 +257,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 
 	// Get logger from base agent's MCP agent
 	baseAgent := agent.GetBaseAgent()
-	var logger utils.ExtendedLogger
+	var logger loggerv2.Logger
 	if baseAgent != nil {
 		mcpAgent := baseAgent.Agent()
 		if mcpAgent != nil && mcpAgent.Logger != nil {
@@ -279,7 +279,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 	for iteration < maxIterations {
 		iteration++
 		if logger != nil {
-			logger.Infof("🔍 Learning consolidation agent iteration %d/%d", iteration, maxIterations)
+			logger.Info(fmt.Sprintf("🔍 Learning consolidation agent iteration %d/%d", iteration, maxIterations))
 		}
 
 		// Create a simple input processor that returns the user message
@@ -299,7 +299,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {
-				logger.Infof("🔍 Learning consolidation agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations)
+				logger.Info(fmt.Sprintf("🔍 Learning consolidation agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations))
 			}
 
 			// Generate unique request ID
@@ -316,7 +316,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 			)
 			if err != nil {
 				if logger != nil {
-					logger.Warnf("⚠️ Failed to get user feedback: %v", err)
+					logger.Warn(fmt.Sprintf("⚠️ Failed to get user feedback: %v", err))
 				}
 				// Continue without blocking if feedback fails
 				break
@@ -325,7 +325,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 			// If user clicked Approve button, we're done
 			if approved {
 				if logger != nil {
-					logger.Infof("✅ User approved - learning consolidation complete")
+					logger.Info(fmt.Sprintf("✅ User approved - learning consolidation complete"))
 				}
 				break
 			}
@@ -333,7 +333,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 			// User provided feedback/question - always pass it to the agent and continue
 			if feedback != "" && strings.TrimSpace(feedback) != "" {
 				if logger != nil {
-					logger.Infof("📝 User provided feedback: %s", feedback)
+					logger.Info(fmt.Sprintf("📝 User provided feedback: %s", feedback))
 				}
 				// Use feedback directly as user message for next iteration
 				// Note: BaseAgent.Execute() will automatically add it to conversation history
@@ -341,20 +341,20 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 			} else {
 				// No feedback provided but not approved - continue with same message
 				if logger != nil {
-					logger.Infof("ℹ️ No feedback provided, continuing with same context")
+					logger.Info(fmt.Sprintf("ℹ️ No feedback provided, continuing with same context"))
 				}
 			}
 		} else {
 			// Reached max iterations or no base orchestrator
 			if logger != nil {
-				logger.Infof("🔍 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations)
+				logger.Info(fmt.Sprintf("🔍 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations))
 			}
 			break
 		}
 	}
 
 	if logger != nil {
-		logger.Infof("🔍 Learning consolidation completed after %d iterations", iteration)
+		logger.Info(fmt.Sprintf("🔍 Learning consolidation completed after %d iterations", iteration))
 	}
 
 	return currentResult, currentConversationHistory, nil

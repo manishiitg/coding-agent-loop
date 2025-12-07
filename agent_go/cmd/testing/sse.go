@@ -10,8 +10,9 @@ import (
 	"github.com/spf13/viper"
 
 	"mcpagent/llm"
+	loggerv2 "mcpagent/logger/v2"
+
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent/agent_go/internal/utils"
 )
 
 // sseCmd represents the SSE test command
@@ -113,7 +114,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 
 	// If log file is specified, log to file only
 	if logFile != "" {
-		logger.Infof("📝 Logging to file only - log_file: %s", logFile)
+		logger.Info(fmt.Sprintf("📝 Logging to file only - log_file: %s", logFile))
 	}
 
 	// 🆕 AUTOMATIC LANGFUSE SETUP FOR ALL TESTS
@@ -121,9 +122,9 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	os.Setenv("TRACING_PROVIDER", "langfuse")
 	os.Setenv("LANGFUSE_DEBUG", "true")
 
-	logger.Infof("🔧 Automatic Langfuse Setup - tracing_provider: %s, langfuse_debug: %s, note: %s", "langfuse", "true", "All SSE tests now automatically use Langfuse tracing")
+	logger.Info(fmt.Sprintf("🔧 Automatic Langfuse Setup - tracing_provider: %s, langfuse_debug: %s, note: %s", "langfuse", "true", "All SSE tests now automatically use Langfuse tracing"))
 
-	logger.Infof("🌊 SSE Test Suite - test_type: %s, provider: %s, verbose: %t, server_url: %s", "sse_test", provider, verbose, sseFlags.serverURL)
+	logger.Info(fmt.Sprintf("🌊 SSE Test Suite - test_type: %s, provider: %s, verbose: %t, server_url: %s", "sse_test", provider, verbose, sseFlags.serverURL))
 
 	// Configuration (use inherited flags from parent command)
 	modelID := sseFlags.model
@@ -133,7 +134,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	// Validate and get provider
 	llmProvider, err := llm.ValidateProvider(provider)
 	if err != nil {
-		logger.Fatalf("❌ Invalid LLM provider - provider: %s, error: %s", provider, err.Error())
+		logger.Fatal(fmt.Sprintf("❌ Invalid LLM provider - provider: %s, error: %s", provider, err.Error()), nil)
 	}
 
 	// Set default model if not specified
@@ -141,7 +142,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 		modelID = llm.GetDefaultModel(llmProvider)
 	}
 
-	logger.Infof("🤖 SSE Test Configuration - provider: %s, model: %s, servers: %s, server_url: %s, timeout: %d, trace_provider: %s, debug_mode: %t, verbose: %t", provider, modelID, serverList, sseFlags.serverURL, sseFlags.timeout, "langfuse", viper.GetBool("debug"), verbose)
+	logger.Info(fmt.Sprintf("🤖 SSE Test Configuration - provider: %s, model: %s, servers: %s, server_url: %s, timeout: %d, trace_provider: %s, debug_mode: %t, verbose: %t", provider, modelID, serverList, sseFlags.serverURL, sseFlags.timeout, "langfuse", viper.GetBool("debug"), verbose))
 
 	// Initialize tracer based on environment (Langfuse if available, otherwise noop)
 	_ = InitializeTracer(logger)
@@ -150,7 +151,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.simple {
 		logger.Info("🧪 Test 1: Basic SSE Connection Test")
 		if err := testBasicSSEConnection(); err != nil {
-			logger.Errorf("❌ Basic SSE connection test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ Basic SSE connection test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ Basic SSE connection test passed")
 		}
@@ -160,7 +161,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.streaming {
 		logger.Info("🧪 Test 2: SSE Streaming Test")
 		if err := testSSEStreamingWithQueries(context.Background(), nil); err != nil {
-			logger.Errorf("❌ SSE streaming test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ SSE streaming test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ SSE streaming test passed")
 		}
@@ -170,7 +171,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.connection {
 		logger.Info("🧪 Test 3: SSE Connection Management")
 		if err := testSSEConnectionManagement(); err != nil {
-			logger.Errorf("❌ SSE connection management test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ SSE connection management test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ SSE connection management test passed")
 		}
@@ -180,7 +181,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.eventTypes {
 		logger.Info("🧪 Test 4: SSE Event Type Validation")
 		if err := testSSEEventTypes(); err != nil {
-			logger.Errorf("❌ SSE event type validation test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ SSE event type validation test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ SSE event type validation test passed")
 		}
@@ -190,7 +191,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.multiClient {
 		logger.Info("🧪 Test 5: Multi-Client SSE Test")
 		if err := testMultiClientSSE(); err != nil {
-			logger.Errorf("❌ Multi-client SSE test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ Multi-client SSE test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ Multi-client SSE test passed")
 		}
@@ -200,7 +201,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.performance {
 		logger.Info("🧪 Test 6: SSE Performance Test")
 		if err := testSSEPerformance(); err != nil {
-			logger.Errorf("❌ SSE performance test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ SSE performance test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ SSE performance test passed")
 		}
@@ -210,7 +211,7 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.errorHandling {
 		logger.Info("🧪 Test 7: SSE Error Handling")
 		if err := testSSEErrorHandling(); err != nil {
-			logger.Errorf("❌ SSE error handling test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ SSE error handling test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ SSE error handling test passed")
 		}
@@ -220,13 +221,13 @@ func runSSETest(cmd *cobra.Command, args []string) {
 	if sseFlags.comprehensive {
 		logger.Info("🧪 Test 8: Comprehensive SSE Test")
 		if err := testComprehensiveSSE(logger, modelID, serverList, configPath); err != nil {
-			logger.Errorf("❌ Comprehensive SSE test failed - error: %s", err.Error())
+			logger.Error(fmt.Sprintf("❌ Comprehensive SSE test failed - error: %s", err.Error()), nil)
 		} else {
 			logger.Info("✅ Comprehensive SSE test passed")
 		}
 	}
 
-	logger.Infof("🎉 SSE Test Suite Completed - test_type: %s, provider: %s, model: %s", "sse_test_suite", provider, modelID)
+	logger.Info(fmt.Sprintf("🎉 SSE Test Suite Completed - test_type: %s, provider: %s, model: %s", "sse_test_suite", provider, modelID))
 }
 
 // testBasicSSEConnection tests basic SSE connection functionality
@@ -334,7 +335,7 @@ func testSSEErrorHandling() error {
 }
 
 // testComprehensiveSSE runs a comprehensive SSE test suite
-func testComprehensiveSSE(logger utils.ExtendedLogger, modelID, serverList, configPath string) error {
+func testComprehensiveSSE(logger loggerv2.Logger, modelID, serverList, configPath string) error {
 	logger.Info("🎯 Running comprehensive SSE test suite")
 
 	// Run all individual tests in sequence
@@ -357,7 +358,7 @@ func testComprehensiveSSE(logger utils.ExtendedLogger, modelID, serverList, conf
 	for _, test := range tests {
 		logger.Info(fmt.Sprintf("🧪 Running %s test", test.name))
 		if err := test.fn(); err != nil {
-			logger.Error(fmt.Sprintf("❌ %s test failed", test.name), map[string]interface{}{"error": err.Error()})
+			logger.Error(fmt.Sprintf("❌ %s test failed: %v", test.name, err), err)
 		} else {
 			passedTests++
 			logger.Info(fmt.Sprintf("✅ %s test passed", test.name))
@@ -366,11 +367,7 @@ func testComprehensiveSSE(logger utils.ExtendedLogger, modelID, serverList, conf
 
 	successRate := float64(passedTests) / float64(totalTests) * 100
 
-	logger.Info("🎉 Comprehensive SSE test suite completed", map[string]interface{}{
-		"total_tests":  totalTests,
-		"passed_tests": passedTests,
-		"success_rate": fmt.Sprintf("%.1f%%", successRate),
-	})
+	logger.Info(fmt.Sprintf("🎉 Comprehensive SSE test suite completed - Total: %d, Passed: %d, Success Rate: %.1f%%", totalTests, passedTests, successRate))
 
 	if passedTests < totalTests {
 		return fmt.Errorf("comprehensive SSE test suite failed: %d/%d tests passed", passedTests, totalTests)

@@ -47,10 +47,11 @@ func (a *Agent) buildConversationContext(messages []llmtypes.MessageContent) str
 
 	for i := 0; i < len(messages); i++ {
 		msg := messages[i]
-		if msg.Role == llmtypes.ChatMessageTypeHuman {
+		switch msg.Role {
+		case llmtypes.ChatMessageTypeHuman:
 			content := a.extractTextContent(msg)
 			contextBuilder.WriteString(fmt.Sprintf("User: %s\n", content))
-		} else if msg.Role == llmtypes.ChatMessageTypeAI {
+		case llmtypes.ChatMessageTypeAI:
 			content := a.extractTextContent(msg)
 			contextBuilder.WriteString(fmt.Sprintf("Assistant: %s\n", content))
 		}
@@ -370,7 +371,7 @@ func (a *Agent) makeLightweightLLMCallWithReasoning(ctx context.Context, prompt 
 
 	// Use GenerateContentWithRetry for automatic fallback support
 	llmCallStart := time.Now()
-	response, err, usage := GenerateContentWithRetry(a, ctx, messages, opts, 0, func(msg string) {
+	response, usage, err := GenerateContentWithRetry(a, ctx, messages, opts, 0, func(msg string) {
 		// Optional: Could emit streaming events for smart routing if needed
 		// For now, we'll keep it simple since smart routing is typically fast
 	})

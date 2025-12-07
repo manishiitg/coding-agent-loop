@@ -21,29 +21,20 @@
 53. the diff tool in workspace, has some issues. test with json format
 also fails in writing python code due to indentation
 
-
-
-
-
 new tasks
 
 f) add hallunication check as extra agent
 g) add references as extra agent 
 
-h) should we conditional llm, manually to change flow? like during scrapping. if here is a logout or wrong password there is a critical error.
 
-the prompts we have, have variable issue which we get to know later when we run. 
-
-
-1. the mcp code execution
-2. variable looping agent or variable injection agent
-3. step deciding agent
 4. chain builder?
-6. have a different knowledge tools and a different directly fully for knowledge/ which will index data
+6. have a different knowledge tools and a different directly fully for knowledge/ which 
+
+will index data
 i) prompt tempaltes, need to check variables on compile time
 
-j) refractor todo human create code structure
+k) also fix logging in this process
 
-k) move agent/mcp etc outside output agent_go and also fix logging in this process
+h) check if external package is even required
 
-human review tool doesn't work with code exec
+i) check where the generated/ folder should be. if we independely use mcpagent. and also write examples for both llmprovider/mcpagent

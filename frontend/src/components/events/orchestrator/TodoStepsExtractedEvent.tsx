@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback } from "react";
 import { StepEditPanel } from "./StepEditPanel";
 import { agentApi } from "../../../services/api";
 import { usePresetApplication } from "../../../stores/useGlobalPresetStore";
+import { useModeStore } from "../../../stores/useModeStore";
 import type { TodoStepsExtractedEvent } from "../../../generated/events-bridge";
 import type { TodoStepWithConfigs, AgentConfigs, StepConfig, StepConfigFile, PlanningResponse } from "../../../utils/stepConfigMatching";
 import type { PresetLLMConfig } from "../../../services/api-types";
 import ConfirmationDialog from "../../ui/ConfirmationDialog";
-import { Edit2, Trash2, Save, X, ChevronDown, ChevronRight } from "lucide-react";
+import { Edit2, Trash2, Save, X, ChevronDown, ChevronRight, GitBranch, RefreshCw, CheckCircle2 } from "lucide-react";
 
 // Helper to get workspace_path from event
 // workspace_path may be on the event directly or in metadata
@@ -30,6 +31,10 @@ interface TodoStepsExtractedEventDisplayProps {
 export const TodoStepsExtractedEventDisplay: React.FC<
   TodoStepsExtractedEventDisplayProps
 > = ({ event }) => {
+  // Check if we're in workflow mode - if so, show minimized view
+  const { selectedModeCategory } = useModeStore();
+  const isWorkflowMode = selectedModeCategory === 'workflow';
+  
   // Get preset's selected servers and LLM config to pass to step configs
   const { currentPresetServers, getActivePreset } = usePresetApplication();
   const activePreset = getActivePreset('workflow');
@@ -50,6 +55,8 @@ export const TodoStepsExtractedEventDisplay: React.FC<
   const [expandedStepIndex, setExpandedStepIndex] = useState<number | null>(null);
   // Track config source (default)
   const [configSource, setConfigSource] = useState<'default' | 'unknown'>('unknown');
+  // Collapsed state for workflow mode (default: collapsed in workflow mode)
+  const [isCollapsed, setIsCollapsed] = useState(isWorkflowMode);
   
   // Edit state management
   const [editingStepIndex, setEditingStepIndex] = useState<number | null>(null);
@@ -745,22 +752,70 @@ export const TodoStepsExtractedEventDisplay: React.FC<
     }
   };
 
+  // Count step types for summary
+  const stepSummary = React.useMemo(() => {
+    let regular = 0;
+    let conditional = 0;
+    let loop = 0;
+    
+    steps.forEach(step => {
+      if (step.has_condition) conditional++;
+      else if (step.has_loop) loop++;
+      else regular++;
+    });
+    
+    return { regular, conditional, loop, total: steps.length };
+  }, [steps]);
+
   return (
     <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-      {/* Header */}
-      <div className="p-3 border-b border-green-200 dark:border-green-800">
+      {/* Header - clickable in workflow mode to expand/collapse */}
+      <div 
+        className={`p-3 ${!isCollapsed ? 'border-b border-green-200 dark:border-green-800' : ''} ${isWorkflowMode ? 'cursor-pointer hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors' : ''}`}
+        onClick={isWorkflowMode ? () => setIsCollapsed(!isCollapsed) : undefined}
+      >
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
+            {/* Expand/Collapse icon in workflow mode */}
+            {isWorkflowMode && (
+              <div className="w-5 h-5 flex items-center justify-center text-green-600 dark:text-green-400">
+                {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </div>
+            )}
             <div className="w-7 h-7 bg-green-100 dark:bg-green-800/50 rounded-full flex items-center justify-center">
-              <span className="text-green-600 dark:text-green-400 text-sm">📋</span>
+              <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
             </div>
             <div className="text-sm font-medium text-green-700 dark:text-green-300">
-              Plan Breakdown Complete
+              Plan Updated
             </div>
+            {/* Step count summary */}
+            <div className="flex items-center gap-2 ml-2">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-green-200 dark:bg-green-800 text-green-700 dark:text-green-300 font-medium">
+                {stepSummary.total} steps
+              </span>
+              {stepSummary.conditional > 0 && (
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+                  <GitBranch className="w-3 h-3" />
+                  {stepSummary.conditional}
+                </span>
+              )}
+              {stepSummary.loop > 0 && (
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300">
+                  <RefreshCw className="w-3 h-3" />
+                  {stepSummary.loop}
+                </span>
+              )}
+            </div>
+            {/* Workflow mode hint */}
+            {isWorkflowMode && isCollapsed && (
+              <span className="text-xs text-green-600 dark:text-green-400 italic ml-2">
+                (view in React Flow canvas)
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {/* Config Source Indicator */}
-            {!isLoading && (
+            {!isLoading && !isCollapsed && (
               <div className="text-xs px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
                 {configSource === 'default' && (
                   <span>📄 Using default config</span>
@@ -779,8 +834,8 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         </div>
       </div>
 
-      {/* Steps List */}
-      {steps && steps.length > 0 && (
+      {/* Steps List - hidden when collapsed */}
+      {!isCollapsed && steps && steps.length > 0 && (
         <div className="p-3">
           {isLoading && (
             <div className="text-sm text-gray-600 dark:text-gray-400 text-center py-2">

@@ -197,7 +197,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 			},
 		})
 		if err != nil {
-			c.mcpClient.Close()
+			_ = c.mcpClient.Close() // Ignore errors during cleanup
 			return fmt.Errorf("failed to initialize MCP connection: %w", err)
 		}
 

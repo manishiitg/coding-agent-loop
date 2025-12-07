@@ -12,7 +12,9 @@ import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
 import { Edit, Save, X, Loader2 } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
-import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore } from "./stores";
+import { WorkflowLayout } from "./components/workflow";
+import { EventModeProvider } from "./components/events";
+import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import "./App.css";
@@ -26,6 +28,66 @@ declare global {
 }
 
 const queryClient = new QueryClient();
+
+// Utility function to detect code files and get their language
+const getCodeFileLanguage = (filepath: string): string | null => {
+  const ext = filepath.toLowerCase().split('.').pop() || ''
+  const codeExtensions: Record<string, string> = {
+    'go': 'go',
+    'py': 'python',
+    'ts': 'typescript',
+    'tsx': 'typescript',
+    'js': 'javascript',
+    'jsx': 'javascript',
+    'java': 'java',
+    'c': 'c',
+    'cpp': 'cpp',
+    'cc': 'cpp',
+    'cxx': 'cpp',
+    'cs': 'csharp',
+    'php': 'php',
+    'rb': 'ruby',
+    'sql': 'sql',
+    'html': 'html',
+    'htm': 'html',
+    'css': 'css',
+    'scss': 'scss',
+    'sass': 'sass',
+    'sh': 'shell',
+    'bash': 'shell',
+    'zsh': 'shell',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'xml': 'xml',
+    'vue': 'vue',
+    'svelte': 'svelte',
+    'rs': 'rust',
+    'swift': 'swift',
+    'kt': 'kotlin',
+    'scala': 'scala',
+    'r': 'r',
+    'lua': 'lua',
+    'pl': 'perl',
+    'dart': 'dart',
+    'ex': 'elixir',
+    'exs': 'elixir',
+    'clj': 'clojure',
+    'hs': 'haskell',
+    'ml': 'ocaml',
+    'fs': 'fsharp',
+    'vb': 'vbnet',
+    'ps1': 'powershell',
+    'dockerfile': 'dockerfile',
+    'makefile': 'makefile',
+    'mk': 'makefile'
+  }
+  return codeExtensions[ext] || null
+}
+
+// Check if a file is a code file
+const isCodeFile = (filepath: string): boolean => {
+  return getCodeFileLanguage(filepath) !== null
+}
 
 function App() {
   // Ref for ChatArea component to access its methods
@@ -278,6 +340,9 @@ function App() {
     
     // Initialize global preset store
     useGlobalPresetStore.getState().refreshPresets()
+    
+    // Initialize workflow store (load phases)
+    useWorkflowStore.getState().loadPhases()
   }, [])
 
   // Restore active presets after stores are initialized
@@ -462,29 +527,34 @@ function App() {
         
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
-          <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
+          <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>
             <WorkspaceSidebar
-              onPresetAdded={() => {
-                // Refresh workflow presets when a new preset is added
-                if (chatAreaRef.current) {
-                  chatAreaRef.current.refreshWorkflowPresets()
-                }
-              }}
               onChatSessionSelect={handleChatSessionSelect}
               minimized={sidebarMinimized}
               onToggleMinimize={toggleSidebarMinimize}
             />
           </div>
 
-          {/* Middle Chat Area */}
-          <div className="flex-1 flex flex-col min-w-0 relative">
-            {/* ChatArea - always rendered and mounted to preserve state */}
-            <div className="flex-1 flex flex-col h-full min-w-0">
-              <ChatArea
-                ref={chatAreaRef}
+          {/* Middle Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes) */}
+          <div className="flex-1 flex flex-col min-w-0 relative z-10">
+            {selectedModeCategory === 'workflow' ? (
+              // Workflow mode - WorkflowLayout as main view (wrapped in EventModeProvider for ChatHeader)
+              // ChatArea is now embedded inside WorkflowLayout
+              <EventModeProvider>
+              <WorkflowLayout
+                className="flex-1"
                 onNewChat={startNewChat}
               />
-            </div>
+              </EventModeProvider>
+            ) : (
+              // Other modes - show ChatArea (wrapped in EventModeProvider for filter toggle)
+              <EventModeProvider>
+                <ChatArea
+                  ref={chatAreaRef}
+                  onNewChat={startNewChat}
+                />
+              </EventModeProvider>
+            )}
             
             {/* File Content View - overlay when showing file content */}
             {showFileContent && (
@@ -660,6 +730,7 @@ function App() {
                     ) : (
                       <div className="p-4">
                         {(() => {
+                          // Check for JSON files first
                           if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
                             // Check if content looks like formatted JSON (has proper indentation)
                             const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')
@@ -681,7 +752,40 @@ function App() {
                                 </div>
                               </div>
                             )
-                          } else {
+                          } 
+                          // Check for code files
+                          else if (selectedFile?.path && isCodeFile(selectedFile.path)) {
+                            const language = getCodeFileLanguage(selectedFile.path)
+                            const fileName = selectedFile.path.split('/').pop() || selectedFile.path
+                            
+                            // Wrap content in markdown code block for syntax highlighting
+                            const codeBlockContent = `\`\`\`${language}\n${fileContent}\n\`\`\``
+                            
+                            return (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                                  <span className="font-medium">💻 Code File</span>
+                                  <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded font-mono">
+                                    {language}
+                                  </span>
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    {fileName}
+                                  </span>
+                                </div>
+                                <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                                  <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
+                                    <MarkdownRenderer 
+                                      content={codeBlockContent} 
+                                      className="max-w-none"
+                                      showScrollbar={true}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          } 
+                          // Default: render as markdown
+                          else {
                             return (
                               <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
                                 <MarkdownRenderer 
@@ -702,8 +806,11 @@ function App() {
             )}
           </div>
 
-          {/* Right Workspace Area */}
-          <div className={`${workspaceMinimized ? 'w-16' : 'w-96'} transition-all duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700`}>
+          {/* Right Workspace Area - auto-minimize in workflow mode */}
+          <div className={`${
+            // Use workspaceMinimized state directly - user can toggle regardless of mode
+            workspaceMinimized ? 'w-16' : 'w-96'
+          } transition-all duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 relative z-20`}>
             <Workspace 
               minimized={workspaceMinimized}
               onToggleMinimize={toggleWorkspaceMinimize}

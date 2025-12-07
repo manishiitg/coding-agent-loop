@@ -17,12 +17,20 @@ export interface AgentConfigs {
   disable_validation?: boolean;
   disable_learning?: boolean;
   learning_after_loop_iteration?: boolean;
-  learning_detail_level?: 'exact' | 'general' | 'none';
+  learning_detail_level?: 'exact' | 'general';
   selected_servers?: string[];
   selected_tools?: string[];
   enabled_custom_tools?: string[]; // Format: "category:tool" or "category:*" (e.g., "workspace_tools:*", "human_tools:human_feedback")
   enable_large_output_virtual_tools?: boolean;
   use_code_execution_mode?: boolean; // Step-level code execution mode override (undefined = use preset default)
+  enable_prerequisite_detection?: boolean; // Enable prerequisite failure detection for this step (default: false)
+  prerequisite_rules?: PrerequisiteRule[]; // Array of prerequisite rules, each with one step dependency and one description
+}
+
+// PrerequisiteRule represents a single prerequisite rule with one step dependency and one description
+export interface PrerequisiteRule {
+  depends_on_step: string; // Step ID this rule depends on
+  description: string; // User description of when to detect prerequisite failures for this specific step (e.g., "if login session is missing or expired, go back to step 0")
 }
 
 // Extended TodoStep with agent_configs
@@ -125,6 +133,7 @@ export interface PlanStep {
   if_false_steps?: PlanStep[];
   condition_result?: boolean;
   condition_reason?: string;
+  agent_configs?: AgentConfigs;       // Merged from step_config.json
   [key: string]: unknown;              // Allow other fields for flexibility
 }
 

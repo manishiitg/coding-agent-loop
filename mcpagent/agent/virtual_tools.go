@@ -127,13 +127,18 @@ func (a *Agent) CreateVirtualTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "write_code",
-			Description: "Write Go code to workspace. Code can import generated tool packages from 'generated/' directory. Filename is automatically generated.",
+			Description: "Write Go code to workspace. Code can import generated tool packages from 'generated/' directory. Filename is automatically generated. Optional CLI arguments can be passed to the program via os.Args.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"code": map[string]interface{}{
 						"type":        "string",
 						"description": "Go source code to write",
+					},
+					"args": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Optional array of command-line arguments to pass to the Go program. Accessible via os.Args[1], os.Args[2], etc. (os.Args[0] is the program name).",
 					},
 				},
 				"required": []string{"code"},

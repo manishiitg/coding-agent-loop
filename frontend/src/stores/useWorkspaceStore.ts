@@ -3,7 +3,8 @@ import { devtools } from 'zustand/middleware'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { findFileInTree, extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
-import { parseWorkspaceToolCalls, selectPrimaryFile } from '../utils/goCodeParser'
+import { getTypedEventData } from '../generated/event-types'
+import type { WorkspaceFileOperationEvent } from '../generated/events-bridge'
 
 interface WorkspaceState {
   // File Management
@@ -115,7 +116,7 @@ interface WorkspaceState {
   setExpandedFolders: (folders: Set<string>) => void
   expandFoldersForFile: (filepath: string) => void
   toggleFolder: (folderPath: string) => void
-  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number) => void
+  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number, additionalFolders?: string[]) => void
   
   // Auto-scroll functionality
   scrollToFile: (filepath: string) => Promise<void>
@@ -465,6 +466,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       
       // File highlighting
       highlightFile: async (filepath: string) => {
+        console.log('[WorkspaceStore] highlightFile called:', filepath)
         const state = get()
         
         // Clear existing timeout
@@ -475,24 +477,33 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         try {
           // Check if file exists in current file tree
           const fileExists = findFileInTree(state.files, filepath)
+          console.log('[WorkspaceStore] highlightFile - file check:', {
+            filepath,
+            fileExists,
+            currentHighlightedFile: state.highlightedFile,
+            totalFiles: state.files.length
+          })
           
           // If file doesn't exist, refresh the tree
           // Note: In workflow mode, the component will handle filtering
           // so we only refresh if the file is truly missing from raw data
           if (!fileExists) {
-            console.log('[WorkspaceStore] File not found, refreshing:', filepath)
+            console.log('[WorkspaceStore] File not found in tree, refreshing:', filepath)
             await get().fetchFiles()
             
             // Wait a bit for state to update after refresh
             setTimeout(() => {
+              console.log('[WorkspaceStore] Setting highlightedFile after refresh:', filepath)
               set({ highlightedFile: filepath })
             }, 100)
           } else {
+            console.log('[WorkspaceStore] Setting highlightedFile (file exists):', filepath)
             set({ highlightedFile: filepath })
           }
           
           // Auto-clear highlight after 5 seconds
           const timeout = setTimeout(() => {
+            console.log('[WorkspaceStore] Clearing highlight after timeout:', filepath)
             set({ highlightedFile: null, highlightTimeout: null })
           }, 5000)
           
@@ -505,231 +516,149 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       
       // Process workspace events and trigger highlighting or file removal
       processWorkspaceEvent: (event: PollingEvent) => {
-        // Handle tool_call_start events for highlighting
-        if (event.type === 'tool_call_start' && event.data) {
-          const eventData = event.data as Record<string, unknown>
-          if (!eventData?.data) {
-            return false
-          }
-          
-          const toolData = eventData.data as Record<string, unknown>
-          const toolName = toolData.tool_name as string
-          const toolParams = toolData.tool_params as Record<string, unknown>
-          
-          // Check if this is write_code tool (code execution mode)
-          if (toolName === 'write_code') {
-            try {
-              const args = JSON.parse((toolParams?.arguments as string) || '{}')
-              const code = args.code as string
-              
-              if (code) {
-                // Parse Go code to find workspace tool calls
-                const workspaceCalls = parseWorkspaceToolCalls(code)
-                
-                if (workspaceCalls.length > 0) {
-                  // Select the most relevant file to highlight (prioritizes update/delete over read/list)
-                  const primaryCall = selectPrimaryFile(workspaceCalls)
-                  
-                  if (primaryCall && primaryCall.filepath) {
-                    // Trigger highlighting for the primary file only
-                    // This prevents overwhelming the UI when multiple files are involved
-                    get().highlightFile(primaryCall.filepath)
-                    
-                    return true
-                  }
-                }
-              }
-            } catch (error) {
-              console.error('[WorkspaceStore] Failed to parse write_code arguments:', error)
-            }
-            
-            return false
-          }
-          
-          // Check if this is a file creation/modification tool
-          const fileCreationTools = ['update_workspace_file', 'patch_workspace_file', 'diff_patch_workspace_file', 'read_workspace_file', 'get_workspace_file_nested']
-          if (!fileCreationTools.includes(toolName)) {
-            return false
-          }
-          
+        // Handle workspace_file_operation events
+        if (event.type === 'workspace_file_operation') {
           try {
-            const args = JSON.parse((toolParams?.arguments as string) || '{}')
-            const filepath = args.filepath as string
+            // Try multiple ways to extract event data (event structure may vary)
+            let eventData: WorkspaceFileOperationEvent | undefined
             
-            if (filepath) {
-              // Detected file operation
-              
-              // Trigger file highlighting
-              get().highlightFile(filepath)
-              
-              return true
-            } else {
-              // Tool detected but no filepath in arguments
+            // Method 1: Use typed helper (for properly structured events)
+            const typedData = getTypedEventData(event, 'workspace_file_operation')
+            if (typedData) {
+              eventData = typedData as WorkspaceFileOperationEvent
             }
-          } catch (error) {
-            console.error('[WorkspaceStore] Failed to parse tool arguments:', error)
-          }
-          
-          return false
-        }
-        
-        // Handle tool_call_end events for file creation/update/deletion
-        if (event.type === 'tool_call_end' && event.data) {
-          const eventData = event.data as Record<string, unknown>
-          if (!eventData?.data) {
-            return false
-          }
-          
-          const toolData = eventData.data as Record<string, unknown>
-          const toolName = toolData.tool_name as string
-          const toolParams = toolData.tool_params as Record<string, unknown>
-          
-          // Check if this is write_code tool (code execution mode)
-          if (toolName === 'write_code') {
-            try {
-              // Get the code from tool arguments to parse workspace tool calls
-              const args = JSON.parse((toolParams?.arguments as string) || '{}')
-              const code = args.code as string
-              
-              if (code) {
-                // Parse Go code to find workspace tool calls
-                const workspaceCalls = parseWorkspaceToolCalls(code)
-                
-                if (workspaceCalls.length > 0) {
-                  const state = get()
-                  const filesToRefresh: string[] = []
-                  const filesToHighlight: string[] = []
-                  
-                  // Process each workspace tool call
-                  for (const call of workspaceCalls) {
-                    const filepath = call.filepath
-                    
-                    if (!filepath) continue
-                    
-                    // Check if file exists in current tree
-                    const fileExists = findFileInTree(state.files, filepath)
-                    
-                    // For update operations, check if file is new or existing
-                    if (call.operation === 'update') {
-                      if (!fileExists) {
-                        // New file created - needs refresh
-                        filesToRefresh.push(filepath)
-                      }
-                      // Always highlight updated files (new or existing)
-                      filesToHighlight.push(filepath)
-                    } else if (call.operation === 'delete') {
-                      // Deletion is handled by checking if file still exists
-                      // If it was deleted, it won't be in the tree after refresh
-                      if (fileExists) {
-                        // File exists now but should be deleted - refresh to update
-                        filesToRefresh.push(filepath)
-                      }
-                    }
-                    // Read operations don't need refresh/highlight
-                  }
-                  
-                  // If we have files to refresh (new files or deletions), refresh the tree
-                  if (filesToRefresh.length > 0) {
-                    console.log('[WorkspaceStore] Refreshing tree for write_code operations:', filesToRefresh)
-                    get().fetchFiles().then(() => {
-                      // After refresh, highlight all modified files
-                      setTimeout(() => {
-                        filesToHighlight.forEach(filepath => {
-                          get().highlightFile(filepath)
-                        })
-                      }, 200)
-                    })
-                  } else if (filesToHighlight.length > 0) {
-                    // No refresh needed, just highlight existing files
-                    filesToHighlight.forEach(filepath => {
-                      get().highlightFile(filepath)
-                    })
-                  }
-                  
-                  return filesToRefresh.length > 0 || filesToHighlight.length > 0
+            
+            // Method 2: Fallback - access nested data directly
+            if (!eventData && event.data && typeof event.data === 'object') {
+              const agentEvent = event.data as { data?: unknown }
+              const nestedData = agentEvent.data
+              if (nestedData && typeof nestedData === 'object') {
+                const dataObj = nestedData as Record<string, unknown>
+                if (dataObj.operation || dataObj.filepath) {
+                  eventData = nestedData as WorkspaceFileOperationEvent
+                  console.log('[WorkspaceStore] Using fallback data extraction')
                 }
               }
-            } catch (error) {
-              console.error('[WorkspaceStore] Failed to parse write_code on tool_call_end:', error)
             }
             
-            return false
-          }
-          
-          // Handle file deletion
-          if (toolName === 'delete_workspace_file') {
-            try {
-              const result = (toolData.result as string) || ''
-              if (!result) {
-                return false
+            // Method 3: Last resort - check if data is directly on event.data
+            if (!eventData && event.data && typeof event.data === 'object') {
+              const directData = event.data as Record<string, unknown>
+              if (directData.operation || directData.filepath) {
+                eventData = directData as WorkspaceFileOperationEvent
+                console.log('[WorkspaceStore] Using direct data extraction')
+              }
+            }
+            
+            if (!eventData) {
+              console.warn('[WorkspaceStore] Could not extract workspace_file_operation event data', {
+                eventType: event.type,
+                hasData: !!event.data,
+                eventDataStructure: event.data,
+                eventKeys: event.data ? Object.keys(event.data) : []
+              })
+              return true
+            }
+            
+            const { operation, filepath } = eventData
+            
+            console.log('[WorkspaceStore] Processing workspace_file_operation event:', {
+              operation,
+              filepath,
+              folder: eventData.folder,
+              turn: eventData.turn,
+              server_name: eventData.server_name
+            })
+            
+            if (!operation) {
+              console.warn('[WorkspaceStore] No operation in workspace_file_operation event')
+              return true
+            }
+            
+            // Backend emits full filepaths (e.g., "Workflow/MyProject/file.txt")
+            // highlightFile searches in raw unfiltered files, so full paths work correctly
+            // Workspace component handles filtering and path adjustment for display
+            
+            if (operation === 'read' || operation === 'update' || operation === 'patch') {
+              if (!filepath) {
+                console.warn('[WorkspaceStore] No filepath in event for operation:', operation)
+                return true
               }
               
-              const parsedResult = JSON.parse(result)
-              const filepath = (parsedResult.filepath as string) || ''
-              const deleted = (parsedResult.deleted as boolean) || false
+              // Check if file exists in raw file tree, refresh if new, then highlight
+              const state = get()
+              const fileExists = findFileInTree(state.files, filepath)
+              console.log('[WorkspaceStore] File check for highlighting:', {
+                filepath,
+                fileExists,
+                operation,
+                totalFiles: state.files.length,
+                firstFewFiles: state.files.slice(0, 3).map(f => f.filepath)
+              })
               
-              if (filepath && deleted) {
-                // File or folder was successfully deleted, remove it from UI
+              // Always try to highlight - if file doesn't exist, refresh first
+              if (!fileExists) {
+                // File not found - refresh tree to show it (especially for new files)
+                console.log('[WorkspaceStore] File not found, refreshing tree:', filepath)
+                get().fetchFiles().then(() => {
+                  // Wait a bit longer for state to update after refresh
+                  setTimeout(() => {
+                    console.log('[WorkspaceStore] Calling highlightFile after refresh:', filepath)
+                    get().highlightFile(filepath)
+                    // Expand folders to show the file (works with workflow folder filtering)
+                    get().expandFoldersForFile(filepath)
+                  }, 300)
+                }).catch(err => {
+                  console.error('[WorkspaceStore] Error refreshing files:', err)
+                  // Still try to highlight even if refresh fails
+                  setTimeout(() => {
+                    get().highlightFile(filepath)
+                    get().expandFoldersForFile(filepath)
+                  }, 100)
+                })
+              } else {
+                // File exists - highlight and expand folders immediately
+                console.log('[WorkspaceStore] File exists, calling highlightFile:', filepath)
+                get().highlightFile(filepath)
+                get().expandFoldersForFile(filepath)
+              }
+            } else if (operation === 'delete') {
+              if (filepath) {
                 get().removeFile(filepath)
-                
-                // Also clear selection if the deleted file was selected
+                // Clear selection if deleted file was selected
                 const state = get()
                 if (state.selectedFile?.path === filepath) {
                   set({ selectedFile: null, fileContent: '', showFileContent: false })
                 }
-                
-                return true
               }
-            } catch (error) {
-              console.error('[WorkspaceStore] Failed to parse delete tool result:', error)
-            }
-            
-            return false
-          }
-          
-          // Handle file creation/update - refresh to show new/updated files
-          const fileModificationTools = [
-            'update_workspace_file', 
-            'patch_workspace_file', 
-            'diff_patch_workspace_file'
-          ]
-          
-          if (fileModificationTools.includes(toolName)) {
-            try {
-              // Get filepath from tool arguments
-              const args = JSON.parse((toolParams?.arguments as string) || '{}')
-              const filepath = args.filepath as string
-              
+            } else if (operation === 'list') {
+              // List operation - no highlighting needed
+            } else if (operation === 'move') {
+              // Move operation: source file is deleted, destination file is updated
+              // Both events are emitted separately, so we handle them individually
+              // The delete event removes the source, the update event highlights the destination
               if (filepath) {
-                // Check if file exists in current tree
                 const state = get()
                 const fileExists = findFileInTree(state.files, filepath)
-                
-                // If file doesn't exist (new file) or we want to ensure it's up-to-date, refresh
                 if (!fileExists) {
-                  console.log('[WorkspaceStore] New file created, refreshing tree:', filepath)
-                  // Refresh files to show the newly created file
                   get().fetchFiles().then(() => {
-                    // After refresh, highlight the file
                     setTimeout(() => {
                       get().highlightFile(filepath)
-                    }, 200)
+                      get().expandFoldersForFile(filepath)
+                    }, 300)
                   })
                 } else {
-                  // File exists, just highlight it (it might have been updated)
                   get().highlightFile(filepath)
+                  get().expandFoldersForFile(filepath)
                 }
-                
-                return true
               }
-            } catch (error) {
-              console.error('[WorkspaceStore] Failed to parse file modification tool result:', error)
             }
             
-            return false
+            return true
+          } catch (error) {
+            console.error('[WorkspaceStore] Error processing workspace_file_operation event:', error, event)
+            return true // Return true to indicate we handled it (even if there was an error)
           }
-          
-          return false
         }
         
         return false
@@ -796,14 +725,27 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         })
       },
       
-      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2) => {
-        const foldersToExpand = new Set<string>()
+      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2, additionalFolders?: string[]) => {
+        // Start with existing expanded folders to merge with them instead of replacing
+        const currentExpanded = get().expandedFolders
+        const foldersToExpand = new Set<string>(currentExpanded)
+        
+        // Add any additional folders that should be included (e.g., workflow folder)
+        if (additionalFolders) {
+          additionalFolders.forEach(folder => foldersToExpand.add(folder))
+        }
         
         const collectFoldersAtLevel = (fileList: PlannerFile[], currentLevel: number) => {
           fileList.forEach(file => {
-            if (file.type === 'folder' && currentLevel < maxLevel) {
-              foldersToExpand.add(file.filepath)
-              if (file.children) {
+            if (file.type === 'folder') {
+              // Expand folders up to and including maxLevel (0-indexed, so maxLevel=4 means levels 0,1,2,3,4)
+              if (currentLevel <= maxLevel) {
+                // Use filepath (which is adjusted in workflow mode) to match rendering
+                foldersToExpand.add(file.filepath)
+              }
+              // Always recurse into children to check deeper levels, even if we don't expand this folder
+              // This ensures we can expand nested folders even if their parent isn't expanded
+              if (file.children && file.children.length > 0) {
                 collectFoldersAtLevel(file.children, currentLevel + 1)
               }
             }
@@ -811,6 +753,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
         
         collectFoldersAtLevel(files, 0)
+        
         set({ expandedFolders: foldersToExpand })
       },
       

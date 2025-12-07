@@ -427,8 +427,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                 return null
               })()}
               
-              {/* Session Title */}
-              {chatSessionTitle && (
+              {/* Session Title - Hide in workflow mode when preset is active to avoid duplication */}
+              {chatSessionTitle && !(selectedModeCategory === 'workflow' && activePreset) && (
                 <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
                   {chatSessionTitle}
                 </h2>

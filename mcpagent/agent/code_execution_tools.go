@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -292,20 +293,19 @@ func (a *Agent) discoverAllServersAndTools(generatedDir string) (string, error) 
 
 			// Use specific info structs for workspace and human (for backward compatibility with JSON structure)
 			// All other categories use CustomToolsInfo
-			if serverName == workspaceCategory {
+			switch serverName {
+			case workspaceCategory:
 				// Workspace tools directory
 				result.WorkspaceTools = &WorkspaceToolsInfo{
 					Package: dirName,
 					Tools:   tools,
 				}
-			} else if serverName == humanCategory {
+			case humanCategory:
 				// Human tools directory
 				result.HumanTools = &HumanToolsInfo{
 					Package: dirName,
 					Tools:   tools,
 				}
-			} else {
-				// Any other category directories (custom, tavily_search, or any future categories)
 				// Append to CustomTools array - supports multiple custom tool categories
 				result.CustomTools = append(result.CustomTools, CustomToolsInfo{
 					Category: serverName, // Category name (e.g., "tavily_search", "custom")
@@ -378,6 +378,28 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 		return "", fmt.Errorf("code parameter is required and must be a non-empty string")
 	}
 
+	// Extract optional CLI arguments
+	var cliArgs []string
+	if argsParam, exists := args["args"]; exists && argsParam != nil {
+		// Handle array of strings
+		if argsArray, ok := argsParam.([]interface{}); ok {
+			for _, arg := range argsArray {
+				if argStr, ok := arg.(string); ok {
+					cliArgs = append(cliArgs, argStr)
+				} else {
+					// Convert non-string args to strings
+					cliArgs = append(cliArgs, fmt.Sprintf("%v", arg))
+				}
+			}
+		} else if argsArray, ok := argsParam.([]string); ok {
+			// Direct string array (less common but handle it)
+			cliArgs = argsArray
+		}
+		if a.Logger != nil && len(cliArgs) > 0 {
+			a.Logger.Info(fmt.Sprintf("📝 CLI arguments provided: %v", cliArgs))
+		}
+	}
+
 	// Generate unique timestamp for this code execution
 	timestamp := time.Now().UnixNano()
 	filename := fmt.Sprintf("code_%d.go", timestamp)
@@ -427,23 +449,58 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 	}
 
 	// Parse code to find imported packages and set up Go workspace
+	// Try AST parsing first, with regex fallback if parsing fails (e.g., syntax errors)
 	importedPackages, err := a.parseImportedPackages(code)
-	if err != nil && a.Logger != nil {
-		a.Logger.Warn("⚠️ Failed to parse imports from code", loggerv2.Error(err))
-	}
-
-	// Set up Go workspace to import generated packages from their original location
-	if len(importedPackages) > 0 {
-		if err := a.setupGoWorkspace(workspaceDir, importedPackages); err != nil {
-			if a.Logger != nil {
-				a.Logger.Warn("⚠️ Failed to set up Go workspace", loggerv2.Error(err))
+	if err != nil {
+		if a.Logger != nil {
+			a.Logger.Warn(fmt.Sprintf("⚠️ Failed to parse imports from code (both AST and regex methods): %v", err))
+		}
+		// Even if parsing completely fails, try to extract common packages from the code string
+		// This is a last resort to ensure workspace setup happens
+		importedPackages = a.extractImportsWithRegex(code)
+		if len(importedPackages) == 0 {
+			// Check if code mentions common packages even if imports aren't properly formatted
+			if strings.Contains(code, "workspace_tools") {
+				importedPackages = append(importedPackages, "workspace_tools")
 			}
-			// Don't fail - maybe the imports are standard library or external
+			if strings.Contains(code, "google_sheets_tools") {
+				importedPackages = append(importedPackages, "google_sheets_tools")
+			}
+			// Add other common package patterns
+			commonPackages := []string{"aws_tools", "github_tools", "filesystem_tools"}
+			for _, pkg := range commonPackages {
+				if strings.Contains(code, pkg) && !contains(importedPackages, pkg) {
+					importedPackages = append(importedPackages, pkg)
+				}
+			}
+		}
+		if a.Logger != nil && len(importedPackages) > 0 {
+			a.Logger.Info(fmt.Sprintf("🔍 Extracted %d packages using fallback methods: %v", len(importedPackages), importedPackages))
 		}
 	}
 
+	// Set up Go workspace to import generated packages from their original location
+	// This is CRITICAL - if workspace setup fails, code execution will fail with "package not found" errors
+	// Always attempt workspace setup if we found any packages, even if parsing had issues
+	if len(importedPackages) > 0 {
+		if err := a.setupGoWorkspace(workspaceDir, importedPackages); err != nil {
+			if a.Logger != nil {
+				a.Logger.Error(fmt.Sprintf("❌ Failed to set up Go workspace: %v", err), err)
+				a.Logger.Error(fmt.Sprintf("❌ This will cause 'package not found' errors during code execution"), nil)
+			}
+			// Return error immediately - workspace setup is required for generated packages
+			errorMsg := fmt.Sprintf("**❌ WORKSPACE SETUP FAILED**\n\nFailed to set up Go workspace (required for generated packages): %v\n\nThis error occurs when the workspace cannot be configured to find generated tool packages.\nPlease check that:\n- Generated packages exist in the generated/ directory\n- Package directories have go.mod files\n- File permissions allow creating go.work file", err)
+			return errorMsg, nil
+		}
+		if a.Logger != nil {
+			a.Logger.Info(fmt.Sprintf("✅ Go workspace set up successfully with %d packages", len(importedPackages)))
+		}
+	} else if a.Logger != nil {
+		a.Logger.Debug(fmt.Sprintf("ℹ️ No generated packages detected in code, skipping workspace setup"))
+	}
+
 	// Execute the Go code in-process and capture output
-	output, err := a.executeGoCode(ctx, workspaceDir, filePath, code)
+	output, err := a.executeGoCode(ctx, workspaceDir, filePath, code, cliArgs)
 	if err != nil {
 		// Log the full error details for debugging
 		if a.Logger != nil {
@@ -489,15 +546,26 @@ func (a *Agent) handleWriteCode(ctx context.Context, args map[string]interface{}
 // executeGoCode executes Go code using `go run` command
 // This runs the code as a separate process with full Go language support
 // Code can make HTTP calls to MCP API for tool execution
-func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string) (string, error) {
-	// Code execution is internal - log only on error
+// cliArgs are optional command-line arguments passed to the program (accessible via os.Args)
+func (a *Agent) executeGoCode(ctx context.Context, workspaceDir, filePath, code string, cliArgs []string) (string, error) {
+	if a.Logger != nil {
+		if len(cliArgs) > 0 {
+			a.Logger.Info(fmt.Sprintf("🔧 Executing Go code using 'go run' command: %s with args: %v", filePath, cliArgs))
+		} else {
+			a.Logger.Info(fmt.Sprintf("🔧 Executing Go code using 'go run' command: %s", filePath))
+		}
+	}
 
 	// Extract just the filename since cmd.Dir is set to workspaceDir
 	// This prevents path doubling (e.g., tool_output_folder/tool_output_folder/file.go)
 	filename := filepath.Base(filePath)
 
+	// Build command arguments: go run filename.go [args...]
+	cmdArgs := []string{"run", filename}
+	cmdArgs = append(cmdArgs, cliArgs...)
+
 	// Create command to run the Go code
-	cmd := exec.CommandContext(ctx, "go", "run", filename)
+	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
 	cmd.Dir = workspaceDir
 
 	// Set environment variables for code to use
@@ -557,12 +625,91 @@ func formatCodeExecutionError(err error, code string) string {
 	return builder.String()
 }
 
-// parseImportedPackages parses Go code to find imported packages
+// extractImportsWithRegex extracts import statements using regex as a fallback when AST parsing fails
+// This is useful when code has syntax errors but we still need to set up the workspace
+func (a *Agent) extractImportsWithRegex(code string) []string {
+	var packages []string
+
+	// Pattern to match import statements: import "package_name" or import ("package1" "package2")
+	// This handles both single and multi-line import blocks
+	importPattern := regexp.MustCompile(`import\s+(?:\(([^)]+)\)|"([^"]+)")`)
+
+	// Find all import blocks
+	matches := importPattern.FindAllStringSubmatch(code, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			// Handle multi-line import block (match[1] contains the block content)
+			if match[1] != "" {
+				// Extract individual imports from the block
+				blockContent := match[1]
+				// Pattern to match individual quoted imports within the block
+				quotedImports := regexp.MustCompile(`"([^"]+)"`)
+				individualImports := quotedImports.FindAllStringSubmatch(blockContent, -1)
+				for _, imp := range individualImports {
+					if len(imp) > 1 {
+						importPath := imp[1]
+						if strings.HasSuffix(importPath, "_tools") || strings.Contains(importPath, "generated/") {
+							parts := strings.Split(importPath, "/")
+							packageName := parts[len(parts)-1]
+							packages = append(packages, packageName)
+						}
+					}
+				}
+			} else if len(match) > 2 && match[2] != "" {
+				// Handle single import statement
+				importPath := match[2]
+				if strings.HasSuffix(importPath, "_tools") || strings.Contains(importPath, "generated/") {
+					parts := strings.Split(importPath, "/")
+					packageName := parts[len(parts)-1]
+					packages = append(packages, packageName)
+				}
+			}
+		}
+	}
+
+	// Remove duplicates
+	seen := make(map[string]bool)
+	var uniquePackages []string
+	for _, pkg := range packages {
+		if !seen[pkg] {
+			seen[pkg] = true
+			uniquePackages = append(uniquePackages, pkg)
+		}
+	}
+
+	return uniquePackages
+}
+
+// contains checks if a string slice contains a specific string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 // Returns a list of package names that are likely generated packages (end with _tools)
+// Uses AST parsing first, falls back to regex if parsing fails (e.g., due to syntax errors)
 func (a *Agent) parseImportedPackages(code string) ([]string, error) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "", code, parser.ParseComments)
 	if err != nil {
+		// AST parsing failed - try regex fallback
+		if a.Logger != nil {
+			a.Logger.Debug(fmt.Sprintf("⚠️ AST parsing failed, using regex fallback to extract imports: %v", err))
+		}
+		packages := a.extractImportsWithRegex(code)
+		if len(packages) > 0 {
+			if a.Logger != nil {
+				a.Logger.Debug(fmt.Sprintf("✅ Regex fallback extracted %d packages: %v", len(packages), packages))
+			}
+			// Return packages even though parsing failed - this allows workspace setup to proceed
+			return packages, nil
+		}
+		// Both methods failed
 		return nil, fmt.Errorf("failed to parse code: %w", err)
 	}
 
@@ -779,18 +926,14 @@ func (a *Agent) getAgentGeneratedDir() string {
 
 // ensureAgentWorkspaceToolsGenerated generates workspace_tools package for this agent
 // with folder guard validation built into the generated functions
+// Always regenerates to ensure it matches current templates
 func (a *Agent) ensureAgentWorkspaceToolsGenerated(agentDir string) error {
 	workspaceToolsDir := filepath.Join(agentDir, "workspace_tools")
 
-	// Check if already generated (check for api_client.go as indicator)
-	apiClientFile := filepath.Join(workspaceToolsDir, "api_client.go")
-	if _, err := os.Stat(apiClientFile); err == nil {
-		// Already generated, skip
-		return nil
+	// Always regenerate to ensure it matches current templates
+	if a.Logger != nil {
+		a.Logger.Info(fmt.Sprintf("🔧 Generating/updating workspace_tools for agent %s with folder guards", string(a.TraceID)))
 	}
-
-	// Generate workspace_tools with folder guard validation
-	// Generation is internal - log only on error
 
 	return a.generateWorkspaceToolsWithFolderGuards(workspaceToolsDir)
 }
@@ -969,7 +1112,10 @@ func (a *Agent) generateWorkspaceToolFunction(funcName string, tool llmtypes.Too
 	var schema map[string]interface{}
 	if tool.Function.Parameters != nil {
 		paramsBytes, _ := json.Marshal(tool.Function.Parameters)
-		json.Unmarshal(paramsBytes, &schema)
+		if err := json.Unmarshal(paramsBytes, &schema); err != nil {
+			// If unmarshaling fails, use empty schema
+			schema = map[string]interface{}{}
+		}
 	} else {
 		schema = map[string]interface{}{
 			"type":       "object",
@@ -1015,11 +1161,14 @@ func (a *Agent) generateWorkspaceToolFunction(funcName string, tool llmtypes.Too
 	}
 	code.WriteString("//\n")
 	code.WriteString("// Usage: Import package and call with typed struct\n")
-	code.WriteString(fmt.Sprintf("// Example: output, err := %s(%s{...})\n", funcName, goStruct.Name))
+	code.WriteString("//       Panics on API errors - check output string for tool execution errors\n")
+	code.WriteString(fmt.Sprintf("// Example: output := %s(%s{...})\n", funcName, goStruct.Name))
+	code.WriteString("//          // Check output for errors (e.g., strings.HasPrefix(output, \"Error:\"))\n")
+	code.WriteString("//          // Handle tool execution error if detected\n")
 	code.WriteString("//\n")
 
-	// Function signature with typed struct
-	code.WriteString(fmt.Sprintf("func %s(params %s) (string, error) {\n", funcName, goStruct.Name))
+	// Function signature with typed struct - returns only string (no error)
+	code.WriteString(fmt.Sprintf("func %s(params %s) string {\n", funcName, goStruct.Name))
 
 	// Add path validation for path-related parameters BEFORE converting to map
 	pathParams := a.getPathParameters(toolName)
@@ -1052,20 +1201,20 @@ func (a *Agent) generateWorkspaceToolFunction(funcName string, tool llmtypes.Too
 			code.WriteString(fmt.Sprintf("\tif params.%s != \"\" {\n", fieldName))
 			code.WriteString(fmt.Sprintf("\t\tif err := validatePath(params.%s, %v); err != nil {\n", fieldName, isWrite))
 		}
-		code.WriteString("\t\t\treturn \"\", err\n")
+		code.WriteString("\t\t\tpanic(fmt.Sprintf(\"path validation failed: %%v\", err))\n")
 		code.WriteString("\t\t}\n")
 		code.WriteString("\t}\n")
 	}
 
-	// Convert struct to map for API call (same pattern as other tools)
+	// Convert struct to map for API call (panic on errors, same pattern as other tools)
 	code.WriteString("\t// Convert params struct to map for API call\n")
 	code.WriteString("\tparamsBytes, err := json.Marshal(params)\n")
 	code.WriteString("\tif err != nil {\n")
-	code.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to marshal parameters: %w\", err)\n")
+	code.WriteString("\t\tpanic(fmt.Sprintf(\"failed to marshal parameters: %%v\", err))\n")
 	code.WriteString("\t}\n")
 	code.WriteString("\tvar paramsMap map[string]interface{}\n")
 	code.WriteString("\tif err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {\n")
-	code.WriteString("\t\treturn \"\", fmt.Errorf(\"failed to unmarshal parameters: %w\", err)\n")
+	code.WriteString("\t\tpanic(fmt.Sprintf(\"failed to unmarshal parameters: %%v\", err))\n")
 	code.WriteString("\t}\n\n")
 
 	// Build request payload and call custom API (workspace_tools are custom tools, not MCP tools)
@@ -1173,14 +1322,15 @@ func (a *Agent) setupGoWorkspace(workspaceDir string, packageNames []string) err
 		processedDirs[packageDir] = true
 
 		// Create go.mod for the package if it doesn't exist
+		// This is REQUIRED for the package to be included in go.work
 		pkgGoModPath := filepath.Join(packageDir, "go.mod")
 		if _, err := os.Stat(pkgGoModPath); os.IsNotExist(err) {
 			pkgGoModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
 			if err := os.WriteFile(pkgGoModPath, []byte(pkgGoModContent), 0644); err != nil {
 				if a.Logger != nil {
-					a.Logger.Warn("⚠️ Failed to create go.mod for package", loggerv2.String("package_name", packageName), loggerv2.Error(err))
+					a.Logger.Error(fmt.Sprintf("❌ Failed to create go.mod for package %s: %v", packageName, err), err)
 				}
-				continue
+				return fmt.Errorf("failed to create go.mod for package %s (required for workspace): %w", packageName, err)
 			}
 		}
 	}

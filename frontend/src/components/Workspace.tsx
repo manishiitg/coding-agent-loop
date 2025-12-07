@@ -14,6 +14,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { 
   collectFolderPaths, 
   restoreExpandedFolders, 
@@ -97,6 +98,7 @@ export default function Workspace({
     expandedFolders,
     setExpandedFolders,
     expandFoldersForFile,
+    expandFoldersToLevel,
     toggleFolder,
     highlightedFile,
     setSelectedFile,
@@ -259,6 +261,12 @@ export default function Workspace({
     // Skip if no files loaded yet
     if (files.length === 0) return
     
+    // In workflow mode, completely skip restore effect to let auto-expand handle it
+    // This prevents any interference with the auto-expansion logic
+    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+      return
+    }
+    
     // Get current expanded folders
     const currentExpanded = expandedFolders
     const previouslyExpanded = new Set(currentExpanded)
@@ -282,10 +290,7 @@ export default function Workspace({
       })
       setExpandedFolders(restoredExpanded)
     }
-    
-    // If we had no previously expanded folders, we'll rely on the auto-expand
-    // logic in the workflow folder expansion effect below
-  }, [files, applyFilteringAndPathAdjustment, expandedFolders, setExpandedFolders])
+  }, [files, applyFilteringAndPathAdjustment, expandedFolders, setExpandedFolders, selectedModeCategory, workflowFolderPath])
   
   // Function to scroll to highlighted file
   const scrollToHighlightedFile = useCallback((filepath: string) => {
@@ -444,6 +449,13 @@ export default function Workspace({
   // Enhanced file highlighting with folder expansion and auto-scroll
   useEffect(() => {
     if (highlightedFile) {
+      console.log('[Workspace] highlightedFile changed, processing:', {
+        highlightedFile,
+        selectedModeCategory,
+        workflowFolderPath,
+        filteredFilesCount: filteredFiles.length
+      })
+      
       // In workflow mode, we need to convert the original path to the adjusted path for folder expansion
       // Find the file in filtered files that matches the highlightedFile (by originalFilepath or filepath)
       let pathToUse = highlightedFile
@@ -461,16 +473,22 @@ export default function Workspace({
           return null
         }
         const foundFile = findFileByPath(filteredFiles, highlightedFile)
+        console.log('[Workspace] File search in workflow mode:', {
+          highlightedFile,
+          foundFile: foundFile ? { filepath: foundFile.filepath, originalFilepath: foundFile.originalFilepath } : null
+        })
         // Use the adjusted filepath if found, otherwise use the original path
         if (foundFile) {
           pathToUse = foundFile.filepath
         }
       }
       
+      console.log('[Workspace] Expanding folders for file:', pathToUse)
       expandFoldersForFile(pathToUse)
       
       // Auto-scroll to highlighted file after a short delay to allow folder expansion
       setTimeout(() => {
+        console.log('[Workspace] Scrolling to highlighted file:', highlightedFile)
         scrollToHighlightedFile(highlightedFile)
       }, 100)
     }
@@ -484,37 +502,53 @@ export default function Workspace({
       const workflowPresetId = activeWorkflowPreset?.id || workflowFolderPath
       
       // Only auto-expand if we haven't done it for this workflow yet
-      // AND if we don't have any folders already expanded
-      if (autoExpandedWorkflowRef.current !== workflowPresetId && expandedFolders.size === 0) {
+      if (autoExpandedWorkflowRef.current !== workflowPresetId) {
         // Small delay to ensure files are fully loaded and rendered
         const timeoutId = setTimeout(() => {
-          // Collect folders to expand (workflow folder + first level children)
-          const foldersToExpand = new Set<string>()
-          
-          // Expand all top-level folders in the filtered tree
-          filteredFiles.forEach(file => {
-            if (file.type === 'folder') {
-              foldersToExpand.add(file.filepath)
-              
-              // Also expand first level children for better visibility
-              if (file.children) {
-                file.children.forEach(child => {
-                  if (child.type === 'folder') {
-                    foldersToExpand.add(child.filepath)
-                  }
-                })
-              }
-            }
+          // Use the store's expandFoldersToLevel function which properly handles the expansion
+          // Expand up to 4 levels deep (level 0, 1, 2, 3, 4) - that's 4 more levels after workflow folder
+          console.log('[Workspace] Auto-expanding workflow folders using expandFoldersToLevel:', {
+            filteredFilesLength: filteredFiles.length,
+            firstItem: filteredFiles[0],
+            workflowFolderPath
           })
           
-          if (foldersToExpand.size > 0) {
-            console.log('[Workspace] Auto-expanding workflow folders:', foldersToExpand.size)
-            setExpandedFolders(foldersToExpand)
-            
-            // Mark this workflow as auto-expanded
-            autoExpandedWorkflowRef.current = workflowPresetId
+          // Determine what files to expand:
+          // - If filteredFiles contains the workflow folder itself as root, expand it first, then its children
+          // - Otherwise, use filteredFiles directly (which are already the children)
+          const workflowFolder = filteredFiles.length > 0 && filteredFiles[0].type === 'folder' ? filteredFiles[0] : null
+          const filesToExpand = workflowFolder && workflowFolder.children
+            ? workflowFolder.children 
+            : filteredFiles
+          
+          console.log('[Workspace] Files to expand:', {
+            workflowFolderPath: workflowFolder?.filepath,
+            workflowFolderHasChildren: !!workflowFolder?.children,
+            childrenCount: filesToExpand.length,
+            firstFew: filesToExpand.slice(0, 3).map(f => ({ path: f.filepath, type: f.type, hasChildren: !!f.children }))
+          })
+          
+          // Expand children up to 4 levels deep (levels 0, 1, 2, 3, 4 = 5 levels total)
+          // We use maxLevel=4 to get 4 levels below the workflow folder
+          // Pass the workflow folder path as an additional folder to ensure it's expanded
+          const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
+          expandFoldersToLevel(filesToExpand, 4, additionalFolders)
+          
+          if (workflowFolder) {
+            console.log('[Workspace] Expanded workflow folder and children:', {
+              workflowFolderPath: workflowFolder.filepath,
+              childrenCount: filesToExpand.length
+            })
           }
-        }, 300)
+          
+          // Mark this workflow as auto-expanded
+          autoExpandedWorkflowRef.current = workflowPresetId
+          
+          // Log the result after a short delay to see what was expanded
+          setTimeout(() => {
+            console.log('[Workspace] After expansion, expandedFolders count:', expandedFolders.size)
+          }, 100)
+        }, 500) // Increased delay to ensure files are fully processed
         
         return () => clearTimeout(timeoutId)
       }
@@ -522,7 +556,151 @@ export default function Workspace({
       // Reset the auto-expanded ref when switching away from workflow mode
       autoExpandedWorkflowRef.current = null
     }
-  }, [selectedModeCategory, workflowFolderPath, filteredFiles, setExpandedFolders, activeWorkflowPreset?.id, expandedFolders.size])
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id, expandedFolders, setExpandedFolders])
+  
+  // Auto-collapse other iterations when an iteration is selected
+  // Get selected iteration from workflow store
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  
+  useEffect(() => {
+    // Only run in workflow mode when we have filtered files and a selected iteration
+    if (selectedModeCategory !== 'workflow' || !workflowFolderPath || filteredFiles.length === 0 || !selectedRunFolder || selectedRunFolder === 'new') {
+      return
+    }
+    
+    // Helper to recursively find all iteration folders in the tree
+    // file.filepath is already the adjusted path (e.g., "runs/iteration-10")
+    const findIterationFolders = (fileList: PlannerFile[]): string[] => {
+      const iterationFolders: string[] = []
+      
+      for (const file of fileList) {
+        if (file.type === 'folder') {
+          // Check if this is an iteration folder (matches pattern: runs/iteration-* or iteration-*)
+          // Also handle group subfolders: runs/iteration-*/group-*
+          if (file.filepath.match(/^runs\/iteration-\d+(\/group-\d+)?$/) || file.filepath.match(/^iteration-\d+(\/group-\d+)?$/)) {
+            iterationFolders.push(file.filepath)
+          }
+          
+          // Recursively search children
+          if (file.children && file.children.length > 0) {
+            const childIterations = findIterationFolders(file.children)
+            iterationFolders.push(...childIterations)
+          }
+        }
+      }
+      
+      return iterationFolders
+    }
+    
+    // Find all iteration folders in the filtered tree
+    const allIterationFolders = findIterationFolders(filteredFiles)
+    
+    if (allIterationFolders.length === 0) {
+      return // No iteration folders found, nothing to do
+    }
+    
+    // Build the path for the selected iteration
+    // selectedRunFolder can be: "iteration-10" or "iteration-10/group-1"
+    // In filtered view, it appears as "runs/iteration-10" or "runs/iteration-10/group-1"
+    const selectedIterationPath = selectedRunFolder.startsWith('runs/') 
+      ? selectedRunFolder 
+      : `runs/${selectedRunFolder}`
+    
+    // Also check without "runs/" prefix in case paths are adjusted differently
+    const selectedIterationPathAlt = selectedRunFolder
+    
+    // Get current expanded folders
+    const currentExpanded = new Set(expandedFolders)
+    const newExpanded = new Set<string>()
+    
+    // Copy all non-iteration folders to keep them expanded
+    for (const folder of currentExpanded) {
+      // Check if this is NOT an iteration folder
+      // Match patterns: runs/iteration-*, iteration-*, or runs/iteration-*/group-*
+      const isIterationFolder = folder.match(/^runs\/iteration-\d+(\/group-\d+)?$/) || 
+                                 folder.match(/^iteration-\d+(\/group-\d+)?$/)
+      if (!isIterationFolder) {
+        newExpanded.add(folder)
+      }
+    }
+    
+    // Find the matching iteration folder path in the tree (may have different path format)
+    const matchingIterationPath = allIterationFolders.find(path => 
+      path === selectedIterationPath || 
+      path === selectedIterationPathAlt ||
+      path.endsWith(`/${selectedRunFolder}`) ||
+      path === selectedRunFolder
+    )
+    
+    // Collapse all iteration folders, then expand only the selected one
+    // Also expand parent folders needed to show the selected iteration
+    if (matchingIterationPath) {
+      newExpanded.add(matchingIterationPath)
+      
+      // Check if this is a group path (e.g., "iteration-10/group-1")
+      // If so, also expand the parent iteration folder to show all groups
+      const isGroupPath = selectedRunFolder.includes('/group-')
+      if (isGroupPath) {
+        // Extract parent iteration folder (e.g., "iteration-10" from "iteration-10/group-1")
+        const parentIterationName = selectedRunFolder.split('/')[0]
+        const parentIterationPath = selectedIterationPath.startsWith('runs/')
+          ? `runs/${parentIterationName}`
+          : parentIterationName
+        
+        // Helper to find folder in file tree by path
+        const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
+          for (const file of fileList) {
+            if (file.type === 'folder' && (file.filepath === targetPath || file.originalFilepath === targetPath)) {
+              return file
+            }
+            if (file.children && file.children.length > 0) {
+              const found = findFolderInTree(file.children, targetPath)
+              if (found) return found
+            }
+          }
+          return null
+        }
+        
+        // Find the parent iteration folder in the file tree (not just in allIterationFolders)
+        // This is needed because when groups exist, backend only returns group folders, not parent
+        const parentIterationFolder = findFolderInTree(filteredFiles, parentIterationPath) ||
+                                      findFolderInTree(filteredFiles, `runs/${parentIterationName}`) ||
+                                      findFolderInTree(filteredFiles, parentIterationName)
+        
+        if (parentIterationFolder) {
+          // Use the actual filepath from the tree (may have different format)
+          const parentPathToExpand = parentIterationFolder.filepath || parentIterationFolder.originalFilepath
+          if (parentPathToExpand) {
+            newExpanded.add(parentPathToExpand)
+            console.log('[Workspace] Expanding parent iteration to show all groups:', {
+              selectedGroup: matchingIterationPath,
+              parentIteration: parentPathToExpand
+            })
+          }
+        }
+      }
+      
+      // Also expand parent folders (e.g., "runs" if needed)
+      const pathParts = matchingIterationPath.split('/')
+      for (let i = 1; i < pathParts.length; i++) {
+        const parentPath = pathParts.slice(0, i).join('/')
+        newExpanded.add(parentPath)
+      }
+    }
+    
+    // Only update if something changed
+    if (newExpanded.size !== currentExpanded.size || 
+        Array.from(newExpanded).some(f => !currentExpanded.has(f)) ||
+        Array.from(currentExpanded).some(f => !newExpanded.has(f))) {
+      console.log('[Workspace] Auto-collapsing iterations:', {
+        selectedIteration: selectedIterationPath,
+        allIterations: allIterationFolders,
+        previousExpanded: Array.from(currentExpanded),
+        newExpanded: Array.from(newExpanded)
+      })
+      setExpandedFolders(newExpanded)
+    }
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, selectedRunFolder, expandedFolders, setExpandedFolders])
   
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -905,7 +1083,31 @@ export default function Workspace({
       <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
-        {!minimized ? (
+        {minimized ? (
+          <div className="flex items-center justify-between">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleMinimize()
+                  }}
+                  className="flex items-center gap-2 px-2 py-1 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
+                  title="Expand workspace"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span className="text-sm font-medium">Workspace</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Expand workspace (Ctrl+6)</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        ) : (
           <div className="flex items-center justify-between mb-3">
             <div>
               <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
@@ -1005,32 +1207,6 @@ export default function Workspace({
                   </TooltipContent>
                 </Tooltip>
               </div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                Workspace
-              </h2>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={onToggleMinimize}
-                    className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors relative group"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{minimized ? "Expand workspace" : "Minimize workspace"} (Ctrl+5)</p>
-                </TooltipContent>
-              </Tooltip>
             </div>
           </div>
         )}
@@ -1138,39 +1314,60 @@ export default function Workspace({
       {/* Minimized Icons */}
       {minimized && (
         <div className="flex-1 flex flex-col items-center py-4 space-y-4">
-          {/* Files Icon */}
+          {/* Files Icon - Click to expand workspace */}
+          <Tooltip>
+            <TooltipTrigger asChild>
           <button
-            onClick={fetchFiles}
+                onClick={onToggleMinimize}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title="Refresh Files"
+                title="Expand Workspace"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5a2 2 0 012-2h4a2 2 0 012 2v2H8V5z" />
             </svg>
           </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand Workspace</p>
+            </TooltipContent>
+          </Tooltip>
 
-          {/* Search Icon */}
+          {/* Search Icon - Click to expand workspace */}
+          <Tooltip>
+            <TooltipTrigger asChild>
           <button
-            onClick={() => setSearchQuery('')}
+                onClick={onToggleMinimize}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title="Clear Search"
+                title="Expand Workspace"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand Workspace</p>
+            </TooltipContent>
+          </Tooltip>
 
-          {/* Context Icon */}
+          {/* Document Icon - Click to expand workspace */}
+          <Tooltip>
+            <TooltipTrigger asChild>
           <button
-            onClick={() => addFileToContext({name: 'Current Context', path: '/', type: 'folder'})}
+                onClick={onToggleMinimize}
             className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title={`Files in Context: ${chatFileContext.length}`}
+                title="Expand Workspace"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Expand Workspace</p>
+            </TooltipContent>
+          </Tooltip>
         </div>
       )}
 

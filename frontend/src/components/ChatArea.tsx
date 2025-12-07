@@ -1,15 +1,14 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import debounce from 'lodash.debounce'
-import { agentApi } from '../services/api'
+import { agentApi, setCurrentObserverId } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
-import { EventModeProvider } from './events'
 import { ChatInput, type ChatInputRef } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { getWorkflowPhases, getDefaultWorkflowPhase } from '../constants/workflow'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
@@ -18,24 +17,35 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
-import { VariablesIcon } from './workflow/VariablesIcon'
 
 interface ChatAreaProps {
   // New chat handler
   onNewChat: () => void
+  // Hide header when used inside another layout (like WorkflowLayout)
+  hideHeader?: boolean
+  // Hide input area when used inside workflow mode
+  hideInput?: boolean
+  // Compact mode for smaller font sizes (used in workflow layout)
+  compact?: boolean
 }
+
+import type { ExecutionOptions } from '../services/api-types'
 
 // Ref interface for ChatArea component
 export interface ChatAreaRef {
   handleNewChat: () => void
   resetChatState: () => void
   refreshWorkflowPresets: () => Promise<void>
+  submitQuery: (query: string, executionOptions?: ExecutionOptions) => Promise<void>
+  getEvents: () => PollingEvent[]
+  isStreaming: boolean
+  currentWorkflowPhase: string
 }
 
 
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
-  const { onNewChat } = props
+  const { onNewChat, hideHeader = false, hideInput = false, compact = false } = props
   // Ref for ChatInput to get code execution mode
   const chatInputRef = useRef<ChatInputRef>(null)
   
@@ -50,8 +60,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     requiresNewChat
   } = useAppStore()
   
-  const { selectedModeCategory } = useModeStore()
+  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore()
   const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = usePresetApplication()
+  
+  // Derive correct agent mode from selectedModeCategory (source of truth)
+  const correctAgentMode = useMemo(() => {
+    if (selectedModeCategory) {
+      return getAgentModeFromCategory(selectedModeCategory) as AgentMode
+    }
+    return agentMode // Fallback to agentMode if selectedModeCategory is null
+  }, [selectedModeCategory, agentMode, getAgentModeFromCategory])
   
   const { 
     primaryConfig: llmConfig,
@@ -67,15 +85,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     selectedServers
   } = useMCPStore()
   
-  // Determine which servers to use based on agent mode
+  // Determine which servers to use based on mode category
   const effectiveServers = useMemo(() => {
     // For workflow mode, use preset servers
-    if (agentMode === 'workflow') {
+    if (selectedModeCategory === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
-    // For simple mode, use manually selected servers
+    // For chat mode, use manually selected servers
     return selectedServers
-  }, [agentMode, currentPresetServers, selectedServers])
+  }, [selectedModeCategory, currentPresetServers, selectedServers])
   
   // Filter tools to only include those from effective servers
   // If "NO_SERVERS" is selected, return empty tools (pure LLM mode)
@@ -136,10 +154,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
-    if (agentMode !== 'workflow') return true; // No validation needed for other modes
+    if (selectedModeCategory !== 'workflow') return true; // No validation needed for other modes
 
     // Workflow mode requires Workflow/ folder
-    if (agentMode === 'workflow') {
+    if (selectedModeCategory === 'workflow') {
       const hasWorkflowFolder = chatFileContext.some((file: { type: string; path: string }) => 
         file.type === 'folder' && file.path.startsWith('Workflow/')
       );
@@ -147,7 +165,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     return true;
-  }, [agentMode, chatFileContext])
+  }, [selectedModeCategory, chatFileContext])
 
   // Use currentPresetServers from props (passed from App.tsx when preset is selected)
 
@@ -410,10 +428,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setCurrentWorkflowQueryId(presetId) // Store the preset query ID for workflow approval
     
     try {
-      // Get available phases from backend to validate status
-      const phases = await getWorkflowPhases()
+      // Ensure phases are loaded and get them from store
+      const workflowStore = useWorkflowStore.getState()
+      if (!workflowStore.phasesInitialized) {
+        await workflowStore.loadPhases()
+      }
+      const phases = workflowStore.phases
       const phaseIds = phases.map(p => p.id)
-      const defaultPhase = phases.length > 0 ? phases[0].id : 'variable-extraction'
+      const defaultPhase = workflowStore.getDefaultPhase()
       
       // Check if workflow already exists for this preset
       const workflowStatus = await agentApi.getWorkflowStatus(presetId)
@@ -441,25 +463,25 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     } catch (error) {
       console.error('[WORKFLOW] Error checking workflow status:', error)
       // Fallback to default phase on error
-      const defaultPhase = await getDefaultWorkflowPhase()
+      const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
       setCurrentWorkflowPhase(defaultPhase)
       setCurrentQuery(presetContent)
     }
   }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId, clearFileContext])
 
-  const handleWorkflowPresetCleared = useCallback(async () => {
+  const handleWorkflowPresetCleared = useCallback(() => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null) // Clear the stored preset query ID
-    const defaultPhase = await getDefaultWorkflowPhase()
+    const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
     setCurrentWorkflowPhase(defaultPhase) // Reset to default phase
     setCurrentQuery('')
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase, setCurrentQuery])
   
   // Clear workflow state when starting a new chat
-  const clearWorkflowState = useCallback(async () => {
+  const clearWorkflowState = useCallback(() => {
     clearActivePreset('workflow')
     setCurrentWorkflowQueryId(null)
-    const defaultPhase = await getDefaultWorkflowPhase()
+    const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
     setCurrentWorkflowPhase(defaultPhase)
   }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase])
 
@@ -483,9 +505,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // If next_phase is provided, use it; otherwise get the second phase (planning) as default
       let nextPhase = eventData?.next_phase
       if (!nextPhase) {
-        const phases = await getWorkflowPhases()
+        const phases = useWorkflowStore.getState().phases
         // Use second phase (planning) if available, otherwise first phase
-        nextPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+        nextPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
       }
       
       // Update workflow status to the determined next phase
@@ -557,6 +579,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         if (response.observer_id) {
           console.log(`[INIT] Observer registered successfully: ${response.observer_id}`)
           setObserverId(response.observer_id)
+          
+          // Sync observer ID to API module for request interceptor
+          setCurrentObserverId(response.observer_id)
           
           // Clear the requiresNewChat flag after successful initialization
           useAppStore.getState().clearRequiresNewChat()
@@ -640,13 +665,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const pollEvents = useCallback(async () => {
     const currentLastEventIndex = lastEventIndexRef.current
     
-    if (!observerId) {
+    // Get observerId from store (may be more up-to-date than closure)
+    const currentObserverId = useChatStore.getState().observerId || observerId
+    
+    if (!currentObserverId) {
+      console.log('[WorkflowPlanUpdate] Polling skipped - no observerId available')
       return
     }
 
-    
     try {
-      const response = await agentApi.getEvents(observerId, currentLastEventIndex)
+      const response = await agentApi.getEvents(currentObserverId, currentLastEventIndex)
 
       if (response.events.length > 0) {
         
@@ -671,26 +699,38 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             }
             
             // Process workspace events using the centralized store
+            if (event.type === 'workspace_file_operation') {
+              console.log('[ChatArea] Received workspace_file_operation event:', {
+                type: event.type,
+                data: event.data,
+                timestamp: event.timestamp
+              })
+            }
             const { processWorkspaceEvent } = useWorkspaceStore.getState()
-            processWorkspaceEvent(event)
+            const processed = processWorkspaceEvent(event)
+            if (event.type === 'workspace_file_operation') {
+              console.log('[ChatArea] Event processed:', processed)
+            }
             
             // Only filter out user_message events from backend since we add them immediately in submitQuery
             return event.type !== 'user_message'
           })
           
-        // Process workflow-specific events asynchronously (after filtering)
-        if (agentMode === 'workflow') {
+        // Process workflow-specific events (after filtering)
+        if (selectedModeCategory === 'workflow') {
+          const phases = useWorkflowStore.getState().phases
           for (const event of response.events) {
             // Handle todo list generation from workflow agent
             // Note: orchestrator events removed, using agent_end events instead
             if (event.type === 'agent_end') {
-              const agentEvent = event.data?.agent_end
-              if (agentEvent && (agentEvent as { agent_type?: string })?.agent_type === 'todo_planner') {
-                const result = (agentEvent as { result?: string })?.result || ''
+              // Access the nested event data: event.data.data contains the actual AgentEndEvent
+              const agentEventData = event.data as { data?: { agent_type?: string; result?: string } }
+              const agentEvent = agentEventData?.data
+              if (agentEvent && agentEvent.agent_type === 'todo_planner') {
+                const result = agentEvent.result || ''
                 if (result) {
-                  // Get phases to determine planning phase
-                  const phases = await getWorkflowPhases()
-                  const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+                  // Get planning phase (second phase if available)
+                  const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
                   
                   // Only reset to planning phase if workflow hasn't been approved yet
                   // This prevents resetting the phase after user approval
@@ -705,9 +745,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
             // Handle workflow completion events
             if (event.type === 'workflow_end') {
-              // Get phases to determine completion phase (second phase = planning/execution)
-              const phases = await getWorkflowPhases()
-              const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'pre-verification')
+              // Get completion phase (second phase = planning/execution)
+              const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
               setCurrentWorkflowPhase(completionPhase)
             }
           }
@@ -726,13 +765,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             return false
           }
           
-          // Completion detection based on agent mode
-          if (agentMode === 'workflow') {
+          // Completion detection based on mode category
+          if (selectedModeCategory === 'workflow') {
             // For workflow mode, check workflow-specific events
             return event.type === 'workflow_end' ||
                    event.type === 'request_human_feedback'
           } else {
-            // For simple mode, check standard completion events
+            // For chat mode, check standard completion events
             return event.type === 'unified_completion' ||
                    event.type === 'agent_end' ||
                    event.type === 'conversation_end' || 
@@ -760,11 +799,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           setIsCompleted(true)
           setHasActiveChat(false)
           
-          // Check for unified_completion event first - it takes precedence (only for non-Deep Search modes)
+          // Check for unified_completion event first - it takes precedence (only for chat mode)
           let hasError = false
           let finalResult = ''
           
-          if (agentMode !== 'workflow') {
+          if (selectedModeCategory !== 'workflow') {
             const unifiedCompletionEvent = completionEvents.find((event: PollingEvent) => 
               event.type === 'unified_completion'
             )
@@ -786,14 +825,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           
           // If no unified_completion event or no final result, check for individual error events
           if (!finalResult) {
-            if (agentMode === 'workflow') {
+            if (selectedModeCategory === 'workflow') {
               // For workflow mode, check workflow-specific errors
               hasError = completionEvents.some((event: PollingEvent) => 
                 event.type === 'agent_error' || 
                 event.type === 'workflow_error'
               )
             } else {
-              // For simple mode, check standard errors
+              // For chat mode, check standard errors
               hasError = completionEvents.some((event: PollingEvent) => 
                 event.type === 'conversation_error' || 
                 event.type === 'agent_error'
@@ -812,12 +851,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             // Skip processing other completion events since we already have the result
             return
           } else {
-            // Extract final response from completion events - AGENT MODE SPECIFIC LOGIC
+            // Extract final response from completion events - MODE CATEGORY SPECIFIC LOGIC
             let foundFinalResponse = false
             for (const event of completionEvents) {
               let result: string | undefined
               
-              if (agentMode === 'workflow') {
+              if (selectedModeCategory === 'workflow') {
                 // For workflow mode, check workflow_end events
                 if (event.type === 'workflow_end' && event.data && typeof event.data === 'object') {
                   if ('result' in event.data) {
@@ -1107,19 +1146,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setLastEventCount(0)
   }, [pollingInterval, setPollingInterval, observerId, setIsStreaming, setLastEventIndex, setLastEventCount])
 
+  // Store execution options for use in the request
+  const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
+
   // Wrapper function to submit query with the current local query
-  const submitQueryWithQuery = useCallback(async (query: string) => {
+  const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions) => {
+    // Store execution options for inclusion in the request
+    executionOptionsRef.current = executionOptions
     if (!query?.trim()) {
       return
     }
 
     // Add validation check for Tasks folder requirement in Deep Search and Workflow modes
-    if (agentMode === 'workflow' && !isRequiredFolderSelected) {
+    if (selectedModeCategory === 'workflow' && !isRequiredFolderSelected) {
       console.error(
         '[SUBMIT] Validation failed -',
-        agentMode === 'workflow' ? 'Workflow' : 'Tasks',
+        selectedModeCategory === 'workflow' ? 'Workflow' : 'Tasks',
         'folder required for',
-        agentMode,
+        selectedModeCategory,
         'mode'
       )
       return
@@ -1131,7 +1175,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       : query.trim()
     
     // Handle workflow mode - submit query directly to backend
-    if (agentMode === 'workflow') {
+    // Use selectedModeCategory as source of truth
+    if (selectedModeCategory === 'workflow') {
       // For all workflow phases, submit the query directly to the backend
       // The backend will handle the appropriate workflow logic based on the current phase
       setCurrentQuery(queryWithContext)
@@ -1143,26 +1188,51 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       await stopStreaming()
     }
     
-    // Ensure observer is ready
-    if (!observerId) {
-      console.error('[SUBMIT] No observer ID available, cannot submit query')
-      return
+    // Note: Observer ID is not required for query submission
+    // It's only needed for event polling, which will be set up after the query starts
+    // The observer should be initialized automatically via useEffect
+    // If it's not available yet, we'll wait a bit for initialization, but won't block submission
+    let currentObserverId = observerId
+    if (!currentObserverId) {
+      console.log('[SUBMIT] Observer ID not available yet, waiting briefly for initialization...')
+      // Wait up to 1 second for observer to be initialized (check every 100ms)
+      for (let i = 0; i < 10; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        // Check observerId from the chat store directly
+        const storeObserverId = useChatStore.getState().observerId
+        if (storeObserverId) {
+          console.log(`[SUBMIT] Observer ID became available after ${(i + 1) * 100}ms: ${storeObserverId}`)
+          currentObserverId = storeObserverId
+          break
+        }
+      }
+      
+      if (!currentObserverId) {
+        console.warn('[SUBMIT] Observer ID not available yet, but proceeding with query submission.')
+        console.warn('[SUBMIT] Observer will be initialized automatically, and polling will start once it\'s ready.')
+        // Don't return - allow submission to proceed
+        // The observer initialization effect will handle setting it up
+      }
     }
 
     // Use the query with file context that we prepared earlier
     const enhancedQuery = queryWithContext
     
     // Add user message as an event instead of floating popup
+    // Structure matches the actual wire format: event.data.data contains the typed event
     const userMessageEvent: PollingEvent = {
       id: `user-message-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: 'user_message',
       timestamp: new Date().toISOString(),
       data: {
-        user_message: {
+        type: 'user_message',
+        timestamp: new Date().toISOString(),
+        data: {
           content: query.trim(),
           timestamp: new Date().toISOString()
         }
-      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any
     }
     
     // Add user message event to the events array
@@ -1213,8 +1283,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // "*" markers indicate "all tools" mode, which is represented as an empty array
       const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
       
-      console.log('[CHATAREA] Starting workflow with:', {
-        agentMode,
+      // Use the correctAgentMode calculated at component level (derived from selectedModeCategory)
+      console.log('[CHATAREA] Starting query with:', {
+        selectedModeCategory,
+        agentModeFromStore: agentMode,
+        correctAgentMode,
         selectedWorkflowPreset,
         currentPresetServers,
         currentPresetTools,
@@ -1227,7 +1300,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Get code execution mode: prefer preset value, fallback to ChatInput ref (only for chat mode with simple agent)
       const activePreset = selectedWorkflowPreset ? getActivePreset('workflow') : getActivePreset('chat')
       const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
-      const chatInputUseCodeExecutionMode = agentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
+      const chatInputUseCodeExecutionMode = correctAgentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
       
       // Determine final code execution mode value
       // If preset has explicit value (true or false), use it
@@ -1235,7 +1308,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       let useCodeExecutionMode: boolean | undefined
       if (presetUseCodeExecutionMode !== undefined) {
         useCodeExecutionMode = presetUseCodeExecutionMode
-      } else if (agentMode === 'simple') {
+      } else if (correctAgentMode === 'simple') {
         useCodeExecutionMode = chatInputUseCodeExecutionMode
       } else {
         // For workflow mode without preset, don't set it (let backend use default)
@@ -1246,7 +1319,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         activePreset: activePreset?.label,
         presetUseCodeExecutionMode,
         chatInputUseCodeExecutionMode,
-        agentMode,
+        selectedModeCategory,
+        correctAgentMode,
         finalUseCodeExecutionMode: useCodeExecutionMode
       })
       
@@ -1265,7 +1339,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Prepare API request payload
       const requestPayload = {
         query: enhancedQuery,
-        agent_mode: agentMode,
+        agent_mode: correctAgentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
         enabled_servers: effectiveServers,
         selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? filteredPresetTools : undefined, // Only send when preset is active
@@ -1275,6 +1349,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         preset_query_id: selectedWorkflowPreset || undefined,
         // Send boolean value directly - don't use || undefined as it converts false to undefined
         use_code_execution_mode: useCodeExecutionMode !== undefined ? useCodeExecutionMode : undefined,
+        // Execution options from frontend (for workflow execution phase)
+        execution_options: executionOptionsRef.current,
       }
       
       console.log('[code_execution] [ChatArea] API Request payload:', {
@@ -1293,6 +1369,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }
         
         // Start polling for events
+        // pollEvents will check for observerId from store and skip if not available
+        // The observer should be initialized by the useEffect hook
         const interval = setInterval(pollEvents, 1000)
         setPollingInterval(interval)
       } else {
@@ -1306,7 +1384,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       setHasActiveChat(false)
     }
 
-  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
+  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {
@@ -1324,11 +1402,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     // For workflow mode, preserve the selected preset but reset workflow phase
-    if (agentMode === 'workflow' && selectedWorkflowPreset) {
+    if (selectedModeCategory === 'workflow' && selectedWorkflowPreset) {
       // Keep the preset selected, just reset the workflow phase to default
-      getDefaultWorkflowPhase().then(defaultPhase => {
-        setCurrentWorkflowPhase(defaultPhase)
-      })
+      const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
+      setCurrentWorkflowPhase(defaultPhase)
       // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
     } else {
       // For other modes, clear workflow state completely
@@ -1350,7 +1427,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Call the parent's new chat handler
     onNewChat()
-  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, agentMode, selectedWorkflowPreset, setCurrentWorkflowPhase])
+  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {
@@ -1363,8 +1440,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   useImperativeHandle(ref, () => ({
     handleNewChat,
     resetChatState,
-    refreshWorkflowPresets
-  }), [handleNewChat, resetChatState, refreshWorkflowPresets])
+    refreshWorkflowPresets,
+    submitQuery: submitQueryWithQuery,
+    getEvents: () => events,
+    isStreaming,
+    currentWorkflowPhase
+  }), [handleNewChat, resetChatState, refreshWorkflowPresets, submitQueryWithQuery, events, isStreaming, currentWorkflowPhase])
 
   return (
     <div className="flex flex-col h-full min-w-0">
@@ -1390,71 +1471,73 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         />
       )}
 
-      {/* Header */}
+      {/* Header - hidden when used inside WorkflowLayout */}
+      {!hideHeader && (
       <ChatHeader
         chatSessionTitle={chatSessionTitle}
         chatSessionId={chatSessionId}
         sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
         onModeSelect={handleModeSelect}
       />
+      )}
 
       {/* Chat Content - Separated to prevent input re-renders */}
-      <div ref={chatContentRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative">
-        {/* Variables Icon - Top Right */}
-        <VariablesIcon onSubmitQuery={submitQueryWithQuery} />
+      <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative ${compact ? 'text-sm' : ''}`}>
         
-        <div className="min-w-0 p-4">
+        <div className={`min-w-0 ${compact ? 'p-2' : 'p-4'}`}>
           {/* Loading indicator for historical events */}
           {isLoadingHistory && (
-            <div className="flex items-center justify-center py-8">
+            <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
               <div className="flex items-center gap-3 text-gray-600 dark:text-gray-400">
-                <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
-                <span className="text-sm">Loading chat history...</span>
+                <div className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin`}></div>
+                <span className={compact ? 'text-xs' : 'text-sm'}>Loading chat history...</span>
               </div>
             </div>
           )}
 
           {/* Loading indicator for active session checking */}
           {isCheckingActiveSessions && (
-            <div className="flex items-center justify-center py-8">
+            <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
               <div className="flex items-center gap-3 text-gray-600 dark:text-gray-400">
-                <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-green-600 dark:border-t-green-400 rounded-full animate-spin"></div>
-                <span className="text-sm">Checking for active session...</span>
+                <div className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} border-2 border-gray-300 dark:border-gray-600 border-t-green-600 dark:border-t-green-400 rounded-full animate-spin`}></div>
+                <span className={compact ? 'text-xs' : 'text-sm'}>Checking for active session...</span>
               </div>
             </div>
           )}
 
           {/* Active session indicator */}
           {sessionState === 'active' && (
-            <div className="flex items-center justify-center py-4">
-              <div className="flex items-center gap-2 px-3 py-2 bg-green-100 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-sm text-green-700 dark:text-green-300 font-medium">Live Session - Reconnected</span>
+            <div className={`flex items-center justify-center ${compact ? 'py-2' : 'py-4'}`}>
+              <div className={`flex items-center gap-2 ${compact ? 'px-2 py-1' : 'px-3 py-2'} bg-green-100 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg`}>
+                <div className={`${compact ? 'w-1.5 h-1.5' : 'w-2 h-2'} bg-green-500 rounded-full animate-pulse`}></div>
+                <span className={`${compact ? 'text-xs' : 'text-sm'} text-green-700 dark:text-green-300 font-medium`}>Live Session - Reconnected</span>
               </div>
             </div>
           )}
 
           {/* Session error indicator */}
           {sessionState === 'error' && (
-            <div className="flex items-center justify-center py-4">
-              <div className="flex items-center gap-2 px-3 py-2 bg-red-100 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <svg className="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className={`flex items-center justify-center ${compact ? 'py-2' : 'py-4'}`}>
+              <div className={`flex items-center gap-2 ${compact ? 'px-2 py-1' : 'px-3 py-2'} bg-red-100 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg`}>
+                <svg className={`${compact ? 'w-3 h-3' : 'w-4 h-4'} text-red-600 dark:text-red-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-sm text-red-700 dark:text-red-300 font-medium">Session Error - Unable to reconnect</span>
+                <span className={`${compact ? 'text-xs' : 'text-sm'} text-red-700 dark:text-red-300 font-medium`}>Session Error - Unable to reconnect</span>
               </div>
             </div>
           )}
           
 
           {/* Show workflow explanation when in workflow mode but no preset selected */}
-          <WorkflowExplanation agentMode={agentMode} selectedWorkflowPreset={selectedWorkflowPreset} />
+          {selectedModeCategory === 'workflow' && (
+            <WorkflowExplanation agentMode={correctAgentMode} selectedWorkflowPreset={selectedWorkflowPreset} />
+          )}
 
 
           {/* Show Deep Search explanation when in Deep Search mode */}
 
 
-        {agentMode === 'workflow' ? (
+        {selectedModeCategory === 'workflow' ? (
           <WorkflowModeHandler
             ref={workflowModeHandlerRef}
             onPresetSelected={handleWorkflowPresetSelected}
@@ -1466,7 +1549,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
           </WorkflowModeHandler>
         ) : (
           <>
@@ -1475,14 +1558,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} />
+            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
           </>
         )}
         </div>
       </div>
 
-      {/* Input Area - Completely isolated from event updates */}
-      {!chatSessionId && (
+      {/* Input Area - Completely isolated from event updates, hidden in workflow mode */}
+      {!chatSessionId && !hideInput && (
         <ChatInput
           ref={chatInputRef}
           onSubmit={submitQueryWithQuery}
@@ -1493,10 +1576,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       
       {/* Historical Session Notice */}
       {chatSessionId && (
-        <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-          <div className="text-center text-sm text-gray-600 dark:text-gray-400">
+        <div className={`${compact ? 'px-2 py-2' : 'px-4 py-3'} border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800`}>
+          <div className={`text-center ${compact ? 'text-xs' : 'text-sm'} text-gray-600 dark:text-gray-400`}>
             <p>Viewing historical chat session</p>
-            <p className="text-xs mt-1">
+            <p className={`${compact ? 'text-[10px]' : 'text-xs'} mt-1`}>
               <button
                 onClick={onNewChat}
                 className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
@@ -1520,14 +1603,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
 ChatAreaInner.displayName = 'ChatAreaInner'
 
-// Main ChatArea component that provides the EventMode context
-const ChatArea = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
-  return (
-    <EventModeProvider>
-      <ChatAreaInner ref={ref} {...props} />
-    </EventModeProvider>
-  )
-})
+// Main ChatArea component (EventModeProvider should be provided by parent)
+const ChatArea = ChatAreaInner
 
 ChatArea.displayName = 'ChatArea'
 

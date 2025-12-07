@@ -14,6 +14,7 @@ import {
   getToolsByCategory,
   getToolsByWorkspaceSubCategory,
 } from '../../../utils/customToolNames';
+import { PrerequisiteConfigPanel } from '../../workflow/canvas/PrerequisiteConfigPanel';
 
 interface StepEditPanelProps {
   step: TodoStepWithConfigs;
@@ -26,6 +27,7 @@ interface StepEditPanelProps {
   presetUseCodeExecutionMode?: boolean; // Preset's code execution mode (default value for step)
   isExpanded?: boolean; // Controlled expanded state from parent
   onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
+  planSteps?: import('../../../utils/stepConfigMatching').PlanStep[]; // All plan steps (for prerequisite detection)
 }
 
 const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100] as const;
@@ -40,6 +42,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   presetUseCodeExecutionMode = false,
   isExpanded: controlledIsExpanded,
   onToggleExpanded,
+  planSteps = [],
 }) => {
   const { availableLLMs, getCurrentLLMOption } = useLLMStore();
   const { currentPresetTools } = usePresetApplication();
@@ -61,7 +64,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   // Ensure validation is enabled for loop steps (required to check loop conditions)
   const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>(() => {
     const configs = step.agent_configs || {};
-    console.log('[StepEditPanel] Initializing agentConfigs from step:', {
+    console.log('[StepConfigDebug] Initializing agentConfigs from step:', {
       stepTitle: step.title,
       stepId: step.id,
       step_agent_configs: step.agent_configs,
@@ -92,9 +95,21 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   const [selectedTools, setSelectedTools] = useState<string[]>(() => {
     // If step config has explicit selection, use it
     if (agentConfigs.selected_tools && agentConfigs.selected_tools.length > 0) {
+      console.log('[StepConfigDebug] ⚠️ CRITICAL: Initializing selectedTools from agentConfigs:', {
+        stepId: step.id,
+        agentConfigs_selected_tools: agentConfigs.selected_tools,
+        using: agentConfigs.selected_tools
+      });
       return agentConfigs.selected_tools;
     }
     // Otherwise, use preset defaults for display
+    console.log('[StepConfigDebug] ⚠️ CRITICAL: Initializing selectedTools from preset (no step config):', {
+      stepId: step.id,
+      step_agent_configs: step.agent_configs,
+      agentConfigs_selected_tools: agentConfigs.selected_tools,
+      currentPresetTools,
+      using: currentPresetTools || []
+    });
     return currentPresetTools || [];
   });
 
@@ -176,14 +191,15 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     // Sync if it's a different step OR if agent_configs has changed (e.g., after save)
     // We need to sync when agent_configs changes to reflect saved changes
     if (isDifferentStep || configsChanged) {
-      console.log('[StepEditPanel] Syncing state from step config:', {
-        isDifferentStep,
-        configsChanged,
-        stepTitle: step.title,
+      // Critical log - always show this to track the issue
+      console.log('[StepConfigDebug] ⚠️ CRITICAL: Syncing state from step config:', {
         stepId: step.id,
-        currentConfigs,
-        disable_learning: currentConfigs.disable_learning,
-        disable_validation: currentConfigs.disable_validation,
+        stepTitle: step.title,
+        currentConfigs_selected_tools: currentConfigs.selected_tools,
+        currentConfigs_selected_servers: currentConfigs.selected_servers,
+        step_agent_configs_selected_tools: step.agent_configs?.selected_tools,
+        step_agent_configs_selected_servers: step.agent_configs?.selected_servers,
+        fullStepAgentConfigs: step.agent_configs,
       });
       
       // Reset agentConfigs state from step's config
@@ -203,8 +219,18 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
       // Update tools: use step config if available, otherwise preset defaults
       if (currentConfigs.selected_tools && currentConfigs.selected_tools.length > 0) {
+        console.log('[StepConfigDebug] ⚠️ CRITICAL: Setting selectedTools from step config:', {
+          stepId: step.id,
+          from: currentConfigs.selected_tools,
+          settingTo: currentConfigs.selected_tools
+        });
         setSelectedTools(currentConfigs.selected_tools);
       } else {
+        console.log('[StepConfigDebug] ⚠️ CRITICAL: No step config tools, using preset:', {
+          stepId: step.id,
+          currentPresetTools,
+          settingTo: currentPresetTools || []
+        });
         setSelectedTools(currentPresetTools || []);
       }
 
@@ -532,27 +558,40 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
     // Handle disable_learning: explicitly save false when enabled, true when disabled
     // nil/undefined = not set (default enabled), false = explicitly enabled, true = disabled
+    // CRITICAL: When user unchecks checkbox (to enable learning), we MUST save false explicitly
+    // to override any previous true value in JSON. JSON.stringify will include false values.
     if (agentConfigs.disable_learning === false) {
-      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      // User explicitly enabled learning (unchecked the checkbox)
+      // Save false to override any previous true value
       finalConfigs.disable_learning = false;
     } else if (agentConfigs.disable_learning === true) {
-      // Explicitly disabled - save true
+      // User explicitly disabled learning (checked the checkbox)
       finalConfigs.disable_learning = true;
     } else {
-      // Not set - keep undefined (default enabled)
-      finalConfigs.disable_learning = undefined;
+      // State is undefined - check if it was previously set in the step config
+      // If it was never set before, keep undefined (default enabled)
+      // If it was set before but now undefined, this is unexpected - keep undefined to reset to default
+      const wasPreviouslySet = step.agent_configs?.disable_learning !== undefined;
+      if (!wasPreviouslySet) {
+        // Never set before - keep undefined (default enabled, field omitted from JSON)
+        finalConfigs.disable_learning = undefined;
+      } else {
+        // Was set before but now undefined in state - reset to default (undefined)
+        // This allows user to "reset" by clearing the value
+        finalConfigs.disable_learning = undefined;
+      }
     }
 
     // Handle disable_validation: explicitly save false when enabled, true when disabled
     // Similar logic to disable_learning
     if (agentConfigs.disable_validation === false) {
-      // Explicitly enabled - save false so backend knows it's explicitly enabled (not just default)
+      // User explicitly enabled validation (unchecked the checkbox)
       finalConfigs.disable_validation = false;
     } else if (agentConfigs.disable_validation === true) {
-      // Explicitly disabled - save true
+      // User explicitly disabled validation (checked the checkbox)
       finalConfigs.disable_validation = true;
     } else {
-      // Not set - keep undefined (default enabled)
+      // State is undefined - reset to default
       finalConfigs.disable_validation = undefined;
     }
 
@@ -619,7 +658,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     if (valLLM && !agentConfigs.disable_validation) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
       const detailLevel = agentConfigs.learning_detail_level || 'general';
-      const detailLabel = detailLevel === 'exact' ? 'Exact' : detailLevel === 'none' ? 'None' : 'General';
+      const detailLabel = detailLevel === 'exact' ? 'Exact' : 'General';
       parts.push(`Learn: ${learnLLM.label} (${detailLabel})`);
     }
     if (agentConfigs.disable_validation) parts.push('Val: Disabled');
@@ -865,6 +904,11 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                             setAgentConfigs((prev) => ({
                               ...prev,
                               use_code_execution_mode: true,
+                              // Auto-enable learning and validation when code exec is enabled
+                              disable_learning: false,
+                              disable_validation: false,
+                              // Auto-set learning detail level to 'exact' for code exec mode
+                              learning_detail_level: 'exact',
                             }));
                           }}
                           className={`px-2 py-1 text-xs font-medium transition-colors ${
@@ -921,25 +965,39 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
                   Validation
                 </div>
-                <label 
-                  className={`flex items-center gap-1.5 ${step.has_loop ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-                  title={step.has_loop ? "Validation cannot be disabled for loop steps - it's required to check loop conditions" : undefined}
-                >
-                  <input
-                    type="checkbox"
-                    checked={agentConfigs.disable_validation || false}
-                    onChange={(e) => {
-                      if (!step.has_loop) {
-                        handleToggleChange('disable_validation', e.target.checked);
-                      }
-                    }}
-                    disabled={step.has_loop}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <span className="text-xs text-gray-600 dark:text-gray-400">
-                    Disable{step.has_loop && ' (Required for loops)'}
-                  </span>
-                </label>
+                {(() => {
+                  const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
+                    ? agentConfigs.use_code_execution_mode 
+                    : presetUseCodeExecutionMode;
+                  const isDisabled = step.has_loop || effectiveCodeExecMode;
+                  const tooltipText = step.has_loop 
+                    ? "Validation cannot be disabled for loop steps - it's required to check loop conditions"
+                    : effectiveCodeExecMode
+                    ? "Validation is automatically enabled in Code Exec mode"
+                    : undefined;
+                  
+                  return (
+                    <label 
+                      className={`flex items-center gap-1.5 ${isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+                      title={tooltipText}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={agentConfigs.disable_validation || false}
+                        onChange={(e) => {
+                          if (!isDisabled) {
+                            handleToggleChange('disable_validation', e.target.checked);
+                          }
+                        }}
+                        disabled={isDisabled}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <span className="text-xs text-gray-600 dark:text-gray-400">
+                        Disable{step.has_loop && ' (Required for loops)'}{effectiveCodeExecMode && !step.has_loop && ' (Auto-enabled)'}
+                      </span>
+                    </label>
+                  );
+                })()}
               </div>
               {!agentConfigs.disable_validation ? (
                 <div className="flex items-center gap-2">
@@ -983,15 +1041,34 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
                   Learning
                 </div>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={agentConfigs.disable_learning || false}
-                    onChange={(e) => handleToggleChange('disable_learning', e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <span className="text-xs text-gray-600 dark:text-gray-400">Disable</span>
-                </label>
+                {(() => {
+                  const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
+                    ? agentConfigs.use_code_execution_mode 
+                    : presetUseCodeExecutionMode;
+                  const isDisabled = effectiveCodeExecMode;
+                  const tooltipText = effectiveCodeExecMode
+                    ? "Learning is automatically enabled in Code Exec mode"
+                    : undefined;
+                  
+                  return (
+                    <label className={`flex items-center gap-1.5 ${isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`} title={tooltipText}>
+                      <input
+                        type="checkbox"
+                        checked={agentConfigs.disable_learning || false}
+                        onChange={(e) => {
+                          if (!isDisabled) {
+                            handleToggleChange('disable_learning', e.target.checked);
+                          }
+                        }}
+                        disabled={isDisabled}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <span className="text-xs text-gray-600 dark:text-gray-400">
+                        Disable{effectiveCodeExecMode && ' (Auto-enabled)'}
+                      </span>
+                    </label>
+                  );
+                })()}
               </div>
               {!agentConfigs.disable_learning ? (
                 <div className="space-y-2">
@@ -1022,21 +1099,33 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Detail Level:</label>
-                    <select
-                      value={agentConfigs.learning_detail_level || 'general'}
-                      onChange={(e) => {
-                        const value = e.target.value as 'exact' | 'general' | 'none';
-                        setAgentConfigs((prev): AgentConfigs => ({
-                          ...prev,
-                          learning_detail_level: value,
-                        }));
-                      }}
-                      className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1"
-                    >
-                      <option value="exact">Exact MCP Tools</option>
-                      <option value="general">General Patterns</option>
-                      <option value="none">No Learnings Required</option>
-                    </select>
+                    {(() => {
+                      const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
+                        ? agentConfigs.use_code_execution_mode 
+                        : presetUseCodeExecutionMode;
+                      const isDisabled = effectiveCodeExecMode;
+                      
+                      return (
+                        <select
+                          value={agentConfigs.learning_detail_level || 'general'}
+                          onChange={(e) => {
+                            if (!isDisabled) {
+                              const value = e.target.value as 'exact' | 'general';
+                              setAgentConfigs((prev): AgentConfigs => ({
+                                ...prev,
+                                learning_detail_level: value,
+                              }));
+                            }
+                          }}
+                          disabled={isDisabled}
+                          title={isDisabled ? "Learning detail level is automatically set to 'exact' in Code Exec mode" : undefined}
+                          className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <option value="general">General Patterns</option>
+                          <option value="exact">Exact MCP Tools</option>
+                        </select>
+                      );
+                    })()}
                   </div>
                 </div>
               ) : (
@@ -1205,6 +1294,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         setSelectedServers(servers.filter(s => s !== "NO_SERVERS"));
                       }}
                       onToolChange={setSelectedTools}
+                      stepId={step.id}
                     />
                   )}
                 </div>
@@ -1636,6 +1726,16 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 </label>
               </div>
             </div>
+
+            {/* Prerequisite Detection Configuration */}
+            <PrerequisiteConfigPanel
+              agentConfigs={agentConfigs}
+              onUpdate={(updatedConfigs) => {
+                setAgentConfigs(updatedConfigs);
+              }}
+              planSteps={planSteps}
+              currentStepIndex={stepIndex}
+            />
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">

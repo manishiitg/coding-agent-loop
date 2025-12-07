@@ -10,7 +10,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,14 +18,133 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+
+	"mcpagent/events"
+
 	"golang.org/x/image/draw"
 )
+
+// WorkspaceEventEmitter interface for emitting workspace file operation events
+type WorkspaceEventEmitter interface {
+	HandleEvent(ctx context.Context, event *events.AgentEvent) error
+}
+
+// Context keys for workspace event emission
+type contextKey string
+
+const (
+	// WorkspaceEventEmitterKey is the context key for the workspace event emitter
+	WorkspaceEventEmitterKey contextKey = "workspace_event_emitter"
+	// TurnKey is the context key for the turn number
+	TurnKey contextKey = "turn"
+	// ServerNameKey is the context key for the server name
+	ServerNameKey contextKey = "server_name"
+)
+
+// Legacy constants for backward compatibility (use exported versions)
+var (
+	workspaceEventEmitterKey = WorkspaceEventEmitterKey
+	turnKey                  = TurnKey
+	serverNameKey            = ServerNameKey
+)
+
+// getEventEmitterFromContext extracts the event emitter from context
+// Tries multiple key types to handle different packages using their own contextKey types
+func getEventEmitterFromContext(ctx context.Context) WorkspaceEventEmitter {
+	// Try with our typed key first
+	if emitter, ok := ctx.Value(workspaceEventEmitterKey).(WorkspaceEventEmitter); ok {
+		return emitter
+	}
+	// Try with string key (for backward compatibility and cross-package compatibility)
+	if emitter, ok := ctx.Value("workspace_event_emitter").(WorkspaceEventEmitter); ok {
+		return emitter
+	}
+	// Try with any contextKey type that has the same string value
+	// This handles cases where other packages define their own contextKey types
+	if val := ctx.Value("workspace_event_emitter"); val != nil {
+		if emitter, ok := val.(WorkspaceEventEmitter); ok {
+			return emitter
+		}
+	}
+	return nil
+}
+
+// getTurnFromContext extracts the turn number from context
+// Tries multiple key types to handle different packages using their own contextKey types
+func getTurnFromContext(ctx context.Context) int {
+	// Try with our typed key first
+	if turn, ok := ctx.Value(turnKey).(int); ok {
+		return turn
+	}
+	// Try with string key (for backward compatibility and cross-package compatibility)
+	if turn, ok := ctx.Value("turn").(int); ok {
+		return turn
+	}
+	// Try with any contextKey type that has the same string value
+	if val := ctx.Value("turn"); val != nil {
+		if turn, ok := val.(int); ok {
+			return turn
+		}
+	}
+	return 0
+}
+
+// getServerNameFromContext extracts the server name from context
+// Tries multiple key types to handle different packages using their own contextKey types
+func getServerNameFromContext(ctx context.Context) string {
+	// Try with our typed key first
+	if serverName, ok := ctx.Value(serverNameKey).(string); ok {
+		return serverName
+	}
+	// Try with string key (for backward compatibility and cross-package compatibility)
+	if serverName, ok := ctx.Value("server_name").(string); ok {
+		return serverName
+	}
+	// Try with any contextKey type that has the same string value
+	if val := ctx.Value("server_name"); val != nil {
+		if serverName, ok := val.(string); ok {
+			return serverName
+		}
+	}
+	return ""
+}
+
+// emitWorkspaceFileOperation emits a workspace file operation event
+func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder string) {
+	emitter := getEventEmitterFromContext(ctx)
+	if emitter == nil {
+		// No emitter in context - this is expected for some orchestrator direct calls
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No emitter in context for operation=%s, filepath=%s, folder=%s\n", operation, filepath, folder)
+		return
+	}
+
+	turn := getTurnFromContext(ctx)
+	serverName := getServerNameFromContext(ctx)
+
+	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Emitting event operation=%s, filepath=%s, folder=%s, turn=%d, serverName=%s\n",
+		operation, filepath, folder, turn, serverName)
+
+	eventData := events.NewWorkspaceFileOperationEvent(operation, filepath, folder, turn, serverName)
+	agentEvent := &events.AgentEvent{
+		Type:      events.WorkspaceFileOperation,
+		Timestamp: eventData.Timestamp,
+		Data:      eventData,
+	}
+
+	if err := emitter.HandleEvent(ctx, agentEvent); err != nil {
+		// Log error but don't break tool execution
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Error emitting event: %v\n", err)
+	} else {
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Successfully emitted event\n")
+	}
+}
 
 // WorkspaceAPIResponse represents the response structure from the workspace API
 type WorkspaceAPIResponse struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message"`
-	Data    interface{} `json:"data"`
+	Data    interface{} `json:"data"` // Can be WorkspaceFolderListing, WorkspaceFileContent, etc.
 	Error   string      `json:"error,omitempty"`
 }
 
@@ -36,6 +154,29 @@ type WorkspaceFile struct {
 	Size        int64     `json:"size,omitempty"`
 	ModifiedAt  time.Time `json:"modified_at,omitempty"`
 	IsDirectory bool      `json:"is_directory,omitempty"`
+}
+
+// WorkspaceFolderItem represents a single item (file or folder) in a workspace folder listing
+type WorkspaceFolderItem struct {
+	Filepath    string                `json:"filepath"`
+	Folder      string                `json:"folder,omitempty"`
+	Name        string                `json:"name,omitempty"`
+	Size        int64                 `json:"size,omitempty"`
+	ModifiedAt  time.Time             `json:"modified_at,omitempty"`
+	Type        string                `json:"type,omitempty"` // "file" or "folder"
+	IsDirectory bool                  `json:"is_directory,omitempty"`
+	IsDir       bool                  `json:"is_dir,omitempty"`   // Alternative field name
+	Children    []WorkspaceFolderItem `json:"children,omitempty"` // Nested children for folders
+}
+
+// WorkspaceFolderListing represents the folder listing response from workspace API
+// The API returns an array of folder items, where each item can have nested children
+type WorkspaceFolderListing []WorkspaceFolderItem
+
+// WorkspaceFileContent represents the content response when reading a file
+type WorkspaceFileContent struct {
+	Filepath string `json:"filepath"`
+	Content  string `json:"content"`
 }
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
@@ -574,16 +715,36 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Check if folder doesn't exist (API returns Success: true but with error message)
+	if strings.Contains(apiResp.Message, "Folder does not exist") ||
+		strings.Contains(apiResp.Error, "Folder not found") {
+		if folder == "" {
+			return "", fmt.Errorf("folder is empty or does not exist")
+		}
+		return "", fmt.Errorf("folder does not exist: %s", folder)
+	}
+
 	// Debug logging for troubleshooting
 	if apiResp.Data == nil {
 		fmt.Printf("[DEBUG] Workspace API returned nil data for folder: %s, maxDepth: %d\n", folder, maxDepth)
 	}
 
-	// Return the raw API response directly
+	// Marshal the response data
 	responseData, err := json.Marshal(apiResp.Data)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Check if data is an empty array (folder exists but is empty)
+	// Only check if we didn't already detect a non-existent folder
+	if string(responseData) == "[]" && apiResp.Error == "" && !strings.Contains(apiResp.Message, "Folder does not exist") {
+		// Folder exists but is empty - return a message indicating this
+		return fmt.Sprintf("Folder '%s' exists but contains no files or subfolders.", folder), nil
+	}
+
+	// Emit workspace file operation event for list operation
+	emitWorkspaceFileOperation(ctx, "list", "", folder)
+
 	return string(responseData), nil
 }
 
@@ -660,6 +821,12 @@ func handleReadWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Check if file doesn't exist (API returns Success: true but with error message)
+	if strings.Contains(apiResp.Message, "File does not exist") ||
+		strings.Contains(apiResp.Error, "File not found") {
+		return "", fmt.Errorf("file does not exist: %s. Use the 'list_workspace_files' tool to find the correct file path", filepathStr)
+	}
+
 	// Check if file is an image - if so, inform LLM to use read_image tool
 	if isImageFile(filepathStr) {
 		return "", fmt.Errorf("this file is an image (%s). Please use the 'read_image' tool instead to read and analyze image files. The read_image tool requires both 'filepath' and 'query' parameters", filepathStr)
@@ -670,6 +837,10 @@ func handleReadWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Emit workspace file operation event for read operation
+	emitWorkspaceFileOperation(ctx, "read", filepathStr, "")
+
 	return string(responseData), nil
 }
 
@@ -754,6 +925,12 @@ func handleReadImage(ctx context.Context, args map[string]interface{}) (string, 
 			return "", fmt.Errorf("workspace API error: %s. Use the 'list_workspace_files' tool to find the correct file path", apiResp.Error)
 		}
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Check if file doesn't exist (API returns Success: true but with error message)
+	if strings.Contains(apiResp.Message, "File does not exist") ||
+		strings.Contains(apiResp.Error, "File not found") {
+		return "", fmt.Errorf("file does not exist: %s. Use the 'list_workspace_files' tool to find the correct file path", filepathStr)
 	}
 
 	// Parse workspace file data
@@ -905,6 +1082,10 @@ func handleUpdateWorkspaceFile(ctx context.Context, args map[string]interface{})
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Emit workspace file operation event for update operation
+	emitWorkspaceFileOperation(ctx, "update", filepath, "")
+
 	return string(responseData), nil
 }
 
@@ -1132,6 +1313,9 @@ func handleDeleteWorkspaceFile(ctx context.Context, args map[string]interface{})
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Emit workspace file operation event for delete operation
+	emitWorkspaceFileOperation(ctx, "delete", filepath, "")
+
 	// Return structured JSON for frontend parsing
 	resultJSON := map[string]interface{}{
 		"filepath": filepath,
@@ -1221,6 +1405,10 @@ func handleMoveWorkspaceFile(ctx context.Context, args map[string]interface{}) (
 	if !apiResp.Success {
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
+
+	// Emit workspace file operation events for move operation (delete source + update destination)
+	emitWorkspaceFileOperation(ctx, "delete", sourceFilepath, "")
+	emitWorkspaceFileOperation(ctx, "update", destinationFilepath, "")
 
 	// Format the response
 	var result strings.Builder
@@ -1603,6 +1791,7 @@ func handleSyncWorkspaceToGitHub(ctx context.Context, args map[string]interface{
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
 	return string(responseData), nil
 }
 
@@ -1759,6 +1948,10 @@ func handleDiffPatchWorkspaceFile(ctx context.Context, args map[string]interface
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal API response: %w", err)
 	}
+
+	// Emit workspace file operation event for patch operation
+	emitWorkspaceFileOperation(ctx, "patch", filepath, "")
+
 	return string(responseData), nil
 }
 

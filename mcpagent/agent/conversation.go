@@ -31,6 +31,15 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+const (
+	contextKeyWorkspaceEventEmitter contextKey = "workspace_event_emitter"
+	contextKeyTurn                  contextKey = "turn"
+	contextKeyServerName            contextKey = "server_name"
+)
+
 // getLogger returns the agent's logger (guaranteed to be non-nil)
 func getLogger(a *Agent) loggerv2.Logger {
 	// Agent logger is guaranteed to be non-nil in the new architecture
@@ -365,28 +374,12 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		}
 
 		// Emit LLM Messages event to track what's being sent to the LLM
-		// Build tool context from previous tool calls in this conversation
-		var toolContext []events.ToolContext
-		for _, msg := range messages {
-			if msg.Role == llmtypes.ChatMessageTypeTool {
-				for _, part := range msg.Parts {
-					if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
-						toolContext = append(toolContext, events.ToolContext{
-							ToolName:   "previous_tool_call", // We don't have the original tool name here
-							ServerName: "unknown",            // We don't have the server name here
-							Result:     toolResp.Content,
-							Status:     "completed",
-						})
-					}
-				}
-			}
-		}
 
 		// NEW: Start LLM generation for hierarchy tracking
 		a.StartLLMGeneration(ctx)
 
 		// Use GenerateContentWithRetry for robust fallback handling
-		resp, genErr, usage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
+		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
 			// Streaming callback - no ReAct reasoning tracking needed
 		})
 
@@ -422,8 +415,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					loggerv2.Int("turn", turn+1))
 
 				// Try fallback models by calling GenerateContentWithRetry again with fallback
-				fallbackResp, fallbackErr, fallbackUsage := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
-					v2Logger.Debug("Fallback", loggerv2.String("message", msg))
+				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn, func(msg string) {
+					v2Logger.Info(fmt.Sprintf("[FALLBACK] %s", msg))
 				})
 
 				if fallbackErr == nil && fallbackResp != nil && len(fallbackResp.Choices) > 0 &&
@@ -542,10 +535,21 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					// Parse arguments
 					args, err := mcpclient.ParseToolArguments(tc.FunctionCall.Arguments)
 					if err != nil {
-						v2Logger.Error("Failed to parse read_image arguments", err)
-						// Emit error event and continue (don't add tool response)
+						v2Logger.Error(fmt.Sprintf("🖼️ [DEBUG] Failed to parse read_image arguments: %v", err), err)
+						// Emit error event
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse arguments: %v", err), serverName, 0)
 						a.EmitTypedEvent(ctx, toolErrorEvent)
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Failed to parse arguments: %v", err),
+								},
+							},
+						})
 						continue
 					}
 
@@ -575,23 +579,56 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						// Emit tool call error event (for observability only)
 						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
 						a.EmitTypedEvent(ctx, toolErrorEvent)
-						// Don't add tool response - just continue
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Tool execution failed: %v", toolErr),
+								},
+							},
+						})
 						continue
 					}
 
 					// Parse the result JSON
 					var imageResult map[string]interface{}
 					if err := json.Unmarshal([]byte(resultText), &imageResult); err != nil {
-						v2Logger.Warn("Failed to parse read_image result as JSON", loggerv2.Error(err))
-						// Don't add tool response - just continue
+						previewLen := 500
+						if len(resultText) < previewLen {
+							previewLen = len(resultText)
+						}
+						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Failed to parse read_image result as JSON: %v, raw result: %s", err, resultText[:previewLen]))
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Failed to parse result as JSON: %v", err),
+								},
+							},
+						})
 						continue
 					}
 
 					// Check if it's an image_query type
 					if imageResult["_type"] != "image_query" {
-						v2Logger.Warn("read_image result is not image_query type",
-							loggerv2.Any("got_type", imageResult["_type"]))
-						// Don't add tool response - just continue
+						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] read_image result is not image_query type, got: %v", imageResult["_type"]))
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    fmt.Sprintf("Error: Result is not image_query type, got: %v", imageResult["_type"]),
+								},
+							},
+						})
 						continue
 					}
 
@@ -601,8 +638,18 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					base64Data, _ := imageResult["data"].(string)
 
 					if query == "" || mimeType == "" || base64Data == "" {
-						v2Logger.Warn("Missing required fields in read_image result")
-						// Don't add tool response - just continue
+						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Missing required fields in read_image result - query: %q, mimeType: %q, base64Data: %q", query != "", mimeType != "", base64Data != ""))
+						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
+						messages = append(messages, llmtypes.MessageContent{
+							Role: llmtypes.ChatMessageTypeTool,
+							Parts: []llmtypes.ContentPart{
+								llmtypes.ToolCallResponse{
+									ToolCallID: tc.ID,
+									Name:       tc.FunctionCall.Name,
+									Content:    "Error: Missing required fields in read_image result (query, mime_type, or data)",
+								},
+							},
+						})
 						continue
 					}
 
@@ -741,30 +788,68 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				if a.customTools != nil {
 					if _, exists := a.customTools[tc.FunctionCall.Name]; exists {
 						isCustomTool = true
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' identified as custom tool (customTools map has %d tools)", tc.FunctionCall.Name, len(a.customTools)))
+					} else {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not found in customTools (map has %d tools)", tc.FunctionCall.Name, len(a.customTools)))
 					}
+				} else {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] customTools map is nil for tool '%s'", tc.FunctionCall.Name))
+				}
+
+				// Check if it's a virtual tool
+				isVirtual := isVirtualTool(tc.FunctionCall.Name)
+				if isVirtual {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' identified as virtual tool", tc.FunctionCall.Name))
 				}
 
 				client := a.Client
 				if a.toolToServer != nil {
 					if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
-						if a.Clients != nil {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' mapped to server '%s' in toolToServer", tc.FunctionCall.Name, mapped))
+						if mapped == "custom" {
+							// Custom tool - no client needed
+							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' is a custom tool (mapped to 'custom'), skipping client lookup", tc.FunctionCall.Name))
+							isCustomTool = true // Ensure it's marked as custom
+						} else if a.Clients != nil {
 							if c, exists := a.Clients[mapped]; exists {
 								client = c
+								v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Found client for tool '%s' from server '%s'", tc.FunctionCall.Name, mapped))
+							} else {
+								v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Server '%s' mapped for tool '%s' but no client found in Clients map", mapped, tc.FunctionCall.Name))
 							}
 						}
+					} else {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not found in toolToServer mapping (map has %d entries)", tc.FunctionCall.Name, len(a.toolToServer)))
 					}
+				} else {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] toolToServer map is nil for tool '%s'", tc.FunctionCall.Name))
 				}
+
 				// Only check for client errors for non-custom tools and non-virtual tools
-				if !isCustomTool && !isVirtualTool(tc.FunctionCall.Name) && client == nil {
+				if !isCustomTool && !isVirtual && client == nil {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' requires client but none found (isCustomTool=%v, isVirtual=%v, client=nil)", tc.FunctionCall.Name, isCustomTool, isVirtual))
 					// Check if we have no active connections
 					if len(a.Clients) == 0 {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] No active clients (len(a.Clients)=%d), attempting on-demand connection for tool '%s'", len(a.Clients), tc.FunctionCall.Name))
 
 						// Create connection on-demand for the specific server
-						serverName := a.toolToServer[tc.FunctionCall.Name]
+						serverName := ""
+						if a.toolToServer != nil {
+							serverName = a.toolToServer[tc.FunctionCall.Name]
+						}
 						if serverName == "" {
-							v2Logger.Warn("AskWithHistory: Tool not mapped to any server, providing feedback to LLM",
-								loggerv2.Int("turn", turn+1),
-								loggerv2.String("tool", tc.FunctionCall.Name))
+							// Calculate counts for logging
+							customToolsCount := 0
+							if a.customTools != nil {
+								customToolsCount = len(a.customTools)
+							}
+							toolToServerCount := 0
+							if a.toolToServer != nil {
+								toolToServerCount = len(a.toolToServer)
+							}
+							v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not mapped to any server. isCustomTool=%v, isVirtual=%v, customTools has %d tools, toolToServer has %d entries",
+								tc.FunctionCall.Name, isCustomTool, isVirtual, customToolsCount, toolToServerCount))
+							v2Logger.Warn(fmt.Sprintf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name))
 
 							// Generate helpful feedback instead of failing
 							feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- read_large_output, search_large_output, query_large_output (file tools)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
@@ -782,8 +867,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							continue
 						}
 
-						// Create a fresh connection for this specific server
-						onDemandClient, err := a.createOnDemandConnection(ctx, serverName)
+						// Create a fresh connection for this specific server using shared function
+						onDemandClient, err := mcpcache.GetFreshConnection(ctx, serverName, a.configPath, v2Logger)
 						if err != nil {
 							v2Logger.Error("AskWithHistory Early return: failed to create on-demand connection",
 								err,
@@ -838,6 +923,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 
 				}
 
+				// Inject event emitter, turn, and server name into context for workspace tools
+				toolCtx = context.WithValue(toolCtx, contextKeyWorkspaceEventEmitter, a)
+				toolCtx = context.WithValue(toolCtx, contextKeyTurn, turn+1)
+				toolCtx = context.WithValue(toolCtx, contextKeyServerName, serverName)
+
 				var result *mcp.CallToolResult
 				var toolErr error
 
@@ -866,21 +956,25 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				} else if a.customTools != nil {
 					// Check if this is a custom tool
 					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Executing custom tool '%s' (category: %s)", tc.FunctionCall.Name, customTool.Category))
 						// Handle custom tool execution using the stored execution function
 						resultText, toolErr := customTool.Execution(toolCtx, args)
 
 						if toolErr != nil {
+							v2Logger.Error(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' execution failed: %v", tc.FunctionCall.Name, toolErr), toolErr)
 							result = &mcp.CallToolResult{
 								IsError: true,
 								Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
 							}
 						} else {
+							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' executed successfully (result length: %d chars)", tc.FunctionCall.Name, len(resultText)))
 							result = &mcp.CallToolResult{
 								IsError: false,
 								Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
 							}
 						}
 					} else {
+						v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_EXECUTION] Tool '%s' not found in customTools map (map has %d tools) - attempting MCP client call", tc.FunctionCall.Name, len(a.customTools)))
 						// Handle regular MCP tool execution
 						result, toolErr = client.CallTool(toolCtx, tc.FunctionCall.Name, args)
 					}
@@ -913,7 +1007,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					errorRecoveryHandler := NewErrorRecoveryHandler(a)
 
 					// Attempt error recovery for recoverable errors
-					recoveredResult, recoveredErr, recoveredDuration, wasRecovered := errorRecoveryHandler.HandleError(
+					recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 						ctx, &tc, serverName, toolErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
 
 					if wasRecovered && recoveredErr == nil {
@@ -964,11 +1058,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
 					}
 
-					// 🔧 BROKEN PIPE DETECTION IN SUCCESSFUL RESULT PATH
-					if result.IsError && (strings.Contains(resultText, "Broken pipe") || strings.Contains(resultText, "[Errno 32]")) {
-						v2Logger.Debug("Broken pipe detected for tool, attempting recovery",
-							loggerv2.String("tool", tc.FunctionCall.Name),
-							loggerv2.String("server", serverName))
+					// 🔧 BROKEN PIPE DETECTION IN RESULT CONTENT (regardless of IsError flag)
+					// Check for broken pipe errors in content text, even when IsError is false
+					// This handles cases where the MCP server returns broken pipe errors in content rather than as error flags
+					if mcpclient.IsBrokenPipeInContent(resultText) {
+						v2Logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s, IsError: %v - Attempting immediate connection recreation", turn+1, tc.FunctionCall.Name, serverName, result.IsError))
 
 						// Create error recovery handler
 						errorRecoveryHandler := NewErrorRecoveryHandler(a)
@@ -977,7 +1071,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						fakeErr := fmt.Errorf("broken pipe detected in result: %s", resultText)
 
 						// Attempt error recovery
-						recoveredResult, recoveredErr, recoveredDuration, wasRecovered := errorRecoveryHandler.HandleError(
+						recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
 							ctx, &tc, serverName, fakeErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
 
 						if wasRecovered && recoveredErr == nil {
@@ -1160,9 +1254,50 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
 	}
 
-	finalResp, err, finalUsage := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
+	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1, func(msg string) {
 		// Optional: stream the final response
 	})
+
+	// Log finalUsage for debugging
+	v2Logger.Info(fmt.Sprintf("🔍 [FINAL LLM CALL DEBUG] finalUsage from GenerateContentWithRetry:"))
+	v2Logger.Info(fmt.Sprintf("   InputTokens: %d, OutputTokens: %d, TotalTokens: %d, Unit: %s",
+		finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.TotalTokens, finalUsage.Unit))
+	if finalResp != nil && len(finalResp.Choices) > 0 {
+		if finalResp.Choices[0].GenerationInfo != nil {
+			genInfo := finalResp.Choices[0].GenerationInfo
+			v2Logger.Info(fmt.Sprintf("   GenerationInfo available:"))
+			if genInfo.InputTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      InputTokens: %d", *genInfo.InputTokens))
+			}
+			if genInfo.OutputTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      OutputTokens: %d", *genInfo.OutputTokens))
+			}
+			if genInfo.TotalTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      TotalTokens: %d", *genInfo.TotalTokens))
+			}
+			if genInfo.CachedContentTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      CachedContentTokens: %d", *genInfo.CachedContentTokens))
+			}
+			if genInfo.ReasoningTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      ReasoningTokens: %d", *genInfo.ReasoningTokens))
+			}
+			if genInfo.CacheDiscount != nil {
+				v2Logger.Info(fmt.Sprintf("      CacheDiscount: %.2f%%", *genInfo.CacheDiscount*100))
+			}
+			if len(genInfo.Additional) > 0 {
+				v2Logger.Info(fmt.Sprintf("      Additional fields:"))
+				for key, value := range genInfo.Additional {
+					if strings.Contains(strings.ToLower(key), "cache") || strings.Contains(strings.ToLower(key), "token") {
+						v2Logger.Info(fmt.Sprintf("         %s: %v", key, value))
+					}
+				}
+			}
+		} else {
+			v2Logger.Info(fmt.Sprintf("   GenerationInfo is nil"))
+		}
+	} else {
+		v2Logger.Info(fmt.Sprintf("   finalResp is nil or has no choices"))
+	}
 
 	// Accumulate token usage from final LLM call
 	if finalResp != nil && len(finalResp.Choices) > 0 && finalUsage.TotalTokens > 0 {

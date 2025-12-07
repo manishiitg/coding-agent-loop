@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerAnonymizationTemplate holds template variables for anonymization prompts
@@ -25,10 +27,11 @@ type HumanControlledTodoPlannerAnonymizationTemplate struct {
 // HumanControlledTodoPlannerAnonymizationAgent scans learnings folder and replaces actual values with variable placeholders
 type HumanControlledTodoPlannerAnonymizationAgent struct {
 	*agents.BaseOrchestratorAgent
+	baseOrchestrator *orchestrator.BaseOrchestrator // Reference to base orchestrator for RequestHumanFeedback
 }
 
 // NewHumanControlledTodoPlannerAnonymizationAgent creates a new anonymization agent
-func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *HumanControlledTodoPlannerAnonymizationAgent {
+func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, baseOrchestrator *orchestrator.BaseOrchestrator) *HumanControlledTodoPlannerAnonymizationAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
 		config,
 		logger,
@@ -39,6 +42,7 @@ func NewHumanControlledTodoPlannerAnonymizationAgent(config *agents.Orchestrator
 
 	return &HumanControlledTodoPlannerAnonymizationAgent{
 		BaseOrchestratorAgent: baseAgent,
+		baseOrchestrator:      baseOrchestrator,
 	}
 }
 
@@ -47,35 +51,54 @@ type AnonymizationManager struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
 
+	// Session and workflow IDs for human feedback
+	sessionID  string
+	workflowID string
+
 	// Anonymization LLM config (optional preset)
 	presetAnonymizationLLM *AgentLLMConfig
+	// Learning LLM config (fallback for anonymization if presetAnonymizationLLM not set)
+	presetLearningLLM *AgentLLMConfig
 }
 
 // NewAnonymizationManager creates a new AnonymizationManager
 func NewAnonymizationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
+	sessionID string,
+	workflowID string,
 	presetAnonymizationLLM *AgentLLMConfig,
+	presetLearningLLM *AgentLLMConfig,
 ) *AnonymizationManager {
 	return &AnonymizationManager{
 		BaseOrchestrator:       baseOrchestrator,
+		sessionID:              sessionID,
+		workflowID:             workflowID,
 		presetAnonymizationLLM: presetAnonymizationLLM,
+		presetLearningLLM:      presetLearningLLM,
 	}
 }
 
 // createAnonymizationAgent creates and sets up an anonymization agent with all necessary configuration
 // This method handles folder guard setup, LLM config selection, tool combination, and agent initialization
 func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from both learnings folders, writes to both learnings folders
+	// Set folder guard paths: allow reads from learnings folder, writes to learnings folder
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
-	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", workspacePath)
 
-	// Agent has access to both learnings folders (read and write)
-	readPaths := []string{learningsPath, learningCodeExecPath}
-	writePaths := []string{learningsPath, learningCodeExecPath}
+	// Agent has access to learnings folder (read and write)
+	readPaths := []string{learningsPath}
+	writePaths := []string{learningsPath}
+
+	// When step-specific learnings is enabled, step-specific folders are at workspace root
+	useStepSpecific := am.GetUseStepSpecificLearnings()
+	if useStepSpecific {
+		// No need to add runs/ folder - step-specific learnings are at workspace root
+		am.GetLogger().Infof("📁 Step-specific learnings enabled - agent can access and modify step-specific folders in learnings/step-*/")
+	}
+
 	am.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	am.GetLogger().Infof("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (both learnings folders)", readPaths, writePaths)
+	am.GetLogger().Infof("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (learnings folder)", readPaths, writePaths)
 
-	// Determine LLM config: Priority: preset default > orchestrator default
+	// Determine LLM config: Priority: presetAnonymizationLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := am.GetLLMConfig()
 	if am.presetAnonymizationLLM != nil && am.presetAnonymizationLLM.Provider != "" && am.presetAnonymizationLLM.ModelID != "" {
@@ -87,6 +110,16 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
 		am.GetLogger().Infof("🔧 Using preset default anonymization LLM: %s/%s", am.presetAnonymizationLLM.Provider, am.presetAnonymizationLLM.ModelID)
+	} else if am.presetLearningLLM != nil && am.presetLearningLLM.Provider != "" && am.presetLearningLLM.ModelID != "" {
+		// Fallback to learning LLM if anonymization LLM not set
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Provider:              am.presetLearningLLM.Provider,
+			ModelID:               am.presetLearningLLM.ModelID,
+			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
+			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
+			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
+		}
+		am.GetLogger().Infof("🔧 Using preset learning LLM as fallback for anonymization: %s/%s", am.presetLearningLLM.Provider, am.presetLearningLLM.ModelID)
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		am.GetLogger().Infof("🔧 Using orchestrator default anonymization LLM: %s/%s", am.GetProvider(), am.GetModel())
@@ -111,7 +144,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 
 	// Create wrapper function that returns OrchestratorAgent interface
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger utils.ExtendedLogger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-		return NewHumanControlledTodoPlannerAnonymizationAgent(cfg, logger, tracer, eventBridge)
+		return NewHumanControlledTodoPlannerAnonymizationAgent(cfg, logger, tracer, eventBridge, am.BaseOrchestrator)
 	}
 
 	// Use base orchestrator's CreateAndSetupStandardAgentWithConfig to avoid code duplication
@@ -177,9 +210,12 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 
 	// Prepare template variables
 	anonymizationTemplateVars := map[string]string{
-		"WorkspacePath": am.GetWorkspacePath(),
-		"VariablesJSON": string(variablesJSONBytes),
-		"VariableNames": variableNames.String(),
+		"WorkspacePath":            am.GetWorkspacePath(),
+		"VariablesJSON":            string(variablesJSONBytes),
+		"VariableNames":            variableNames.String(),
+		"SessionID":                am.sessionID,
+		"WorkflowID":               am.workflowID,
+		"UseStepSpecificLearnings": fmt.Sprintf("%t", am.GetUseStepSpecificLearnings()),
 	}
 
 	// Execute anonymization agent
@@ -249,17 +285,128 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) Execute(ctx context.C
 	systemPrompt := agent.anonymizationSystemPromptProcessor(anonymizationTemplateVars)
 	userMessage := agent.anonymizationUserMessageProcessor(anonymizationTemplateVars)
 
-	// Create a simple input processor that returns the user message
-	inputProcessor := func(map[string]string) string {
-		return userMessage
+	// Get logger from base agent's MCP agent
+	baseAgent := agent.GetBaseAgent()
+	var logger utils.ExtendedLogger
+	if baseAgent != nil {
+		mcpAgent := baseAgent.Agent()
+		if mcpAgent != nil && mcpAgent.Logger != nil {
+			logger = mcpAgent.Logger
+		}
 	}
 
-	// Execute with system prompt and user message (overwrite=true to replace default MCP prompt with agent-specific prompt)
-	return agent.ExecuteWithTemplateValidation(ctx, anonymizationTemplateVars, inputProcessor, conversationHistory, templateData, systemPrompt, true)
+	// Maximum iterations for anonymization analysis
+	maxIterations := 20
+	iteration := 0
+	currentResult := ""
+	currentConversationHistory := conversationHistory
+
+	// Extract sessionID and workflowID from template vars
+	sessionID := templateVars["SessionID"]
+	workflowID := templateVars["WorkflowID"]
+
+	// Main execution loop with blocking human feedback
+	for iteration < maxIterations {
+		iteration++
+		if logger != nil {
+			logger.Infof("🔒 Anonymization agent iteration %d/%d", iteration, maxIterations)
+		}
+
+		// Create a simple input processor that returns the user message
+		inputProcessor := func(map[string]string) string {
+			return userMessage
+		}
+
+		// Execute with system prompt and user message (overwrite=true to replace default MCP prompt with agent-specific prompt)
+		result, updatedConversationHistory, err := agent.ExecuteWithTemplateValidation(ctx, anonymizationTemplateVars, inputProcessor, currentConversationHistory, templateData, systemPrompt, true)
+		if err != nil {
+			return "", nil, err
+		}
+
+		currentResult = result
+		currentConversationHistory = updatedConversationHistory
+
+		// After execution, ask if user wants to continue (blocking feedback)
+		if iteration < maxIterations && agent.baseOrchestrator != nil {
+			if logger != nil {
+				logger.Infof("🔒 Anonymization agent completed (iteration %d/%d). Asking user if they want to continue...", iteration, maxIterations)
+			}
+
+			// Generate unique request ID
+			requestID := fmt.Sprintf("anonymization_continue_%d_%d", iteration, time.Now().UnixNano())
+
+			// Request human feedback (blocking call)
+			approved, feedback, err := agent.baseOrchestrator.RequestHumanFeedback(
+				ctx,
+				requestID,
+				fmt.Sprintf("Anonymization analysis is complete (iteration %d/%d). Would you like to ask more questions or request additional anonymization?", iteration, maxIterations),
+				currentResult,
+				sessionID,
+				workflowID,
+			)
+			if err != nil {
+				if logger != nil {
+					logger.Warnf("⚠️ Failed to get user feedback: %v", err)
+				}
+				// Continue without blocking if feedback fails
+				break
+			}
+
+			// If user clicked Approve button, we're done
+			if approved {
+				if logger != nil {
+					logger.Infof("✅ User approved - anonymization complete")
+				}
+				break
+			}
+
+			// User provided feedback/question - always pass it to the agent and continue
+			if feedback != "" && strings.TrimSpace(feedback) != "" {
+				if logger != nil {
+					logger.Infof("📝 User provided feedback: %s", feedback)
+				}
+				// Use feedback directly as user message for next iteration
+				// Note: BaseAgent.Execute() will automatically add it to conversation history
+				userMessage = feedback
+			} else {
+				// No feedback provided but not approved - continue with same message
+				if logger != nil {
+					logger.Infof("ℹ️ No feedback provided, continuing with same context")
+				}
+			}
+		} else {
+			// Reached max iterations or no base orchestrator
+			if logger != nil {
+				logger.Infof("🔒 Reached maximum iterations (%d) or no base orchestrator, ending conversation", maxIterations)
+			}
+			break
+		}
+	}
+
+	if logger != nil {
+		logger.Infof("🔒 Anonymization completed after %d iterations", iteration)
+	}
+
+	return currentResult, currentConversationHistory, nil
 }
 
 // anonymizationSystemPromptProcessor creates the system prompt for anonymization
 func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPromptProcessor(templateVars map[string]string) string {
+	useStepSpecific := templateVars["UseStepSpecificLearnings"] == "true"
+
+	learningsLocationNote := ""
+	if useStepSpecific {
+		learningsLocationNote = `
+## LEARNING FILES LOCATION
+
+When step-specific learnings are enabled, learning files are stored in step-specific folders:
+- Shared learnings: {WorkspacePath}/learnings/ and {WorkspacePath}/learnings/
+- Step-specific learnings: {WorkspacePath}/learnings/step-{X}/ and {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
+
+You must scan BOTH shared and step-specific folders. Use list_workspace_files to discover step-specific folders in runs/ directory recursively.
+`
+	}
+
 	return `# Learning Anonymization Agent
 
 ## 🤖 AGENT IDENTITY
@@ -272,7 +419,7 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 ## 🎯 **ANONYMIZATION PROCESS**
 
 ### **Primary Goal:**
-**Replace actual values in learnings with variable placeholders** - Scan all files in the learnings/ folder (including subdirectories like scripts/), identify values that match known variables AND detect other hardcoded values that should be anonymized, then replace them appropriately:
+**Replace actual values in learnings with variable placeholders** - Scan all files in the learnings folders (including subdirectories like scripts/), identify values that match known variables AND detect other hardcoded values that should be anonymized, then replace them appropriately:` + learningsLocationNote + `
 - **For .md files**: Replace with {{VARIABLE_NAME}} placeholders
 - **For .py files**: Refactor to accept variables as parameters (command-line args or environment variables) instead of hardcoding values
 This makes learnings reusable across different environments, accounts, and configurations.
@@ -292,14 +439,25 @@ This makes learnings reusable across different environments, accounts, and confi
 
 ### **Process (Step-by-Step):**
 
-1. **Understand Available Variables** - The variables are provided in the template variables (VariablesJSON). You have access to both learnings/ and learning_code_exec/ folders - variables are passed to you, not read from files.
+1. **Understand Available Variables** - The variables are provided in the template variables (VariablesJSON). You have access to the learnings/ folder - variables are passed to you, not read from files.
 
-2. **Scan Learnings Folders** - Use list_workspace_files tool to scan both learnings folders recursively:
+2. **Scan Learnings Folder** - Use list_workspace_files tool to scan the learnings folder recursively:` + func() string {
+		if useStepSpecific {
+			return `
+   - **Shared folders**: Scan learnings/ (including subdirectories)
+   - **Step-specific folders**: Scan learnings/step-{X}/ (all step folders, at workspace root, not inside runs/)
+   - Scan all .md files in both shared and step-specific folders
+   - Scan all .py files in learnings/scripts/ and step-specific folders (if scripts folder exists)
+   - Scan all .go files in learnings/code/ and step-specific folders (if code folder exists)
+   - Identify all files that may contain actual values`
+		}
+		return `
    - Scan all .md files in learnings/
    - Scan all .py files in learnings/scripts/ (if scripts folder exists)
-   - Scan all .md files in learning_code_exec/
-   - Scan all .go files in learning_code_exec/code/ (if code folder exists)
-   - Identify all files that may contain actual values
+   - Scan all .md files in learnings/
+   - Scan all .go files in learnings/code/ (if code folder exists)
+   - Identify all files that may contain actual values`
+	}() + `
 
 3. **Read Files and Identify Values** - For each file:
    - Use read_workspace_file tool to read the file content
@@ -380,7 +538,12 @@ This makes learnings reusable across different environments, accounts, and confi
 
 ### **Important Rules:**
 
-1. **Access Both Learnings Folders**: You have access to both learnings/ and learning_code_exec/ folders. Variables are provided in template variables, not read from files.
+1. **Access Learnings Folder**: You have access to the learnings/ folder.` + func() string {
+		if useStepSpecific {
+			return ` When step-specific learnings are enabled, you also have access to runs/ folder to discover and process step-specific folders.`
+		}
+		return ""
+	}() + ` Variables are provided in template variables, not read from files.
 
 2. **Preserve Existing Placeholders**: If a file already contains {{VARIABLE_NAME}} placeholders, preserve them exactly as-is. Do NOT replace them.
 
@@ -394,14 +557,28 @@ This makes learnings reusable across different environments, accounts, and confi
    - Comments and documentation can reference variables
    - Newly detected hardcoded values should be anonymized with appropriate variable names
 
-6. **File Types**: Process all:
+6. **File Types**: Process all:` + func() string {
+		if useStepSpecific {
+			return `
+   - Markdown files (.md) in learnings/ and learnings/step-{X}/ (learning documentation)
+   - Python files (.py) in learnings/scripts/ and step-specific folders (Python scripts)
+   - Markdown files (.md) in learnings/ and learnings/step-{X}/ (code execution learning documentation)
+   - Go files (.go) in learnings/code/ and step-specific folders (Go code patterns)`
+		}
+		return `
    - Markdown files (.md) in learnings/ (learning documentation)
    - Python files (.py) in learnings/scripts/ (Python scripts)
-   - Markdown files (.md) in learning_code_exec/ (code execution learning documentation)
-   - Go files (.go) in learning_code_exec/code/ (Go code patterns)
+   - Markdown files (.md) in learnings/ (code execution learning documentation)
+   - Go files (.go) in learnings/code/ (Go code patterns)`
+	}() + `
 
 ### **Available Tools:**
-- **list_workspace_files**: List files in learnings/ and learning_code_exec/ folders (recursively)
+- **list_workspace_files**: List files in learnings/ and learnings/ folders (recursively)` + func() string {
+		if useStepSpecific {
+			return `, and in runs/ folder to discover step-specific folders`
+		}
+		return ""
+	}() + `
 - **read_workspace_file**: Read file content to analyze
 - **update_workspace_file**: Modify files in place (AFTER human approval)
 - **human_feedback**: **REQUIRED** - Get user confirmation before making changes
@@ -424,16 +601,30 @@ This makes learnings reusable across different environments, accounts, and confi
 
 // anonymizationUserMessageProcessor creates the user message for anonymization
 func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationUserMessageProcessor(templateVars map[string]string) string {
+	useStepSpecific := templateVars["UseStepSpecificLearnings"] == "true"
+
+	learningsFoldersNote := ""
+	if useStepSpecific {
+		learningsFoldersNote = `
+- **Shared Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/ and ` + templateVars["WorkspacePath"] + `/learnings/
+- **Step-Specific Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ and ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (at workspace root, not inside runs/)
+- **IMPORTANT**: Scan BOTH shared and step-specific folders. Use list_workspace_files to discover all run folders and step folders.
+`
+	} else {
+		learningsFoldersNote = `
+- **Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/ and ` + templateVars["WorkspacePath"] + `/learnings/
+`
+	}
+
 	return `# Anonymize Learnings Task
 
-**PRIMARY GOAL**: Scan both learnings folders and anonymize actual values to make learnings reusable across different environments:
+**PRIMARY GOAL**: Scan learnings folders and anonymize actual values to make learnings reusable across different environments:
 - **For .md files**: Replace values with {{VARIABLE_NAME}} placeholders
 - **For .py files**: Refactor to accept variables as parameters (argparse/env vars), NOT placeholders in code
 
 ## 📋 **CONTEXT**
 
-- **Workspace Path**: ` + templateVars["WorkspacePath"] + `
-- **Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/ and ` + templateVars["WorkspacePath"] + `/learning_code_exec/
+- **Workspace Path**: ` + templateVars["WorkspacePath"] + learningsFoldersNote + `
 
 ## 🔑 **AVAILABLE VARIABLES**
 
@@ -458,9 +649,19 @@ These variables are available for replacement. When you find actual values in le
 		return ""
 	}() + `## 🧠 **YOUR TASK**
 
-1. **Scan learnings folders**: Use list_workspace_files to find all files in both folders:
+1. **Scan learnings folders**: Use list_workspace_files to find all files:` + func() string {
+		if useStepSpecific {
+			return `
+   - **Shared folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
+   - **Shared folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
+   - **Step-specific folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all step folders, at workspace root, not inside runs/)
+   - **Step-specific folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all step folders, at workspace root, not inside runs/)
+   - Use list_workspace_files recursively to discover all run folders and step folders`
+		}
+		return `
    - .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
-   - .md and .go files in ` + templateVars["WorkspacePath"] + `/learning_code_exec/ (including subdirectories)
+   - .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)`
+	}() + `
 
 2. **Read and analyze files**: For each file, read its content and identify:
    - **Known variables**: Values that match the variables provided above
@@ -495,19 +696,33 @@ These variables are available for replacement. When you find actual values in le
    - **For .py files**: Refactor to accept variables as parameters (argparse or env vars), NOT use placeholders in code
    - Make replacements in place (overwrite files)
 
-7. **Process all file types**:
+7. **Process all file types**:` + func() string {
+		if useStepSpecific {
+			return `
+   - .md files in learnings/ and learnings/step-{X}/
+   - .py files in learnings/scripts/ and step-specific folders
+   - .md files in learnings/ and learnings/step-{X}/
+   - .go files in learnings/code/ and step-specific folders`
+		}
+		return `
    - .md files in learnings/
    - .py files in learnings/scripts/
-   - .md files in learning_code_exec/
-   - .go files in learning_code_exec/code/
+   - .md files in learnings/
+   - .go files in learnings/code/`
+	}() + `
 
 **Remember**: 
-- You have access to both learnings/ and learning_code_exec/ folders
+- You have access to the learnings/ folder` + func() string {
+		if useStepSpecific {
+			return `, and runs/ folder to discover step-specific folders`
+		}
+		return ""
+	}() + `
 - Variables are provided above (not read from files)
 - ALWAYS get human approval before modifying files
 - Preserve existing {{VARIABLE_NAME}} placeholders
 - Make replacements in place (overwrite files)
 
-**Start by listing files in the learnings folder.**
+**Start by listing files in the learnings folders.**
 `
 }

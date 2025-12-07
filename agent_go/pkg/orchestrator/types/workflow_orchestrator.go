@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/orchestrator"
@@ -15,6 +15,8 @@ import (
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // WorkflowPhaseOption represents an option for a workflow phase
@@ -87,6 +89,12 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
 			},
 			{
+				ID:          "learning-consolidation",
+				Title:       "Learning Consolidation",
+				Description: "Analyze and consolidate learning files across the learnings/ folder. Identifies duplicate patterns, similar patterns, and outdated patterns. Consolidates redundant learnings to optimize learning structure for better future execution efficiency.",
+				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
+			},
+			{
 				ID:          "plan-tool-optimization",
 				Title:       "Plan Tool Optimization",
 				Description: "Analyze plan.json and learnings folder to optimize tool selections in step_config.json. Compares configured tools vs actually used tools and updates step_config.json to include only tools that were used.",
@@ -140,12 +148,32 @@ type WorkflowOrchestrator struct {
 	presetExecutionLLM              *todo_creation_human.AgentLLMConfig // Default for execution agents
 	presetValidationLLM             *todo_creation_human.AgentLLMConfig // Default for validation agents
 	presetLearningLLM               *todo_creation_human.AgentLLMConfig // Default for learning agents
+	presetLearningReadingLLM        *todo_creation_human.AgentLLMConfig // Default for learning reading agent
 	presetPlanningLLM               *todo_creation_human.AgentLLMConfig // Default for planning agent
 	presetVariableExtractionLLM     *todo_creation_human.AgentLLMConfig // Default for variable extraction agent
 	presetAnonymizationLLM          *todo_creation_human.AgentLLMConfig // Default for anonymization agent
 	presetPlanImprovementLLM        *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
 	presetPlanToolOptimizationLLM   *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
 	presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig // Default for plan learnings alignment agent
+	presetLearningConsolidationLLM  *todo_creation_human.AgentLLMConfig // Default for learning consolidation agent
+
+	// Frontend-provided execution options (when provided, skips interactive prompts)
+	executionOptions *todo_creation_human.ExecutionOptions
+}
+
+// SetExecutionOptions sets the execution options from frontend
+// When set, backend will use these options instead of asking interactively
+func (wo *WorkflowOrchestrator) SetExecutionOptions(options *todo_creation_human.ExecutionOptions) {
+	wo.executionOptions = options
+	if options != nil {
+		wo.GetLogger().Infof("📋 WorkflowOrchestrator: Execution options set from frontend: run_mode=%s, strategy=%s, run_folder=%s",
+			options.RunMode, options.ExecutionStrategy, options.SelectedRunFolder)
+	}
+}
+
+// GetExecutionOptions returns the current execution options
+func (wo *WorkflowOrchestrator) GetExecutionOptions() *todo_creation_human.ExecutionOptions {
+	return wo.executionOptions
 }
 
 // Human verification types
@@ -228,7 +256,7 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetLearningReadingLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM, presetLearningConsolidationLLM *todo_creation_human.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
@@ -263,6 +291,24 @@ func NewWorkflowOrchestrator(
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for learning
 			presetLearningLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
+		if presetLLMConfig.LearningReadingLLM != nil && presetLLMConfig.LearningReadingLLM.Provider != "" && presetLLMConfig.LearningReadingLLM.ModelID != "" {
+			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.LearningReadingLLM.Provider,
+				ModelID:  presetLLMConfig.LearningReadingLLM.ModelID,
+			}
+		} else if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
+			// Fall back to execution LLM if learning reading LLM not set
+			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.ExecutionLLM.Provider,
+				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for learning reading
+			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
@@ -339,6 +385,18 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
+		if presetLLMConfig.LearningConsolidationLLM != nil && presetLLMConfig.LearningConsolidationLLM.Provider != "" && presetLLMConfig.LearningConsolidationLLM.ModelID != "" {
+			presetLearningConsolidationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.LearningConsolidationLLM.Provider,
+				ModelID:  presetLLMConfig.LearningConsolidationLLM.ModelID,
+			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for learning consolidation
+			presetLearningConsolidationLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
+		}
 	}
 
 	// Create workflow orchestrator instance
@@ -347,12 +405,14 @@ func NewWorkflowOrchestrator(
 		presetExecutionLLM:              presetExecutionLLM,
 		presetValidationLLM:             presetValidationLLM,
 		presetLearningLLM:               presetLearningLLM,
+		presetLearningReadingLLM:        presetLearningReadingLLM,
 		presetPlanningLLM:               presetPlanningLLM,
 		presetVariableExtractionLLM:     presetVariableExtractionLLM,
 		presetAnonymizationLLM:          presetAnonymizationLLM,
 		presetPlanImprovementLLM:        presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM:   presetPlanToolOptimizationLLM,
 		presetPlanLearningsAlignmentLLM: presetPlanLearningsAlignmentLLM,
+		presetLearningConsolidationLLM:  presetLearningConsolidationLLM,
 	}
 
 	return wo, nil
@@ -365,6 +425,7 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	workspacePath string,
 	workflowStatus string,
 	selectedOptions *database.WorkflowSelectedOptions,
+	stepID string, // Optional step ID for step-specific phase execution
 ) (string, error) {
 	// Set workspace path from parameter
 	wo.SetWorkspacePath(workspacePath)
@@ -399,12 +460,20 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
 	}
 
-	if workflowStatus == "plan-tool-optimization" {
-		wo.GetLogger().Infof("🔧 Routing to plan tool optimization phase (workflowStatus: %s)", workflowStatus)
-		return wo.runPlanToolOptimization(ctx, objective, selectedOptions)
+	if workflowStatus == "learning-consolidation" {
+		wo.GetLogger().Infof("🔍 Routing to learning consolidation phase (workflowStatus: %s)", workflowStatus)
+		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
 	}
 
-	// All other workflow statuses (pre-verification) go through execution phase
+	if workflowStatus == "plan-tool-optimization" {
+		wo.GetLogger().Infof("🔧 Routing to plan tool optimization phase (workflowStatus: %s)", workflowStatus)
+		if stepID != "" {
+			wo.GetLogger().Infof("🔧 Step-specific execution for step: %s", stepID)
+		}
+		return wo.runPlanToolOptimization(ctx, objective, selectedOptions, stepID)
+	}
+
+	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	wo.GetLogger().Infof("🚀 Routing to execution phase (workflowStatus: %s)", workflowStatus)
 	return wo.runPlanning(ctx, objective, selectedOptions)
@@ -418,6 +487,7 @@ func (wo *WorkflowOrchestrator) runVariableExtraction(ctx context.Context, objec
 	variableManager := todo_creation_human.NewVariableManager(
 		wo.BaseOrchestrator,
 		wo.presetVariableExtractionLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 	)
@@ -458,6 +528,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,
+		wo.presetLearningReadingLLM,
 		wo.presetPlanningLLM,
 		wo.presetVariableExtractionLLM,
 		wo.presetAnonymizationLLM,
@@ -484,7 +555,10 @@ func (wo *WorkflowOrchestrator) runAnonymization(ctx context.Context, objective 
 	// Create anonymization manager directly (independent from controller)
 	anonymizationManager := todo_creation_human.NewAnonymizationManager(
 		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
 		wo.presetAnonymizationLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 	)
 
 	// Run only anonymization
@@ -505,6 +579,7 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 	planImprovementManager := todo_creation_human.NewPlanImprovementManager(
 		wo.BaseOrchestrator,
 		wo.presetPlanImprovementLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 	)
@@ -529,6 +604,7 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetPlanLearningsAlignmentLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 	)
 
 	// Run only alignment check
@@ -541,9 +617,35 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 	return result, nil
 }
 
+// runLearningConsolidation runs only the learning consolidation phase
+func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Infof("🔍 Starting Learning Consolidation Phase")
+
+	// Create learning consolidation manager directly (independent from controller)
+	consolidationManager := todo_creation_human.NewLearningConsolidationManager(
+		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+		wo.presetLearningConsolidationLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
+	)
+
+	// Run only consolidation
+	result, err := consolidationManager.ConsolidateLearningsOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("learning consolidation failed: %w", err)
+	}
+
+	wo.GetLogger().Infof("✅ Learning consolidation completed successfully")
+	return result, nil
+}
+
 // runPlanToolOptimization runs only the plan tool optimization phase
-func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions, stepID string) (string, error) {
 	wo.GetLogger().Infof("🔧 Starting Plan Tool Optimization Phase")
+	if stepID != "" {
+		wo.GetLogger().Infof("🔧 Step-specific execution for step: %s", stepID)
+	}
 
 	// Create plan tool optimization manager directly (independent from controller)
 	toolOptimizationManager := todo_creation_human.NewPlanToolOptimizationManager(
@@ -551,10 +653,11 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetPlanToolOptimizationLLM,
+		wo.presetLearningLLM, // Pass learning LLM for fallback
 	)
 
-	// Run only tool optimization
-	result, err := toolOptimizationManager.PlanToolOptimizationOnly(ctx, wo.GetWorkspacePath())
+	// Run only tool optimization (with optional step ID for step-specific execution)
+	result, err := toolOptimizationManager.PlanToolOptimizationOnly(ctx, wo.GetWorkspacePath(), stepID)
 	if err != nil {
 		return "", fmt.Errorf("plan tool optimization failed: %w", err)
 	}
@@ -564,7 +667,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 }
 
 // runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
-// This is called for pre-verification status and executes the approved plan
+// This is called for execution status and executes the approved plan
 func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Infof("🚀 Starting Execution Phase")
 
@@ -598,6 +701,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,
+		wo.presetLearningReadingLLM,
 		wo.presetPlanningLLM,
 		wo.presetVariableExtractionLLM,
 		wo.presetAnonymizationLLM,
@@ -607,21 +711,26 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
 
+	// Pass execution options from WorkflowOrchestrator to the todo planner if set
+	if wo.executionOptions != nil {
+		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
+		wo.GetLogger().Infof("📋 Passed execution options to todo planner: run_mode=%s, strategy=%s",
+			wo.executionOptions.RunMode, wo.executionOptions.ExecutionStrategy)
+	}
+
 	// Generate todo list using Execute method
 	todoListMarkdown, err := todoPlannerAgent.Execute(ctx, objective, wo.GetWorkspacePath(), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create/update todo list: %w", err)
 	}
 
-	// Emit request_human_feedback event
+	// Emit blocking_human_feedback event (no Slack notifications)
 	// Note: Execution now happens automatically after plan approval, so no separate phase needed
-	if err := wo.emitRequestHumanFeedback(ctx, objective, todoListMarkdown,
-		"planning_verification",
-		database.WorkflowStatusPreVerification, // Stay in planning phase
+	if err := wo.emitBlockingHumanFeedback(ctx, objective, todoListMarkdown,
 		"Human Controlled Planning Complete",
 		"Approve Plan & Continue",
 		"Please review the generated todo list and approve to proceed with execution."); err != nil {
-		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %w", err)
+		wo.GetLogger().Warnf("⚠️ Failed to emit blocking human feedback event: %w", err)
 	}
 
 	planningResult := fmt.Sprintf("Human controlled planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
@@ -648,32 +757,49 @@ func (wo *WorkflowOrchestrator) getWorkflowID() string {
 	return "workflow-" + fmt.Sprintf("%d", time.Now().Unix())
 }
 
-// emitRequestHumanFeedback emits a request human feedback event
-func (wo *WorkflowOrchestrator) emitRequestHumanFeedback(ctx context.Context, objective string, todoListMarkdown string, verificationType string, nextPhase string, title string, actionLabel string, actionDescription string) error {
+// emitBlockingHumanFeedback emits a blocking human feedback event (no Slack notifications)
+func (wo *WorkflowOrchestrator) emitBlockingHumanFeedback(ctx context.Context, objective string, todoListMarkdown string, title string, actionLabel string, actionDescription string) error {
 
 	// Generate unique request ID
 	requestID := fmt.Sprintf("feedback_%d", time.Now().UnixNano())
 
-	// Create request human feedback event data
-	eventData := &events.RequestHumanFeedbackEvent{
+	// Build question text from event data
+	questionText := title
+	if actionDescription != "" {
+		questionText = fmt.Sprintf("%s\n\n%s", title, actionDescription)
+	}
+	if objective != "" {
+		questionText = fmt.Sprintf("%s\n\nObjective: %s", questionText, objective)
+	}
+
+	// Build context message from todo list
+	contextMsg := todoListMarkdown
+
+	// Set default labels if not provided
+	yesLabel := actionLabel
+	if yesLabel == "" {
+		yesLabel = "Approve Plan & Continue"
+	}
+
+	// Create blocking human feedback event data
+	eventData := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective:         objective,
-		TodoListMarkdown:  todoListMarkdown,
-		SessionID:         wo.getSessionID(),
-		WorkflowID:        wo.getWorkflowID(),
-		RequestID:         requestID,
-		VerificationType:  verificationType,
-		NextPhase:         nextPhase,
-		Title:             title,
-		ActionLabel:       actionLabel,
-		ActionDescription: actionDescription,
+		Question:      questionText,
+		AllowFeedback: true, // Allow text feedback in frontend
+		Context:       contextMsg,
+		SessionID:     wo.getSessionID(),
+		WorkflowID:    wo.getWorkflowID(),
+		RequestID:     requestID,
+		YesNoOnly:     false, // false = frontend shows textarea + "Approve & Continue" button
+		YesLabel:      yesLabel,
+		NoLabel:       "Reject",
 	}
 
 	// Create agent event
 	agentEvent := &events.AgentEvent{
-		Type:      events.RequestHumanFeedback,
+		Type:      events.BlockingHumanFeedback,
 		Timestamp: time.Now(),
 		Data:      eventData,
 	}
@@ -683,8 +809,20 @@ func (wo *WorkflowOrchestrator) emitRequestHumanFeedback(ctx context.Context, ob
 		if bridge, ok := wo.GetContextAwareBridge().(interface {
 			HandleEvent(context.Context, *events.AgentEvent) error
 		}); ok {
-			return bridge.HandleEvent(ctx, agentEvent)
+			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+				return err
+			}
 		}
+	}
+
+	// Note: blocking_human_feedback events do NOT send Slack notifications
+	// Only request_human_feedback events send Slack notifications
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+
+	// Create feedback request without notifications (only registers in store for WaitForResponse)
+	if err := feedbackStore.CreateRequestWithoutNotification(requestID, questionText); err != nil {
+		wo.GetLogger().Warnf("⚠️ Failed to create feedback request: %v", err)
+		// Don't return error, as the event is already emitted to frontend
 	}
 
 	return nil
@@ -717,6 +855,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"anonymize-learnings",                  // Anonymize learnings phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-learnings-alignment",             // Plan-learnings alignment phase
+					"learning-consolidation",               // Learning consolidation phase
 					"plan-tool-optimization",               // Plan tool optimization phase
 				}
 				valid := false
@@ -783,11 +922,23 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 		return "", fmt.Errorf("objective cannot be empty")
 	}
 
+	// Extract stepId from options if provided
+	var stepID string
+	if stepIDVal, exists := options["stepId"]; exists {
+		if stepIDStr, ok := stepIDVal.(string); ok && stepIDStr != "" {
+			stepID = stepIDStr
+			wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - stepId found: %s", stepID)
+		}
+	}
+
 	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - About to call executeFlow with workflowStatus: %s", workflowStatus)
 	wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions for executeFlow: %+v", selectedOptions)
+	if stepID != "" {
+		wo.GetLogger().Infof("🚀 WORKFLOW EXECUTION DEBUG - Step-specific execution for step: %s", stepID)
+	}
 
 	// Call the existing executeFlow method with the extracted parameters
-	result, err := wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions)
+	result, err := wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions, stepID)
 	if err != nil {
 		wo.GetLogger().Errorf("🚀 WORKFLOW EXECUTION ERROR - executeFlow failed: %w", err)
 		return "", err

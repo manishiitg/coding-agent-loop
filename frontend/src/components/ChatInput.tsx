@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useImperativeHandle, forwardRef, useEffect } from 'react'
-import { Send, Loader2, Zap, Square, Plus, Code2, Sparkles } from 'lucide-react'
+import { Send, Loader2, Square, Plus, Code2, Sparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -34,7 +34,6 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   // Store subscriptions
   const {
     agentMode,
-    setAgentMode,
     chatFileContext,
     removeFileFromContext,
     clearFileContext,
@@ -121,9 +120,9 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   }, [selectedModeCategory, activePresetIds, customPresets, predefinedPresets])
   
   const isRequiredFolderSelected = useMemo(() => {
-    if (agentMode !== 'workflow') return true; // No validation needed for other modes
+    if (selectedModeCategory !== 'workflow') return true; // No validation needed for other modes
     
-    if (agentMode === 'workflow') {
+    if (selectedModeCategory === 'workflow') {
       // Workflow mode requires Workflow/ folder
       const hasWorkflowFolder = chatFileContext.some((file: { type: string; path: string }) => 
         file.type === 'folder' && file.path.startsWith('Workflow/')
@@ -132,19 +131,19 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
     }
     
     return true;
-  }, [agentMode, chatFileContext])
+  }, [selectedModeCategory, chatFileContext])
 
   // Helper function for dynamic button text based on agent mode
   const getButtonText = useCallback(() => {
-    if (agentMode === 'workflow') return 'Start Workflow'
+    if (selectedModeCategory === 'workflow') return 'Start Workflow'
     return 'Start Chat'
-  }, [agentMode])
+  }, [selectedModeCategory])
 
   // Helper function for dynamic tooltip text based on agent mode
   const getButtonTooltip = useCallback(() => {
-    if (agentMode === 'workflow') return 'Start workflow execution with this preset'
+    if (selectedModeCategory === 'workflow') return 'Start workflow execution with this preset'
     return 'Start a new chat with this preset'
-  }, [agentMode])
+  }, [selectedModeCategory])
 
   // Preset folder selection (for workflow mode)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -163,7 +162,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
 
   // Get active preset for current mode - directly reactive to store changes
   const activePreset = useMemo(() => {
-    if (agentMode === 'workflow') {
+    if (selectedModeCategory === 'workflow') {
       const presetId = activePresetIds['workflow']
       if (!presetId) return null
       
@@ -177,14 +176,14 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
       return null
     }
     return null
-  }, [agentMode, activePresetIds, customPresets, predefinedPresets])
+  }, [selectedModeCategory, activePresetIds, customPresets, predefinedPresets])
 
   // Consolidated query selection logic
   const queryToSubmit = useMemo(() => {
-    return agentMode === 'workflow' && activePreset 
+    return selectedModeCategory === 'workflow' && activePreset 
       ? activePreset.query 
       : localQuery
-  }, [agentMode, activePreset, localQuery])
+  }, [selectedModeCategory, activePreset, localQuery])
 
   // Guard to prevent submission before observer is ready
   const canSubmit = useMemo(() => {
@@ -263,7 +262,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
       
       if (canSubmit) {
         // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-        if (agentMode !== 'workflow' && observerId) {
+        if (selectedModeCategory !== 'workflow' && observerId) {
           setLocalQuery('')
         }
         // Call onSubmit with the query directly - no global state coordination needed!
@@ -286,20 +285,20 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, onSubmit, showFileDialog, agentMode, observerId, canSubmit, queryToSubmit])
+  }, [localQuery, onSubmit, showFileDialog, selectedModeCategory, observerId, canSubmit, queryToSubmit])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     
     if (canSubmit && isRequiredFolderSelected) {
       // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-      if (agentMode !== 'workflow' && observerId) {
+      if (selectedModeCategory !== 'workflow' && observerId) {
         setLocalQuery('')
       }
       // Call onSubmit with the query directly - no global state coordination needed!
       onSubmit(queryToSubmit)
     }
-  }, [canSubmit, isRequiredFolderSelected, agentMode, observerId, queryToSubmit, onSubmit])
+  }, [canSubmit, isRequiredFolderSelected, selectedModeCategory, observerId, queryToSubmit, onSubmit])
 
   // File selection handlers
   const handleFileSelect = useCallback((file: PlannerFile) => {
@@ -431,26 +430,26 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
   }, [])
 
   // Check if workflow mode requires preset selection
-  const isWorkflowReady = agentMode !== 'workflow' || (getActivePreset('workflow') && isRequiredFolderSelected)
+  const isWorkflowReady = selectedModeCategory !== 'workflow' || (getActivePreset('workflow') && isRequiredFolderSelected)
   
   // Preset modes require a non-empty preset query; chat modes require non-empty local input
   const hasValidQuery =
-    agentMode === 'workflow'
+    selectedModeCategory === 'workflow'
       ? Boolean(activePreset?.query?.trim())
       : Boolean(localQuery?.trim())
   
   const readyForMode =
-    agentMode === 'workflow' ? isWorkflowReady :
+    selectedModeCategory === 'workflow' ? isWorkflowReady :
     true
   const submitButtonDisabled = !hasValidQuery || !observerId || !readyForMode
   
 
   // Memoized placeholder to prevent re-computation
   const placeholder = useMemo(() => {
-    return agentMode === 'workflow'
+    return selectedModeCategory === 'workflow'
       ? "Enter your objective for workflow execution... I'll create a todo-list and execute tasks sequentially!"
       : "Ask me anything... I can use tools to help you!"
-  }, [agentMode])
+  }, [selectedModeCategory])
 
   return (
     <TooltipProvider>
@@ -469,7 +468,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
       )}
 
       {/* Validation message for Workflow mode - no preset selected */}
-      {agentMode === 'workflow' && !getActivePreset('workflow') && (
+      {selectedModeCategory === 'workflow' && !getActivePreset('workflow') && (
         <div className="px-4">
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 mb-0">
             <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
@@ -480,7 +479,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
       )}
 
       {/* Validation message for Workflow mode - no Workflow folder selected */}
-      {agentMode === 'workflow' && getActivePreset('workflow') && !isRequiredFolderSelected && (
+      {selectedModeCategory === 'workflow' && getActivePreset('workflow') && !isRequiredFolderSelected && (
         <div className="px-4">
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-1.5 py-0.5 mb-0">
             <span className="text-xs text-yellow-600 dark:text-yellow-400">
@@ -506,7 +505,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
             {/* Show compact preset info with action buttons for workflow mode */}
-            {agentMode === 'workflow' && activePreset && !isEditingQuery ? (
+            {selectedModeCategory === 'workflow' && activePreset && !isEditingQuery ? (
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <Tooltip>
@@ -572,7 +571,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                             onClick={() => {
                               if (canSubmit) {
                                 // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-                                if (agentMode !== 'workflow' && observerId) {
+                                if (selectedModeCategory !== 'workflow' && observerId) {
                                   setLocalQuery('')
                                 }
                                 onSubmit(queryToSubmit)
@@ -606,7 +605,7 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
             )}
             
             {/* Show compact edit controls when editing preset query */}
-            {agentMode === 'workflow' && isEditingQuery && (
+            {selectedModeCategory === 'workflow' && isEditingQuery && (
               <div className="flex items-center gap-1 px-2 py-1 bg-gray-50 dark:bg-gray-800 rounded text-xs">
                 <span className="text-gray-600 dark:text-gray-400">Editing:</span>
                 <button
@@ -631,27 +630,6 @@ const ChatInputComponent = forwardRef<ChatInputRef, ChatInputProps>(({
                 {/* Agent Mode Selector - Only for Chat Mode */}
                 {selectedModeCategory === 'chat' && (
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => setAgentMode('simple')}
-                            className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                              agentMode === 'simple'
-                                ? 'agent-mode-selected'
-                                : 'agent-mode-unselected'
-                            }`}
-                          >
-                            <Zap className="w-3 h-3 inline mr-1" />
-                            Simple
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Simple mode - Ctrl+1</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
                     {/* Code Execution Mode Toggle */}
                     <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
                       <Tooltip>

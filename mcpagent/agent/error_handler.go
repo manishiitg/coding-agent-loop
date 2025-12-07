@@ -12,11 +12,12 @@ package mcpagent
 
 import (
 	"context"
-	"strings"
+	"fmt"
 	"time"
 
 	"mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
+	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -39,16 +40,9 @@ func NewBrokenPipeHandler(agent *Agent) *BrokenPipeHandler {
 }
 
 // IsBrokenPipeError checks if an error is a broken pipe error
+// Delegates to mcpclient.IsBrokenPipeError for shared implementation
 func IsBrokenPipeError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errorMessage := err.Error()
-	return strings.Contains(errorMessage, "Broken pipe") ||
-		strings.Contains(errorMessage, "broken pipe") ||
-		strings.Contains(errorMessage, "[Errno 32]") ||
-		strings.Contains(errorMessage, "EOF") ||
-		strings.Contains(errorMessage, "connection reset")
+	return mcpclient.IsBrokenPipeError(err)
 }
 
 // HandleBrokenPipeError handles broken pipe errors by recreating the connection and retrying
@@ -58,7 +52,7 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	serverName string,
 	originalErr error,
 	startTime time.Time,
-) (*mcp.CallToolResult, error, time.Duration) {
+) (*mcp.CallToolResult, time.Duration, error) {
 
 	h.logger.Info("Broken pipe detected, attempting connection recreation",
 		loggerv2.String("tool", toolCall.FunctionCall.Name),
@@ -67,16 +61,12 @@ func (h *BrokenPipeHandler) HandleBrokenPipeError(
 	// Emit broken pipe detection event
 	h.emitBrokenPipeEvent(ctx, toolCall, serverName, originalErr)
 
-	// Create a fresh connection immediately
-	h.logger.Info("Creating fresh connection for server", loggerv2.String("server", serverName))
-	freshClient, freshErr := h.agent.createOnDemandConnection(ctx, serverName)
+	// Create a fresh connection immediately using shared function
+	freshClient, freshErr := mcpcache.GetFreshConnection(ctx, serverName, h.agent.configPath, h.logger)
 	if freshErr != nil {
-		h.logger.Error("Failed to create fresh connection", freshErr,
-			loggerv2.String("server", serverName))
-		return nil, freshErr, time.Since(startTime)
+		h.logger.Error(fmt.Sprintf("🔧 [BROKEN PIPE] Failed to create fresh connection: %v", freshErr), freshErr)
+		return nil, time.Since(startTime), freshErr
 	}
-
-	h.logger.Info("Successfully created fresh connection for server", loggerv2.String("server", serverName))
 
 	// Retry the tool call once with the fresh connection
 	return h.retryToolCall(ctx, toolCall, freshClient, serverName, startTime)
@@ -89,7 +79,7 @@ func (h *BrokenPipeHandler) retryToolCall(
 	client mcpclient.ClientInterface,
 	serverName string,
 	startTime time.Time,
-) (*mcp.CallToolResult, error, time.Duration) {
+) (*mcp.CallToolResult, time.Duration, error) {
 
 	h.logger.Info("Retrying tool call with fresh connection",
 		loggerv2.String("tool", toolCall.FunctionCall.Name))
@@ -97,9 +87,8 @@ func (h *BrokenPipeHandler) retryToolCall(
 	// Parse the tool arguments from JSON string to map
 	retryArgs, parseErr := mcpclient.ParseToolArguments(toolCall.FunctionCall.Arguments)
 	if parseErr != nil {
-		h.logger.Error("Failed to parse tool arguments", parseErr,
-			loggerv2.String("tool", toolCall.FunctionCall.Name))
-		return nil, parseErr, time.Since(startTime)
+		h.logger.Error(fmt.Sprintf("🔧 [BROKEN PIPE] Failed to parse tool arguments: %v", parseErr), parseErr)
+		return nil, time.Since(startTime), parseErr
 	}
 
 	// Create a timeout context for the retry
@@ -115,13 +104,13 @@ func (h *BrokenPipeHandler) retryToolCall(
 			loggerv2.String("tool", toolCall.FunctionCall.Name),
 			loggerv2.String("duration", retryDuration.String()))
 		h.emitRetrySuccessEvent(ctx, toolCall, serverName, retryDuration)
-		return retryResult, nil, retryDuration
+		return retryResult, retryDuration, nil
 	}
 
 	h.logger.Error("Retry failed", retryErr,
 		loggerv2.String("tool", toolCall.FunctionCall.Name))
 	h.emitRetryFailureEvent(ctx, toolCall, serverName, retryErr, retryDuration)
-	return nil, retryErr, retryDuration
+	return nil, retryDuration, retryErr
 }
 
 // emitBrokenPipeEvent emits a broken pipe detection event
@@ -202,19 +191,19 @@ func (h *ErrorRecoveryHandler) HandleError(
 	startTime time.Time,
 	isCustomTool bool,
 	isVirtualTool bool,
-) (*mcp.CallToolResult, error, time.Duration, bool) {
+) (*mcp.CallToolResult, time.Duration, bool, error) {
 
 	// Only handle errors for regular MCP tools (not custom or virtual tools)
 	if isCustomTool || isVirtualTool {
-		return nil, originalErr, time.Since(startTime), false
+		return nil, time.Since(startTime), false, originalErr
 	}
 
 	// Handle broken pipe errors
 	if IsBrokenPipeError(originalErr) {
-		result, err, duration := h.brokenPipeHandler.HandleBrokenPipeError(ctx, toolCall, serverName, originalErr, startTime)
-		return result, err, duration, true
+		result, duration, err := h.brokenPipeHandler.HandleBrokenPipeError(ctx, toolCall, serverName, originalErr, startTime)
+		return result, duration, true, err
 	}
 
 	// No recovery strategy available for this error type
-	return nil, originalErr, time.Since(startTime), false
+	return nil, time.Since(startTime), false, originalErr
 }

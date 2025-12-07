@@ -58,6 +58,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 	// Check if we have an existing connection
 	var existingConn *StdioConnection
 	var needsHealthCheck bool
+	var clientToClose *client.Client
 	if conn, exists := p.connections[serverKey]; exists {
 		existingConn = conn
 		// Quick check if already marked unhealthy
@@ -67,12 +68,23 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 
 		if !needsHealthCheck {
 			// Connection already marked unhealthy, remove it
+<<<<<<< HEAD
 			p.logger.Debug("Existing connection unhealthy, removing", loggerv2.String("server", serverKey))
 			p.removeConnection(serverKey)
+=======
+			p.logger.Infof("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey)
+			clientToClose = p.removeConnection(serverKey)
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 			existingConn = nil
 		}
 	}
 	p.mutex.Unlock() // Unlock before any potentially long-running operations
+
+	// Close the connection outside the mutex to avoid blocking other threads
+	if clientToClose != nil {
+		p.logger.Infof("🔧 [STDIO POOL] Closing unhealthy connection outside mutex: %s", serverKey)
+		_ = clientToClose.Close() // Ignore errors during cleanup
+	}
 
 	// If we have an existing connection, check its health (this can take time)
 	if existingConn != nil && needsHealthCheck {
@@ -92,11 +104,23 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 		} else {
 			// Connection is unhealthy, remove it
 			p.mutex.Lock()
+			var clientToClose *client.Client
 			if _, stillExists := p.connections[serverKey]; stillExists {
+<<<<<<< HEAD
 				p.logger.Debug("Existing connection unhealthy, removing", loggerv2.String("server", serverKey))
 				p.removeConnection(serverKey)
+=======
+				p.logger.Infof("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey)
+				clientToClose = p.removeConnection(serverKey)
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 			}
 			p.mutex.Unlock()
+
+			// Close the connection outside the mutex to avoid blocking
+			if clientToClose != nil {
+				p.logger.Infof("🔧 [STDIO POOL] Closing unhealthy connection outside mutex: %s", serverKey)
+				_ = clientToClose.Close() // Ignore errors during cleanup
+			}
 		}
 	}
 
@@ -117,7 +141,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 		p.logger.Debug("Another goroutine created connection, using existing one", loggerv2.String("server", serverKey))
 		// Close our newly created connection and use the existing one
 		if conn.client != nil {
-			conn.client.Close()
+			_ = conn.client.Close() // Ignore errors during cleanup
 		}
 		return existingConn.client, nil
 	}
@@ -131,9 +155,13 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 // createNewConnection creates a new stdio connection
 func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey string, command string, args []string, env []string) (*StdioConnection, error) {
 	startTime := time.Now()
+<<<<<<< HEAD
 	p.logger.Debug("Creating new stdio connection",
 		loggerv2.String("command", command),
 		loggerv2.Any("args", args))
+=======
+	p.logger.Infof("🔧 [STDIO POOL] Creating new stdio connection: %s %v", command, args)
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 
 	// Debug: Log environment variables (but mask sensitive values)
 	if p.logger != nil {
@@ -231,7 +259,7 @@ func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey
 	progressDone <- true
 
 	if err != nil {
-		mcpClient.Close()
+		_ = mcpClient.Close() // Ignore errors during cleanup
 		totalDuration := time.Since(startTime)
 
 		// Check if it was a timeout
@@ -308,6 +336,7 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 	_, err := client.ListTools(testCtx, mcp.ListToolsRequest{})
 	if err != nil {
 		// 🔧 ENHANCED BROKEN PIPE DETECTION IN HEALTH CHECK
+<<<<<<< HEAD
 		errorMessage := err.Error()
 		isBrokenPipe := strings.Contains(errorMessage, "Broken pipe") ||
 			strings.Contains(errorMessage, "broken pipe") ||
@@ -319,6 +348,10 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 			p.logger.Debug("Broken pipe detected in health check, marking unhealthy",
 				loggerv2.String("server", serverKey),
 				loggerv2.Error(err))
+=======
+		if IsBrokenPipeError(err) {
+			p.logger.Infof("🔧 [STDIO POOL] Broken pipe detected in health check, marking unhealthy: %s, error: %v", serverKey, err)
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 		} else {
 			p.logger.Debug("Health check failed, marking unhealthy",
 				loggerv2.String("server", serverKey),
@@ -336,21 +369,33 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 }
 
 // removeConnection removes a connection from the pool
-func (p *StdioConnectionPool) removeConnection(serverKey string) {
+// IMPORTANT: This function assumes the caller holds p.mutex
+// It does NOT call Close() - caller must close the connection outside the mutex
+func (p *StdioConnectionPool) removeConnection(serverKey string) *client.Client {
 	if conn, exists := p.connections[serverKey]; exists {
+<<<<<<< HEAD
 		p.logger.Debug("Removing connection", loggerv2.String("server", serverKey))
 		if conn.client != nil {
 			conn.client.Close()
 		}
+=======
+		p.logger.Infof("🔧 [STDIO POOL] Removing connection from pool: %s", serverKey)
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 		delete(p.connections, serverKey)
+		if conn.client != nil {
+			return conn.client
+		}
 	}
+	return nil
 }
 
 // ForceRemoveBrokenConnection forcefully removes a broken connection from the pool
 func (p *StdioConnectionPool) ForceRemoveBrokenConnection(serverKey string) {
 	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	clientToClose := p.removeConnection(serverKey)
+	p.mutex.Unlock()
 
+<<<<<<< HEAD
 	if conn, exists := p.connections[serverKey]; exists {
 		p.logger.Debug("Force removing broken connection", loggerv2.String("server", serverKey))
 		if conn.client != nil {
@@ -358,6 +403,13 @@ func (p *StdioConnectionPool) ForceRemoveBrokenConnection(serverKey string) {
 		}
 		delete(p.connections, serverKey)
 		p.logger.Debug("Successfully force removed broken connection", loggerv2.String("server", serverKey))
+=======
+	// Close the connection outside the mutex to avoid blocking
+	if clientToClose != nil {
+		p.logger.Infof("🔧 [STDIO POOL] Closing broken connection outside mutex: %s", serverKey)
+		_ = clientToClose.Close() // Ignore errors during cleanup
+		p.logger.Infof("✅ [STDIO POOL] Successfully force removed broken connection: %s", serverKey)
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 	} else {
 		p.logger.Debug("No connection found to force remove", loggerv2.String("server", serverKey))
 	}
@@ -366,25 +418,48 @@ func (p *StdioConnectionPool) ForceRemoveBrokenConnection(serverKey string) {
 // CloseConnection closes a specific connection
 func (p *StdioConnectionPool) CloseConnection(serverKey string) {
 	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	clientToClose := p.removeConnection(serverKey)
+	p.mutex.Unlock()
 
+<<<<<<< HEAD
 	p.logger.Debug("Closing connection", loggerv2.String("server", serverKey))
 	p.removeConnection(serverKey)
+=======
+	// Close the connection outside the mutex to avoid blocking
+	if clientToClose != nil {
+		p.logger.Infof("🔧 [STDIO POOL] Closing connection outside mutex: %s", serverKey)
+		_ = clientToClose.Close() // Ignore errors during cleanup
+	}
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 }
 
 // CloseAllConnections closes all connections in the pool
 func (p *StdioConnectionPool) CloseAllConnections() {
 	p.mutex.Lock()
+<<<<<<< HEAD
 	defer p.mutex.Unlock()
 
 	p.logger.Debug("Closing all connections")
 	for serverKey, conn := range p.connections {
 		p.logger.Debug("Closing connection", loggerv2.String("server", serverKey))
+=======
+	// Collect all clients to close
+	clientsToClose := make([]*client.Client, 0, len(p.connections))
+	for serverKey, conn := range p.connections {
+		p.logger.Infof("🔧 [STDIO POOL] Removing connection from pool: %s", serverKey)
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 		if conn.client != nil {
-			conn.client.Close()
+			clientsToClose = append(clientsToClose, conn.client)
 		}
 	}
 	p.connections = make(map[string]*StdioConnection)
+	p.mutex.Unlock()
+
+	// Close all connections outside the mutex to avoid blocking
+	p.logger.Infof("🔧 [STDIO POOL] Closing %d connections outside mutex", len(clientsToClose))
+	for _, client := range clientsToClose {
+		_ = client.Close() // Ignore errors during cleanup
+	}
 }
 
 // GetPoolStats returns statistics about the connection pool
@@ -432,9 +507,12 @@ func (p *StdioConnectionPool) startCleanupRoutine() {
 // cleanupStaleConnections removes stale connections
 func (p *StdioConnectionPool) cleanupStaleConnections() {
 	p.mutex.Lock()
-	defer p.mutex.Unlock()
 
 	p.logger.Debug("Running cleanup routine")
+
+	// Collect stale connections to close
+	clientsToClose := make([]*client.Client, 0)
+	keysToRemove := make([]string, 0)
 
 	for serverKey, conn := range p.connections {
 		conn.mutex.RLock()
@@ -444,11 +522,34 @@ func (p *StdioConnectionPool) cleanupStaleConnections() {
 
 		// Remove connections that are too old or haven't been used recently
 		if age > time.Hour || lastUsed > 30*time.Minute {
+<<<<<<< HEAD
 			p.logger.Debug("Removing stale connection",
 				loggerv2.String("server", serverKey),
 				loggerv2.String("age", age.String()),
 				loggerv2.String("last_used", lastUsed.String()))
 			p.removeConnection(serverKey)
+=======
+			p.logger.Infof("🔧 [STDIO POOL] Marking stale connection for removal: %s (age: %v, last_used: %v)", serverKey, age, lastUsed)
+			keysToRemove = append(keysToRemove, serverKey)
+			if conn.client != nil {
+				clientsToClose = append(clientsToClose, conn.client)
+			}
+		}
+	}
+
+	// Remove from map while holding lock
+	for _, key := range keysToRemove {
+		delete(p.connections, key)
+	}
+
+	p.mutex.Unlock()
+
+	// Close all stale connections outside the mutex to avoid blocking
+	if len(clientsToClose) > 0 {
+		p.logger.Infof("🔧 [STDIO POOL] Closing %d stale connections outside mutex", len(clientsToClose))
+		for _, client := range clientsToClose {
+			_ = client.Close() // Ignore errors during cleanup
+>>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 		}
 	}
 }

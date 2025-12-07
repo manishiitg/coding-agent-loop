@@ -7,19 +7,22 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // HumanControlledTodoPlannerLearningReadingTemplate holds template variables for learning reading prompts
 type HumanControlledTodoPlannerLearningReadingTemplate struct {
-	StepTitle           string
-	StepDescription     string
-	LearningsPath       string // Learnings folder path for reading learning files and scripts/code
-	IsCodeExecutionMode string // "true" or "false" - determines which learnings folder to read from
+	StepTitle               string
+	StepDescription         string
+	LearningsPath           string // Learnings folder path for reading learning files and scripts/code
+	IsCodeExecutionMode     string // "true" or "false" - determines which learnings folder to read from
+	StepContextDependencies string // Context files from previous steps (comma-separated)
+	WorkspacePath           string // Workspace path for reading context dependency files
 }
 
 // HumanControlledTodoPlannerLearningReadingAgent reads learning files and code patterns only
@@ -61,6 +64,9 @@ func (hctplra *HumanControlledTodoPlannerLearningReadingAgent) Execute(ctx conte
 func (hctplra *HumanControlledTodoPlannerLearningReadingAgent) learningReadingSystemPromptProcessor(templateVars map[string]string) string {
 	learningsPath := templateVars["LearningsPath"]
 	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
+	workspacePath := templateVars["WorkspacePath"]
+	stepContextDependencies := templateVars["StepContextDependencies"]
+	hasContextDependencies := stepContextDependencies != ""
 
 	// Get current date and time
 	now := time.Now()
@@ -70,86 +76,123 @@ func (hctplra *HumanControlledTodoPlannerLearningReadingAgent) learningReadingSy
 	// Define the system prompt template
 	templateStr := `# Learning Reading Agent
 
-## 📅 **CURRENT SESSION INFORMATION**
-**Date**: {{.CurrentDate}}
-**Time**: {{.CurrentTime}}
+## 📅 Current Session
+**Date**: {{.CurrentDate}} | **Time**: {{.CurrentTime}}
 
-## 🤖 AGENT IDENTITY
-- **Role**: Learning Reading Agent
-- **Responsibility**: Discover and read step-specific learning files{{if .IsCodeExecutionMode}} and Go code patterns{{else}} and scripts{{end}} from the learnings folder
-- **Mode**: Learning discovery only (NO execution)
+## 🤖 Agent Identity
+- **Role**: Learning Reading Agent (Discovery Only - NO Execution)  
+- **Responsibility**: Discover and read step-specific learning files{{if .IsCodeExecutionMode}} and Go code patterns{{else}} and scripts{{end}}  
+- **Output**: Conversation history will be passed to execution agent
 
-## 📁 FILE PERMISSIONS
+## 📁 File Permissions
+**READ ONLY**: {{.LearningsPath}}/{{if and .IsCodeExecutionMode .HasContextDependencies}}, {{.WorkspacePath}}/ (context files){{end}}  
+**NO WRITE** - This agent only reads learnings
 
-**READ ONLY:**
-- Learning files/scripts from {{.LearningsPath}}/ (read-only access)
-- **NO** writing permissions - this agent only reads learnings
+## 🎯 Learning Discovery Flow
 
-## 🔍 LEARNING DISCOVERY GUIDELINES
+**BE SELECTIVE: Only read files DIRECTLY relevant to the current step**
 
-**Your ONLY task is to discover and read STEP-SPECIFIC learning files and code patterns. You do NOT execute any steps.**
+{{if and .IsCodeExecutionMode .HasContextDependencies}}┌─────────────────────────────────────────┐
+│ 1. Read Context Dependencies FIRST     │
+│    (from {{.WorkspacePath}}/)           │
+│    - Understand file structure/format   │
+│    - Identify data patterns              │
+│    - See how to work with context files  │
+└─────────────────────────────────────────┘
+              ↓
+{{end}}┌─────────────────────────────────────────┐
+│ {{if and .IsCodeExecutionMode .HasContextDependencies}}2{{else}}1{{end}}. Analyze Step Title & Description      │
+│    - Extract KEY CONCEPTS & KEYWORDS     │
+│    - Identify technologies/operations    │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│ {{if and .IsCodeExecutionMode .HasContextDependencies}}3{{else}}2{{end}}. List Available Files               │
+│    - {{.LearningsPath}}/                │
+{{if .IsCodeExecutionMode}}│    - {{.LearningsPath}}/code/           │{{else}}│    - {{.LearningsPath}}/scripts/        │{{end}}
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│ {{if and .IsCodeExecutionMode .HasContextDependencies}}4{{else}}3{{end}}. Select by Keyword Match            │
+│    Priority 1: Exact keyword match       │
+│    Priority 2: Related keywords          │
+│    Priority 3: Relevant general files    │
+│    SKIP: Unrelated files/topics          │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│ {{if and .IsCodeExecutionMode .HasContextDependencies}}5{{else}}4{{end}}. Read Selected Files ONLY           │{{if .IsCodeExecutionMode}}
+│    - *{keyword}_learning.md              │
+│    - *{keyword}_code.go                  │{{else}}
+│    - *{keyword}_learning.md              │
+│    - *{keyword}_script.py                │{{end}}
+│    Quality > Quantity (2-3 relevant      │
+│    files better than 10+ unrelated)      │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│ {{if and .IsCodeExecutionMode .HasContextDependencies}}6{{else}}5{{end}}. Summarize Findings                 │{{if and .IsCodeExecutionMode .HasContextDependencies}}
+│    - Context structure learned           │
+│    - Files read + relevance              │
+│    - Key patterns/code examples          │
+│    - How context informs learnings       │{{else}}
+│    - Files read + relevance              │
+│    - Key patterns{{if .IsCodeExecutionMode}}/code examples{{else}}/scripts{{end}}       │{{end}}
+└─────────────────────────────────────────┘
 
-**CRITICAL: Be SELECTIVE - Only read files that are DIRECTLY relevant to the current step. Do NOT read all files.**
+## 📤 Output Requirements
 
-1. **Understand the Step First**:
-   - Analyze the step title and description to identify KEY CONCEPTS and KEYWORDS
-   - Focus on what the step is trying to accomplish
-   - Identify the main technologies, tools, or operations mentioned
+**CRITICAL: Preserve Workflow Structure**
+If the learning file contains an **EXECUTION WORKFLOW** section, you MUST preserve it exactly:
+- Keep the step sequence (Step 1, Step 2, Step 3...)
+- Keep all tool names and arguments
+- Keep prerequisites, outputs, and on_error sections
+- Keep data flow documentation
+- Keep decision points and error recovery
 
-2. **List files to discover options**:
-   - Use list_workspace_files to discover files in {{.LearningsPath}}/ (max_depth: 1)
-   {{if .IsCodeExecutionMode}}
-   - Use list_workspace_files to discover Go code files in {{.LearningsPath}}/code/ (max_depth: 1)
-   {{else}}
-   - Use list_workspace_files to discover Python scripts in {{.LearningsPath}}/scripts/ (max_depth: 1)
-   {{end}}
+{{if and .IsCodeExecutionMode .HasContextDependencies}}- **Context Dependencies**: What you learned about file structure/format from context files  
+{{end}}- **Files Read**: List with brief relevance explanation  
+- **Key Insights**: 
+  - **If EXECUTION WORKFLOW exists**: Present the COMPLETE workflow with all steps, data flow, and error recovery
+  - **If only patterns exist**: Main patterns, best practices, {{if .IsCodeExecutionMode}}code examples{{else}}script examples{{end}}
+- **Relevance**: Why each file applies to current step{{if and .IsCodeExecutionMode .HasContextDependencies}}  
+- **Context Integration**: How context dependencies inform learning selection{{end}}
 
-3. **Selective File Matching - READ ONLY STEP-SPECIFIC FILES**:
-   - **Priority 1**: Files whose names contain EXACT keywords from the step title/description
-   - **Priority 2**: Files whose names contain RELATED keywords (same concept, different wording)
-   - **Priority 3**: General learnings files ONLY if they mention concepts relevant to this step
-   - **DO NOT READ**: Files that are clearly about different topics, unrelated steps, or general learnings that don't apply
+**WORKFLOW PRESENTATION FORMAT:**
+When presenting workflow learnings, structure them clearly for the execution agent:
 
-4. **File Naming Patterns to Look For**:
-   - Step-specific: *{step_keyword}_learning.md{{if .IsCodeExecutionMode}}, *{step_keyword}_code.go{{else}}, *{step_keyword}_script.py{{end}}
-   - Related: Files with similar concepts but different wording
-   - General: Only if they contain relevant patterns (check file names first, don't read blindly)
+` + "```" + `
+🎯 EXECUTION WORKFLOW [Runs: X | Success: Y%]
 
-5. **Read Only Selected Files**:
-   - Read files that match the step keywords/concepts
-   - Skip files that are clearly unrelated
-   - If unsure, check file name relevance before reading
+Step 1: tool_name: server.tool
+  arguments: {...}
+  prerequisites: ...
+  outputs: ...
+  on_error: ...
 
-{{if .IsCodeExecutionMode}}
-6. **Code Pattern Selection**:
-   - Read Go code files that match step keywords
-   - Focus on code patterns that solve similar problems to the current step
-   - Skip code patterns for unrelated operations
-{{else}}
-6. **Script Selection**:
-   - Read Python scripts that match step keywords
-   - Focus on scripts that perform similar operations to the current step
-   - Skip scripts for unrelated tasks
-{{end}}
+Step 2: tool_name: server.tool
+  arguments: {...} (uses output from Step 1)
+  prerequisites: Step 1 completed
+  outputs: ...
+  on_error: ...
 
-**Discovery Strategy**: 
-- **Be SELECTIVE**: Only read files SPECIFIC to this step or DIRECTLY RELATED
-- **Quality over Quantity**: Better to read 2-3 highly relevant files than 10+ unrelated files
-- **Name-based matching**: Use keywords from step title/description to identify relevant files
-- **Skip unrelated files**: Don't read files about different topics or unrelated steps
+📊 DATA FLOW:
+Step 1 → outputs: X
+Step 2 → inputs: X from Step 1 → outputs: Y
 
-## 📤 Output Format
+🔀 DECISION POINTS:
+- After Step 1: If X then Y, else Z
 
-Provide a focused summary of:
-- **Files Discovered**: List the step-specific learning files and{{if .IsCodeExecutionMode}} Go code patterns{{else}} scripts{{end}} you found
-- **Files Read**: List ONLY the files you actually read (with brief descriptions of why they're relevant)
-- **Key Insights**: Summarize the main patterns, best practices, and{{if .IsCodeExecutionMode}} code examples{{else}} script examples{{end}} found in the step-specific files
-- **Relevance**: Explain why each file/{{if .IsCodeExecutionMode}}code pattern{{else}}script{{end}} is relevant to the current step
+⚠️ PREREQUISITES:
+- Before workflow: ...
+- Step 1: ...
 
-**Important**: 
-- Be SELECTIVE - only read and report files that are directly relevant to this step
-- Your conversation history will be passed to the execution agent
-- Focus on quality, step-specific learnings rather than reading everything`
+🔄 ERROR RECOVERY:
+- Step 1 fails: ...
+- Step 2 fails: ...
+` + "```" + `
+
+Focus on quality over quantity - your conversation history goes to the execution agent.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("learningReadingSystemPrompt").Parse(templateStr)
@@ -159,10 +202,12 @@ Provide a focused summary of:
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, map[string]interface{}{
-		"LearningsPath":       learningsPath,
-		"IsCodeExecutionMode": isCodeExecutionMode,
-		"CurrentDate":         currentDate,
-		"CurrentTime":         currentTime,
+		"LearningsPath":          learningsPath,
+		"IsCodeExecutionMode":    isCodeExecutionMode,
+		"WorkspacePath":          workspacePath,
+		"HasContextDependencies": hasContextDependencies,
+		"CurrentDate":            currentDate,
+		"CurrentTime":            currentTime,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing learning reading system prompt template: %v", err)
@@ -175,50 +220,59 @@ Provide a focused summary of:
 func (hctplra *HumanControlledTodoPlannerLearningReadingAgent) learningReadingUserMessageProcessor(templateVars map[string]string) string {
 	// Create template data
 	templateData := HumanControlledTodoPlannerLearningReadingTemplate{
-		StepTitle:           templateVars["StepTitle"],
-		StepDescription:     templateVars["StepDescription"],
-		LearningsPath:       templateVars["LearningsPath"],
-		IsCodeExecutionMode: templateVars["IsCodeExecutionMode"],
+		StepTitle:               templateVars["StepTitle"],
+		StepDescription:         templateVars["StepDescription"],
+		LearningsPath:           templateVars["LearningsPath"],
+		IsCodeExecutionMode:     templateVars["IsCodeExecutionMode"],
+		StepContextDependencies: templateVars["StepContextDependencies"],
+		WorkspacePath:           templateVars["WorkspacePath"],
 	}
 
 	// Define the user message template
-	templateStr := `## 🎯 PRIMARY TASK - DISCOVER AND READ STEP-SPECIFIC LEARNINGS
+	templateStr := `## 🎯 Discover Learnings for: {{.StepTitle}}
 
-**Your ONLY task**: Discover and read learning files{{if eq .IsCodeExecutionMode "true"}} and Go code patterns{{else}} and scripts{{end}} that are SPECIFIC to the current step.
-
-**CURRENT STEP**: {{.StepTitle}}
 **STEP DESCRIPTION**: {{.StepDescription}}
+{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}
 
-**CRITICAL: Be SELECTIVE - Only read files that are DIRECTLY relevant to this step.**
+## 📋 Context Dependencies (Read FIRST in Code Execution Mode)
+**Files**: {{.StepContextDependencies}}  
+**Location**: {{.WorkspacePath}}/  
+**Why**: Understand file structure/format to select better learning files and code patterns
+{{end}}
 
-**Instructions**:
-1. **Analyze the step** - Identify key concepts, keywords, and technologies from the step title and description
-2. **List files to discover options**:
-   - List files in {{.LearningsPath}}/ to see available learning files
-   {{if eq .IsCodeExecutionMode "true"}}
-   - List Go code files in {{.LearningsPath}}/code/ to see available code patterns
-   {{else}}
-   - List Python scripts in {{.LearningsPath}}/scripts/ to see available scripts
-   {{end}}
-3. **Select files by relevance**:
-   - **Read files** whose names contain keywords from the step title/description
-   - **Read files** that are clearly about the same topic/concept as this step
-   - **Skip files** that are about different topics or unrelated steps
-   - **Skip general learnings** unless they mention concepts relevant to this step
-4. **Read only selected files**:
-   {{if eq .IsCodeExecutionMode "true"}}
-   - Read step-specific learning markdown files and Go code patterns
-   {{else}}
-   - Read step-specific learning markdown files and Python scripts
-   {{end}}
-   - Don't read files that are clearly unrelated
-5. **Summarize your findings** - Provide a focused summary of step-specific learnings you discovered
+## ✅ Discovery Checklist
+{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}1. ✓ Read context dependencies from {{.WorkspacePath}}/ (understand file structure)
+2{{else}}1{{end}}. ✓ Analyze step - extract keywords and technologies
+{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}3{{else}}2{{end}}. ✓ List files in {{.LearningsPath}}/{{if eq .IsCodeExecutionMode "true"}} and {{.LearningsPath}}/code/{{else}} and {{.LearningsPath}}/scripts/{{end}}
+{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}4{{else}}3{{end}}. ✓ Select by keyword match:
+   - Priority 1: Exact keyword in filename
+   - Priority 2: Related keywords
+   - Priority 3: Relevant general files
+   - SKIP: Unrelated files/topics
+{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}5{{else}}4{{end}}. ✓ Read ONLY selected files ({{if eq .IsCodeExecutionMode "true"}}*.md, *.go{{else}}*.md, *.py{{end}})
+{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}6{{else}}5{{end}}. ✓ Summarize:{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}
+   - Context structure learned
+{{end}}   - Files read + why relevant
+   - Key patterns{{if eq .IsCodeExecutionMode "true"}}/code examples{{else}}/scripts{{end}}{{if and (eq .IsCodeExecutionMode "true") .StepContextDependencies}}
+   - How context informs learnings{{end}}
 
-**Important**: 
-- You are ONLY discovering and reading learnings - you do NOT execute any steps
-- Be SELECTIVE - quality over quantity, only read step-specific files
-- Your conversation history will be passed to the execution agent
-- Focus on files that directly help with this specific step`
+## 🎯 CRITICAL: Workflow Preservation
+
+**If learning file contains EXECUTION WORKFLOW:**
+- Present the COMPLETE workflow structure to the execution agent
+- Include ALL steps in order (Step 1 → Step 2 → Step 3...)
+- Include tool names, arguments, prerequisites, outputs, on_error
+- Include data flow between steps
+- Include decision points and error recovery
+- The execution agent will follow this workflow EXACTLY
+
+**If learning file contains only patterns:**
+- Summarize key patterns and approaches
+- Note which tools/scripts worked best
+- Include failure patterns to avoid
+
+**Remember**: Quality > Quantity. Your conversation history goes to the execution agent.
+The execution agent relies on your summary to execute the step correctly.`
 
 	// Parse and execute the template
 	tmpl, err := template.New("learningReadingUserMessage").Parse(templateStr)

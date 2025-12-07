@@ -109,11 +109,6 @@ func NormalizeLLMTools(tools []llmtypes.Tool) {
 	for i := range tools {
 		if tools[i].Function != nil && tools[i].Function.Parameters != nil {
 			toolName := tools[i].Function.Name
-			// Debug: log the actual type and structure
-			paramsBytes, _ := json.Marshal(tools[i].Function.Parameters)
-			if len(paramsBytes) > 200 {
-				paramsBytes = paramsBytes[:200]
-			}
 
 			// Handle different parameter types - convert to map for normalization
 			var paramsMap map[string]interface{}

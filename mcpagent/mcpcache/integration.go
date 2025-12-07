@@ -6,11 +6,7 @@ import (
 	"strings"
 	"time"
 
-<<<<<<< HEAD
 	loggerv2 "mcpagent/logger/v2"
-=======
-	"mcpagent/logger"
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -1034,14 +1030,14 @@ func InvalidateServerCache(configPath, serverName string, logger loggerv2.Logger
 // GetFreshConnection creates a fresh MCP connection for a server, bypassing any cache
 // This is used for broken pipe recovery when existing connections are dead
 // It invalidates the cache first, then creates a new connection
-func GetFreshConnection(ctx context.Context, serverName, configPath string, logger logger.ExtendedLogger) (mcpclient.ClientInterface, error) {
-	logger.Infof("🔧 [FRESH CONNECTION] Creating fresh MCP client for server: %s", serverName)
+func GetFreshConnection(ctx context.Context, serverName, configPath string, logger loggerv2.Logger) (mcpclient.ClientInterface, error) {
+	logger.Info("🔧 [FRESH CONNECTION] Creating fresh MCP client for server", loggerv2.String("server", serverName))
 
 	// Invalidate cache first to force fresh connection
 	if invalidateErr := InvalidateServerCache(configPath, serverName, logger); invalidateErr != nil {
-		logger.Warnf("🔧 [FRESH CONNECTION] Failed to invalidate cache for server %s: %v (continuing anyway)", serverName, invalidateErr)
+		logger.Warn("🔧 [FRESH CONNECTION] Failed to invalidate cache for server (continuing anyway)", loggerv2.String("server", serverName), loggerv2.Error(invalidateErr))
 	} else {
-		logger.Infof("🔧 [FRESH CONNECTION] Invalidated cache for server: %s", serverName)
+		logger.Info("🔧 [FRESH CONNECTION] Invalidated cache for server", loggerv2.String("server", serverName))
 	}
 
 	// Get fresh connection using existing infrastructure
@@ -1063,7 +1059,7 @@ func GetFreshConnection(ctx context.Context, serverName, configPath string, logg
 		return nil, fmt.Errorf("server %s not found in fresh connection result", serverName)
 	}
 
-	logger.Infof("✅ [FRESH CONNECTION] Successfully created fresh MCP client for server: %s", serverName)
+	logger.Info("✅ [FRESH CONNECTION] Successfully created fresh MCP client for server", loggerv2.String("server", serverName))
 	return client, nil
 }
 
@@ -1138,15 +1134,10 @@ func ValidateServerCache(serverName, configPath string, tracers []observability.
 			return true
 		} else {
 			// Cache expired - invalidate
-<<<<<<< HEAD
-			cacheManager.InvalidateByServer(configPath, serverName)
-			logger.Debug("Cache validation: server expired and invalidated", loggerv2.String("server", serverName))
-=======
 			if err := cacheManager.InvalidateByServer(configPath, serverName); err != nil {
-				logger.Warnf("Failed to invalidate cache for server %s: %v", serverName, err)
+				logger.Warn("Failed to invalidate cache for server", loggerv2.String("server", serverName), loggerv2.Error(err))
 			}
-			logger.Debugf("Cache validation: %s expired and invalidated", serverName)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+			logger.Debug("Cache validation: server expired and invalidated", loggerv2.String("server", serverName))
 			return false
 		}
 	} else {

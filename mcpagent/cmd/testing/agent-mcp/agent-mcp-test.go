@@ -23,10 +23,13 @@ This test:
 3. Runs the agent with a question that requires tool usage
 4. Verifies that MCP tools were called and used correctly
 
+Note: This test doesn't use traditional asserts. Logs are analyzed (manually or by LLM) to verify success.
+See criteria.md in the agent-mcp folder for detailed log analysis criteria.
+
 Examples:
-  mcpagent-test test agent-mcp
-  mcpagent-test test agent-mcp --provider openai --model gpt-4.1-mini
-  mcpagent-test test agent-mcp --verbose`,
+  mcpagent-test test agent-mcp --log-file logs/agent-mcp-test.log
+  mcpagent-test test agent-mcp --provider openai --model gpt-4.1-mini --log-file logs/agent-mcp-test.log
+  mcpagent-test test agent-mcp --verbose --log-file logs/agent-mcp-test.log`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logger := testutils.NewTestLoggerFromViper()
 		logger.Info("=== Agent MCP Test ===")
@@ -165,11 +168,23 @@ func testAgentWithMCPServers(log loggerv2.Logger) error {
 		log.Info("✅ Tracer flushed")
 	}
 
+	logFile := viper.GetString("log-file")
+
 	log.Info("✅ Agent MCP test completed",
 		loggerv2.String("trace_id", string(traceID)),
 		loggerv2.String("response_preview", truncateString(response, 200)),
 		loggerv2.Int("response_length", len(response)),
 		loggerv2.String("duration", duration.String()))
+
+	log.Info("")
+	if logFile != "" {
+		log.Info("📋 Log file saved", loggerv2.String("path", logFile))
+		log.Info("   See criteria.md in agent-mcp folder for log analysis criteria")
+	} else {
+		log.Info("📋 See criteria.md in agent-mcp folder for log analysis criteria")
+		log.Info("   Tip: Use --log-file to save logs for analysis")
+	}
+	log.Info("   These tests don't use traditional asserts - logs are analyzed by LLM to verify success")
 
 	return nil
 }

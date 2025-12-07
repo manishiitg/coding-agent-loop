@@ -68,13 +68,8 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 
 		if !needsHealthCheck {
 			// Connection already marked unhealthy, remove it
-<<<<<<< HEAD
-			p.logger.Debug("Existing connection unhealthy, removing", loggerv2.String("server", serverKey))
-			p.removeConnection(serverKey)
-=======
-			p.logger.Infof("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey)
+			p.logger.Info(fmt.Sprintf("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey), loggerv2.String("server", serverKey))
 			clientToClose = p.removeConnection(serverKey)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 			existingConn = nil
 		}
 	}
@@ -82,7 +77,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 
 	// Close the connection outside the mutex to avoid blocking other threads
 	if clientToClose != nil {
-		p.logger.Infof("🔧 [STDIO POOL] Closing unhealthy connection outside mutex: %s", serverKey)
+		p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Closing unhealthy connection outside mutex: %s", serverKey), loggerv2.String("server", serverKey))
 		_ = clientToClose.Close() // Ignore errors during cleanup
 	}
 
@@ -106,19 +101,14 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 			p.mutex.Lock()
 			var clientToClose *client.Client
 			if _, stillExists := p.connections[serverKey]; stillExists {
-<<<<<<< HEAD
-				p.logger.Debug("Existing connection unhealthy, removing", loggerv2.String("server", serverKey))
-				p.removeConnection(serverKey)
-=======
-				p.logger.Infof("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey)
+				p.logger.Info(fmt.Sprintf("❌ [STDIO POOL] Existing connection unhealthy, removing: %s", serverKey), loggerv2.String("server", serverKey))
 				clientToClose = p.removeConnection(serverKey)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 			}
 			p.mutex.Unlock()
 
 			// Close the connection outside the mutex to avoid blocking
 			if clientToClose != nil {
-				p.logger.Infof("🔧 [STDIO POOL] Closing unhealthy connection outside mutex: %s", serverKey)
+				p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Closing unhealthy connection outside mutex: %s", serverKey), loggerv2.String("server", serverKey))
 				_ = clientToClose.Close() // Ignore errors during cleanup
 			}
 		}
@@ -155,13 +145,7 @@ func (p *StdioConnectionPool) GetConnection(ctx context.Context, serverKey strin
 // createNewConnection creates a new stdio connection
 func (p *StdioConnectionPool) createNewConnection(ctx context.Context, serverKey string, command string, args []string, env []string) (*StdioConnection, error) {
 	startTime := time.Now()
-<<<<<<< HEAD
-	p.logger.Debug("Creating new stdio connection",
-		loggerv2.String("command", command),
-		loggerv2.Any("args", args))
-=======
-	p.logger.Infof("🔧 [STDIO POOL] Creating new stdio connection: %s %v", command, args)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+	p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Creating new stdio connection: %s %v", command, args), loggerv2.String("command", command), loggerv2.Any("args", args))
 
 	// Debug: Log environment variables (but mask sensitive values)
 	if p.logger != nil {
@@ -336,22 +320,8 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 	_, err := client.ListTools(testCtx, mcp.ListToolsRequest{})
 	if err != nil {
 		// 🔧 ENHANCED BROKEN PIPE DETECTION IN HEALTH CHECK
-<<<<<<< HEAD
-		errorMessage := err.Error()
-		isBrokenPipe := strings.Contains(errorMessage, "Broken pipe") ||
-			strings.Contains(errorMessage, "broken pipe") ||
-			strings.Contains(errorMessage, "[Errno 32]") ||
-			strings.Contains(errorMessage, "EOF") ||
-			strings.Contains(errorMessage, "connection reset")
-
-		if isBrokenPipe {
-			p.logger.Debug("Broken pipe detected in health check, marking unhealthy",
-				loggerv2.String("server", serverKey),
-				loggerv2.Error(err))
-=======
 		if IsBrokenPipeError(err) {
-			p.logger.Infof("🔧 [STDIO POOL] Broken pipe detected in health check, marking unhealthy: %s, error: %v", serverKey, err)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+			p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Broken pipe detected in health check, marking unhealthy: %s", serverKey), loggerv2.String("server", serverKey), loggerv2.Error(err))
 		} else {
 			p.logger.Debug("Health check failed, marking unhealthy",
 				loggerv2.String("server", serverKey),
@@ -373,14 +343,7 @@ func (p *StdioConnectionPool) isConnectionHealthy(conn *StdioConnection) bool {
 // It does NOT call Close() - caller must close the connection outside the mutex
 func (p *StdioConnectionPool) removeConnection(serverKey string) *client.Client {
 	if conn, exists := p.connections[serverKey]; exists {
-<<<<<<< HEAD
-		p.logger.Debug("Removing connection", loggerv2.String("server", serverKey))
-		if conn.client != nil {
-			conn.client.Close()
-		}
-=======
-		p.logger.Infof("🔧 [STDIO POOL] Removing connection from pool: %s", serverKey)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+		p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Removing connection from pool: %s", serverKey), loggerv2.String("server", serverKey))
 		delete(p.connections, serverKey)
 		if conn.client != nil {
 			return conn.client
@@ -395,21 +358,11 @@ func (p *StdioConnectionPool) ForceRemoveBrokenConnection(serverKey string) {
 	clientToClose := p.removeConnection(serverKey)
 	p.mutex.Unlock()
 
-<<<<<<< HEAD
-	if conn, exists := p.connections[serverKey]; exists {
-		p.logger.Debug("Force removing broken connection", loggerv2.String("server", serverKey))
-		if conn.client != nil {
-			conn.client.Close()
-		}
-		delete(p.connections, serverKey)
-		p.logger.Debug("Successfully force removed broken connection", loggerv2.String("server", serverKey))
-=======
 	// Close the connection outside the mutex to avoid blocking
 	if clientToClose != nil {
-		p.logger.Infof("🔧 [STDIO POOL] Closing broken connection outside mutex: %s", serverKey)
+		p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Closing broken connection outside mutex: %s", serverKey), loggerv2.String("server", serverKey))
 		_ = clientToClose.Close() // Ignore errors during cleanup
-		p.logger.Infof("✅ [STDIO POOL] Successfully force removed broken connection: %s", serverKey)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+		p.logger.Info(fmt.Sprintf("✅ [STDIO POOL] Successfully force removed broken connection: %s", serverKey), loggerv2.String("server", serverKey))
 	} else {
 		p.logger.Debug("No connection found to force remove", loggerv2.String("server", serverKey))
 	}
@@ -421,33 +374,20 @@ func (p *StdioConnectionPool) CloseConnection(serverKey string) {
 	clientToClose := p.removeConnection(serverKey)
 	p.mutex.Unlock()
 
-<<<<<<< HEAD
-	p.logger.Debug("Closing connection", loggerv2.String("server", serverKey))
-	p.removeConnection(serverKey)
-=======
 	// Close the connection outside the mutex to avoid blocking
 	if clientToClose != nil {
-		p.logger.Infof("🔧 [STDIO POOL] Closing connection outside mutex: %s", serverKey)
+		p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Closing connection outside mutex: %s", serverKey), loggerv2.String("server", serverKey))
 		_ = clientToClose.Close() // Ignore errors during cleanup
 	}
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 }
 
 // CloseAllConnections closes all connections in the pool
 func (p *StdioConnectionPool) CloseAllConnections() {
 	p.mutex.Lock()
-<<<<<<< HEAD
-	defer p.mutex.Unlock()
-
-	p.logger.Debug("Closing all connections")
-	for serverKey, conn := range p.connections {
-		p.logger.Debug("Closing connection", loggerv2.String("server", serverKey))
-=======
 	// Collect all clients to close
 	clientsToClose := make([]*client.Client, 0, len(p.connections))
 	for serverKey, conn := range p.connections {
-		p.logger.Infof("🔧 [STDIO POOL] Removing connection from pool: %s", serverKey)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+		p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Removing connection from pool: %s", serverKey), loggerv2.String("server", serverKey))
 		if conn.client != nil {
 			clientsToClose = append(clientsToClose, conn.client)
 		}
@@ -456,7 +396,7 @@ func (p *StdioConnectionPool) CloseAllConnections() {
 	p.mutex.Unlock()
 
 	// Close all connections outside the mutex to avoid blocking
-	p.logger.Infof("🔧 [STDIO POOL] Closing %d connections outside mutex", len(clientsToClose))
+	p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Closing %d connections outside mutex", len(clientsToClose)), loggerv2.Int("count", len(clientsToClose)))
 	for _, client := range clientsToClose {
 		_ = client.Close() // Ignore errors during cleanup
 	}
@@ -522,14 +462,7 @@ func (p *StdioConnectionPool) cleanupStaleConnections() {
 
 		// Remove connections that are too old or haven't been used recently
 		if age > time.Hour || lastUsed > 30*time.Minute {
-<<<<<<< HEAD
-			p.logger.Debug("Removing stale connection",
-				loggerv2.String("server", serverKey),
-				loggerv2.String("age", age.String()),
-				loggerv2.String("last_used", lastUsed.String()))
-			p.removeConnection(serverKey)
-=======
-			p.logger.Infof("🔧 [STDIO POOL] Marking stale connection for removal: %s (age: %v, last_used: %v)", serverKey, age, lastUsed)
+			p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Marking stale connection for removal: %s", serverKey), loggerv2.String("server", serverKey), loggerv2.String("age", age.String()), loggerv2.String("last_used", lastUsed.String()))
 			keysToRemove = append(keysToRemove, serverKey)
 			if conn.client != nil {
 				clientsToClose = append(clientsToClose, conn.client)
@@ -546,10 +479,9 @@ func (p *StdioConnectionPool) cleanupStaleConnections() {
 
 	// Close all stale connections outside the mutex to avoid blocking
 	if len(clientsToClose) > 0 {
-		p.logger.Infof("🔧 [STDIO POOL] Closing %d stale connections outside mutex", len(clientsToClose))
+		p.logger.Info(fmt.Sprintf("🔧 [STDIO POOL] Closing %d stale connections outside mutex", len(clientsToClose)), loggerv2.Int("count", len(clientsToClose)))
 		for _, client := range clientsToClose {
 			_ = client.Close() // Ignore errors during cleanup
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 		}
 	}
 }

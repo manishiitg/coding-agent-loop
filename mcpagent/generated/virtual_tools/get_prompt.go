@@ -15,20 +15,23 @@ type GetPromptParams struct {
 // Fetch the full content of a specific prompt by name and server
 //
 // Usage: Import package and call with typed struct
-// Example: output, err := GetPrompt(GetPromptParams{
+//       Panics on API errors - check output string for tool execution errors
+// Example: output := GetPrompt(GetPromptParams{
 //     Name: "value",
 //     // ... other parameters
 // })
+// // Check output for errors (e.g., strings.HasPrefix(output, "Error:"))
+// // Handle tool execution error if detected
 //
-func GetPrompt(params GetPromptParams) (string, error) {
+func GetPrompt(params GetPromptParams) string {
 	// Convert params struct to map for API call
 	paramsBytes, err := json.Marshal(params)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal parameters: %w", err)
+		panic(fmt.Sprintf("failed to marshal parameters: %%v", err))
 	}
 	var paramsMap map[string]interface{}
 	if err := json.Unmarshal(paramsBytes, &paramsMap); err != nil {
-		return "", fmt.Errorf("failed to unmarshal parameters: %w", err)
+		panic(fmt.Sprintf("failed to unmarshal parameters: %%v", err))
 	}
 
 	// Build request payload and call common API client

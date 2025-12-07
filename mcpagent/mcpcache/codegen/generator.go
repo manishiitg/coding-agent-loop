@@ -8,11 +8,7 @@ import (
 	"strings"
 	"time"
 
-<<<<<<< HEAD
 	loggerv2 "mcpagent/logger/v2"
-=======
-	"mcpagent/logger"
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -69,25 +65,11 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 	// Generate common API client file - always overwrite to ensure it matches current templates
 	apiClientFile := filepath.Join(packageDir, "api_client.go")
 	apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
-<<<<<<< HEAD
-	// Use O_EXCL to atomically create file only if it doesn't exist
-	f, err := os.OpenFile(apiClientFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-	if err == nil {
-		_, writeErr := f.WriteString(apiClientCode)
-		f.Close()
-		if writeErr != nil {
-			logger.Warn("Failed to write API client file", loggerv2.Error(writeErr))
-		} else {
-			logger.Debug("Generated common API client file", loggerv2.String("file", apiClientFile))
-		}
-	} else if !os.IsExist(err) {
-		logger.Warn("Failed to create API client file", loggerv2.Error(err))
-=======
+	// Always overwrite to ensure it matches current templates
 	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
-		logger.Warnf("Failed to write API client file: %v", err)
+		logger.Warn("Failed to write API client file", loggerv2.Error(err))
 	} else {
-		logger.Debugf("Generated/updated common API client file: %s", apiClientFile)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+		logger.Debug("Generated/updated common API client file", loggerv2.String("file", apiClientFile))
 	}
 
 	generatedCount := 0
@@ -146,10 +128,10 @@ func GenerateServerToolsCode(entry *CacheEntryForCodeGen, serverName string, gen
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 		goModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
 		if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
-			logger.Warnf("Failed to create go.mod for package %s: %v", packageName, err)
+			logger.Warn("Failed to create go.mod for package", loggerv2.String("package", packageName), loggerv2.Error(err))
 			// Don't fail the whole operation, but log the warning
 		} else {
-			logger.Debugf("✅ Created go.mod for package %s", packageName)
+			logger.Debug("Created go.mod for package", loggerv2.String("package", packageName))
 		}
 	}
 
@@ -232,30 +214,13 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 		// Generate common API client file - always overwrite to ensure it matches current templates
 		apiClientFile := filepath.Join(packageDir, "api_client.go")
 		apiClientCode := GeneratePackageHeader(packageName) + "\n" + GenerateAPIClient(timeout)
-<<<<<<< HEAD
-		// Use O_EXCL to atomically create file only if it doesn't exist
-		f, err := os.OpenFile(apiClientFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-		if err == nil {
-			_, writeErr := f.WriteString(apiClientCode)
-			f.Close()
-			if writeErr != nil {
-				if logger != nil {
-					logger.Warn("Failed to write API client file", loggerv2.Error(writeErr))
-				}
-			} else if logger != nil {
-				logger.Debug("Generated common API client file", loggerv2.String("file", apiClientFile))
-			}
-		} else if !os.IsExist(err) {
-			if logger != nil {
-				logger.Warn("Failed to create API client file", loggerv2.Error(err))
-=======
+		// Always overwrite to ensure it matches current templates
 		if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
 			if logger != nil {
-				logger.Warnf("Failed to write API client file: %v", err)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+				logger.Warn("Failed to write API client file", loggerv2.Error(err))
 			}
 		} else if logger != nil {
-			logger.Debugf("Generated/updated common API client file: %s", apiClientFile)
+			logger.Debug("Generated/updated common API client file", loggerv2.String("file", apiClientFile))
 		}
 
 		generatedCount := 0
@@ -272,7 +237,7 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 
 			// Skip if file already exists (tool definitions are static, no need to regenerate)
 			if _, err := os.Stat(goFile); err == nil {
-				logger.Debugf("Skipping %s - file already exists", toolName)
+				logger.Debug("Skipping tool - file already exists", loggerv2.String("tool", toolName))
 				continue
 			}
 
@@ -312,13 +277,10 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 				loggerv2.String("package_dir", packageDir))
 		}
 
-<<<<<<< HEAD
 		logger.Info("Generated Go code for category tools",
 			loggerv2.String("category", category),
 			loggerv2.Int("tools_count", generatedCount),
 			loggerv2.String("package_dir", packageDir))
-=======
-		logger.Infof("Generated Go code for %s tools: %d tools in %s", category, generatedCount, packageDir)
 
 		// Create go.mod file for the package if it doesn't exist
 		// This is required for Go workspace to recognize the package
@@ -327,14 +289,13 @@ func GenerateCustomToolsCode(customTools map[string]CustomToolForCodeGen, genera
 			goModContent := fmt.Sprintf("module %s\n\ngo 1.21\n", packageName)
 			if err := os.WriteFile(goModPath, []byte(goModContent), 0644); err != nil {
 				if logger != nil {
-					logger.Warnf("Failed to create go.mod for package %s: %v", packageName, err)
+					logger.Warn("Failed to create go.mod for package", loggerv2.String("package", packageName), loggerv2.Error(err))
 				}
 				// Don't fail the whole operation, but log the warning
 			} else if logger != nil {
-				logger.Debugf("✅ Created go.mod for package %s", packageName)
+				logger.Debug("Created go.mod for package", loggerv2.String("package", packageName))
 			}
 		}
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
 	}
 
 	logger.Info("Generated Go code for custom tools",
@@ -409,26 +370,11 @@ func GenerateVirtualToolsCode(virtualTools []llmtypes.Tool, generatedDir string,
 	// Generate common API client file once per package
 	apiClientFile := filepath.Join(packageDir, "api_client.go")
 	apiClientCode := GeneratePackageHeader("virtual_tools") + "\n" + GenerateAPIClient(timeout)
-<<<<<<< HEAD
-	// Use O_EXCL to atomically create file only if it doesn't exist
-	f, err := os.OpenFile(apiClientFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-	if err == nil {
-		_, writeErr := f.WriteString(apiClientCode)
-		f.Close()
-		if writeErr != nil {
-			logger.Warn("Failed to write API client file", loggerv2.Error(writeErr))
-		} else {
-			logger.Debug("Generated common API client file", loggerv2.String("file", apiClientFile))
-		}
-	} else if !os.IsExist(err) {
-		logger.Warn("Failed to create API client file", loggerv2.Error(err))
-=======
 	// Always overwrite to ensure it matches current templates
 	if err := os.WriteFile(apiClientFile, []byte(apiClientCode), 0644); err != nil {
-		logger.Warnf("Failed to write API client file: %v", err)
+		logger.Warn("Failed to write API client file", loggerv2.Error(err))
 	} else {
-		logger.Debugf("Generated/updated common API client file: %s", apiClientFile)
->>>>>>> 07dab3768f0baffef50d7a837f64b5fbffbae6c8
+		logger.Debug("Generated/updated common API client file", loggerv2.String("file", apiClientFile))
 	}
 
 	generatedCount := 0

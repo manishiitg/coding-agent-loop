@@ -13,7 +13,8 @@ import (
 
 // callAPI makes an HTTP POST request to the specified endpoint with the given payload
 // This is a common function used by all tool functions to reduce code duplication
-func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
+// Panics on API errors (network, HTTP failures) - tool execution errors are in result string
+func callAPI(endpoint string, payload map[string]interface{}) string {
 	apiURL := os.Getenv("MCP_API_URL")
 	if apiURL == "" {
 		apiURL = "http://localhost:8000"
@@ -21,7 +22,7 @@ func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
 
 	reqBody, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		panic(fmt.Sprintf("failed to marshal request: %v", err))
 	}
 
 	// Create request with 300 second timeout (from agent ToolTimeout)
@@ -30,19 +31,19 @@ func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL+endpoint, bytes.NewBuffer(reqBody))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		panic(fmt.Sprintf("failed to create request: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %w", err)
+		panic(fmt.Sprintf("HTTP request failed: %v", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		panic(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)))
 	}
 
 	var result struct {
@@ -51,12 +52,13 @@ func callAPI(endpoint string, payload map[string]interface{}) (string, error) {
 		Error   string `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+		panic(fmt.Sprintf("failed to decode response: %v", err))
 	}
 
 	if !result.Success {
-		return "", fmt.Errorf("%s", result.Error)
+		panic(fmt.Sprintf("API error: %s", result.Error))
 	}
-	return result.Result, nil
+	// Return result string - tool execution errors will be in result (check output for error indicators)
+	return result.Result
 }
 

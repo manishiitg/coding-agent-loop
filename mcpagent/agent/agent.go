@@ -1496,7 +1496,7 @@ func (a *Agent) Close() {
 	// Close all clients in the map
 	for serverName, client := range a.Clients {
 		if client != nil {
-			a.Logger.Info("🔌 Closing connection to %s", map[string]interface{}{"server_name": serverName})
+			a.Logger.Info(fmt.Sprintf("🔌 Closing connection to %s", serverName), loggerv2.String("server_name", serverName))
 			_ = client.Close() // Ignore errors during cleanup
 		}
 	}
@@ -1934,12 +1934,12 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	if a.toolToServer == nil {
 		a.toolToServer = make(map[string]string)
 		if a.Logger != nil {
-			a.Logger.Debugf("🔧 [TOOL_REGISTRATION] Initialized toolToServer map for custom tools")
+			a.Logger.Debug("🔧 [TOOL_REGISTRATION] Initialized toolToServer map for custom tools")
 		}
 	}
 	a.toolToServer[name] = "custom"
 	if a.Logger != nil {
-		a.Logger.Debugf("🔧 [TOOL_REGISTRATION] Added custom tool '%s' to toolToServer mapping (category: %s)", name, toolCategory)
+		a.Logger.Debug(fmt.Sprintf("🔧 [TOOL_REGISTRATION] Added custom tool '%s' to toolToServer mapping (category: %s)", name, toolCategory))
 	}
 
 	// In code execution mode, do NOT add custom tools to LLM tools list
@@ -1966,7 +1966,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		}
 		if a.UseCodeExecutionMode && isHumanTool {
 			if a.Logger != nil {
-				a.Logger.Infof("🔧 Code execution mode: Human tool %s added to LLM tools (requires event bridge for frontend UI) - total tools now: %d", name, len(a.Tools))
+				a.Logger.Info(fmt.Sprintf("🔧 Code execution mode: Human tool %s added to LLM tools (requires event bridge for frontend UI) - total tools now: %d", name, len(a.Tools)))
 			}
 		}
 	} else {
@@ -1981,7 +1981,7 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	// (not via generated code) because they need event bridge access for frontend UI
 	if isHumanTool {
 		if a.Logger != nil {
-			a.Logger.Infof("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name)
+			a.Logger.Info(fmt.Sprintf("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name))
 		}
 	} else {
 		generatedDir := a.getGeneratedDir()
@@ -1992,17 +1992,17 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 			},
 		}
 		if a.Logger != nil {
-			a.Logger.Debugf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory)
+			a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory))
 		}
 		// Use agent's ToolTimeout (same as used for normal tool calls)
 		toolTimeout := getToolExecutionTimeout(a)
 		if err := codegen.GenerateCustomToolsCode(singleToolForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
 			if a.Logger != nil {
-				a.Logger.Warnf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err)
+				a.Logger.Warn(fmt.Sprintf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err))
 			}
 			// Don't fail tool registration if code generation fails
 		} else if a.Logger != nil {
-			a.Logger.Debugf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name)
+			a.Logger.Debug(fmt.Sprintf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name))
 		}
 	}
 

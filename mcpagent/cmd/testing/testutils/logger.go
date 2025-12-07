@@ -36,17 +36,37 @@ func NewTestLogger(cfg *TestLoggerConfig) loggerv2.Logger {
 	if cfg.Format == "" {
 		cfg.Format = "text"
 	}
-	if cfg.Output == "" {
-		cfg.Output = "stdout"
+
+	// Determine output destination
+	// If log file is specified, write only to file (not stdout)
+	// Otherwise, write to stdout
+	var output string
+	var enableFile bool
+	var filePath string
+
+	if cfg.LogFile != "" {
+		// Log file specified: write only to file
+		output = cfg.LogFile
+		enableFile = false
+		filePath = ""
+	} else {
+		// No log file: write to stdout
+		if cfg.Output == "" {
+			output = "stdout"
+		} else {
+			output = cfg.Output
+		}
+		enableFile = false
+		filePath = ""
 	}
 
 	// Create logger config
 	loggerCfg := loggerv2.Config{
 		Level:      cfg.LogLevel,
 		Format:     cfg.Format,
-		Output:     cfg.Output,
-		EnableFile: cfg.LogFile != "",
-		FilePath:   cfg.LogFile,
+		Output:     output,
+		EnableFile: enableFile,
+		FilePath:   filePath,
 	}
 
 	// Create logger

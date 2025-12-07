@@ -5,3 +5,5 @@ use (
 	./mcpagent
 	./workspace
 )
+
+replace github.com/manishiitg/multi-llm-provider-go => ../multi-llm-provider-go

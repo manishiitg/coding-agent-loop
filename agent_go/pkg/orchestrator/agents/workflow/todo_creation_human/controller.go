@@ -244,28 +244,86 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	}
 
 	// Load runtime variable values if provided and switch to templated objective
-	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
-	if err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to load variable values: %w", err)
+	// If a specific group is selected via execution options, use that group's values
+	var variableValues map[string]string
+	if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupIDs) > 0 && hcpo.variablesManifest != nil {
+		// Specific group(s) selected - use the first group's values (for single group execution)
+		requestedGroupID := hcpo.executionOptions.EnabledGroupIDs[0]
+		hcpo.GetLogger().Infof("🔍 [VARIABLE LOADING] Requested group ID: %s", requestedGroupID)
+
+		// Log available groups for debugging
+		availableGroupIDs := make([]string, len(hcpo.variablesManifest.Groups))
+		for i, g := range hcpo.variablesManifest.Groups {
+			availableGroupIDs[i] = g.GroupID
+		}
+		hcpo.GetLogger().Infof("🔍 [VARIABLE LOADING] Available groups in manifest: %v", availableGroupIDs)
+
+		variableValues = hcpo.variablesManifest.GetVariableValues(requestedGroupID)
+		if variableValues == nil {
+			hcpo.GetLogger().Warnf("⚠️ [VARIABLE LOADING] Group %s not found in manifest, falling back to LoadVariableValues", requestedGroupID)
+			var err error
+			variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
+			if err != nil {
+				hcpo.GetLogger().Warnf("⚠️ [VARIABLE LOADING] Failed to load variable values: %w", err)
+			} else {
+				hcpo.GetLogger().Warnf("⚠️ [VARIABLE LOADING] Loaded from fallback LoadVariableValues (may not match requested group %s)", requestedGroupID)
+			}
+		} else {
+			hcpo.GetLogger().Infof("✅ [VARIABLE LOADING] Loaded variable values for selected group: %s (values: %v)", requestedGroupID, variableValues)
+
+			// Validate: Double-check that we got the right group's values
+			// Find the group in manifest to verify
+			for _, g := range hcpo.variablesManifest.Groups {
+				if g.GroupID == requestedGroupID {
+					// Compare values to ensure they match
+					valuesMatch := true
+					if len(variableValues) != len(g.Values) {
+						valuesMatch = false
+					} else {
+						for k, v := range variableValues {
+							if g.Values[k] != v {
+								valuesMatch = false
+								hcpo.GetLogger().Errorf("❌ [VARIABLE LOADING] Value mismatch for key %s: expected %s, got %s", k, g.Values[k], v)
+								break
+							}
+						}
+					}
+					if !valuesMatch {
+						hcpo.GetLogger().Errorf("❌ [VARIABLE LOADING] Variable values don't match group %s! Expected: %v, Got: %v", requestedGroupID, g.Values, variableValues)
+					} else {
+						hcpo.GetLogger().Infof("✅ [VARIABLE LOADING] Verified variable values match group %s", requestedGroupID)
+					}
+					break
+				}
+			}
+		}
 	} else {
+		// No specific group selected - use default LoadVariableValues (backward compatibility)
+		hcpo.GetLogger().Infof("🔍 [VARIABLE LOADING] No specific group selected, using default LoadVariableValues")
+		var err error
+		variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
+		if err != nil {
+			hcpo.GetLogger().Warnf("⚠️ [VARIABLE LOADING] Failed to load variable values: %w", err)
+		}
+	}
+
+	if variableValues != nil {
 		hcpo.variableValues = variableValues
+		hcpo.GetLogger().Infof("✅ [VARIABLE LOADING] Set hcpo.variableValues with %d variables", len(variableValues))
+	} else {
+		hcpo.GetLogger().Warnf("⚠️ [VARIABLE LOADING] variableValues is nil - no variables loaded")
 	}
 
 	// Switch to templated objective for all subsequent phases
 	hcpo.SetObjective(templatedObjective)
 	hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
 
-	// Emit both events together
-	hcpo.GetLogger().Infof("📋 Found both existing variables.json and plan.json - emitting both events together")
-	hcpo.variableManager.emitVariablesExtractedEvent(ctx, existingVariablesManifest.Variables, existingVariablesManifest.Objective)
-
-	// Convert existing plan to TodoStep format and emit TodoStepsExtractedEvent
+	// Convert existing plan to TodoStep format for execution
 	breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
 	if err != nil {
 		return "", fmt.Errorf("failed to convert existing plan steps: %w", err)
 	}
 	hcpo.GetLogger().Infof("✅ Converted existing plan: %d steps extracted", len(breakdownSteps))
-	hcpo.emitTodoStepsExtractedEvent(ctx, breakdownSteps, "existing_plan")
 
 	// Store approved plan for access during execution
 	hcpo.approvedPlan = existingPlan

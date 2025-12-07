@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useCallback } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight } from 'lucide-react'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code } from 'lucide-react'
 import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
+import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 
 interface StepLegendProps {
   plan: { steps: PlanStep[] } | null
@@ -22,6 +23,23 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   onStepClick
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true)
+
+  // Get active preset for code execution mode default
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const customPresets = useGlobalPresetStore(state => state.customPresets)
+  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
+  
+  const activePreset = useMemo(() => {
+    if (activePresetId) {
+      const customPreset = customPresets.find(p => p.id === activePresetId)
+      if (customPreset) return customPreset
+      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
+      if (predefinedPreset) return predefinedPreset
+    }
+    return null
+  }, [activePresetId, customPresets, predefinedPresets])
+  
+  const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
 
   // Type guard to check if node has step data
   const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData } => {
@@ -117,6 +135,13 @@ export const StepLegend: React.FC<StepLegendProps> = ({
               const statusIcon = getStatusIcon(node)
               const nodeType = node.type
 
+              // Determine if code execution mode is enabled for this step
+              // Priority: step config > preset default (matching backend logic)
+              const stepCodeExecSetting = step.agent_configs?.use_code_execution_mode
+              const useCodeExecutionMode = stepCodeExecSetting !== undefined 
+                ? stepCodeExecSetting === true  // Step has explicit setting
+                : presetUseCodeExecutionMode     // Fall back to preset default
+
               return (
                 <button
                   key={nodeId}
@@ -139,12 +164,15 @@ export const StepLegend: React.FC<StepLegendProps> = ({
 
                     {/* Step Title */}
                     <div className="flex-1 min-w-0">
-                      <div className={`text-[11px] leading-tight ${
+                      <div className={`flex items-center gap-1.5 text-[11px] leading-tight ${
                         isSelected 
                           ? 'font-semibold text-foreground' 
                           : 'font-medium text-foreground/90'
                       }`}>
-                        {step.title || `Step ${stepIndex + 1}`}
+                        <span>{step.title || `Step ${stepIndex + 1}`}</span>
+                        {useCodeExecutionMode && (
+                          <Code className="w-3 h-3 text-blue-500 flex-shrink-0" />
+                        )}
                       </div>
                       {(nodeType === 'conditional' || nodeType === 'loop') && (
                         <div className="text-[9px] text-muted-foreground mt-0.5 font-medium">

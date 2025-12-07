@@ -473,12 +473,15 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 
 	// Register custom tool for updating step_config.json
 	// Note: human_feedback tool is already available via workspace tools (no need to register separately)
-	mcpAgent.RegisterCustomTool(
+	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config_tools",
 		"Update tool selections for specific steps in step_config.json. Provide step_id (required) to identify which step to update, and only include the tool fields you want to change (selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools). The step_config.json file is updated immediately when this tool is called. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output in enabled_custom_tools - these are large output virtual tools managed separately via enable_large_output_virtual_tools boolean flag. If you see these tools used in learnings, set enable_large_output_virtual_tools to true.",
 		updateParams,
 		createUpdateStepConfigToolsExecutor(ptom.GetWorkspacePath(), logger, ptom.ReadWorkspaceFile, ptom.WriteWorkspaceFile),
-	)
+		"workflow",
+	); err != nil {
+		return "", fmt.Errorf("failed to register update_step_config_tools tool: %w", err)
+	}
 
 	// Create mapping of step IDs to their learnings folder paths based on code execution mode
 	presetCodeExecMode := ptom.GetUseCodeExecutionMode()

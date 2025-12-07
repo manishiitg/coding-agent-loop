@@ -369,7 +369,13 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 	// 3. Update existing progress if needed (remove steps >= StartFromStep)
 	if scope.UpdateProgress && setup.StartFromStep > 0 {
 		progress, err := orch.loadStepProgress(ctx)
-		if err == nil && progress != nil {
+		if err != nil {
+			// If progress file doesn't exist or can't be loaded, log warning but don't fail
+			// This can happen if the file was deleted or corrupted
+			orch.GetLogger().Warnf("⚠️ Failed to load progress for update: %v (progress file may not exist yet)", err)
+		} else if progress != nil {
+			// Preserve TotalSteps from existing progress (don't overwrite with NewTotalSteps)
+			// Only update CompletedStepIndices to remove steps >= StartFromStep
 			newCompleted := []int{}
 			for _, idx := range progress.CompletedStepIndices {
 				if idx < setup.StartFromStep {
@@ -378,12 +384,22 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 			}
 			removedCount := len(progress.CompletedStepIndices) - len(newCompleted)
 			progress.CompletedStepIndices = newCompleted
+
+			// Ensure TotalSteps is preserved (use existing value, or fallback to NewTotalSteps if 0)
+			if progress.TotalSteps == 0 && scope.NewTotalSteps > 0 {
+				progress.TotalSteps = scope.NewTotalSteps
+				orch.GetLogger().Infof("📝 Progress had TotalSteps=0, setting to %d", scope.NewTotalSteps)
+			}
+
 			if err := orch.saveStepProgress(ctx, progress); err != nil {
 				orch.GetLogger().Warnf("⚠️ Failed to update progress: %v", err)
 			} else {
-				orch.GetLogger().Infof("📝 Updated progress: removed %d steps >= step-%d",
-					removedCount, setup.StartFromStep+1)
+				orch.GetLogger().Infof("📝 Updated progress: removed %d steps >= step-%d, preserved TotalSteps=%d",
+					removedCount, setup.StartFromStep+1, progress.TotalSteps)
 			}
+		} else {
+			// Progress is nil (shouldn't happen if loadStepProgress succeeded, but handle it)
+			orch.GetLogger().Warnf("⚠️ Progress is nil after successful load (unexpected)")
 		}
 	}
 
@@ -561,7 +577,10 @@ func (em *ExecutionManager) CleanupForResumeFromStep(ctx context.Context, resume
 
 	// Update progress: remove steps >= resumeStep-1 (0-based)
 	progress, err := orch.loadStepProgress(ctx)
-	if err == nil && progress != nil {
+	if err != nil {
+		// If progress file doesn't exist or can't be loaded, log warning but don't fail
+		orch.GetLogger().Warnf("⚠️ Failed to load progress for resume cleanup: %v (progress file may not exist yet)", err)
+	} else if progress != nil {
 		newCompleted := []int{}
 		startFromStep := resumeStep - 1 // Convert to 0-based
 		for _, idx := range progress.CompletedStepIndices {
@@ -571,11 +590,21 @@ func (em *ExecutionManager) CleanupForResumeFromStep(ctx context.Context, resume
 		}
 		removedCount := len(progress.CompletedStepIndices) - len(newCompleted)
 		progress.CompletedStepIndices = newCompleted
+
+		// Preserve TotalSteps - use existing value, or fallback to provided totalSteps if 0
+		if progress.TotalSteps == 0 && totalSteps > 0 {
+			progress.TotalSteps = totalSteps
+			orch.GetLogger().Infof("📝 Progress had TotalSteps=0, setting to %d", totalSteps)
+		}
+
 		if err := orch.saveStepProgress(ctx, progress); err != nil {
 			orch.GetLogger().Warnf("⚠️ Failed to update progress: %v", err)
 		} else {
-			orch.GetLogger().Infof("📝 Updated progress: removed %d steps", removedCount)
+			orch.GetLogger().Infof("📝 Updated progress: removed %d steps, preserved TotalSteps=%d", removedCount, progress.TotalSteps)
 		}
+	} else {
+		// Progress is nil (shouldn't happen if loadStepProgress succeeded, but handle it)
+		orch.GetLogger().Warnf("⚠️ Progress is nil after successful load (unexpected)")
 	}
 
 	orch.GetLogger().Infof("✅ Cleaned %d step folders for resume from step %d", cleanedCount, resumeStep)
@@ -720,5 +749,24 @@ func (em *ExecutionManager) CleanupExecutionFolder(ctx context.Context, runFolde
 	}
 
 	orch.GetLogger().Infof("✅ Cleaned execution folder")
+	return nil
+}
+
+// CleanupDownloadsFolder cleans the Downloads folder before step execution
+// This ensures a clean state for each step by removing any files downloaded in previous steps
+func (em *ExecutionManager) CleanupDownloadsFolder(ctx context.Context) error {
+	orch := em.orchestrator
+
+	downloadsDir := fmt.Sprintf("%s/Downloads", orch.GetWorkspacePath())
+
+	orch.GetLogger().Infof("🗑️ Cleaning Downloads folder before step execution: %s", downloadsDir)
+
+	if err := orch.CleanupDirectory(ctx, downloadsDir, "Downloads"); err != nil {
+		// Non-blocking: log warning but don't fail - Downloads folder may not exist
+		orch.GetLogger().Warnf("⚠️ Failed to cleanup Downloads folder: %v (continuing)", err)
+		return nil // Return nil to allow execution to continue
+	}
+
+	orch.GetLogger().Infof("✅ Cleaned Downloads folder")
 	return nil
 }

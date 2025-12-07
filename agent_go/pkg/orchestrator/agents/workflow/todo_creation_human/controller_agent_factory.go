@@ -676,6 +676,113 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 	return agent, nil
 }
 
+// createPrerequisiteDetectionAgent creates a prerequisite detection agent
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
+	// Set folder guard paths: allow reads from execution (read-only), no write permissions
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	// Use run folder if available, otherwise use base workspace (backward compatibility)
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
+
+	// Prerequisite detection agent only reads - no write permissions needed
+	readPaths := []string{executionPath}
+	writePaths := []string{} // No write permissions - prerequisite detection agent only reads and returns structured JSON
+	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	hcpo.GetLogger().Infof("🔒 Setting folder guard for prerequisite detection agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths)
+
+	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
+	maxTurns := hcpo.GetMaxTurns()
+	if stepConfig != nil && stepConfig.ValidationMaxTurns != nil {
+		maxTurns = *stepConfig.ValidationMaxTurns
+		hcpo.GetLogger().Infof("🔧 Using step-specific prerequisite detection max turns: %d", maxTurns)
+	}
+
+	// Determine LLM config: Priority: step config > preset default > orchestrator default
+	// Use validation LLM config (prerequisite detection is similar to validation)
+	var llmConfig *orchestrator.LLMConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       stepConfig.ValidationLLM.Provider,
+			ModelID:        stepConfig.ValidationLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Infof("🔧 Using step-specific prerequisite detection LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID)
+	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       hcpo.presetValidationLLM.Provider,
+			ModelID:        hcpo.presetValidationLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Infof("🔧 Using preset default prerequisite detection LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID)
+	} else {
+		llmConfig = orchestratorLLMConfig
+		hcpo.GetLogger().Infof("🔧 Using orchestrator default prerequisite detection LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID)
+	}
+
+	// Create agent config with custom LLM if needed
+	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+
+	// Prerequisite detection agents always use NoServers (pure LLM analysis agent)
+	// Step-specific server/tool selection is only for execution agents
+	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM analysis agent
+
+	// Code execution mode only applies to execution agents, not prerequisite detection agents
+	config.UseCodeExecutionMode = false
+	hcpo.GetLogger().Infof("🔧 Disabling code execution mode for prerequisite detection agent (only execution agents use MCP tools)")
+
+	// Set EnableLargeOutputVirtualTools if specified
+	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
+		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
+		hcpo.GetLogger().Infof("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools)
+	}
+
+	// Create agent using provided factory function
+	agent := NewHumanControlledTodoPlannerPrerequisiteDetectionAgent(config, hcpo.GetLogger(), hcpo.GetTracer(), hcpo.GetContextAwareBridge())
+
+	// Initialize and setup agent (inlined from CreateAndSetupStandardAgent)
+	if err := agent.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize prerequisite detection agent: %w", err)
+	}
+
+	// Validate essentials and connect event bridge
+	eventBridge := hcpo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
+	}
+
+	hcpo.GetLogger().Infof("🔍 Checking agent structure for %s", agentName)
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, fmt.Errorf("base agent is nil for %s", agentName)
+	}
+
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
+	}
+
+	// Connect agent to orchestrator's main event bridge
+	baseAgentName := baseAgent.GetName()
+	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
+		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		mcpAgent.AddEventListener(cab)
+		hcpo.GetLogger().Infof("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
+	} else {
+		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+	}
+
+	hcpo.GetLogger().Infof("✅ Prerequisite detection agent created successfully: %s", agentName)
+	return agent, nil
+}
+
 // Note: Learning integration functions removed - execution agent now auto-discovers learning files and scripts
 
 // createSuccessLearningAgent creates a success learning agent for analyzing successful executions

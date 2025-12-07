@@ -588,7 +588,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               if (stepStatus === 'running' && prevStatus !== 'running') {
                 // Auto-focus on the node when it starts running (position viewport, but don't open sidebar)
                 // This happens when the running label and loader are added to the node
-                focusNode(node.id, { topPadding: 150, selectNode: false, delay: 200 })
+                focusNode(node.id, { topPadding: 150, selectNode: false, delay: 100 })
                 console.log('[WorkflowCanvas] Auto-focused on step that started running:', stepId, node.id)
               }
               

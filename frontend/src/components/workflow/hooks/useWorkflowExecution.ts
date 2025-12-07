@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { agentApi } from '../../../services/api'
+import { agentApi, getSessionId } from '../../../services/api'
 import type { PollingEvent } from '../../../services/api-types'
 import { useLLMStore, useMCPStore, useChatStore } from '../../../stores'
 import { usePresetApplication } from '../../../stores/useGlobalPresetStore'
@@ -252,6 +252,49 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         }
       }
 
+      // Handle prerequisite_navigation event
+      if (event.type === 'prerequisite_navigation') {
+        const rawData = event.data as Record<string, unknown> | undefined
+        let fromStepIndex: number | undefined
+        let toStepIndex: number | undefined
+        let reason: string | undefined
+        let failureType: string | undefined
+
+        if (rawData && typeof rawData === 'object') {
+          // Try direct access first
+          fromStepIndex = rawData.from_step_index as number | undefined
+          toStepIndex = rawData.to_step_index as number | undefined
+          reason = rawData.reason as string | undefined
+          failureType = rawData.failure_type as string | undefined
+
+          // If not found, try accessing through 'data' property
+          if (fromStepIndex === undefined && rawData.data && typeof rawData.data === 'object') {
+            const nestedData = rawData.data as Record<string, unknown>
+            fromStepIndex = nestedData.from_step_index as number | undefined
+            toStepIndex = nestedData.to_step_index as number | undefined
+            if (!reason) {
+              reason = nestedData.reason as string | undefined
+            }
+            if (!failureType) {
+              failureType = nestedData.failure_type as string | undefined
+            }
+          }
+        }
+
+        if (fromStepIndex !== undefined && toStepIndex !== undefined) {
+          console.log('[useWorkflowExecution] Prerequisite navigation detected:', {
+            fromStep: fromStepIndex + 1,
+            toStep: toStepIndex + 1,
+            reason,
+            failureType
+          })
+          
+          // Update step status to show navigation
+          // Mark from step as having prerequisite failure
+          // The navigation will restart execution from toStepIndex
+          // Note: The backend handles the actual navigation, this is just for UI feedback
+        }
+      }
 
     }
 
@@ -370,7 +413,6 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
   // Stop workflow
   const stopWorkflow = useCallback(async () => {
     const storeState = useChatStore.getState()
-    const currentObserverId = storeState.observerId
     const pollingInterval = storeState.pollingInterval
 
     // Stop ChatArea's polling (same logic as ChatArea.stopStreaming)
@@ -389,14 +431,17 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     // Clear current step tracking
     setCurrentStepId(null)
 
-    // Call backend to stop the session
-    if (currentObserverId) {
+    // Call backend to stop the session using session ID (not observer ID)
+    const sessionId = getSessionId()
+    if (sessionId) {
       try {
-        await agentApi.stopSession(currentObserverId)
+        await agentApi.stopSession(sessionId)
         console.log('[useWorkflowExecution] Session stopped and polling cleared')
       } catch (err) {
         console.error('[useWorkflowExecution] Failed to stop session:', err)
       }
+    } else {
+      console.warn('[useWorkflowExecution] No session ID available to stop session')
     }
   }, [])
 

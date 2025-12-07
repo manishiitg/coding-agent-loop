@@ -4,9 +4,10 @@ import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { ChatHeader } from '../ChatHeader'
-import { MessageSquare, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { type ExecutionOptions } from '../../services/api-types'
 
@@ -41,6 +42,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const canvasRef = useRef<WorkflowCanvasRef>(null)
   // Track the last processed event index to avoid duplicate refreshes
   const lastProcessedEventIndexRef = useRef(-1)
+  // Track the last processed step progress event index to avoid duplicate workspace refreshes
+  const lastProcessedStepProgressIndexRef = useRef(-1)
+  
+  // Get selected run folder and workspace fetchFiles function
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const { fetchFiles } = useWorkspaceStore()
   
   // Get active workflow preset
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -107,6 +114,44 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [events])
 
+  // Listen for step_progress_updated events to refresh workspace files for current iteration
+  useEffect(() => {
+    if (events.length === 0 || !workspacePath || !selectedRunFolder || selectedRunFolder === 'new') {
+      return
+    }
+    
+    // Find new step_progress_updated events that we haven't processed yet
+    for (let i = lastProcessedStepProgressIndexRef.current + 1; i < events.length; i++) {
+      const event = events[i]
+      
+      if (event.type === 'step_progress_updated') {
+        const eventData = event.data as {
+          run_folder?: string
+          workspace_path?: string
+          completed_step_indices?: number[]
+          total_steps?: number
+        }
+        
+        // Only refresh if this event is for the currently selected iteration
+        if (eventData?.run_folder === selectedRunFolder && eventData?.workspace_path === workspacePath) {
+          console.log('[WorkflowLayout] Step progress updated for current iteration, refreshing workspace:', {
+            runFolder: eventData.run_folder,
+            completedSteps: eventData.completed_step_indices?.length || 0,
+            totalSteps: eventData.total_steps || 0,
+            eventIndex: i
+          })
+          
+          // Refresh workspace files to show new execution files
+          fetchFiles().catch((err) => {
+            console.error('[WorkflowLayout] Failed to refresh workspace files:', err)
+          })
+          
+          lastProcessedStepProgressIndexRef.current = i
+        }
+      }
+    }
+  }, [events, workspacePath, selectedRunFolder, fetchFiles])
+
   // Handle phase start from toolbar (now accepts execution options directly)
   const handleStartPhase = useCallback(async (phaseId: string, executionOptions?: ExecutionOptions) => {
     console.log('[WorkflowLayout] Starting phase:', phaseId, executionOptions ? 'with options' : '')
@@ -157,6 +202,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setShowChatArea(false)
     setActivePhase(null)
   }, [setShowChatArea, setActivePhase])
+
+  // Handle create plan - starts the planning phase (ID: "planning")
+  const handleCreatePlan = useCallback(() => {
+    const phases = useWorkflowStore.getState().phases
+    // Look for the "planning" phase explicitly, fallback to second phase (index 1) if not found
+    const planningPhase = phases.find(p => p.id === 'planning') || (phases.length > 1 ? phases[1] : phases[0])
+    const planningPhaseId = planningPhase?.id || 'planning'
+    console.log('[WorkflowLayout] Create plan requested, starting planning phase:', planningPhaseId)
+    
+    // Show ChatArea immediately (synchronously) before starting the phase
+    setShowChatArea(true)
+    setActivePhase(planningPhaseId)
+    
+    // Then start the phase (which will also set showChatArea, but this ensures it's visible immediately)
+    handleStartPhase(planningPhaseId)
+  }, [handleStartPhase, setShowChatArea, setActivePhase])
 
   // No preset selected state
   if (!activeWorkflowPreset) {
@@ -210,18 +271,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             presetQueryId={activePresetId}
             currentPhase={activePhase || currentWorkflowPhase}
             onStartPhase={handleStartPhase}
-            onCreatePlan={onCreatePlan}
+            onCreatePlan={onCreatePlan || handleCreatePlan}
+            showChatArea={showChatArea}
+            onToggleChatArea={() => setShowChatArea(!showChatArea)}
             className="h-full"
           />
         </div>
 
         {/* ChatArea Panel - single instance, show/hide via CSS */}
-        <div className={`${showChatArea ? 'w-1/2' : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col bg-white dark:bg-gray-900 relative transition-all duration-300`}>
+        <div className={`${showChatArea ? 'w-1/2' : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col bg-white dark:bg-gray-900 relative z-20 transition-all duration-300`}>
           {/* Close button overlay - only visible when panel is open */}
           {showChatArea && (
             <button
               onClick={handleCloseChatArea}
-              className="absolute top-2 right-2 z-10 p-1.5 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 shadow-sm"
+              className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 shadow-sm"
               title="Close chat panel"
             >
               <X className="w-4 h-4" />
@@ -237,17 +300,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             compact
           />
         </div>
-
-        {/* Toggle ChatArea Button (when hidden) */}
-        {!showChatArea && (
-          <button
-            onClick={() => setShowChatArea(true)}
-            className="fixed bottom-4 right-4 p-3 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-full shadow-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors z-40"
-            title="Show Chat"
-          >
-            <MessageSquare className="w-5 h-5" />
-          </button>
-        )}
       </div>
     </div>
   )

@@ -11,10 +11,11 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcpagent/agent/codeexec"
 	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // --- TOOL MANAGEMENT TYPES ---
@@ -733,6 +734,26 @@ func (api *StreamingAPI) handleMCPExecute(w http.ResponseWriter, r *http.Request
 	// Execute tool
 	api.logger.Infof("🚀 Executing tool %s on server %s with args: %v", req.Tool, req.Server, req.Args)
 	result, err := client.CallTool(ctx, req.Tool, req.Args)
+
+	// 🔧 BROKEN PIPE DETECTION AND RETRY
+	if err != nil && mcpclient.IsBrokenPipeError(err) {
+		api.logger.Infof("🔧 [BROKEN PIPE] Detected for tool %s on server %s, getting fresh connection...", req.Tool, req.Server)
+
+		// Get fresh connection using shared function (bypasses cache by invalidating)
+		freshClient, freshErr := mcpcache.GetFreshConnection(ctx, req.Server, api.mcpConfigPath, api.logger)
+		if freshErr == nil {
+			api.logger.Infof("🔧 [BROKEN PIPE] Retrying tool %s with fresh connection...", req.Tool)
+			result, err = freshClient.CallTool(ctx, req.Tool, req.Args)
+			if err == nil {
+				api.logger.Infof("🔧 [BROKEN PIPE] Retry successful for tool %s", req.Tool)
+			} else {
+				api.logger.Errorf("🔧 [BROKEN PIPE] Retry failed for tool %s: %v", req.Tool, err)
+			}
+		} else {
+			api.logger.Errorf("🔧 [BROKEN PIPE] Failed to get fresh connection for server %s: %v", req.Server, freshErr)
+		}
+	}
+
 	if err != nil {
 		api.logger.Errorf("Tool execution failed for %s on %s: %v", req.Tool, req.Server, err)
 		json.NewEncoder(w).Encode(MCPExecuteResponse{

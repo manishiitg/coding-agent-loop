@@ -37,6 +37,7 @@ import (
 	"github.com/joho/godotenv"
 
 	eventbridge "mcp-agent/agent_go/cmd/server/event_bridge"
+	slackservice "mcp-agent/agent_go/cmd/server/services"
 	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	mcpagent "mcpagent/agent"
 	"strconv"
@@ -468,6 +469,41 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("💾 Chat History Database: %s\n", dbPath)
 
+	// Initialize Slack service for human feedback
+	slackSvc, err := slackservice.InitSlackService(chatDB.GetDB())
+	if err != nil {
+		log.Printf("⚠️  Failed to initialize Slack service: %v (Slack integration will be disabled)", err)
+	} else {
+		log.Printf("✅ Slack service initialized")
+		// Set feedback store function for test connections only
+		// Note: For receiving feedback, notification manager handles it
+		slackservice.SetFeedbackStoreFuncs(
+			func(uniqueID string, message string) error {
+				store := virtualtools.GetHumanFeedbackStore()
+				if store != nil {
+					return store.CreateRequest(uniqueID, message)
+				}
+				return nil
+			},
+		)
+		// Register Slack service with notification manager
+		notificationManager := slackservice.GetNotificationManager()
+		if notificationManager != nil && slackSvc != nil {
+			notificationManager.RegisterConnector(slackSvc)
+			// Set feedback store function so notification manager can update feedback store
+			notificationManager.SetFeedbackResponseFunc(
+				func(uniqueID string, response string) error {
+					store := virtualtools.GetHumanFeedbackStore()
+					if store != nil {
+						return store.SubmitResponse(uniqueID, response)
+					}
+					return nil
+				},
+			)
+			log.Printf("✅ Slack service registered with notification manager")
+		}
+	}
+
 	// Create internal LLM instance for workflow orchestrator
 	internalLLMProvider, err := llm.ValidateProvider(config.Provider)
 	if err != nil {
@@ -590,14 +626,21 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Preset Queries API routes
 	PresetQueryRoutes(router, chatDB)
 
+	// Slack Feedback API routes
+	SlackFeedbackRoutes(router, api, chatDB)
+
 	// Workflow API routes
 	apiRouter.HandleFunc("/workflow/create", api.handleCreateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
 	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/run-folder", api.handleCreateRunFolder).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/progress", api.handleGetProgress).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleDeleteRunFolder).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/learnings", api.handleDeleteStepLearnings).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/variable-groups", api.handleGetVariableGroups).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/variable-groups", api.handleUpdateVariableGroups).Methods("POST", "PUT", "OPTIONS")
 
 	// Static file serving (for frontend)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
@@ -1182,11 +1225,35 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKFLOW EXECUTION] Step-specific execution for step: %s", stepID)
 			}
 
-			// Extract workspace path from objective
-			workflowWorkspacePath := extractWorkspacePathFromObjective(req.Query)
+			// Get the actual objective from preset (not from the query string)
+			workflowObjective := req.Query // Default to query if preset not available
+			workflowWorkspacePath := ""
+			if req.PresetQueryID != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
+				if err == nil && preset != nil {
+					// Use preset's Query field as the objective (the actual workflow objective)
+					workflowObjective = preset.Query
+					log.Printf("[WORKFLOW EXECUTION] Using preset objective: %s", workflowObjective)
+
+					// Extract workspace path from preset's selected folder
+					if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
+						workflowWorkspacePath = preset.SelectedFolder.String
+						log.Printf("[WORKFLOW EXECUTION] Using preset workspace path: %s", workflowWorkspacePath)
+					}
+				} else {
+					log.Printf("[WORKFLOW WARNING] Could not get preset for objective: %v", err)
+				}
+			}
+
+			// Fallback: Extract workspace path from objective if not found in preset
 			if workflowWorkspacePath == "" {
-				log.Printf("[WORKFLOW ERROR] Workspace path not found in objective for query %s", queryID)
-				workflowWorkspacePath = "default_workspace" // fallback
+				workflowWorkspacePath = extractWorkspacePathFromObjective(workflowObjective)
+				if workflowWorkspacePath == "" {
+					log.Printf("[WORKFLOW ERROR] Workspace path not found in objective for query %s", queryID)
+					workflowWorkspacePath = "default_workspace" // fallback
+				}
 			}
 
 			// Prepare options for the Execute method
@@ -1208,27 +1275,36 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Pass execution options from frontend if provided
 			if req.ExecutionOptions != nil {
-				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s",
-					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder)
+				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d",
+					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep)
 
 				// Convert to controller ExecutionOptions and pass to workflow orchestrator
 				controllerOpts := &todo_creation_human.ExecutionOptions{
-					RunMode:            req.ExecutionOptions.RunMode,
-					SelectedRunFolder:  req.ExecutionOptions.SelectedRunFolder,
-					ExecutionStrategy:  req.ExecutionOptions.ExecutionStrategy,
-					ResumeFromStep:     req.ExecutionOptions.ResumeFromStep,
-					FastExecuteEndStep: req.ExecutionOptions.FastExecuteEndStep,
+					RunMode:                        req.ExecutionOptions.RunMode,
+					SelectedRunFolder:              req.ExecutionOptions.SelectedRunFolder,
+					ExecutionStrategy:              req.ExecutionOptions.ExecutionStrategy,
+					ResumeFromStep:                 req.ExecutionOptions.ResumeFromStep,
+					FastExecuteEndStep:             req.ExecutionOptions.FastExecuteEndStep,
+					FallbackToOriginalLLMOnFailure: req.ExecutionOptions.FallbackToOriginalLLMOnFailure,
+				}
+
+				// Convert TempOverrideLLM if present
+				if req.ExecutionOptions.TempOverrideLLM != nil {
+					controllerOpts.TempOverrideLLM = &todo_creation_human.AgentLLMConfig{
+						Provider: req.ExecutionOptions.TempOverrideLLM.Provider,
+						ModelID:  req.ExecutionOptions.TempOverrideLLM.ModelID,
+					}
 				}
 
 				// Set execution options on the workflow orchestrator
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
 			}
 
-			// Execute workflow with the query
-			log.Printf("[WORKFLOW DEBUG] Starting workflow execution for query %s with workspace: %s", queryID, workflowWorkspacePath)
+			// Execute workflow with the preset objective (not the phase query)
+			log.Printf("[WORKFLOW DEBUG] Starting workflow execution for query %s with objective: %s, workspace: %s", queryID, workflowObjective, workflowWorkspacePath)
 			_, err := workflowOrchestrator.Execute(
 				workflowCtx,
-				req.Query,
+				workflowObjective, // Use preset objective instead of req.Query
 				workflowWorkspacePath,
 				workflowOptions,
 			)
@@ -1614,6 +1690,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
+
+			// Update code execution registry to rebuild system prompt with newly registered tools
+			// This ensures human_feedback and workspace tools appear in the system prompt
+			if err := underlyingAgent.UpdateCodeExecutionRegistry(); err != nil {
+				log.Printf("[CUSTOM TOOLS] Warning: Failed to update code execution registry: %v", err)
+			}
 
 			// Add base instructions for all agents
 			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())

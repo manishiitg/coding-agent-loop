@@ -78,23 +78,22 @@ func NewLearningConsolidationManager(
 
 // createLearningConsolidationAgent creates and sets up a learning consolidation agent with all necessary configuration
 // This method handles folder guard setup, LLM config selection, tool combination, and agent initialization
-// selectedFolder: the folder to consolidate ("learnings/" or "learning_code_exec/")
-func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx context.Context, workspacePath string, selectedFolder string) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: read and write access to selected folder only
-	var targetPath string
-	if selectedFolder == "learnings/" {
-		targetPath = fmt.Sprintf("%s/learnings", workspacePath)
-	} else if selectedFolder == "learning_code_exec/" {
-		targetPath = fmt.Sprintf("%s/learning_code_exec", workspacePath)
-	} else {
-		return nil, fmt.Errorf("invalid selected folder: %s (must be 'learnings/' or 'learning_code_exec/')", selectedFolder)
-	}
+// Always consolidates learnings/ folder (unified folder for all learning types)
+func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
+	// Set folder guard paths: read and write access to learnings folder only
+	targetPath := fmt.Sprintf("%s/learnings", workspacePath)
 
-	// Agent has read and write access to only the selected folder
+	// Step-specific learnings: always add access to runs/ directory for scanning step-specific folders
+	// Agent has read and write access to the learnings folder
 	readPaths := []string{targetPath}
-	writePaths := []string{targetPath} // Write access to selected folder for consolidation
+	writePaths := []string{targetPath} // Write access to learnings folder for consolidation
+
+	// Step-specific learnings are at workspace root, not inside runs/
+	// Step-specific folders are directly in learnings/step-*/
+	lcm.GetLogger().Infof("🔍 Step-specific learnings are at workspace root (learnings/step-*/)")
+
 	lcm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	lcm.GetLogger().Infof("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to %s folder only)", readPaths, writePaths, selectedFolder)
+	lcm.GetLogger().Infof("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to learnings/ folder only)", readPaths, writePaths)
 
 	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
 	orchestratorLLMConfig := lcm.GetLLMConfig()
@@ -177,41 +176,25 @@ func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Co
 	// Set workspace path
 	lcm.SetWorkspacePath(workspacePath)
 
-	// Ask user which folder to consolidate before starting
-	folderChoice, err := lcm.requestFolderSelection(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get folder selection: %w", err)
-	}
+	// Always consolidate learnings/ folder (unified folder for all learning types)
+	allowedPaths := "['learnings/']"
+	selectedFolder := "learnings/"
+	lcm.GetLogger().Infof("✅ Consolidating learnings/ folder")
 
-	// Determine allowed paths based on user selection
-	var allowedPaths string
-	var selectedFolder string
-	switch folderChoice {
-	case "option0": // learnings/
-		allowedPaths = "['learnings/']"
-		selectedFolder = "learnings/"
-		lcm.GetLogger().Infof("✅ User selected: learnings/ folder")
-	case "option1": // learning_code_exec/
-		allowedPaths = "['learning_code_exec/']"
-		selectedFolder = "learning_code_exec/"
-		lcm.GetLogger().Infof("✅ User selected: learning_code_exec/ folder")
-	default:
-		return "", fmt.Errorf("invalid folder selection: %s", folderChoice)
-	}
-
-	// Create consolidation agent with selected folder
-	consolidationAgent, err := lcm.createLearningConsolidationAgent(ctx, lcm.GetWorkspacePath(), selectedFolder)
+	// Create consolidation agent
+	consolidationAgent, err := lcm.createLearningConsolidationAgent(ctx, lcm.GetWorkspacePath())
 	if err != nil {
 		return "", fmt.Errorf("failed to create learning consolidation agent: %w", err)
 	}
 
 	// Prepare template variables with selected folder only
 	consolidationTemplateVars := map[string]string{
-		"WorkspacePath":  lcm.GetWorkspacePath(),
-		"AllowedPaths":   allowedPaths,
-		"SelectedFolder": selectedFolder,
-		"SessionID":      lcm.sessionID,
-		"WorkflowID":     lcm.workflowID,
+		"WorkspacePath":            lcm.GetWorkspacePath(),
+		"AllowedPaths":             allowedPaths,
+		"SelectedFolder":           selectedFolder,
+		"SessionID":                lcm.sessionID,
+		"WorkflowID":               lcm.workflowID,
+		"UseStepSpecificLearnings": "true",
 	}
 
 	// Execute consolidation agent
@@ -229,39 +212,12 @@ func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Co
 	return result, nil
 }
 
-// requestFolderSelection asks the user to select which folder to consolidate
-// Returns: "option0" for learnings/, "option1" for learning_code_exec/
+// requestFolderSelection is deprecated - always uses learnings/ folder now
+// Kept for backward compatibility but no longer prompts user
 func (lcm *LearningConsolidationManager) requestFolderSelection(ctx context.Context) (string, error) {
-	lcm.GetLogger().Infof("🤔 Asking user to select folder for consolidation")
-
-	requestID := fmt.Sprintf("learning_consolidation_folder_selection_%d", time.Now().UnixNano())
-
-	options := []string{
-		"learnings/ (MCP tool patterns)",
-		"learning_code_exec/ (Code execution patterns)",
-	}
-
-	question := "Which folder would you like to consolidate?"
-	context := "Learning consolidation will analyze and merge duplicate/similar patterns in the selected folder.\n\n" +
-		"**learnings/**: Contains MCP tool patterns and Python scripts\n" +
-		"**learning_code_exec/**: Contains Go code execution patterns\n\n" +
-		"Please select which folder you want to consolidate."
-
-	choice, err := lcm.RequestMultipleChoiceFeedback(
-		ctx,
-		requestID,
-		question,
-		options,
-		context,
-		lcm.sessionID,
-		lcm.workflowID,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to get folder selection: %w", err)
-	}
-
-	lcm.GetLogger().Infof("✅ User selected folder option: %s", choice)
-	return choice, nil
+	// Always return learnings/ folder (unified folder for all learning types)
+	lcm.GetLogger().Infof("✅ Using learnings/ folder for consolidation (unified folder)")
+	return "option0", nil
 }
 
 // Execute implements the OrchestratorAgent interface
@@ -273,7 +229,7 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
 	if allowedPaths == "" {
-		allowedPaths = "['learnings/', 'learning_code_exec/']"
+		allowedPaths = "['learnings/']"
 	}
 
 	// If SelectedFolder is provided, use it to restrict access to only that folder
@@ -283,9 +239,10 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) Execute(ctx c
 
 	// Prepare template variables
 	consolidationTemplateVars := map[string]string{
-		"WorkspacePath":  workspacePath,
-		"AllowedPaths":   allowedPaths,
-		"SelectedFolder": selectedFolder,
+		"WorkspacePath":            workspacePath,
+		"AllowedPaths":             allowedPaths,
+		"SelectedFolder":           selectedFolder,
+		"UseStepSpecificLearnings": templateVars["UseStepSpecificLearnings"],
 	}
 
 	// Create template data for consolidation
@@ -424,9 +381,16 @@ Your main goal is to analyze all learning files, identify consolidation opportun
 
 ## 🎯 CONSOLIDATION PROCESS
 
-1. **Discover All Learning Files**: Use 'list_workspace_files' to explore ` + selectedFolder + ` folder:
-   - If consolidating 'learnings/': List files in 'learnings/' folder (look for *_learning.md files) and 'learnings/scripts/' folder (look for *_script.py files)
-   - If consolidating 'learning_code_exec/': List files in 'learning_code_exec/' folder (look for *_learning.md files) and 'learning_code_exec/code/' folder (look for *_code.go files)
+1. **Discover All Learning Files**: **STEP-SPECIFIC LEARNINGS MODE**: Learning files are stored in step-specific folders within runs/ directory.
+   - First, scan the runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
+   - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
+     * Look for learnings/step-{X}/ folders (each step has its own folder, at workspace root)
+   - **CRITICAL**: Consolidate within EACH step folder separately - do NOT merge patterns across different step folders
+   - **CRITICAL**: Each step folder (step-1/, step-2/, etc.) should be consolidated independently
+   - For each step folder found:
+     * List files in the step folder (look for *_learning.md files)
+     * If consolidating 'learnings/': Also check step folder's scripts/ subfolder (look for *_script.py files)
+     * Check step folder's code/ subfolder (look for *_code.go files)
 
 2. **Read and Analyze Learning Files**: For each learning file:
    - Read the complete content using 'read_workspace_file'
@@ -436,32 +400,37 @@ Your main goal is to analyze all learning files, identify consolidation opportun
    - Identify tool names, arguments, code patterns, and approaches
 
 3. **Identify Consolidation Opportunities**:
-   - **Duplicate Patterns**: Same tool calls/approaches appearing in multiple learning files
-     - Example: Same tool call pattern in "Step1_learning.md" and "Step2_learning.md"
-   - **Similar Patterns**: Overlapping tool usage or same approach with minor variations
-     - Example: Same tools but different argument values, or same approach with slight modifications
-   - **Outdated Patterns**: Low success rate (<50%) with many failures, or patterns superseded by better ones
-     - Example: Pattern with [Runs: 2 | Success: 33%] that has a better alternative with [Runs: 10 | Success: 90%]
-   - **Redundant Patterns**: Patterns that are essentially the same but documented differently
-     - Example: Two patterns that achieve the same goal using the same tools but written differently
-   - **Files to Merge**: Multiple learning files that should be merged into a single existing step-specific file
-     - **CRITICAL**: Only merge files within the SAME folder (learnings/ or learning_code_exec/)
-     - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
+   - **CRITICAL STEP-SPECIFIC RULE**: Consolidate patterns ONLY within the SAME step folder (e.g., step-1/, step-2/, etc.)
+   - **NEVER merge across step folders**: Do NOT merge patterns from step-1/ with patterns from step-2/
+   - **NEVER merge across runs**: Do NOT merge patterns from different run folders
+   - **Duplicate Patterns**: Same tool calls/approaches appearing in multiple learning files WITHIN THE SAME STEP FOLDER
+     - Example: Same tool call pattern in multiple files within learnings/step-1/
+   - **Similar Patterns**: Overlapping tool usage or same approach with minor variations WITHIN THE SAME STEP FOLDER
+     - Example: Same tools but different argument values within the same step folder
+   - **Outdated Patterns**: Low success rate (<50%) with many failures, or patterns superseded by better ones WITHIN THE SAME STEP FOLDER
+     - Example: Pattern with [Runs: 2 | Success: 33%] that has a better alternative with [Runs: 10 | Success: 90%] in the same step folder
+   - **Redundant Patterns**: Patterns that are essentially the same but documented differently WITHIN THE SAME STEP FOLDER
+     - Example: Two patterns that achieve the same goal using the same tools but written differently in the same step folder
+   - **Files to Merge**: Multiple learning files WITHIN THE SAME STEP FOLDER that should be merged into a single existing file
+     - **CRITICAL**: Only merge files within the SAME step folder (e.g., all files in step-1/ folder)
+     - **NEVER merge across step folders**: Do NOT merge files from step-1/ with files from step-2/
+     - **NEVER merge across step folders**: Do NOT merge files from different step folders
      - **CRITICAL**: When merging files, merge patterns into an EXISTING step-specific file (e.g., Step1_learning.md), NOT into a new general or consolidated file
      - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
-     - Example: Files with >70% similar patterns within the same folder should be merged into one of the existing step files
-     - Example: Multiple files with overlapping content in the same folder should be consolidated into the most relevant existing step file
+     - Example: Files with >70% similar patterns within the same step folder should be merged into one of the existing files in that step folder
 
 4. **Analyze Pattern Relationships**:
-   - **Cross-Step Patterns**: Identify patterns that appear across multiple steps (may indicate general best practices)
-   - **Pattern Evolution**: Identify patterns that have been improved over time (keep best version)
-   - **Pattern Conflicts**: Identify conflicting patterns (same goal, different approaches - keep best one)
-   - **File Similarity**: Calculate similarity between files (percentage of shared patterns)
-   - **Merge Candidates**: Identify files that should be merged (>70% similar patterns within the SAME folder)
-     - **CRITICAL**: Only consider files in the same folder for merging (learnings/ or learning_code_exec/)
-     - **NEVER merge across folders**: learnings/ and learning_code_exec/ are separate and should remain separate
+   - **CRITICAL**: Analyze patterns ONLY within each step folder separately
+   - **Pattern Evolution**: Identify patterns that have been improved over time WITHIN THE SAME STEP FOLDER (keep best version)
+   - **Pattern Conflicts**: Identify conflicting patterns WITHIN THE SAME STEP FOLDER (same goal, different approaches - keep best one)
+   - **File Similarity**: Calculate similarity between files WITHIN THE SAME STEP FOLDER (percentage of shared patterns)
+   - **Merge Candidates**: Identify files that should be merged (>70% similar patterns WITHIN THE SAME STEP FOLDER)
+     - **CRITICAL**: Only consider files in the same step folder for merging (e.g., all files in step-1/)
+     - **NEVER merge across step folders**: step-1/ and step-2/ are separate and should remain separate
+     - **NEVER merge across step folders**: Different step folders are separate and should remain separate
      - **CRITICAL**: When merging, consolidate patterns into an EXISTING step-specific file, NOT a new general/consolidated file
      - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
+   - **NOTE**: Do NOT analyze patterns across different step folders - each step folder is consolidated independently
 
 5. **Calculate Consolidation Impact**:
    - **Before Consolidation**: Count total patterns, duplicates, similar patterns, outdated patterns
@@ -491,17 +460,20 @@ Your main goal is to analyze all learning files, identify consolidation opportun
    - **Consolidate Similar Patterns**: Merge similar patterns into best version, combine scores
    - **Remove Outdated Patterns**: Delete patterns with low success rates that have better alternatives
    - **Merge Files**: When files should be merged:
-     - **CRITICAL FOLDER RULE**: Only merge files within the SAME folder (learnings/ or learning_code_exec/)
-     - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
+     - **CRITICAL STEP-SPECIFIC RULE**: Only merge files within the SAME step folder (e.g., all files in step-1/)
+     - **NEVER merge across step folders**: Do NOT merge files from step-1/ with files from step-2/
+     - **NEVER merge across runs**: Do NOT merge files from different run folders
+     - **CRITICAL STEP RULE**: Only merge files within the SAME step folder
+     - **NEVER merge across step folders**: Do NOT merge files from different step folders
      - **CRITICAL**: Merge patterns into an EXISTING step-specific file (e.g., Step1_learning.md), NOT into a new general or consolidated file
      - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
-     - **Merge All Patterns**: Combine all unique patterns from source files into the selected existing step file
+     - **Merge All Patterns**: Combine all unique patterns from source files WITHIN THE SAME STEP FOLDER into the selected existing file
      - **Combine Scores**: Merge run counts and recalculate success rates for all patterns
      - **Preserve Best Content**: Keep the best descriptions, most detailed patterns, and highest quality content
-     - **File Selection**: Choose the most relevant existing step-specific file (based on step title/context) to merge patterns into
-     - **Update Existing File**: Use 'update_workspace_file' to update the selected existing step file with merged patterns
+     - **File Selection**: Choose the most relevant existing file within the same step folder to merge patterns into
+     - **Update Existing File**: Use 'update_workspace_file' to update the selected existing file with merged patterns
      - **Delete Original Files**: After successful merge, use 'delete_workspace_file' to remove original files (ONLY after user explicitly approves deletion)
-     - **Cross-Step Patterns**: If patterns appear across multiple steps, merge them into the most relevant existing step file (do NOT create a general file)
+     - **NOTE**: Do NOT merge patterns across different step folders - each step folder is consolidated independently
    - **Update Pattern Scores**: When consolidating, properly combine run counts and recalculate success percentages
    - **Preserve Best Patterns**: Always keep the pattern with highest success rate and most runs when consolidating
    - Only modify files that the user explicitly approved for consolidation/merging
@@ -513,7 +485,7 @@ Your main goal is to analyze all learning files, identify consolidation opportun
 - **CRITICAL FILE CREATION RULE**: NEVER create general_patterns_learning.md, consolidated_patterns_learning.md, or any other general/consolidated learning files. Only work with existing step-specific files (format: {StepTitle}_learning.md). When consolidating, merge patterns into existing step files only.
 - **Restricted Access**: You ONLY have access to these subdirectories: ` + templateVars["AllowedPaths"] + `
    - You CANNOT list the root workspace (folder=".").
-   - Always start listing from the allowed subdirectories (e.g., folder="learnings", folder="learning_code_exec").
+   - Always start listing from the allowed subdirectories (e.g., folder="learnings").
 - **Pathing**: All tool paths are relative to the Workspace Path provided.
 - **Workflow**: Analyze → Present findings with 'human_feedback' → Wait for user approval → Then consolidate (if approved)
 - **Preserve Valuable Learnings**: Only consolidate truly duplicate/redundant/outdated patterns. Preserve all unique and valuable learnings.
@@ -534,12 +506,13 @@ Your main goal is to analyze all learning files, identify consolidation opportun
   - Superseded by better pattern (same goal, higher success rate, more runs)
 - **Cross-Step Patterns**: Patterns that appear in multiple step learning files (may be general best practices)
 - **File Merge Candidates**:
-  - Files with >70% similar patterns within the SAME folder should be considered for merging
-  - **CRITICAL**: Only merge files within the same folder (learnings/ or learning_code_exec/)
-  - **NEVER merge across folders**: learnings/ and learning_code_exec/ are separate and must remain separate
-   - Files with mostly duplicate content in the same folder (can merge into single existing step file)
-   - Multiple small files in the same folder that could be consolidated into one existing step file
-   - General patterns appearing in 3+ files in the same folder (merge into the most relevant existing step file, do NOT create a general file)
+  - Files with >70% similar patterns within the SAME step folder should be considered for merging
+  - **CRITICAL**: Only merge files within the same step folder (e.g., all files in step-1/)
+  - **NEVER merge across step folders**: step-1/ and step-2/ are separate and must remain separate
+  - **NEVER merge across step folders**: Different step folders are separate and must remain separate
+  - Files with mostly duplicate content in the same step folder (can merge into single existing file in that step folder)
+  - Multiple small files in the same step folder that could be consolidated into one existing file
+  - **NOTE**: Each step folder is consolidated independently - do NOT merge patterns across step folders
 
 ## 📊 CONSOLIDATION EXAMPLES
 
@@ -565,7 +538,7 @@ Your main goal is to analyze all learning files, identify consolidation opportun
   - Combined scores (merge run counts, recalculate success rates)
   - Best descriptions from each file
   - Delete original files after successful merge (with user approval)
-- **Note**: Only merge files within the same folder. Do NOT merge learnings/ files with learning_code_exec/ files. Do NOT create consolidated_patterns_learning.md.
+- **Note**: Only merge files within the same step folder. Do NOT merge files from different step folders. Do NOT create consolidated_patterns_learning.md.
 
 **Example 5 - Cross-Step Pattern Consolidation:**
 - Pattern "kubernetes.kubectl_apply" appears in 5 different step learning files with similar arguments
@@ -585,21 +558,31 @@ After consolidation, provide a summary of:
 
 // consolidationUserMessageProcessor creates the user message for learning consolidation
 func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidationUserMessageProcessor(templateVars map[string]string) string {
+	workspacePath := templateVars["WorkspacePath"]
+
 	return `# Learning Consolidation Task
 
 **PRIMARY GOAL**: Analyze all learning files and consolidate duplicate, similar, and outdated patterns to optimize learning structure for better future execution efficiency.
 
 **Context**:
-- **Workspace Path**: ` + templateVars["WorkspacePath"] + `
+- **Workspace Path**: ` + workspacePath + `
 - **Allowed Paths**: ` + templateVars["AllowedPaths"] + `
+- **Step-Specific Learnings Mode**: Learning files are stored in step-specific folders within runs/ directory
+- **CRITICAL**: Consolidate patterns ONLY within each step folder separately - do NOT merge across step folders
+
 
 **YOUR TASKS**:
 
-1. **Discover all learning files**: Use 'list_workspace_files' to list all learning files from both folders:
-   - Look for *.md files in learnings/ folder
-   - Look for *.py files in learnings/scripts/ folder
-   - Look for *.md files in learning_code_exec/ folder
-   - Look for *.go files in learning_code_exec/code/ folder
+1. **Discover all learning files**: **STEP-SPECIFIC LEARNINGS MODE**
+   - First, scan runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
+   - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
+     * Look for learnings/step-{X}/ folders (at workspace root)
+   - **CRITICAL**: Consolidate within EACH step folder separately (step-1/, step-2/, etc.)
+   - For each step folder found:
+     * List files in the step folder (look for *_learning.md files)
+     * Check step folder's scripts/ subfolder (look for *_script.py files)
+     * Check step folder's code/ subfolder (look for *_code.go files)
+   - **NOTE**: Each step folder should be analyzed and consolidated independently
 
 2. **Read and analyze learning files**: For each learning file:
    - Read the complete content using 'read_workspace_file'
@@ -609,15 +592,18 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidation
    - Note pattern locations (which file, which section)
 
 3. **Identify consolidation opportunities**:
-   - **Duplicate patterns**: Same tool calls/approaches appearing in multiple files
-   - **Similar patterns**: Overlapping tool usage or same approach with minor variations
-   - **Outdated patterns**: Low success rate (<50%) with many failures, or superseded by better patterns
-   - **Redundant patterns**: Patterns that are essentially the same but documented differently
-   - **Files to merge**: Files with >70% similar patterns within the SAME folder
-     - **CRITICAL**: Only merge files within the same folder (learnings/ or learning_code_exec/)
-     - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
+   - **CRITICAL STEP-SPECIFIC RULE**: Identify opportunities ONLY within each step folder separately
+   - **Duplicate patterns**: Same tool calls/approaches appearing in multiple files WITHIN THE SAME STEP FOLDER
+   - **Similar patterns**: Overlapping tool usage or same approach with minor variations WITHIN THE SAME STEP FOLDER
+   - **Outdated patterns**: Low success rate (<50%) with many failures, or superseded by better patterns WITHIN THE SAME STEP FOLDER
+   - **Redundant patterns**: Patterns that are essentially the same but documented differently WITHIN THE SAME STEP FOLDER
+   - **Files to merge**: Files with >70% similar patterns within the SAME STEP FOLDER
+     - **CRITICAL**: Only merge files within the same step folder (e.g., all files in step-1/)
+     - **NEVER merge across step folders**: Do NOT merge files from step-1/ with files from step-2/
+     - **NEVER merge across step folders**: Do NOT merge files from different step folders
      - **CRITICAL**: When merging, consolidate patterns into an EXISTING step-specific file, NOT a new general/consolidated file
      - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
+     - **NOTE**: Each step folder is consolidated independently - do NOT merge patterns across step folders
 
 4. **Calculate consolidation impact**:
    - Count total patterns before consolidation
@@ -646,16 +632,19 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidation
    - **Consolidate similar patterns**: Merge similar patterns into best version, combine scores
    - **Remove outdated patterns**: Delete patterns with low success rates that have better alternatives
    - **Merge files**: When files should be merged:
-     - **CRITICAL FOLDER RULE**: Only merge files within the SAME folder (learnings/ or learning_code_exec/)
-     - **NEVER merge across folders**: Do NOT merge files from learnings/ with files from learning_code_exec/
+     - **CRITICAL STEP-SPECIFIC RULE**: Only merge files within the SAME step folder (e.g., all files in step-1/)
+     - **NEVER merge across step folders**: Do NOT merge files from step-1/ with files from step-2/
+     - **NEVER merge across runs**: Do NOT merge files from different run folders
+     - **CRITICAL STEP RULE**: Only merge files within the SAME step folder
+     - **NEVER merge across step folders**: Do NOT merge files from different step folders
      - **CRITICAL**: Merge patterns into an EXISTING step-specific file (e.g., Step1_learning.md), NOT into a new general or consolidated file
      - **NEVER create general_patterns_learning.md or consolidated_patterns_learning.md files**
-     - **Combine all patterns**: Merge all unique patterns from source files into the selected existing step file, combine scores
+     - **Combine all patterns**: Merge all unique patterns from source files WITHIN THE SAME STEP FOLDER into the selected existing file, combine scores
      - **Preserve best content**: Keep best descriptions, most detailed patterns, highest quality content
-     - **File selection**: Choose the most relevant existing step-specific file (based on step title/context) to merge patterns into
-     - **Update existing file**: Use 'update_workspace_file' to update the selected existing step file with merged patterns
-     - **Cross-step patterns**: If patterns appear in 3+ files in the same folder, merge them into the most relevant existing step file (do NOT create a general file)
+     - **File selection**: Choose the most relevant existing file within the same step folder to merge patterns into
+     - **Update existing file**: Use 'update_workspace_file' to update the selected existing file with merged patterns
      - **Delete originals**: After successful merge, use 'delete_workspace_file' to remove original files (ONLY if user explicitly approved deletion)
+     - **NOTE**: Each step folder is consolidated independently - do NOT merge patterns across step folders
    - **Update pattern scores**: When consolidating, properly combine run counts and recalculate success percentages
    - **Preserve best patterns**: Always keep the pattern with highest success rate and most runs when consolidating
    - Only modify files that the user explicitly approved for consolidation/merging

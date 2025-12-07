@@ -130,6 +130,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     learning_llm?: { provider?: string; model_id?: string }
     disable_learning?: boolean
     learning_detail_level?: 'exact' | 'general'
+    learning_after_loop_iteration?: boolean
     selected_servers?: string[]
     selected_tools?: string[]
     enabled_custom_tools?: string[]
@@ -265,6 +266,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0
   const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
+  const learningAfterLoopIteration = stepConfig?.agent_configs?.learning_after_loop_iteration === true
 
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
 
@@ -409,23 +411,30 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
       <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
 
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 pt-5 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
-            {title || `Loop ${stepIndex + 1}`}
-          </h3>
+      <div className="px-4 py-3 pt-5 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
+        {/* First row: Step number and title */}
+        <div className="flex items-start gap-3 mb-2">
+          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-bold flex-shrink-0">
+            {stepIndex + 1}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-relaxed">
+              {title || `Loop ${stepIndex + 1}`}
+            </h3>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Second row: Action buttons */}
+        <div className="flex items-center gap-1.5">
           {/* Run from this step button */}
           {onRunFromStep ? (
             <button
               onClick={handleRunClick}
               disabled={isRunDisabled}
               className={`
-                flex items-center justify-center w-7 h-7 rounded-lg transition-all relative z-10
+                flex items-center justify-center w-8 h-8 rounded-md transition-all relative z-10
                 ${isRunDisabled
                   ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed opacity-50'
-                  : 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/60 hover:scale-105 cursor-pointer'
+                  : 'bg-emerald-500 dark:bg-emerald-600 text-white hover:bg-emerald-600 dark:hover:bg-emerald-500 hover:scale-105 cursor-pointer shadow-sm'
                 }
               `}
               title={
@@ -436,10 +445,10 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
                     : `Run step ${stepIndex + 1} only`
               }
             >
-              <Play className="w-3.5 h-3.5" />
+              <Play className="w-4 h-4" />
             </button>
           ) : (
-            <div className="w-7 h-7 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
+            <div className="w-8 h-8 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
               ⚠️
             </div>
           )}
@@ -447,21 +456,21 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
           {onOpenSidebar ? (
             <button
               onClick={handleSettingsClick}
-              className="flex items-center justify-center w-7 h-7 rounded-lg transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
+              className="flex items-center justify-center w-8 h-8 rounded-md transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
               title="Open step settings"
             >
-              <Settings className="w-3.5 h-3.5" />
+              <Settings className="w-4 h-4" />
             </button>
           ) : null}
           {/* Agent Mode Badge */}
           {useCodeExecutionMode ? (
-            <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold">
-              <Terminal className="w-3 h-3" />
+            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold border border-amber-200 dark:border-amber-800">
+              <Terminal className="w-3.5 h-3.5" />
               <span>Code</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">
-              <Code className="w-3 h-3" />
+            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 text-[10px] font-semibold border border-slate-200 dark:border-slate-700">
+              <Code className="w-3.5 h-3.5" />
               <span>Agent</span>
             </div>
           )}
@@ -583,6 +592,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
         humanToolsInfo={humanToolsInfo}
         hasHumanTools={hasHumanTools}
         hasLargeOutput={hasLargeOutput}
+        learningAfterLoopIteration={learningAfterLoopIteration}
       />
 
       {/* Loop back handle */}

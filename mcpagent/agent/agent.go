@@ -833,98 +833,6 @@ func (a *Agent) SetCurrentQuery(query string) {
 	// This method is no longer needed as hierarchy is removed
 }
 
-// createOnDemandConnection creates a connection to a specific server when needed
-func (a *Agent) createOnDemandConnection(ctx context.Context, serverName string) (mcpclient.ClientInterface, error) {
-	logger := getLogger(a)
-	startTime := time.Now()
-	logger.Infof("[ON-DEMAND CONNECTION] Creating connection for server: %s", serverName)
-
-	// Add a shorter timeout for on-demand connections (3 minutes instead of 10)
-	// This prevents hanging for too long and provides faster feedback
-	connectTimeout := 3 * time.Minute
-	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
-	defer cancel()
-
-	// Start a goroutine to log progress and timeout warnings
-	progressDone := make(chan bool, 1)
-	go func() {
-		ticker := time.NewTicker(30 * time.Second) // Log every 30 seconds
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				elapsed := time.Since(startTime)
-				remaining := connectTimeout - elapsed
-				if remaining > 0 {
-					logger.Infof("[ON-DEMAND CONNECTION] Still connecting to %s... (elapsed: %v, remaining: %v)",
-						serverName, elapsed.Round(time.Second), remaining.Round(time.Second))
-				} else {
-					logger.Warnf("[ON-DEMAND CONNECTION] Connection to %s has exceeded timeout (%v)", serverName, connectTimeout)
-				}
-			case <-connectCtx.Done():
-				return
-			case <-progressDone:
-				return
-			}
-		}
-	}()
-
-	// Load the merged config to get server details
-	logger.Infof("[ON-DEMAND CONNECTION] Loading config for server: %s", serverName)
-	config, err := mcpclient.LoadMergedConfig(a.configPath, logger)
-	if err != nil {
-		progressDone <- true
-		return nil, fmt.Errorf("failed to load merged config for on-demand connection: %w", err)
-	}
-
-	serverConfig, exists := config.MCPServers[serverName]
-	if !exists {
-		progressDone <- true
-		return nil, fmt.Errorf("server %s not found in config", serverName)
-	}
-
-	logger.Infof("[ON-DEMAND CONNECTION] Server config loaded: command=%s, args=%v, protocol=%s",
-		serverConfig.Command, serverConfig.Args, serverConfig.Protocol)
-
-	// Create a new client for this specific server
-	logger.Infof("[ON-DEMAND CONNECTION] Creating MCP client for server: %s", serverName)
-	client := mcpclient.New(mcpclient.MCPServerConfig{
-		Command:  serverConfig.Command,
-		Args:     serverConfig.Args,
-		URL:      serverConfig.URL,
-		Protocol: serverConfig.Protocol,
-		Env:      serverConfig.Env, // Include environment variables
-	}, logger)
-
-	// Connect to the server with timeout context
-	logger.Infof("[ON-DEMAND CONNECTION] Attempting to connect to server: %s (timeout: %v)", serverName, connectTimeout)
-	connectStartTime := time.Now()
-	if err := client.Connect(connectCtx); err != nil {
-		progressDone <- true
-		connectDuration := time.Since(connectStartTime)
-
-		// Check if it was a timeout
-		if connectCtx.Err() == context.DeadlineExceeded {
-			logger.Errorf("[ON-DEMAND CONNECTION] Connection to %s timed out after %v: %v",
-				serverName, connectDuration, err)
-			return nil, fmt.Errorf("connection to server %s timed out after %v: %w",
-				serverName, connectTimeout, err)
-		}
-
-		logger.Errorf("[ON-DEMAND CONNECTION] Failed to connect to server %s after %v: %v",
-			serverName, connectDuration, err)
-		return nil, fmt.Errorf("failed to connect to server %s: %w", serverName, err)
-	}
-
-	progressDone <- true
-	connectDuration := time.Since(connectStartTime)
-	totalDuration := time.Since(startTime)
-	logger.Infof("[ON-DEMAND CONNECTION] Successfully connected to server: %s (connect_time: %v, total_time: %v)",
-		serverName, connectDuration.Round(time.Millisecond), totalDuration.Round(time.Millisecond))
-	return client, nil
-}
-
 // StartAgentSession creates a new agent-level event tree
 func (a *Agent) StartAgentSession(ctx context.Context) {
 	// Emit agent start event to create hierarchy
@@ -1587,6 +1495,16 @@ func (a *Agent) EmitTypedEvent(ctx context.Context, eventData events.EventData) 
 	}
 }
 
+// HandleEvent implements the WorkspaceEventEmitter interface for workspace tools.
+// This allows workspace tools to emit events when called via the agent conversation loop.
+// The workspace_tools.go file expects this interface to emit workspace_file_operation events.
+func (a *Agent) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
+	if event != nil && event.Data != nil {
+		a.EmitTypedEvent(ctx, event.Data)
+	}
+	return nil
+}
+
 // isStartOrEndEvent checks if an event type is a start or end event that needs correlation ID
 func isStartOrEndEvent(eventType events.EventType) bool {
 	return eventType == events.ConversationStart || eventType == events.ConversationEnd ||
@@ -2099,10 +2017,13 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 	// They should only be accessible via generated Go code
 	// EXCEPTION: Structured output tools (category "structured_output") must always be available
 	// because they're orchestration/control tools, not regular MCP tools
+	// EXCEPTION: Human tools (category "human") must always be available
+	// because they require event bridge access for frontend UI and cannot work via generated code
 	isStructuredOutputTool := toolCategory == "structured_output"
+	isHumanTool := toolCategory == "human"
 
-	if !a.UseCodeExecutionMode || isStructuredOutputTool {
-		// Normal mode OR structured output tool: Add to the main Tools array so the LLM can see it
+	if !a.UseCodeExecutionMode || isStructuredOutputTool || isHumanTool {
+		// Normal mode OR structured output tool OR human tool: Add to the main Tools array so the LLM can see it
 		a.Tools = append(a.Tools, tool)
 
 		// 🔧 CRITICAL FIX: Also add to filteredTools if smart routing is active
@@ -2114,6 +2035,11 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 				a.Logger.Debugf("🔧 Code execution mode: Structured output tool %s added to LLM tools (required for orchestration)", name)
 			}
 		}
+		if a.UseCodeExecutionMode && isHumanTool {
+			if a.Logger != nil {
+				a.Logger.Infof("🔧 Code execution mode: Human tool %s added to LLM tools (requires event bridge for frontend UI) - total tools now: %d", name, len(a.Tools))
+			}
+		}
 	} else {
 		// Code execution mode: Don't add to LLM tools, but still generate code and update registry
 		if a.Logger != nil {
@@ -2121,43 +2047,33 @@ func (a *Agent) RegisterCustomTool(name string, description string, parameters m
 		}
 	}
 
-	// Generate Go code for custom tools
-	generatedDir := a.getGeneratedDir()
-	customToolsForCodeGen := make(map[string]codegen.CustomToolForCodeGen)
-	categoryCounts := make(map[string]int)
-	for toolName, customTool := range a.customTools {
-		customToolsForCodeGen[toolName] = codegen.CustomToolForCodeGen{
-			Definition: customTool.Definition,
-			Category:   customTool.Category, // Pass category to code generation
-		}
-		// Count tools by category for logging
-		category := customTool.Category
-		if category == "" {
-			category = "custom"
-		}
-		categoryCounts[category]++
-	}
-	if a.Logger != nil {
-		a.Logger.Infof("🔍 [DISCOVERY] Generating custom tools code for %d tools", len(customToolsForCodeGen))
-		for category, count := range categoryCounts {
-			a.Logger.Infof("🔍 [DISCOVERY]   - Category %s: %d tools", category, count)
-		}
-	}
-	// Use agent's ToolTimeout (same as used for normal tool calls)
-	toolTimeout := getToolExecutionTimeout(a)
-	if err := codegen.GenerateCustomToolsCode(customToolsForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
+	// Generate Go code for ONLY the new tool (not all tools - that was causing O(n²) regeneration)
+	// EXCEPTION: Skip code generation for human tools - they must only be used as direct LLM tools
+	// (not via generated code) because they need event bridge access for frontend UI
+	if isHumanTool {
 		if a.Logger != nil {
-			a.Logger.Warnf("🔍 [DISCOVERY] Failed to generate Go code for custom tools: %v", err)
+			a.Logger.Infof("🔧 Skipping code generation for human tool %s - must be used as direct LLM tool only", name)
 		}
-		// Don't fail tool registration if code generation fails
-	} else if a.Logger != nil {
-		a.Logger.Infof("🔍 [DISCOVERY] Successfully generated custom tools code")
-		// Verify workspace_tools directory was created
-		workspaceToolsDir := filepath.Join(generatedDir, "workspace_tools")
-		if _, err := os.Stat(workspaceToolsDir); err == nil {
-			a.Logger.Infof("🔍 [DISCOVERY] Verified workspace_tools directory exists: %s", workspaceToolsDir)
-		} else {
-			a.Logger.Warnf("🔍 [DISCOVERY] workspace_tools directory not found after code generation: %s (error: %v)", workspaceToolsDir, err)
+	} else {
+		generatedDir := a.getGeneratedDir()
+		singleToolForCodeGen := map[string]codegen.CustomToolForCodeGen{
+			name: {
+				Definition: tool,
+				Category:   toolCategory,
+			},
+		}
+		if a.Logger != nil {
+			a.Logger.Debugf("🔍 [DISCOVERY] Generating code for new tool: %s (category: %s)", name, toolCategory)
+		}
+		// Use agent's ToolTimeout (same as used for normal tool calls)
+		toolTimeout := getToolExecutionTimeout(a)
+		if err := codegen.GenerateCustomToolsCode(singleToolForCodeGen, generatedDir, a.Logger, toolTimeout); err != nil {
+			if a.Logger != nil {
+				a.Logger.Warnf("🔍 [DISCOVERY] Failed to generate Go code for tool %s: %v", name, err)
+			}
+			// Don't fail tool registration if code generation fails
+		} else if a.Logger != nil {
+			a.Logger.Debugf("🔍 [DISCOVERY] Successfully generated code for tool: %s", name)
 		}
 	}
 

@@ -34,31 +34,78 @@ type WorkspaceEventEmitter interface {
 type contextKey string
 
 const (
-	workspaceEventEmitterKey contextKey = "workspace_event_emitter"
-	turnKey                  contextKey = "turn"
-	serverNameKey            contextKey = "server_name"
+	// WorkspaceEventEmitterKey is the context key for the workspace event emitter
+	WorkspaceEventEmitterKey contextKey = "workspace_event_emitter"
+	// TurnKey is the context key for the turn number
+	TurnKey contextKey = "turn"
+	// ServerNameKey is the context key for the server name
+	ServerNameKey contextKey = "server_name"
+)
+
+// Legacy constants for backward compatibility (use exported versions)
+var (
+	workspaceEventEmitterKey = WorkspaceEventEmitterKey
+	turnKey                  = TurnKey
+	serverNameKey            = ServerNameKey
 )
 
 // getEventEmitterFromContext extracts the event emitter from context
+// Tries multiple key types to handle different packages using their own contextKey types
 func getEventEmitterFromContext(ctx context.Context) WorkspaceEventEmitter {
+	// Try with our typed key first
 	if emitter, ok := ctx.Value(workspaceEventEmitterKey).(WorkspaceEventEmitter); ok {
 		return emitter
+	}
+	// Try with string key (for backward compatibility and cross-package compatibility)
+	if emitter, ok := ctx.Value("workspace_event_emitter").(WorkspaceEventEmitter); ok {
+		return emitter
+	}
+	// Try with any contextKey type that has the same string value
+	// This handles cases where other packages define their own contextKey types
+	if val := ctx.Value("workspace_event_emitter"); val != nil {
+		if emitter, ok := val.(WorkspaceEventEmitter); ok {
+			return emitter
+		}
 	}
 	return nil
 }
 
 // getTurnFromContext extracts the turn number from context
+// Tries multiple key types to handle different packages using their own contextKey types
 func getTurnFromContext(ctx context.Context) int {
+	// Try with our typed key first
 	if turn, ok := ctx.Value(turnKey).(int); ok {
 		return turn
+	}
+	// Try with string key (for backward compatibility and cross-package compatibility)
+	if turn, ok := ctx.Value("turn").(int); ok {
+		return turn
+	}
+	// Try with any contextKey type that has the same string value
+	if val := ctx.Value("turn"); val != nil {
+		if turn, ok := val.(int); ok {
+			return turn
+		}
 	}
 	return 0
 }
 
 // getServerNameFromContext extracts the server name from context
+// Tries multiple key types to handle different packages using their own contextKey types
 func getServerNameFromContext(ctx context.Context) string {
+	// Try with our typed key first
 	if serverName, ok := ctx.Value(serverNameKey).(string); ok {
 		return serverName
+	}
+	// Try with string key (for backward compatibility and cross-package compatibility)
+	if serverName, ok := ctx.Value("server_name").(string); ok {
+		return serverName
+	}
+	// Try with any contextKey type that has the same string value
+	if val := ctx.Value("server_name"); val != nil {
+		if serverName, ok := val.(string); ok {
+			return serverName
+		}
 	}
 	return ""
 }

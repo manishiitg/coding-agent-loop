@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useCallback } from 'react'
+import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
 import { 
   Play, 
   Square, 
@@ -7,7 +7,6 @@ import {
   ZoomIn,
   ZoomOut,
   Loader2,
-  GitBranch,
   ChevronDown,
   Check,
   Rocket,
@@ -17,7 +16,11 @@ import {
   RefreshCw,
   BookOpen,
   FolderTree,
-  Trash2
+  Trash2,
+  Settings,
+  X,
+  Brain,
+  MessageSquare
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -27,6 +30,7 @@ import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
+import LLMOverrideModal from '../LLMOverrideModal'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -61,9 +65,9 @@ interface WorkflowToolbarProps {
   onZoomIn: () => void
   onZoomOut: () => void
   onFitView: () => void
-  showDependencyEdges?: boolean
-  onToggleDependencyEdges?: () => void
   onProgressChange?: (completedStepIndices: number[]) => void  // Callback when step progress changes
+  showChatArea?: boolean
+  onToggleChatArea?: () => void
   className?: string
 }
 
@@ -80,9 +84,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onZoomIn,
   onZoomOut,
   onFitView,
-  showDependencyEdges = false,
-  onToggleDependencyEdges,
   onProgressChange,
+  showChatArea = false,
+  onToggleChatArea,
   className = ''
 }) => {
   // Workspace store for opening folders
@@ -111,6 +115,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const buildExecutionOptions = useWorkflowStore(state => state.buildExecutionOptions)
   const loadSavedSettings = useWorkflowStore(state => state.loadSavedSettings)
   const saveSettings = useWorkflowStore(state => state.saveSettings)
+  const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
+  const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)
+  
+  // LLM Override modal state
+  const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
   
   // Helper function to find a folder in the file tree
   const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
@@ -151,6 +160,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     folderName: null,
     isLoading: false
   })
+  
+  // Loading state for creating new folder
+  const [isCreatingFolder, setIsCreatingFolder] = React.useState(false)
   
   // Refs for dropdown click-outside detection
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -336,10 +348,46 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [setStartPoint])
 
   // Handle selecting run folder
-  const handleSelectRunFolder = useCallback((folder: string) => {
-    setSelectedRunFolder(folder)
+  const handleSelectRunFolder = useCallback(async (folder: string) => {
+    // If "new" is selected, create a new iteration folder via API
+    if (folder === 'new' && workspacePath) {
+      setIsCreatingFolder(true)
+      try {
+        // Create new folder via API
+        const response = await agentApi.createRunFolder(workspacePath)
+        
+        if (response.success && response.folder_name) {
+          // Select the newly created folder FIRST (before loading folders)
+          // This ensures the selection is set immediately and won't be reset by validation
+          setSelectedRunFolder(response.folder_name)
+          
+          // Refresh folder list to include the new folder
+          await loadRunFolders(workspacePath)
+          
+          // Load progress for the new folder (will be empty, but ensures consistency)
+          await loadProgress(workspacePath, response.folder_name)
+          
+          // Refresh workspace files to show the new folder
+          await fetchFiles()
+        } else {
+          console.error('[WorkflowToolbar] Failed to create folder:', response)
+          // Fallback: still set to 'new' so user can try again
+          setSelectedRunFolder('new')
+        }
+      } catch (error) {
+        console.error('[WorkflowToolbar] Error creating new folder:', error)
+        // Fallback: still set to 'new' so user can try again
+        setSelectedRunFolder('new')
+      } finally {
+        setIsCreatingFolder(false)
+      }
+    } else {
+      // Regular folder selection
+      setSelectedRunFolder(folder)
+    }
+    
     setIsIterationDropdownOpen(false)
-  }, [setSelectedRunFolder])
+  }, [setSelectedRunFolder, workspacePath, loadRunFolders, loadProgress, fetchFiles])
 
   // Handle delete folder confirmation
   const handleDeleteFolderClick = useCallback((e: React.MouseEvent, folderName: string) => {
@@ -407,6 +455,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     <div className={`
       flex items-center justify-between gap-2 px-3 py-1.5 
       bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700
+      relative z-10
       ${className}
     `}>
       {/* Left side - Phase selector */}
@@ -422,9 +471,37 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         ) : (
           <>
-            {/* Execution Controls - Iteration selector + Split button */}
+            {/* Execution Controls - Execute button first, then configuration dropdowns */}
             {executionPhase && (
               <>
+                {/* Execute/Stop Button - Changes to Stop when running */}
+                <button
+                  onClick={isRunning ? onStop : handleExecute}
+                  disabled={false}
+                  className={`
+                    flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
+                    ${isRunning
+                      ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
+                      : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
+                    }
+                  `}
+                  title={isRunning ? 'Stop execution' : `Execute: ${currentModeInfo.label}`}
+                >
+                  {isRunning ? (
+                    <>
+                      <Square className="w-3.5 h-3.5" />
+                      <span>Stop</span>
+                    </>
+                  ) : (
+                    <>
+                      <Rocket className="w-3.5 h-3.5" />
+                      <span>Execute</span>
+                    </>
+                  )}
+                </button>
+                
+                <div className="w-px h-5 bg-border" />
+                
                 {/* Iteration Selector */}
                 <div className="relative" ref={iterationDropdownRef}>
                   <button
@@ -453,17 +530,25 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         {/* New Run option */}
                         <button
                           onClick={() => handleSelectRunFolder('new')}
+                          disabled={isCreatingFolder}
                           className={`
                             w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
                             ${selectedRunFolder === 'new' 
                               ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
                               : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                             }
+                            ${isCreatingFolder ? 'opacity-50 cursor-not-allowed' : ''}
                           `}
                         >
-                          <Plus className="w-4 h-4" />
-                          <span className="font-medium">New Run</span>
-                          {selectedRunFolder === 'new' && <Check className="w-4 h-4 ml-auto" />}
+                          {isCreatingFolder ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Plus className="w-4 h-4" />
+                          )}
+                          <span className="font-medium">
+                            {isCreatingFolder ? 'Creating...' : 'New Run'}
+                          </span>
+                          {selectedRunFolder === 'new' && !isCreatingFolder && <Check className="w-4 h-4 ml-auto" />}
                         </button>
                         
                         {runFolders.length > 0 ? (
@@ -474,7 +559,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             </div>
                             {runFolders.map((folder: RunFolder) => {
                               const progress = folder.progress
-                              const folderCompletedCount = progress?.completed_step_indices.length || 0
+                              const folderCompletedCount = progress?.completed_step_indices?.length || 0
                               const folderTotalSteps = progress?.total_steps || 0
                               const hasProgress = progress && folderCompletedCount > 0
                               
@@ -677,34 +762,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     </div>
                   )}
                 </div>
-
-                {/* Execute/Stop Button - Changes to Stop when running */}
-                <button
-                  onClick={isRunning ? onStop : handleExecute}
-                  disabled={false}
-                  className={`
-                    flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
-                    ${isRunning
-                      ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
-                      : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
-                    }
-                  `}
-                  title={isRunning ? 'Stop execution' : `Execute: ${currentModeInfo.label}`}
-                >
-                  {isRunning ? (
-                    <>
-                      <Square className="w-3.5 h-3.5" />
-                      <span>Stop</span>
-                    </>
-                  ) : (
-                    <>
-                      <Rocket className="w-3.5 h-3.5" />
-                      <span>Execute</span>
-                    </>
-                  )}
-                </button>
-                
-                <div className="w-px h-5 bg-border" />
               </>
             )}
 
@@ -838,20 +895,40 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div className="flex items-center gap-1">
         {/* Toggle dependency edges - icon only */}
-        {onToggleDependencyEdges && (
+        {/* LLM Override Button and Banner */}
+        {tempOverrideLLM ? (
+          // Active override indicator with clear button
+          <div className="flex items-center gap-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-md shadow-sm">
+            <Brain className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 animate-pulse" />
+            <span className="text-xs font-medium text-amber-700 dark:text-amber-300 max-w-[120px] truncate" title={`${tempOverrideLLM.provider}/${tempOverrideLLM.model_id}`}>
+              {tempOverrideLLM.model_id.split('/').pop() || tempOverrideLLM.model_id}
+            </span>
+            <button
+              onClick={() => clearTempOverrideLLM()}
+              className="p-0.5 rounded hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-600 dark:text-amber-400"
+              title="Clear LLM override"
+            >
+              <X className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => setShowLLMOverrideModal(true)}
+              className="p-0.5 rounded hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-600 dark:text-amber-400"
+              title="Change LLM override"
+            >
+              <Settings className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          // No override - show button to set one
           <button
-            onClick={onToggleDependencyEdges}
-            className={`p-1.5 rounded-md transition-colors ${
-              showDependencyEdges 
-                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700' 
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
-            }`}
-            title={showDependencyEdges ? 'Hide data dependencies' : 'Show data dependencies'}
+            onClick={() => setShowLLMOverrideModal(true)}
+            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            title="Set temporary LLM override for execution agents"
           >
-            <GitBranch className="w-3.5 h-3.5" />
+            <Brain className="w-3.5 h-3.5" />
           </button>
         )}
-
+        
         {/* Show Learnings - opens workspace and navigates to learnings folder */}
         {workspacePath && (
           <button
@@ -926,6 +1003,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
+        {/* Toggle ChatArea Button */}
+        {onToggleChatArea && (
+          <button
+            onClick={onToggleChatArea}
+            className={`p-1.5 rounded-md transition-colors ${
+              showChatArea
+                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+            }`}
+            title={showChatArea ? 'Hide chat panel' : 'Show chat panel'}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+          </button>
+        )}
+        
         <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
         
         <button
@@ -962,6 +1054,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       cancelText="Cancel"
       type="danger"
       isLoading={deleteDialog.isLoading}
+    />
+    
+    {/* LLM Override Modal */}
+    <LLMOverrideModal
+      isOpen={showLLMOverrideModal}
+      onClose={() => setShowLLMOverrideModal(false)}
     />
     </>
   )

@@ -412,21 +412,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 						Duration:      time.Since(fallbackStartTime).String(),
 					}
 					a.EmitTypedEvent(ctx, fallbackSuccessEvent)
-					// Emit max token fallback success event (replaced span-based tracing)
-					maxTokenSuccessEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"turn":                turn + 1,
-							"successful_fallback": fallbackModelID,
-							"attempts":            i + 1,
-							"successful_llm":      fallbackModelID,
-							"successful_provider": string(a.provider),
-							"successful_phase":    "same_provider",
-							"duration":            time.Since(fallbackStartTime).String(),
-						},
-					}
+					// Emit max token fallback success event
+					maxTokenSuccessEvent := events.NewFallbackSuccessDetailEvent(turn+1, fallbackModelID, string(a.provider), "same_provider", "max_token", i+1, time.Since(fallbackStartTime))
 					a.EmitTypedEvent(ctx, maxTokenSuccessEvent)
 					sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, string(a.provider)))
 					return fresp, usage, nil
@@ -460,22 +447,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 			if len(crossProviderFallbacks) > 0 {
 				sendMessage(fmt.Sprintf("\n🔄 Phase 2: Trying %d cross-provider (%s) fallback models...", len(crossProviderFallbacks), cases.Title(language.English).String(crossProviderName)))
 				for i, fallbackModelID := range crossProviderFallbacks {
-					// Create cross-provider fallback attempt event (replaced span-based tracing)
-					crossProviderFallbackEvent := &events.GenericEventData{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						Data: map[string]interface{}{
-							"fallback_index":    i + 1,
-							"fallback_model":    fallbackModelID,
-							"llm_model":         fallbackModelID,
-							"fallback_provider": "openai",
-							"fallback_phase":    "cross_provider",
-							"total_fallbacks":   len(crossProviderFallbacks),
-							"error_type":        "max_token",
-							"operation":         "fallback_attempt",
-						},
-					}
+					// Create cross-provider fallback attempt event
+					crossProviderFallbackEvent := events.NewFallbackAttemptDetailEvent(turn+1, i+1, len(crossProviderFallbacks), fallbackModelID, "openai", "cross_provider", "max_token")
 					a.EmitTypedEvent(ctx, crossProviderFallbackEvent)
 
 					sendMessage(fmt.Sprintf("\n🔄 Trying %s fallback model %d/%d: %s", cases.Title(language.English).String(crossProviderName), i+1, len(crossProviderFallbacks), fallbackModelID))
@@ -488,22 +461,8 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 					fallbackLLM, ferr := a.createFallbackLLM(ctx, fallbackModelID)
 					if ferr != nil {
 						a.ModelID = origModelID
-						// Emit cross-provider fallback initialization failure event (replaced span-based tracing)
-						crossProviderInitFailureEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":              turn + 1,
-								"success":           false,
-								"error":             ferr.Error(),
-								"stage":             "initialization",
-								"fallback_model":    fallbackModelID,
-								"fallback_provider": "openai",
-								"fallback_phase":    "cross_provider",
-								"duration":          time.Since(fallbackStartTime).String(),
-							},
-						}
+						// Emit cross-provider fallback initialization failure event
+						crossProviderInitFailureEvent := events.NewFallbackFailureDetailEvent(turn+1, fallbackModelID, "openai", "cross_provider", "initialization", "max_token", ferr.Error(), time.Since(fallbackStartTime))
 						a.EmitTypedEvent(ctx, crossProviderInitFailureEvent)
 
 						// Emit fallback attempt event for initialization failure
@@ -554,39 +513,9 @@ func GenerateContentWithRetry(a *Agent, ctx context.Context, messages []llmtypes
 						modelChangeEvent := events.NewModelChangeEvent(turn, origModelID, fallbackModelID, "fallback_success", "openai", time.Since(fallbackStartTime))
 						a.EmitTypedEvent(ctx, modelChangeEvent)
 
-						// Emit cross-provider fallback success event (replaced span-based tracing)
-						crossProviderSuccessEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":              turn + 1,
-								"success":           true,
-								"usage":             usage,
-								"stage":             "generation",
-								"llm_model":         fallbackModelID,
-								"fallback_provider": "openai",
-								"fallback_phase":    "cross_provider",
-								"duration":          time.Since(fallbackStartTime).String(),
-							},
-						}
+						// Emit cross-provider fallback success event
+						crossProviderSuccessEvent := events.NewFallbackSuccessDetailEvent(turn+1, fallbackModelID, "openai", "cross_provider", "max_token", i+1, time.Since(fallbackStartTime))
 						a.EmitTypedEvent(ctx, crossProviderSuccessEvent)
-						// Emit max token fallback success event for cross-provider (replaced span-based tracing)
-						maxTokenCrossProviderSuccessEvent := &events.GenericEventData{
-							BaseEventData: events.BaseEventData{
-								Timestamp: time.Now(),
-							},
-							Data: map[string]interface{}{
-								"turn":                turn + 1,
-								"successful_fallback": fallbackModelID,
-								"attempts":            i + 1,
-								"successful_llm":      fallbackModelID,
-								"successful_provider": "openai",
-								"successful_phase":    "cross_provider",
-								"duration":            time.Since(fallbackStartTime).String(),
-							},
-						}
-						a.EmitTypedEvent(ctx, maxTokenCrossProviderSuccessEvent)
 						sendMessage(fmt.Sprintf("\n✅ Fallback LLM succeeded: %s (%s) - Model updated permanently", fallbackModelID, cases.Title(language.English).String(crossProviderName)))
 						return fresp, usage, nil
 					}

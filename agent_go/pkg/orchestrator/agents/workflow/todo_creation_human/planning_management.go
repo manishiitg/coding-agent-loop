@@ -264,11 +264,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
-	learningCodeExecPath := fmt.Sprintf("%s/learning_code_exec", baseWorkspacePath)
 
 	// Only specify learnings in readPaths - planning is automatically readable since it's in writePaths
-	// Include both learnings folders for comprehensive access
-	readPaths := []string{learningsPath, learningCodeExecPath}
+	readPaths := []string{learningsPath}
 	writePaths := []string{planningPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Infof("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths)
@@ -342,11 +340,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(interface {
-		SetOrchestratorContext(phase string, step, iteration int, agentName string)
+		SetOrchestratorContext(phase string, step int, agentName string)
 	}); ok {
-		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		cab.SetOrchestratorContext(phase, step, baseAgentName)
 		mcpAgent.AddEventListener(eventBridge)
-		hcpo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		hcpo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
 	} else {
 		mcpAgent.AddEventListener(eventBridge)
 		hcpo.GetLogger().Infof("🔗 Connected event bridge to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
@@ -647,13 +645,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 				} else {
 					hcpo.GetLogger().Infof("🗑️ Cleaned up execution directory in run folder: %s", executionDir)
 				}
-				// Clean validation directory in run folder
-				validationDir := fmt.Sprintf("%s/validation", runFolderPath)
-				if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
-					hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory in run folder %s: %w", folder, err)
-				} else {
-					hcpo.GetLogger().Infof("🗑️ Cleaned up validation directory in run folder: %s", validationDir)
-				}
 				// Clean steps_done.json from run folder
 				stepsDonePath := fmt.Sprintf("%s/steps_done.json", runFolderPath)
 				if err := hcpo.DeleteWorkspaceFile(ctx, stepsDonePath); err != nil {
@@ -668,13 +659,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExistingPlanArtifacts
 		}
 	}
 
-	// 3. Delete all files in old validation/ directory (backward compatibility)
-	validationDir := fmt.Sprintf("%s/validation", basePath)
-	if err := hcpo.CleanupDirectory(ctx, validationDir, "validation"); err != nil {
-		hcpo.GetLogger().Warnf("⚠️ Failed to cleanup validation directory: %w", err)
-	}
-
-	// 4. Note: learnings/ folder is preserved - deleted manually only
+	// 3. Note: learnings/ folder is preserved - deleted manually only
 
 	// 5. Delete all files in old execution/ directory (backward compatibility)
 	executionDir := fmt.Sprintf("%s/execution", basePath)
@@ -864,21 +849,48 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
 
-	// Check if variables.json exists - REQUIRED for planning
+	// Check if variables.json exists - OPTIONAL for planning (can proceed without it)
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
 	variablesExist, existingVariablesManifest, err := hcpo.variableManager.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to check for existing variables: %w", err)
-	}
-	if !variablesExist {
-		return "", fmt.Errorf("variables.json not found at %s - variable extraction must be run first as a separate phase", variablesPath)
+		// Log error but continue without variables (for new workflows)
+		hcpo.GetLogger().Warnf("⚠️ Failed to check for existing variables: %v - proceeding without variables", err)
+		variablesExist = false
 	}
 
-	// Variables exist - use them
-	hcpo.variablesManifest = existingVariablesManifest
-	templatedObjective := existingVariablesManifest.Objective
-	hcpo.SetObjective(templatedObjective)
-	hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
+	if variablesExist && existingVariablesManifest != nil {
+		// Variables exist - use them
+		hcpo.variablesManifest = existingVariablesManifest
+		templatedObjective := existingVariablesManifest.Objective
+		hcpo.SetObjective(templatedObjective)
+		hcpo.GetLogger().Infof("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective)
+	} else {
+		// No variables.json - create it with empty variables and the original objective
+		hcpo.GetLogger().Infof("📝 No variables.json found - creating new variables.json with original objective")
+
+		// Create new VariablesManifest with original objective and empty variables
+		newManifest := &VariablesManifest{
+			Objective:      objective,         // Use the original objective from preset
+			Variables:      []Variable{},      // Empty variables array
+			Groups:         []VariableGroup{}, // Empty groups
+			ExtractionDate: time.Now().Format(time.RFC3339),
+		}
+
+		// Write variables.json to workspace
+		variablesJSON, err := json.MarshalIndent(newManifest, "", "  ")
+		if err != nil {
+			hcpo.GetLogger().Warnf("⚠️ Failed to marshal variables manifest: %v - proceeding without variables", err)
+			hcpo.variablesManifest = nil
+		} else {
+			if err := hcpo.WriteWorkspaceFile(ctx, variablesPath, string(variablesJSON)); err != nil {
+				hcpo.GetLogger().Warnf("⚠️ Failed to create variables.json: %v - proceeding without variables", err)
+				hcpo.variablesManifest = nil
+			} else {
+				hcpo.variablesManifest = newManifest
+				hcpo.GetLogger().Infof("✅ Created variables.json with original objective and empty variables")
+			}
+		}
+	}
 
 	// Load runtime variable values if provided
 	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())

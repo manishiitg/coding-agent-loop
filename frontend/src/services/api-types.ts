@@ -1,5 +1,6 @@
 // API-specific types (separate from event types)
 import type { PollingEventSchema } from '../generated/events-bridge'
+import type { EventTypeString } from '../generated/event-types'
 
 // LLM Configuration types
 export interface LLMConfiguration {
@@ -115,6 +116,40 @@ export interface HumanFeedbackResponse {
   message?: string
 }
 
+// Slack Feedback Configuration types
+export interface SlackConfig {
+  enabled: boolean
+  bot_token?: string  // Masked in GET response
+  app_token?: string  // Masked in GET response (App-level token for Socket Mode)
+  channel_id?: string
+}
+
+export interface SlackConfigRequest {
+  enabled: boolean
+  bot_token: string  // Bot User OAuth Token (xoxb-...)
+  app_token: string  // App-level token (xapp-...) for Socket Mode
+  channel_id: string
+}
+
+export interface SlackConfigResponse {
+  enabled: boolean
+  bot_token?: string  // Masked in GET
+  app_token?: string  // Masked in GET
+  channel_id?: string
+}
+
+export interface SlackTestResponse {
+  success: boolean
+  message: string
+  test_id?: string  // Unique ID for polling test replies
+}
+
+export interface SlackTestReplyResponse {
+  test_id: string
+  reply: string
+  received: boolean
+}
+
 export interface AgentStreamEvent {
   type: string
   query_id: string
@@ -136,6 +171,7 @@ export interface RegisterObserverResponse {
 }
 
 // Use the PollingEventSchema type from generated events
+// Extends with additional runtime fields that may not be in schema
 export type PollingEvent = PollingEventSchema & {
   id: string
   parent_id?: string
@@ -147,6 +183,9 @@ export type PollingEvent = PollingEventSchema & {
   component?: string
   event_index?: number
 }
+
+// Re-export the EventTypeString for convenience
+export type { EventTypeString }
 
 export interface GetEventsResponse {
   events: PollingEvent[]
@@ -638,6 +677,12 @@ export interface RunFoldersResponse {
   showing_count: number;
 }
 
+export interface CreateRunFolderResponse {
+  success: boolean;
+  folder_name: string;
+  message: string;
+}
+
 // Branch step progress for conditional steps
 export interface BranchStepProgress {
   branch_executed: string;  // "if_true" or "if_false"
@@ -658,6 +703,7 @@ export interface ProgressResponse {
 }
 
 // Execution options for frontend-controlled execution
+// Note: AgentLLMConfig is already defined above (line ~462)
 export interface ExecutionOptions {
   run_mode: 'use_same_run' | 'create_new_runs_always';
   selected_run_folder?: string;
@@ -666,6 +712,16 @@ export interface ExecutionOptions {
   fast_execute_end_step?: number;  // 0-based last step for fast execute range
   plan_change_action?: 'keep_old_progress' | 'delete_old_progress';
   all_steps_completed_action?: 'fast_execute_again' | 'skip_execution';
+  
+  // Temporary LLM override (optional, overrides step-level configs for this execution only)
+  // Only applies to execution agents (not validation or learning agents)
+  temp_override_llm?: AgentLLMConfig;
+  
+  // Fallback behavior when validation fails
+  fallback_to_original_llm_on_failure?: boolean;  // If true, use original LLM instead of temp override when validation fails
+  
+  // Variable group execution options (for batch execution with multiple groups)
+  enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)
 }
 
 // Execution strategy constants (matching backend)
@@ -683,4 +739,92 @@ export const ExecutionStrategy = {
   RUN_SINGLE_STEP: 'run_single_step',
 } as const;
 
-export type ExecutionStrategyType = typeof ExecutionStrategy[keyof typeof ExecutionStrategy]; 
+export type ExecutionStrategyType = typeof ExecutionStrategy[keyof typeof ExecutionStrategy];
+
+// Variable Groups API types
+export interface Variable {
+  name: string;
+  value?: string;  // Used in single-group mode
+  description: string;
+}
+
+export interface VariableGroup {
+  group_id: string;  // e.g., "group-1", "group-2"
+  values: Record<string, string>;  // Variable name -> value mapping
+  enabled: boolean;
+}
+
+export interface VariablesManifest {
+  objective: string;  // Templated objective with {{VARS}}
+  variables: Variable[];  // Variable definitions
+  groups?: VariableGroup[];  // Array of variable groups (multi-group mode)
+  extraction_date: string;
+}
+
+export interface VariableGroupsResponse {
+  success: boolean;
+  manifest?: VariablesManifest;
+  error?: string;
+}
+
+// Batch execution progress for multiple variable groups
+export interface BatchExecutionProgress {
+  total_groups: number;
+  enabled_groups: string[];  // Group IDs to execute
+  completed_groups: string[];  // Group IDs that finished
+  current_group: string;  // Currently executing group ID
+  group_progress: Record<string, StepProgress>;  // Per-group step progress
+  iteration_number: number;
+}
+
+// Batch execution event types
+export interface BatchExecutionStartEvent {
+  total_groups: number;
+  enabled_group_ids: string[];
+  iteration_number: number;
+  workspace_path: string;
+}
+
+export interface BatchGroupStartEvent {
+  group_id: string;
+  group_index: number;
+  total_groups: number;
+  variable_values: Record<string, string>;
+  run_folder: string;
+  iteration_number: number;
+  workspace_path: string;
+}
+
+export interface BatchGroupEndEvent {
+  group_id: string;
+  group_index: number;
+  total_groups: number;
+  success: boolean;
+  error?: string;
+  duration: number;  // Duration in nanoseconds
+  completed_steps: number;
+  total_steps: number;
+  run_folder: string;
+  remaining_groups: number;
+}
+
+export interface BatchExecutionEndEvent {
+  total_groups: number;
+  completed_groups: number;
+  failed_groups: number;
+  canceled_groups: number;
+  duration: number;  // Duration in nanoseconds
+  success: boolean;
+  error?: string;
+  iteration_number: number;
+  completed_group_ids: string[];
+  failed_group_ids: string[];
+}
+
+export interface BatchExecutionCanceledEvent {
+  total_groups: number;
+  completed_groups: number;
+  canceled_group_id: string;
+  remaining_group_ids: string[];
+  reason: string;
+} 

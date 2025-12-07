@@ -59,14 +59,118 @@ func (e *AgentEvent) GetParentID() string {
 	return e.ParentID
 }
 
-// GenericEventData represents generic event data for backward compatibility
+// GenericEventData is kept for backward compatibility during migration
+// TODO: Migrate all usages to FallbackDetailEvent and remove this
 type GenericEventData struct {
 	BaseEventData
 	Data map[string]interface{} `json:"data"`
 }
 
 func (e *GenericEventData) GetEventType() EventType {
-	return ConversationStart // Default type for generic data
+	return FallbackAttemptEventType // Use fallback type for generic events
+}
+
+// FallbackDetailEvent represents detailed fallback operation events
+// Use this for type-safe fallback tracking (preferred over GenericEventData)
+type FallbackDetailEvent struct {
+	BaseEventData
+	Turn                  int      `json:"turn"`
+	Operation             string   `json:"operation"`       // "fallback_attempt", "fallback_success", "fallback_failure", "all_failed"
+	Stage                 string   `json:"stage,omitempty"` // "initialization", "generation"
+	FallbackIndex         int      `json:"fallback_index,omitempty"`
+	FallbackModel         string   `json:"fallback_model,omitempty"`
+	FallbackProvider      string   `json:"fallback_provider,omitempty"`
+	FallbackPhase         string   `json:"fallback_phase,omitempty"` // "same_provider", "cross_provider"
+	TotalFallbacks        int      `json:"total_fallbacks,omitempty"`
+	ErrorType             string   `json:"error_type,omitempty"` // "max_token", "throttling"
+	Success               bool     `json:"success"`
+	Error                 string   `json:"error,omitempty"`
+	Duration              string   `json:"duration,omitempty"`
+	Attempts              int      `json:"attempts,omitempty"`
+	SuccessfulLLM         string   `json:"successful_llm,omitempty"`
+	SuccessfulProvider    string   `json:"successful_provider,omitempty"`
+	SuccessfulPhase       string   `json:"successful_phase,omitempty"`
+	FailedModels          []string `json:"failed_models,omitempty"`
+	SameProviderAttempts  int      `json:"same_provider_attempts,omitempty"`
+	CrossProviderAttempts int      `json:"cross_provider_attempts,omitempty"`
+}
+
+func (e *FallbackDetailEvent) GetEventType() EventType {
+	return FallbackAttemptEventType
+}
+
+// NewFallbackSuccessDetailEvent creates a fallback success detail event
+func NewFallbackSuccessDetailEvent(turn int, fallbackModel, provider, phase, errorType string, attempts int, duration time.Duration) *FallbackDetailEvent {
+	return &FallbackDetailEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:               turn,
+		Operation:          "fallback_success",
+		FallbackModel:      fallbackModel,
+		FallbackProvider:   provider,
+		FallbackPhase:      phase,
+		ErrorType:          errorType,
+		Success:            true,
+		Attempts:           attempts,
+		SuccessfulLLM:      fallbackModel,
+		SuccessfulProvider: provider,
+		SuccessfulPhase:    phase,
+		Duration:           duration.String(),
+	}
+}
+
+// NewFallbackAttemptDetailEvent creates a fallback attempt detail event
+func NewFallbackAttemptDetailEvent(turn, index, total int, model, provider, phase, errorType string) *FallbackDetailEvent {
+	return &FallbackDetailEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:             turn,
+		Operation:        "fallback_attempt",
+		FallbackIndex:    index,
+		FallbackModel:    model,
+		FallbackProvider: provider,
+		FallbackPhase:    phase,
+		TotalFallbacks:   total,
+		ErrorType:        errorType,
+	}
+}
+
+// NewFallbackFailureDetailEvent creates a fallback failure detail event
+func NewFallbackFailureDetailEvent(turn int, model, provider, phase, stage, errorType, errMsg string, duration time.Duration) *FallbackDetailEvent {
+	return &FallbackDetailEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:             turn,
+		Operation:        "fallback_failure",
+		Stage:            stage,
+		FallbackModel:    model,
+		FallbackProvider: provider,
+		FallbackPhase:    phase,
+		ErrorType:        errorType,
+		Success:          false,
+		Error:            errMsg,
+		Duration:         duration.String(),
+	}
+}
+
+// NewAllFallbacksFailedEvent creates an event when all fallbacks have failed
+func NewAllFallbacksFailedEvent(turn int, errorType string, sameProviderAttempts, crossProviderAttempts int, failedModels []string, finalError string) *FallbackDetailEvent {
+	return &FallbackDetailEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		Turn:                  turn,
+		Operation:             "all_failed",
+		ErrorType:             errorType,
+		Success:               false,
+		Error:                 finalError,
+		SameProviderAttempts:  sameProviderAttempts,
+		CrossProviderAttempts: crossProviderAttempts,
+		FailedModels:          failedModels,
+	}
 }
 
 // AgentStartEvent represents the start of an agent session
@@ -1941,4 +2045,632 @@ type StepFailedEvent struct {
 
 func (e *StepFailedEvent) GetEventType() EventType {
 	return StepExecutionFailed
+}
+
+// LearningSkippedEvent represents the event when learning is skipped due to temp LLM override
+type LearningSkippedEvent struct {
+	BaseEventData
+	StepID          string `json:"step_id"`                     // Step ID from plan
+	StepIndex       int    `json:"step_index"`                  // 0-based step index
+	StepTitle       string `json:"step_title"`                  // Step title
+	StepPath        string `json:"step_path"`                   // Step path (e.g., "step-1" or "step-1-if-true-0")
+	IsBranchStep    bool   `json:"is_branch_step"`              // Whether this is a branch step
+	Reason          string `json:"reason"`                      // Reason for skipping (e.g., "temp_llm_override")
+	TempLLMProvider string `json:"temp_llm_provider,omitempty"` // Temp override LLM provider
+	TempLLMModel    string `json:"temp_llm_model,omitempty"`    // Temp override LLM model
+	RunFolder       string `json:"run_folder"`                  // Run folder name (e.g., "iteration-1")
+	WorkspacePath   string `json:"workspace_path"`              // Workspace path
+}
+
+func (e *LearningSkippedEvent) GetEventType() EventType {
+	return LearningSkipped
+}
+
+// Variable represents a single variable definition extracted from objective
+type Variable struct {
+	Name        string `json:"name"`        // e.g., "AWS_ACCOUNT_ID"
+	Value       string `json:"value"`       // Original value from objective
+	Description string `json:"description"` // e.g., "AWS account number for deployment"
+}
+
+// VariablesExtractedEvent represents the event when variables are extracted from objective
+type VariablesExtractedEvent struct {
+	BaseEventData
+	Variables          []Variable `json:"variables"`
+	TemplatedObjective string     `json:"templated_objective"`
+	WorkspacePath      string     `json:"workspace_path"`       // Workspace path for file operations (required)
+	RunFolder          string     `json:"run_folder,omitempty"` // Run folder name for run-specific configs
+}
+
+func (e *VariablesExtractedEvent) GetEventType() EventType {
+	return VariablesExtracted
+}
+
+// IndependentStepsSelectedEvent represents the event when independent steps are selected for parallel execution
+type IndependentStepsSelectedEvent struct {
+	BaseEventData
+	StepIndices    []int    `json:"step_indices"`    // Indices of steps selected for parallel execution
+	StepTitles     []string `json:"step_titles"`     // Titles of selected steps
+	TotalSteps     int      `json:"total_steps"`     // Total number of steps in plan
+	ExecutionBatch int      `json:"execution_batch"` // Which batch of parallel execution this is
+}
+
+func (e *IndependentStepsSelectedEvent) GetEventType() EventType {
+	return IndependentStepsSelected
+}
+
+// StructuredOutputStartEvent represents the start of structured output extraction
+type StructuredOutputStartEvent struct {
+	BaseEventData
+	SchemaName string `json:"schema_name,omitempty"` // Name of the schema being used
+	TargetType string `json:"target_type,omitempty"` // Target Go type name
+}
+
+func (e *StructuredOutputStartEvent) GetEventType() EventType {
+	return StructuredOutputStart
+}
+
+// StructuredOutputEndEvent represents the end of structured output extraction
+type StructuredOutputEndEvent struct {
+	BaseEventData
+	Success      bool   `json:"success"`
+	SchemaName   string `json:"schema_name,omitempty"`
+	TargetType   string `json:"target_type,omitempty"`
+	ParsedOutput string `json:"parsed_output,omitempty"` // JSON string of parsed output
+}
+
+func (e *StructuredOutputEndEvent) GetEventType() EventType {
+	return StructuredOutputEnd
+}
+
+// StructuredOutputErrorEvent represents an error during structured output extraction
+type StructuredOutputErrorEvent struct {
+	BaseEventData
+	Error      string `json:"error"`
+	SchemaName string `json:"schema_name,omitempty"`
+	TargetType string `json:"target_type,omitempty"`
+	RawOutput  string `json:"raw_output,omitempty"` // The raw output that failed to parse
+}
+
+func (e *StructuredOutputErrorEvent) GetEventType() EventType {
+	return StructuredOutputError
+}
+
+// =============================================================================
+// STREAMING EVENTS
+// =============================================================================
+
+// StreamingStartEvent represents the start of a streaming response
+type StreamingStartEvent struct {
+	BaseEventData
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
+}
+
+func (e *StreamingStartEvent) GetEventType() EventType {
+	return StreamingStart
+}
+
+// StreamingChunkEvent represents a single chunk in a streaming response
+type StreamingChunkEvent struct {
+	BaseEventData
+	Content      string `json:"content"`                 // The text content of this chunk
+	ChunkIndex   int    `json:"chunk_index"`             // Sequential index of this chunk
+	IsToolCall   bool   `json:"is_tool_call"`            // Whether this chunk is part of a tool call
+	FinishReason string `json:"finish_reason,omitempty"` // Reason for finishing (if this is the last chunk)
+}
+
+func (e *StreamingChunkEvent) GetEventType() EventType {
+	return StreamingChunk
+}
+
+// StreamingEndEvent represents the end of a streaming response
+type StreamingEndEvent struct {
+	BaseEventData
+	TotalChunks  int    `json:"total_chunks"`
+	TotalTokens  int    `json:"total_tokens,omitempty"`
+	FinishReason string `json:"finish_reason,omitempty"`
+	Duration     string `json:"duration,omitempty"`
+}
+
+func (e *StreamingEndEvent) GetEventType() EventType {
+	return StreamingEnd
+}
+
+// StreamingErrorEvent represents an error during streaming
+type StreamingErrorEvent struct {
+	BaseEventData
+	Error       string `json:"error"`
+	ChunkIndex  int    `json:"chunk_index,omitempty"` // Index where error occurred
+	Recoverable bool   `json:"recoverable"`           // Whether the error is recoverable
+}
+
+func (e *StreamingErrorEvent) GetEventType() EventType {
+	return StreamingError
+}
+
+// StreamingProgressEvent represents progress during streaming
+type StreamingProgressEvent struct {
+	BaseEventData
+	ChunksReceived int    `json:"chunks_received"`
+	BytesReceived  int    `json:"bytes_received"`
+	ElapsedTime    string `json:"elapsed_time,omitempty"`
+}
+
+func (e *StreamingProgressEvent) GetEventType() EventType {
+	return StreamingProgress
+}
+
+// StreamingConnectionLostEvent represents a lost connection during streaming
+type StreamingConnectionLostEvent struct {
+	BaseEventData
+	Error          string `json:"error"`
+	ChunksReceived int    `json:"chunks_received"` // Chunks received before connection loss
+	WillRetry      bool   `json:"will_retry"`
+	RetryAttempt   int    `json:"retry_attempt,omitempty"`
+	MaxRetries     int    `json:"max_retries,omitempty"`
+}
+
+func (e *StreamingConnectionLostEvent) GetEventType() EventType {
+	return StreamingConnectionLost
+}
+
+// =============================================================================
+// CACHE EVENTS
+// =============================================================================
+
+// CacheHitEvent represents a cache hit
+type CacheHitEvent struct {
+	BaseEventData
+	CacheKey     string `json:"cache_key"`
+	CacheType    string `json:"cache_type,omitempty"` // "prompt", "response", "tool", etc.
+	TTLRemaining string `json:"ttl_remaining,omitempty"`
+}
+
+func (e *CacheHitEvent) GetEventType() EventType {
+	return CacheHit
+}
+
+// CacheMissEvent represents a cache miss
+type CacheMissEvent struct {
+	BaseEventData
+	CacheKey  string `json:"cache_key"`
+	CacheType string `json:"cache_type,omitempty"`
+	Reason    string `json:"reason,omitempty"` // "not_found", "expired", "invalidated"
+}
+
+func (e *CacheMissEvent) GetEventType() EventType {
+	return CacheMiss
+}
+
+// CacheWriteEvent represents a cache write operation
+type CacheWriteEvent struct {
+	BaseEventData
+	CacheKey  string `json:"cache_key"`
+	CacheType string `json:"cache_type,omitempty"`
+	TTL       string `json:"ttl,omitempty"`
+	Size      int    `json:"size,omitempty"` // Size in bytes
+}
+
+func (e *CacheWriteEvent) GetEventType() EventType {
+	return CacheWrite
+}
+
+// CacheExpiredEvent represents an expired cache entry
+type CacheExpiredEvent struct {
+	BaseEventData
+	CacheKey  string `json:"cache_key"`
+	CacheType string `json:"cache_type,omitempty"`
+	Age       string `json:"age,omitempty"` // How long the entry was cached
+}
+
+func (e *CacheExpiredEvent) GetEventType() EventType {
+	return CacheExpired
+}
+
+// CacheCleanupEvent represents a cache cleanup operation
+type CacheCleanupEvent struct {
+	BaseEventData
+	EntriesRemoved int    `json:"entries_removed"`
+	BytesFreed     int    `json:"bytes_freed,omitempty"`
+	Duration       string `json:"duration,omitempty"`
+	Reason         string `json:"reason,omitempty"` // "scheduled", "memory_pressure", "manual"
+}
+
+func (e *CacheCleanupEvent) GetEventType() EventType {
+	return CacheCleanup
+}
+
+// CacheErrorEvent represents an error during cache operation
+type CacheErrorEvent struct {
+	BaseEventData
+	Operation string `json:"operation"` // "read", "write", "delete", "cleanup"
+	CacheKey  string `json:"cache_key,omitempty"`
+	Error     string `json:"error"`
+}
+
+func (e *CacheErrorEvent) GetEventType() EventType {
+	return CacheError
+}
+
+// CacheOperationStartEvent represents the start of a cache operation
+type CacheOperationStartEvent struct {
+	BaseEventData
+	Operation string `json:"operation"` // "read", "write", "delete", "cleanup"
+	CacheKey  string `json:"cache_key,omitempty"`
+	CacheType string `json:"cache_type,omitempty"`
+}
+
+func (e *CacheOperationStartEvent) GetEventType() EventType {
+	return CacheOperationStart
+}
+
+// =============================================================================
+// MCP SERVER CONNECTION EVENTS
+// =============================================================================
+
+// MCPServerConnectionStartEvent represents the start of an MCP server connection
+type MCPServerConnectionStartEvent struct {
+	BaseEventData
+	ServerName string `json:"server_name"`
+	ServerURL  string `json:"server_url,omitempty"`
+	Protocol   string `json:"protocol,omitempty"` // "sse", "http", "stdio"
+}
+
+func (e *MCPServerConnectionStartEvent) GetEventType() EventType {
+	return MCPServerConnectionStart
+}
+
+// MCPServerConnectionEndEvent represents successful MCP server connection
+type MCPServerConnectionEndEvent struct {
+	BaseEventData
+	ServerName string   `json:"server_name"`
+	ToolCount  int      `json:"tool_count,omitempty"`
+	ToolNames  []string `json:"tool_names,omitempty"`
+	Duration   string   `json:"duration,omitempty"`
+}
+
+func (e *MCPServerConnectionEndEvent) GetEventType() EventType {
+	return MCPServerConnectionEnd
+}
+
+// MCPServerConnectionErrorEvent represents an MCP server connection error
+type MCPServerConnectionErrorEvent struct {
+	BaseEventData
+	ServerName string `json:"server_name"`
+	Error      string `json:"error"`
+	Retryable  bool   `json:"retryable"`
+	RetryCount int    `json:"retry_count,omitempty"`
+}
+
+func (e *MCPServerConnectionErrorEvent) GetEventType() EventType {
+	return MCPServerConnectionError
+}
+
+// =============================================================================
+// JSON VALIDATION EVENTS
+// =============================================================================
+
+// JSONValidationStartEvent represents the start of JSON validation
+type JSONValidationStartEvent struct {
+	BaseEventData
+	SchemaName string `json:"schema_name,omitempty"`
+	InputSize  int    `json:"input_size,omitempty"` // Size of input in bytes
+}
+
+func (e *JSONValidationStartEvent) GetEventType() EventType {
+	return JSONValidationStart
+}
+
+// JSONValidationEndEvent represents the end of JSON validation
+type JSONValidationEndEvent struct {
+	BaseEventData
+	SchemaName string   `json:"schema_name,omitempty"`
+	Valid      bool     `json:"valid"`
+	Errors     []string `json:"errors,omitempty"` // Validation errors if not valid
+	Duration   string   `json:"duration,omitempty"`
+}
+
+func (e *JSONValidationEndEvent) GetEventType() EventType {
+	return JSONValidationEnd
+}
+
+// =============================================================================
+// OTHER MISSING EVENTS
+// =============================================================================
+
+// ConversationThinkingEvent represents the agent's thinking/reasoning process
+type ConversationThinkingEvent struct {
+	BaseEventData
+	Thinking string `json:"thinking"` // The thinking/reasoning content
+	Turn     int    `json:"turn"`
+}
+
+func (e *ConversationThinkingEvent) GetEventType() EventType {
+	return ConversationThinking
+}
+
+// LLMMessage represents a single message in the LLM conversation
+type LLMMessage struct {
+	Role    string `json:"role"`              // "system", "user", "assistant", "tool"
+	Content string `json:"content,omitempty"` // Message content
+}
+
+// LLMMessagesEvent represents the messages sent to/from the LLM
+type LLMMessagesEvent struct {
+	BaseEventData
+	Messages     []LLMMessage `json:"messages"`               // The messages
+	MessageCount int          `json:"message_count"`          // Total message count
+	Direction    string       `json:"direction,omitempty"`    // "request" or "response"
+	TotalTokens  int          `json:"total_tokens,omitempty"` // Estimated token count
+}
+
+func (e *LLMMessagesEvent) GetEventType() EventType {
+	return LLMMessages
+}
+
+// ToolCallProgressEvent represents progress during a tool call
+type ToolCallProgressEvent struct {
+	BaseEventData
+	ToolName    string `json:"tool_name"`
+	ToolCallID  string `json:"tool_call_id,omitempty"`
+	Progress    int    `json:"progress"` // 0-100 percentage
+	Status      string `json:"status"`   // "running", "waiting", "processing"
+	Message     string `json:"message,omitempty"`
+	ElapsedTime string `json:"elapsed_time,omitempty"`
+}
+
+func (e *ToolCallProgressEvent) GetEventType() EventType {
+	return ToolCallProgress
+}
+
+// DebugEvent represents debug information
+type DebugEvent struct {
+	BaseEventData
+	Level     string                 `json:"level"`     // "debug", "trace", "verbose"
+	Component string                 `json:"component"` // Which component generated this
+	Message   string                 `json:"message"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
+func (e *DebugEvent) GetEventType() EventType {
+	return Debug
+}
+
+// PerformanceEvent represents performance metrics
+type PerformanceEvent struct {
+	BaseEventData
+	Operation  string  `json:"operation"`             // What operation was measured
+	Duration   string  `json:"duration"`              // Duration as string (e.g., "1.5s")
+	DurationMs float64 `json:"duration_ms"`           // Duration in milliseconds
+	MemoryUsed int64   `json:"memory_used,omitempty"` // Memory used in bytes
+	CPUPercent float64 `json:"cpu_percent,omitempty"` // CPU percentage
+	Component  string  `json:"component,omitempty"`   // Which component
+}
+
+func (e *PerformanceEvent) GetEventType() EventType {
+	return Performance
+}
+
+// LLMTokenUsageEvent represents detailed per-call token usage (advanced mode)
+type LLMTokenUsageEvent struct {
+	BaseEventData
+	Model        string  `json:"model"`
+	Provider     string  `json:"provider"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	TotalTokens  int     `json:"total_tokens"`
+	CachedTokens int     `json:"cached_tokens,omitempty"`
+	Cost         float64 `json:"cost,omitempty"`
+	Turn         int     `json:"turn,omitempty"`
+	CallType     string  `json:"call_type,omitempty"` // "generation", "tool_call", "structured_output"
+}
+
+func (e *LLMTokenUsageEvent) GetEventType() EventType {
+	return LLMTokenUsage
+}
+
+// AgentProcessingEvent represents agent processing status
+type AgentProcessingEvent struct {
+	BaseEventData
+	Status      string `json:"status"` // "thinking", "planning", "executing", "waiting"
+	Turn        int    `json:"turn"`
+	Message     string `json:"message,omitempty"`
+	ElapsedTime string `json:"elapsed_time,omitempty"`
+}
+
+func (e *AgentProcessingEvent) GetEventType() EventType {
+	return AgentProcessing
+}
+
+// =============================================================================
+// BATCH EXECUTION EVENTS (for variable groups)
+// =============================================================================
+
+// BatchExecutionStartEvent represents the start of batch execution across multiple variable groups
+type BatchExecutionStartEvent struct {
+	BaseEventData
+	TotalGroups     int      `json:"total_groups"`      // Total number of enabled groups
+	EnabledGroupIDs []string `json:"enabled_group_ids"` // List of group IDs to execute
+	IterationNumber int      `json:"iteration_number"`  // Current iteration number
+	WorkspacePath   string   `json:"workspace_path"`
+}
+
+func (e *BatchExecutionStartEvent) GetEventType() EventType {
+	return BatchExecutionStart
+}
+
+// NewBatchExecutionStartEvent creates a new BatchExecutionStartEvent
+func NewBatchExecutionStartEvent(totalGroups int, enabledGroupIDs []string, iterationNumber int, workspacePath string) *BatchExecutionStartEvent {
+	return &BatchExecutionStartEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		TotalGroups:     totalGroups,
+		EnabledGroupIDs: enabledGroupIDs,
+		IterationNumber: iterationNumber,
+		WorkspacePath:   workspacePath,
+	}
+}
+
+// BatchGroupStartEvent represents the start of execution for a specific variable group
+type BatchGroupStartEvent struct {
+	BaseEventData
+	GroupID         string            `json:"group_id"`         // Current group ID
+	GroupIndex      int               `json:"group_index"`      // 0-based index in enabled groups
+	TotalGroups     int               `json:"total_groups"`     // Total number of enabled groups
+	VariableValues  map[string]string `json:"variable_values"`  // Values for this group
+	RunFolder       string            `json:"run_folder"`       // e.g., "iteration-1-group-1"
+	IterationNumber int               `json:"iteration_number"` // Current iteration number
+	WorkspacePath   string            `json:"workspace_path"`
+}
+
+func (e *BatchGroupStartEvent) GetEventType() EventType {
+	return BatchGroupStart
+}
+
+// NewBatchGroupStartEvent creates a new BatchGroupStartEvent
+func NewBatchGroupStartEvent(groupID string, groupIndex, totalGroups int, variableValues map[string]string, runFolder string, iterationNumber int, workspacePath string) *BatchGroupStartEvent {
+	return &BatchGroupStartEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		GroupID:         groupID,
+		GroupIndex:      groupIndex,
+		TotalGroups:     totalGroups,
+		VariableValues:  variableValues,
+		RunFolder:       runFolder,
+		IterationNumber: iterationNumber,
+		WorkspacePath:   workspacePath,
+	}
+}
+
+// BatchGroupEndEvent represents the completion of execution for a specific variable group
+type BatchGroupEndEvent struct {
+	BaseEventData
+	GroupID         string        `json:"group_id"`         // Current group ID
+	GroupIndex      int           `json:"group_index"`      // 0-based index in enabled groups
+	TotalGroups     int           `json:"total_groups"`     // Total number of enabled groups
+	Success         bool          `json:"success"`          // Whether this group completed successfully
+	Error           string        `json:"error,omitempty"`  // Error message if failed
+	Duration        time.Duration `json:"duration"`         // How long this group took
+	CompletedSteps  int           `json:"completed_steps"`  // Number of steps completed
+	TotalSteps      int           `json:"total_steps"`      // Total number of steps
+	RunFolder       string        `json:"run_folder"`       // e.g., "iteration-1-group-1"
+	RemainingGroups int           `json:"remaining_groups"` // How many groups are left
+}
+
+func (e *BatchGroupEndEvent) GetEventType() EventType {
+	return BatchGroupEnd
+}
+
+// NewBatchGroupEndEvent creates a new BatchGroupEndEvent
+func NewBatchGroupEndEvent(groupID string, groupIndex, totalGroups int, success bool, errorMsg string, duration time.Duration, completedSteps, totalSteps int, runFolder string, remainingGroups int) *BatchGroupEndEvent {
+	return &BatchGroupEndEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		GroupID:         groupID,
+		GroupIndex:      groupIndex,
+		TotalGroups:     totalGroups,
+		Success:         success,
+		Error:           errorMsg,
+		Duration:        duration,
+		CompletedSteps:  completedSteps,
+		TotalSteps:      totalSteps,
+		RunFolder:       runFolder,
+		RemainingGroups: remainingGroups,
+	}
+}
+
+// BatchExecutionEndEvent represents the completion of all batch execution
+type BatchExecutionEndEvent struct {
+	BaseEventData
+	TotalGroups       int           `json:"total_groups"`        // Total number of enabled groups
+	CompletedGroups   int           `json:"completed_groups"`    // Number of groups that completed
+	FailedGroups      int           `json:"failed_groups"`       // Number of groups that failed
+	CanceledGroups    int           `json:"canceled_groups"`     // Number of groups that were canceled
+	Duration          time.Duration `json:"duration"`            // Total batch execution time
+	Success           bool          `json:"success"`             // Whether all groups succeeded
+	Error             string        `json:"error,omitempty"`     // Error message if batch failed
+	IterationNumber   int           `json:"iteration_number"`    // Current iteration number
+	CompletedGroupIDs []string      `json:"completed_group_ids"` // IDs of completed groups
+	FailedGroupIDs    []string      `json:"failed_group_ids"`    // IDs of failed groups
+}
+
+func (e *BatchExecutionEndEvent) GetEventType() EventType {
+	return BatchExecutionEnd
+}
+
+// NewBatchExecutionEndEvent creates a new BatchExecutionEndEvent
+func NewBatchExecutionEndEvent(totalGroups, completedGroups, failedGroups, canceledGroups int, duration time.Duration, success bool, errorMsg string, iterationNumber int, completedGroupIDs, failedGroupIDs []string) *BatchExecutionEndEvent {
+	return &BatchExecutionEndEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		TotalGroups:       totalGroups,
+		CompletedGroups:   completedGroups,
+		FailedGroups:      failedGroups,
+		CanceledGroups:    canceledGroups,
+		Duration:          duration,
+		Success:           success,
+		Error:             errorMsg,
+		IterationNumber:   iterationNumber,
+		CompletedGroupIDs: completedGroupIDs,
+		FailedGroupIDs:    failedGroupIDs,
+	}
+}
+
+// BatchExecutionCanceledEvent represents when batch execution is canceled by user
+type BatchExecutionCanceledEvent struct {
+	BaseEventData
+	TotalGroups       int      `json:"total_groups"`        // Total number of enabled groups
+	CompletedGroups   int      `json:"completed_groups"`    // Number of groups that completed before cancel
+	CanceledGroupID   string   `json:"canceled_group_id"`   // ID of group that was running when canceled
+	RemainingGroupIDs []string `json:"remaining_group_ids"` // IDs of groups that were not executed
+	Reason            string   `json:"reason"`              // Reason for cancellation
+}
+
+func (e *BatchExecutionCanceledEvent) GetEventType() EventType {
+	return BatchExecutionCanceled
+}
+
+// NewBatchExecutionCanceledEvent creates a new BatchExecutionCanceledEvent
+func NewBatchExecutionCanceledEvent(totalGroups, completedGroups int, canceledGroupID string, remainingGroupIDs []string, reason string) *BatchExecutionCanceledEvent {
+	return &BatchExecutionCanceledEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		TotalGroups:       totalGroups,
+		CompletedGroups:   completedGroups,
+		CanceledGroupID:   canceledGroupID,
+		RemainingGroupIDs: remainingGroupIDs,
+		Reason:            reason,
+	}
+}
+
+// PrerequisiteNavigationEvent represents navigation back to a prerequisite step due to prerequisite failure
+type PrerequisiteNavigationEvent struct {
+	BaseEventData
+	FromStepIndex int    `json:"from_step_index"` // 0-based index of step that failed
+	ToStepIndex   int    `json:"to_step_index"`   // 0-based index of step to navigate to
+	Reason        string `json:"reason"`          // Reason for navigation
+	FailureType   string `json:"failure_type"`    // "prerequisite" or "execution"
+}
+
+func (e *PrerequisiteNavigationEvent) GetEventType() EventType {
+	return PrerequisiteNavigation
+}
+
+// NewPrerequisiteNavigationEvent creates a new PrerequisiteNavigationEvent
+func NewPrerequisiteNavigationEvent(fromStep, toStep int, reason, failureType string) *PrerequisiteNavigationEvent {
+	return &PrerequisiteNavigationEvent{
+		BaseEventData: BaseEventData{
+			Timestamp: time.Now(),
+		},
+		FromStepIndex: fromStep,
+		ToStepIndex:   toStep,
+		Reason:        reason,
+		FailureType:   failureType,
+	}
 }

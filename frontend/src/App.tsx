@@ -527,7 +527,7 @@ function App() {
         
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
-          <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out`}>
+          <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>
             <WorkspaceSidebar
               onChatSessionSelect={handleChatSessionSelect}
               minimized={sidebarMinimized}
@@ -536,18 +536,14 @@ function App() {
           </div>
 
           {/* Middle Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes) */}
-          <div className="flex-1 flex flex-col min-w-0 relative">
+          <div className="flex-1 flex flex-col min-w-0 relative z-10">
             {selectedModeCategory === 'workflow' ? (
               // Workflow mode - WorkflowLayout as main view (wrapped in EventModeProvider for ChatHeader)
               // ChatArea is now embedded inside WorkflowLayout
               <EventModeProvider>
               <WorkflowLayout
                 className="flex-1"
-                onCreatePlan={() => {
-                  // TODO: Handle create plan action
-                  console.log('[App] Create plan requested')
-                }}
-                  onNewChat={startNewChat}
+                onNewChat={startNewChat}
               />
               </EventModeProvider>
             ) : (
@@ -814,7 +810,7 @@ function App() {
           <div className={`${
             // Use workspaceMinimized state directly - user can toggle regardless of mode
             workspaceMinimized ? 'w-16' : 'w-96'
-          } transition-all duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700`}>
+          } transition-all duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 relative z-20`}>
             <Workspace 
               minimized={workspaceMinimized}
               onToggleMinimize={toggleWorkspaceMinimize}

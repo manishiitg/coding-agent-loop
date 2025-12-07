@@ -49,6 +49,20 @@ export interface UnifiedEventsCompleteSchema {
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
+  step_execution_start?: StepStartedEvent;
+  step_execution_end?: StepFinishedEvent;
+  step_execution_failed?: StepFailedEvent;
+  step_token_usage?: StepTokenUsageEvent;
+  step_progress_updated?: StepProgressUpdatedEvent;
+  todo_steps_extracted?: TodoStepsExtractedEvent;
+  variables_extracted?: VariablesExtractedEvent;
+  independent_steps_selected?: IndependentStepsSelectedEvent;
+  structured_output_start?: StructuredOutputStartEvent;
+  structured_output_end?: StructuredOutputEndEvent;
+  structured_output_error?: StructuredOutputErrorEvent;
+  workspace_file_operation?: WorkspaceFileOperationEvent;
+  large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
+  large_tool_output_server_unavailable?: LargeToolOutputServerUnavailableEvent;
 }
 export interface ToolCallStartEvent {
   timestamp?: string;
@@ -156,6 +170,8 @@ export interface UsageMetrics {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  cache_tokens?: number;
+  reasoning_tokens?: number;
 }
 export interface AgentStartEvent {
   timestamp?: string;
@@ -174,6 +190,7 @@ export interface AgentStartEvent {
   agent_type?: string;
   model_id?: string;
   provider?: string;
+  use_code_execution_mode?: boolean;
 }
 export interface AgentEndEvent {
   timestamp?: string;
@@ -192,6 +209,13 @@ export interface AgentEndEvent {
   agent_type?: string;
   success?: boolean;
   error?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cache_tokens?: number;
+  reasoning_tokens?: number;
+  llm_call_count?: number;
+  cache_enabled_call_count?: number;
 }
 export interface AgentErrorEvent {
   timestamp?: string;
@@ -998,6 +1022,13 @@ export interface OrchestratorAgentEndEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cache_tokens?: number;
+  reasoning_tokens?: number;
+  llm_call_count?: number;
+  cache_enabled_call_count?: number;
 }
 export interface OrchestratorAgentErrorEvent {
   timestamp?: string;
@@ -1049,4 +1080,311 @@ export interface RequestHumanFeedbackEvent {
   title?: string;
   action_label?: string;
   action_description?: string;
+}
+export interface StepStartedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  is_branch_step?: boolean;
+  run_folder?: string;
+  workspace_path?: string;
+}
+export interface StepFinishedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  is_branch_step?: boolean;
+}
+export interface StepFailedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  is_branch_step?: boolean;
+  error?: string;
+}
+export interface StepTokenUsageEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  phase?: string;
+  step?: number;
+  step_title?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cache_tokens?: number;
+  reasoning_tokens?: number;
+  llm_call_count?: number;
+  cache_enabled_call_count?: number;
+}
+export interface StepProgressUpdatedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  completed_step_indices?: number[];
+  total_steps?: number;
+  workspace_path?: string;
+  run_folder?: string;
+  last_completed_step?: number;
+  branch_steps?: {
+    [k: string]: BranchStepProgress;
+  };
+}
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[0-9]+$".
+ */
+export interface BranchStepProgress {
+  branch_executed?: string;
+  completed_steps?: string[];
+}
+export interface TodoStepsExtractedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  total_steps_extracted?: number;
+  extracted_steps?: TodoStep[];
+  extraction_method?: string;
+  plan_source?: string;
+}
+export interface TodoStep {
+  id?: string;
+  title?: string;
+  description?: string;
+  success_criteria?: string;
+  why_this_step?: string;
+  context_dependencies?: string[];
+  context_output?: string;
+  success_patterns?: string[];
+  failure_patterns?: string[];
+}
+export interface VariablesExtractedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  variables?: Variable[];
+  templated_objective?: string;
+  workspace_path?: string;
+  run_folder?: string;
+}
+export interface Variable {
+  name?: string;
+  value?: string;
+  description?: string;
+}
+export interface IndependentStepsSelectedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_indices?: number[];
+  step_titles?: string[];
+  total_steps?: number;
+  execution_batch?: number;
+}
+export interface StructuredOutputStartEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  schema_name?: string;
+  target_type?: string;
+}
+export interface StructuredOutputEndEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  success?: boolean;
+  schema_name?: string;
+  target_type?: string;
+  parsed_output?: string;
+}
+export interface StructuredOutputErrorEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  error?: string;
+  schema_name?: string;
+  target_type?: string;
+  raw_output?: string;
+}
+export interface WorkspaceFileOperationEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  operation?: string;
+  filepath?: string;
+  folder?: string;
+  turn?: number;
+  server_name?: string;
+}
+export interface LargeToolOutputFileWriteErrorEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  tool_name?: string;
+  error?: string;
+  output_size?: number;
+  output_folder?: string;
+  fallback_used?: boolean;
+}
+export interface LargeToolOutputServerUnavailableEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  tool_name?: string;
+  output_size?: number;
+  threshold?: number;
+  server_name?: string;
+  reason?: string;
 }

@@ -900,8 +900,8 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 							continue
 						}
 
-						// Create a fresh connection for this specific server
-						onDemandClient, err := a.createOnDemandConnection(ctx, serverName)
+						// Create a fresh connection for this specific server using shared function
+						onDemandClient, err := mcpcache.GetFreshConnection(ctx, serverName, a.configPath, logger)
 						if err != nil {
 							logger.Errorf("[AGENT DEBUG] AskWithHistory Early return: failed to create on-demand connection for server %s: %v", serverName, err)
 							conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("failed to create on-demand connection for server %s: %v", serverName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
@@ -1092,9 +1092,11 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 						resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
 					}
 
-					// 🔧 BROKEN PIPE DETECTION IN SUCCESSFUL RESULT PATH
-					if result.IsError && (strings.Contains(resultText, "Broken pipe") || strings.Contains(resultText, "[Errno 32]")) {
-						logger.Infof("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s - Attempting immediate connection recreation", turn+1, tc.FunctionCall.Name, serverName)
+					// 🔧 BROKEN PIPE DETECTION IN RESULT CONTENT (regardless of IsError flag)
+					// Check for broken pipe errors in content text, even when IsError is false
+					// This handles cases where the MCP server returns broken pipe errors in content rather than as error flags
+					if mcpclient.IsBrokenPipeInContent(resultText) {
+						logger.Infof("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s, IsError: %v - Attempting immediate connection recreation", turn+1, tc.FunctionCall.Name, serverName, result.IsError)
 
 						// Create error recovery handler
 						errorRecoveryHandler := NewErrorRecoveryHandler(a)

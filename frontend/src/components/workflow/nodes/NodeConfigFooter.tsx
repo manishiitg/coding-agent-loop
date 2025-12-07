@@ -28,6 +28,7 @@ interface NodeConfigFooterProps {
   humanToolsInfo?: HumanToolsInfo
   hasHumanTools?: boolean
   hasLargeOutput?: boolean
+  learningAfterLoopIteration?: boolean
 }
 
 export const NodeConfigFooter = memo(({
@@ -41,7 +42,8 @@ export const NodeConfigFooter = memo(({
   hasWorkspaceTools = false,
   humanToolsInfo,
   hasHumanTools = false,
-  hasLargeOutput = false
+  hasLargeOutput = false,
+  learningAfterLoopIteration = false
 }: NodeConfigFooterProps) => {
   const hasConfig = executionLLM || 
     learningLLM || 
@@ -49,7 +51,8 @@ export const NodeConfigFooter = memo(({
     toolsDisplayInfo.length > 0 || 
     hasWorkspaceTools || 
     hasHumanTools || 
-    hasLargeOutput
+    hasLargeOutput ||
+    learningAfterLoopIteration
 
   if (!hasConfig) {
     return null
@@ -96,6 +99,11 @@ export const NodeConfigFooter = memo(({
         {hasLargeOutput && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" title="Large output virtual tools enabled">
             Large Output
+          </span>
+        )}
+        {learningAfterLoopIteration && (
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400" title="Learning runs after each loop iteration">
+            Learn Each Iteration
           </span>
         )}
       </div>

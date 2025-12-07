@@ -5,11 +5,8 @@ import type { ExecutionOptions } from '../../../services/api-types'
 import { ExecutionStrategy } from '../../../services/api-types'
 import { StepEditPanel } from '../../events/orchestrator/StepEditPanel'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
-import { useChatStore } from '../../../stores/useChatStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
-import type { PollingEvent } from '../../../services/api-types'
-import { VariablesModal } from '../VariablesModal'
 import { agentApi } from '../../../services/api'
 import LLMSelectionDropdown from '../../LLMSelectionDropdown'
 import type { LLMOption } from '../../../types/llm'
@@ -71,6 +68,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const [editedDescription, setEditedDescription] = useState('')
   const [editedSuccessCriteria, setEditedSuccessCriteria] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showDeleteLearningsConfirm, setShowDeleteLearningsConfirm] = useState(false)
+  const [isDeletingLearnings, setIsDeletingLearnings] = useState(false)
 
   // Ensure phases are loaded (store handles deduplication)
   useEffect(() => {
@@ -126,9 +125,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     // Create execution options to run only this single step
     // Read from workflow store directly (not from props which might be null/stale)
+    // Use buildExecutionOptions to include all flags (including fallback_to_original_llm_on_failure)
+    const buildExecutionOptions = useWorkflowStore.getState().buildExecutionOptions
+    const baseOptions = buildExecutionOptions()
     const executionOptions: ExecutionOptions = {
-      run_mode: selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
-      selected_run_folder: selectedRunFolder === 'new' ? undefined : selectedRunFolder,
+      ...baseOptions,  // Include all flags from buildExecutionOptions
       execution_strategy: ExecutionStrategy.RUN_SINGLE_STEP,
       resume_from_step: stepIndex + 1  // 1-based step number (target step)
     }
@@ -143,6 +144,35 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     // The adapter in WorkflowCanvas will handle highlighting the node
     onStartPhase('execution', executionOptions)
   }, [onStartPhase, node, canRunStep, selectedRunFolder, selectedExecutionMode, stepIndex])
+
+  // Handle delete learnings for this step
+  const handleDeleteLearnings = useCallback(async () => {
+    if (!workspacePath) {
+      console.error('[StepSidebar] Cannot delete learnings: workspace path not available')
+      return
+    }
+
+    setIsDeletingLearnings(true)
+    try {
+      // stepIndex is 0-based, but step numbers are 1-based
+      const stepNumber = stepIndex + 1
+      const result = await agentApi.deleteStepLearnings(workspacePath, stepNumber)
+      
+      if (result.success) {
+        console.log('[StepSidebar] Successfully deleted learnings:', result.message)
+        // Optionally show a success toast/notification here
+      } else {
+        console.error('[StepSidebar] Failed to delete learnings:', result.message)
+        // Optionally show an error toast/notification here
+      }
+    } catch (error) {
+      console.error('[StepSidebar] Error deleting learnings:', error)
+      // Optionally show an error toast/notification here
+    } finally {
+      setIsDeletingLearnings(false)
+      setShowDeleteLearningsConfirm(false)
+    }
+  }, [workspacePath, stepIndex])
   
   // Get preset information
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -350,39 +380,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     } finally {
       setIsSaving(false)
     }
-  }
-
-  // Get events for variables
-  const { events } = useChatStore()
-  
-  // Find the latest variables_extracted event
-  const latestVariablesEvent = useMemo(() => {
-    const variablesEvents = events.filter(
-      (e: PollingEvent) => e.type === 'variables_extracted'
-    )
-    if (variablesEvents.length === 0) return null
-    
-    // Get the most recent event (last in array since events are chronological)
-    const latest = variablesEvents[variablesEvents.length - 1]
-    // Event data might be nested: event.data.data or event.data
-    const eventData = latest.data as { variables?: Array<{ name: string; value: string; description: string }>; templated_objective?: string; workspace_path?: string } | { data?: { variables?: Array<{ name: string; value: string; description: string }>; templated_objective?: string; workspace_path?: string } }
-    return ('data' in eventData && eventData.data) ? eventData.data : (eventData as { variables?: Array<{ name: string; value: string; description: string }>; templated_objective?: string; workspace_path?: string })
-  }, [events])
-
-  // If start node, show variables editing
-  if (node && node.id === 'start' && node.type === 'start') {
-    return (
-      <div className="absolute right-0 top-0 bottom-0 w-[600px] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col">
-        <VariablesModal
-          isOpen={true}
-          onClose={onClose}
-          variables={latestVariablesEvent?.variables || []}
-          templatedObjective={latestVariablesEvent?.templated_objective || ''}
-          workspacePath={latestVariablesEvent?.workspace_path || workspacePath || ''}
-          inline={true}
-        />
-      </div>
-    )
   }
 
   // Handle validation/learning nodes
@@ -733,6 +730,24 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   Run
                 </button>
               )}
+              {/* Delete Learnings Button */}
+              {workspacePath && (
+                <button
+                  onClick={() => setShowDeleteLearningsConfirm(true)}
+                  disabled={isRunning || isDeletingLearnings}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={
+                    isRunning 
+                      ? 'Execution in progress...' 
+                      : isDeletingLearnings
+                        ? 'Deleting learnings...'
+                        : 'Delete learnings for this step'
+                  }
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Learnings
+                </button>
+              )}
               <button
                 onClick={handleStartEdit}
                 className="p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors"
@@ -920,12 +935,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
               presetUseCodeExecutionMode={presetUseCodeExecutionMode}
               isExpanded={true}
               onToggleExpanded={() => {}}
+              planSteps={plan?.steps || []}
             />
           </div>
         </div>
       </div>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Step Confirmation Dialog */}
       {/* ESC key closes the dialog and cancels the delete (treats as false/not confirmed) */}
       <ConfirmationDialog
         isOpen={showDeleteConfirm}
@@ -947,6 +963,26 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
             : 'Are you sure you want to delete this step? This action cannot be undone.'
         }
         confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+      />
+
+      {/* Delete Learnings Confirmation Dialog */}
+      <ConfirmationDialog
+        isOpen={showDeleteLearningsConfirm}
+        onClose={() => setShowDeleteLearningsConfirm(false)}
+        onConfirm={handleDeleteLearnings}
+        title="Delete Learnings"
+        message={
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'loop')
+            ? (() => {
+                const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+                const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
+                return `Are you sure you want to delete all learnings for "${stepTitle}" (Step ${stepIndex + 1})? This will permanently delete the learnings folder at \`learnings/step-${stepIndex + 1}/\` and all its contents. This action cannot be undone.`
+              })()
+            : `Are you sure you want to delete all learnings for Step ${stepIndex + 1}? This will permanently delete the learnings folder and all its contents. This action cannot be undone.`
+        }
+        confirmText="Delete Learnings"
         cancelText="Cancel"
         type="danger"
       />

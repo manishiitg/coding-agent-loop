@@ -34,5 +34,3 @@ export type {
 export { WorkflowModeHandler, type WorkflowModeHandlerRef } from './WorkflowModeHandler'
 export { WorkflowPhaseHandler } from './WorkflowPhaseHandler'
 export { WorkflowPresetSelector } from './WorkflowPresetSelector'
-export { VariablesIcon } from './VariablesIcon'
-export { VariablesModal } from './VariablesModal'

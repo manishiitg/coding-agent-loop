@@ -81,6 +81,15 @@ func (agent *HumanControlledTodoPlannerLearningAgent) Execute(ctx context.Contex
 		"LearningDetailLevel":     learningDetailLevel,
 	}
 
+	// Add step-specific paths (always enabled)
+	if stepExecutionPath, ok := templateVars["StepExecutionPath"]; ok {
+		learningTemplateVars["StepExecutionPath"] = stepExecutionPath
+	}
+	if stepNumber, ok := templateVars["StepNumber"]; ok {
+		learningTemplateVars["StepNumber"] = stepNumber
+	}
+	learningTemplateVars["UseStepSpecificLearnings"] = "true"
+
 	// Create template data for learning
 	templateData := HumanControlledTodoPlannerLearningTemplate{
 		StepTitle:               stepTitle,
@@ -113,6 +122,12 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 	if learningDetailLevel == "" {
 		learningDetailLevel = "general"
 	}
+
+	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	workspacePath := templateVars["WorkspacePath"]
+	stepNumber := templateVars["StepNumber"]
+	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
+	scriptsPath := workspacePath + "/learnings/step-" + stepNumber + "/scripts"
 
 	return `# Learning Analysis Agent
 
@@ -203,10 +218,16 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 		}
 		return `6`
 	}() + `. Read Existing File First** - **MANDATORY**:
-   - Read {{.WorkspacePath}}/learnings/{StepTitle}_learning.md if exists
+   ` + func() string {
+		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
+			return `- **EXISTING LEARNINGS FOUND**: Read ` + existingPath + `
    - Merge new learnings with existing (preserve all previous content)
    - Update existing patterns if latest run differs from file
-   - Update pattern scores: [Runs: X | Success: Y%]
+   - Update pattern scores: [Runs: X | Success: Y%]`
+		}
+		return `- **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
+   - **Action**: Create new file at ` + writePath + `/{StepTitle}_learning.md with all current learnings`
+	}() + `
 
 **` + func() string {
 		if learningDetailLevel == "exact" {
@@ -240,7 +261,7 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
   - Run 10+: Optimal path is well-established, alternatives are documented but de-prioritized
 
 **Example Optimal Path Tracking:**
-` + "```" + `
+
 ⭐ OPTIMAL PATH [Runs: 15 | Success: 93%] - RECOMMENDED
   Step 1 → Step 2 → Step 3 (3-step approach)
   
@@ -251,7 +272,7 @@ Alternative Path A [Runs: 8 | Success: 75%]
 ⚠️ UNRELIABLE Path B [Runs: 5 | Success: 40%]
   Step 1 → Step X → Step 3 (skips validation)
   Note: Fails often due to missing validation - avoid
-` + "```" + `
+
 ` + func() string {
 		if learningDetailLevel == "exact" {
 			return `
@@ -276,7 +297,6 @@ Do NOT output narrative descriptions or summaries. Output NUMBERED STEPS with CO
 
 **REQUIRED STRUCTURE:**
 
-` + "```" + `
 ⭐ OPTIMAL PATH [Runs: X | Success: Y%] - RECOMMENDED (or just [Runs: 1 | Success: 100%] for first run)
 
 **🎯 EXECUTION WORKFLOW:**
@@ -321,7 +341,7 @@ Alternative Path [Runs: X | Success: Y%]
 **❌ FAILURES TO AVOID:**
 - server.tool_name [Failed: X times] - [reason]
   Use instead: [correct approach with step reference]
-` + "```" + `
+
 
 **KEY REQUIREMENTS FOR EACH STEP:**
 1. **arguments**: MUST be COMPLETE JSON copied from execution history
@@ -440,7 +460,7 @@ Alternative Path [Runs: X | Success: Y%]
 
 **Extract**:
 - Tool names (format: server_name.tool_name)
-- Full Python script content (save to {{.WorkspacePath}}/learnings/scripts/)
+- Full Python script content (save to ` + scriptsPath + `/)
 - Refactor scripts to accept variables as parameters (not placeholders)
 - Focus on MCP server tools (exclude workspace management tools)`
 	}() + `
@@ -448,22 +468,22 @@ Alternative Path [Runs: X | Success: Y%]
 ## 📤 REQUIRED OUTPUT
 
 **CRITICAL**: After writing learning file, output ONLY the file path:
-` + "Updated: " + templateVars["WorkspacePath"] + "/learnings/" + templateVars["StepTitle"] + "_learning.md" + `
+Updated: ` + writePath + "/" + templateVars["StepTitle"] + "_learning.md" + `
 
 **DO NOT provide**: summaries, analysis reports, long explanations, lists of patterns
 
 **Key Requirements**:
 - ALWAYS read existing file first, merge new learnings (never overwrite)
-- ALWAYS save working Python scripts to {{.WorkspacePath}}/learnings/scripts/
-- Document learnings ONLY in {{.WorkspacePath}}/learnings/ folder
+- ALWAYS save working Python scripts to ` + scriptsPath + `/` + `
+- Document learnings ONLY in ` + writePath + `/ folder
 ` + func() string {
 		if learningDetailLevel == "exact" {
-			return `- **PRESERVE WORKFLOW ORDER** - Steps must be in execution sequence
-- **TRACK DATA FLOW** - Show how outputs connect to inputs
-- **INCLUDE DECISION LOGIC** - Document conditional branches
-- **DOCUMENT ERROR RECOVERY** - What to do when steps fail`
+			return "- **PRESERVE WORKFLOW ORDER** - Steps must be in execution sequence\n" +
+				"- **TRACK DATA FLOW** - Show how outputs connect to inputs\n" +
+				"- **INCLUDE DECISION LOGIC** - Document conditional branches\n" +
+				"- **DOCUMENT ERROR RECOVERY** - What to do when steps fail"
 		}
-		return `- Keep file content SHORT and precise (each entry 1-2 lines max)`
+		return "- Keep file content SHORT and precise (each entry 1-2 lines max)"
 	}() + `
 - Update pattern scores when reading existing patterns
 - Analyze BOTH success and failure patterns
@@ -476,6 +496,11 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningUserMessageProcess
 	if learningDetailLevel == "" {
 		learningDetailLevel = "general"
 	}
+
+	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	stepNumber := templateVars["StepNumber"]
+	workspacePath := templateVars["WorkspacePath"]
+	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
 
 	return `# ` + func() string {
 		if learningDetailLevel == "exact" {
@@ -583,18 +608,24 @@ Failures teach us what NOT to do - use them to refine the workflow until it succ
 	}() + `
 
 **File Handling**:
-1. **READ FIRST**: ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md (if exists)
+` + func() string {
+		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
+			return `1. **READ FIRST**: ` + existingPath + `
 2. **MERGE**: Preserve all previous learnings, ` + func() string {
-		if learningDetailLevel == "exact" {
-			return `refine workflow based on latest run`
+				if learningDetailLevel == "exact" {
+					return `refine workflow based on latest run`
+				}
+				return `append new patterns`
+			}() + `  
+3. **UPDATE**: If latest run differs from existing patterns, update them`
 		}
-		return `append new patterns`
-	}() + `  
-3. **UPDATE**: If latest run differs from existing patterns, update them
+		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
+2. **CREATE NEW FILE**: Create new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`
+	}() + `
 4. **SCORES**: Update [Runs: X | Success: Y%] when patterns repeat
 5. **WRITE**: Merged content (existing + new)
 
-**After writing, output ONLY the file path** (e.g., \"Updated: ` + templateVars["WorkspacePath"] + `/learnings/` + templateVars["StepTitle"] + `_learning.md\"). 
+**After writing, output ONLY the file path** (e.g., \"Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md\"). 
 
 **Keep response minimal** - just the file path. No summaries or analysis.
 `

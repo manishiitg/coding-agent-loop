@@ -57,6 +57,19 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) Execute(ctx c
 		"VariableNames":           variableNames,
 	}
 
+	// Add step-specific paths if provided (when flag is enabled)
+	if stepExecutionPath, ok := templateVars["StepExecutionPath"]; ok {
+		learningTemplateVars["StepExecutionPath"] = stepExecutionPath
+	}
+	if stepNumber, ok := templateVars["StepNumber"]; ok {
+		learningTemplateVars["StepNumber"] = stepNumber
+	}
+	if useStepSpecific, ok := templateVars["UseStepSpecificLearnings"]; ok {
+		learningTemplateVars["UseStepSpecificLearnings"] = useStepSpecific
+	} else {
+		learningTemplateVars["UseStepSpecificLearnings"] = "false"
+	}
+
 	// Create template data for learning
 	templateData := HumanControlledTodoPlannerLearningTemplate{
 		StepTitle:               stepTitle,
@@ -85,6 +98,12 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) Execute(ctx c
 
 // learningSystemPromptProcessorCodeExecution creates the system prompt for code execution mode learning
 func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSystemPromptProcessorCodeExecution(templateVars map[string]string) string {
+	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	workspacePath := templateVars["WorkspacePath"]
+	stepNumber := templateVars["StepNumber"]
+	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
+	codePath := workspacePath + "/learnings/step-" + stepNumber + "/code"
+
 	return `# Code Execution Learning Analysis Agent
 
 ## 🤖 AGENT IDENTITY
@@ -119,17 +138,23 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 6. **Document Failures to Avoid** - What code patterns wasted time or failed? (brief)
 7. **Create Code Library** - Document the best code examples so future executions can use them directly
 6. **Read Existing File First** - **CRITICAL STEP BEFORE WRITING**:
-   - **MANDATORY**: Use read_workspace_file tool to read the existing learning file BEFORE writing
-   - **Both Modes**: Read {{.WorkspacePath}}/learning_code_exec/{StepTitle}_learning.md if it exists
+   ` + func() string {
+		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
+			return `- **EXISTING LEARNINGS FOUND**: Use read_workspace_file tool to read the existing learning file BEFORE writing
+   - **File Path**: ` + existingPath + `
    - **Purpose**: Preserve all existing learnings - never overwrite or lose previous content
-   - **If file doesn't exist**: Create new file with current learnings
    - **If file exists**: Merge new learnings with existing content (append new patterns, don't replace)
-   - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results. Replace outdated patterns with current ones based on the most recent execution.
+   - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results. Replace outdated patterns with current ones based on the most recent execution.`
+		}
+		return `- **NO EXISTING LEARNINGS**: No learning file exists for this step - create a NEW learning file with current learnings
+   - **DO NOT** try to search for or read existing learnings - they don't exist for this step
+   - **Action**: Create new file at ` + writePath + `/{StepTitle}_learning.md with all current learnings`
+	}() + `
 
 7. **Write to File** - **USE TOOLS** to write learnings to files:
    - **Priority**: BEST code patterns (the most effective code that worked)
    - **Multiple Best Codes**: If multiple effective patterns exist, save all of them (ranked best first)
-   - **Code Snippets**: Save complete, runnable Go code to {{.WorkspacePath}}/learning_code_exec/code/ folder (one file per best pattern, or combined if variations are similar)
+   - **Code Snippets**: Save complete, runnable Go code to ` + codePath + `/ folder (one file per best pattern, or combined if variations are similar)
    - **Ranking**: Always rank code by effectiveness - best code first
    - **Secondary**: Failure patterns (what to avoid to save time)
    - **CRITICAL**: Write the MERGED content (existing + new learnings), not just new learnings
@@ -176,7 +201,7 @@ The ExecutionHistory section contains the complete execution conversation. Parse
    - Completeness (handles edge cases well)
 3. **Extract BEST code(s)**: Extract complete, runnable Go code of the BEST patterns (or multiple best variations if equally effective)
 4. **REPLACE ACTUAL VALUES WITH VARIABLES**: Before saving code, check if any hardcoded values match known variables. Replace them with variable placeholders (e.g., accountID := "{{AWS_ACCOUNT_ID}}", region := "{{AWS_REGION}}"). This makes code reusable across different environments.
-5. **Save best code**: Save complete, runnable code to {{.WorkspacePath}}/learning_code_exec/code/ folder:
+5. **Save best code**: Save complete, runnable code to ` + codePath + `/ folder:
    - If one best pattern: Save to {StepTitle}_code.go
    - If multiple best patterns: Save to {StepTitle}_code_v1.go, {StepTitle}_code_v2.go, etc. (ranked best first)
 6. **Add effectiveness notes**: 1-2 sentences explaining WHY this code is best (e.g., "Most efficient approach", "Best error handling", "Handles edge cases")
@@ -241,7 +266,7 @@ The ExecutionHistory section contains the complete execution conversation. Parse
 - **Priority 2**: Success code snippets (save working code to code/ folder and reference them)
 - **Priority 3**: Failures to avoid (save time in future executions)
 - **Keep it actionable**: Future executions should be able to replicate success using code patterns
-- **Save BEST Go code**: When Go code worked, save the BEST code to {{.WorkspacePath}}/learning_code_exec/code/{StepTitle}_code.go (or multiple files if multiple best variations exist)
+- **Save BEST Go code**: When Go code worked, save the BEST code to ` + codePath + `/{StepTitle}_code.go (or multiple files if multiple best variations exist)
 - **Rank by effectiveness**: Always rank code by how well it executes the step - best code first
 - **Multiple best codes**: If multiple effective patterns exist, save all of them (ranked best first) - future executions can choose the most appropriate
 - **CRITICAL - Variable Replacement**: Always replace actual values in code with variable placeholders when they match known variables. This ensures code is reusable across different environments, accounts, and configurations.
@@ -276,7 +301,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 **CRITICAL**: After writing the learning file, output ONLY the file path that was updated. Keep your response minimal and concise.
 
 **Output Format:**
-` + `Updated: ` + templateVars["WorkspacePath"] + `/learning_code_exec/` + templateVars["StepTitle"] + `_learning.md` + `
+` + `Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md` + `
 
 **DO NOT provide:**
 - Comprehensive summaries
@@ -290,10 +315,10 @@ You have access to all MCP tools to examine workspace files and gather additiona
 **Key Requirements:**
 - **CRITICAL - PRESERVE EXISTING LEARNINGS**: ALWAYS read existing learning file first, then merge new learnings with existing content. NEVER overwrite existing learnings.
 - **ALWAYS analyze BOTH success patterns AND failure patterns** from execution and validation
-- **ALWAYS save working Go code** to {{.WorkspacePath}}/learning_code_exec/code/ folder before writing the learning file
-- Document learnings ONLY in {{.WorkspacePath}}/learning_code_exec/ folder
+- **ALWAYS save working Go code** to ` + codePath + `/ folder before writing the learning file
+- Document learnings ONLY in ` + writePath + `/ folder
 - Focus on capturing the BEST code that worked (ranked by effectiveness), then other successful variations, then what to avoid
-- Save complete, runnable Go code of BEST patterns to learning_code_exec/code/ folder and reference it in the learning file
+- Save complete, runnable Go code of BEST patterns to learnings/step-{X}/code/ folder and reference it in the learning file
 - Extract and save the BEST code snippets (or multiple best variations) with full function calls
 - Rank code by effectiveness: best code first, then alternatives, then failures to avoid
 - Document only meaningful best code patterns - don't save mediocre code just because it worked
@@ -316,6 +341,12 @@ You have access to all MCP tools to examine workspace files and gather additiona
 
 // learningUserMessageProcessorCodeExecution creates the user message for code execution mode learning
 func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningUserMessageProcessorCodeExecution(templateVars map[string]string) string {
+	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	workspacePath := templateVars["WorkspacePath"]
+	stepNumber := templateVars["StepNumber"]
+	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
+	codePath := workspacePath + "/learnings/step-" + stepNumber + "/code"
+
 	return `# Go Code Pattern Extraction Task (Focus on Execution Efficiency)
 
 **PRIMARY GOAL**: Extract the BEST possible Go code (or multiple best variations) that executed this step most effectively, so future code generation can use optimal patterns.
@@ -388,11 +419,17 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 - **Deprecate bad patterns**: If a code pattern fails >50% of the time, mark as ⚠️ UNRELIABLE
 
 **File to create/update:**
-` + `- ` + templateVars["WorkspacePath"] + `/learning_code_exec/` + templateVars["StepTitle"] + `_learning.md
+` + `- ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
 
 **CRITICAL FILE HANDLING INSTRUCTIONS:**
-1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + templateVars["WorkspacePath"] + `/learning_code_exec/` + templateVars["StepTitle"] + `_learning.md (if it exists)
-2. **IF FILE EXISTS**: Merge new learnings with existing content - preserve ALL previous learnings, append new success/failure patterns
+` + func() string {
+		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
+			return `1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + existingPath + `
+2. **IF FILE EXISTS**: Merge new learnings with existing content - preserve ALL previous learnings, append new success/failure patterns`
+		}
+		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
+2. **CREATE NEW FILE**: Create a new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`
+	}() + `
 3. **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns, UPDATE the existing patterns to reflect the latest run results
 4. **UPDATE PATTERN SCORES**: Compare existing patterns with current success/failure patterns:
    - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 2 | Success: 66.7%] → [Runs: 3 | Success: 75%])
@@ -402,9 +439,9 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 5. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
 6. **IF FILE DOESN'T EXIST**: Create new file with current learnings (all new patterns start with [Runs: 1 | Success: 100%])
 7. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)
-8. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + templateVars["WorkspacePath"] + `/learning_code_exec/code/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file` + `
+8. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file` + `
 
-**After writing the file, output ONLY the file path** (e.g., "Updated: ` + templateVars["WorkspacePath"] + `/learning_code_exec/` + templateVars["StepTitle"] + `_learning.md"). 
+**After writing the file, output ONLY the file path** (e.g., "Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md"). 
 
 **Keep response minimal** - just the file path. No summaries or analysis.
 `

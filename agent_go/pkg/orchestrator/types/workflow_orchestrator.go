@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 	"mcp-agent/agent_go/internal/utils"
 	"mcp-agent/agent_go/pkg/database"
 	"mcp-agent/agent_go/pkg/orchestrator"
@@ -90,7 +91,7 @@ func GetWorkflowConstants() WorkflowConstants {
 			{
 				ID:          "learning-consolidation",
 				Title:       "Learning Consolidation",
-				Description: "Analyze and consolidate learning files across both learnings/ and learning_code_exec/ folders. Identifies duplicate patterns, similar patterns, and outdated patterns. Consolidates redundant learnings to optimize learning structure for better future execution efficiency.",
+				Description: "Analyze and consolidate learning files across the learnings/ folder. Identifies duplicate patterns, similar patterns, and outdated patterns. Consolidates redundant learnings to optimize learning structure for better future execution efficiency.",
 				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
 			},
 			{
@@ -723,15 +724,13 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		return "", fmt.Errorf("failed to create/update todo list: %w", err)
 	}
 
-	// Emit request_human_feedback event
+	// Emit blocking_human_feedback event (no Slack notifications)
 	// Note: Execution now happens automatically after plan approval, so no separate phase needed
-	if err := wo.emitRequestHumanFeedback(ctx, objective, todoListMarkdown,
-		"planning_verification",
-		database.WorkflowStatusPreVerification, // Stay in planning phase
+	if err := wo.emitBlockingHumanFeedback(ctx, objective, todoListMarkdown,
 		"Human Controlled Planning Complete",
 		"Approve Plan & Continue",
 		"Please review the generated todo list and approve to proceed with execution."); err != nil {
-		wo.GetLogger().Warnf("⚠️ Failed to emit request human feedback event: %w", err)
+		wo.GetLogger().Warnf("⚠️ Failed to emit blocking human feedback event: %w", err)
 	}
 
 	planningResult := fmt.Sprintf("Human controlled planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
@@ -758,32 +757,49 @@ func (wo *WorkflowOrchestrator) getWorkflowID() string {
 	return "workflow-" + fmt.Sprintf("%d", time.Now().Unix())
 }
 
-// emitRequestHumanFeedback emits a request human feedback event
-func (wo *WorkflowOrchestrator) emitRequestHumanFeedback(ctx context.Context, objective string, todoListMarkdown string, verificationType string, nextPhase string, title string, actionLabel string, actionDescription string) error {
+// emitBlockingHumanFeedback emits a blocking human feedback event (no Slack notifications)
+func (wo *WorkflowOrchestrator) emitBlockingHumanFeedback(ctx context.Context, objective string, todoListMarkdown string, title string, actionLabel string, actionDescription string) error {
 
 	// Generate unique request ID
 	requestID := fmt.Sprintf("feedback_%d", time.Now().UnixNano())
 
-	// Create request human feedback event data
-	eventData := &events.RequestHumanFeedbackEvent{
+	// Build question text from event data
+	questionText := title
+	if actionDescription != "" {
+		questionText = fmt.Sprintf("%s\n\n%s", title, actionDescription)
+	}
+	if objective != "" {
+		questionText = fmt.Sprintf("%s\n\nObjective: %s", questionText, objective)
+	}
+
+	// Build context message from todo list
+	contextMsg := todoListMarkdown
+
+	// Set default labels if not provided
+	yesLabel := actionLabel
+	if yesLabel == "" {
+		yesLabel = "Approve Plan & Continue"
+	}
+
+	// Create blocking human feedback event data
+	eventData := &events.BlockingHumanFeedbackEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		Objective:         objective,
-		TodoListMarkdown:  todoListMarkdown,
-		SessionID:         wo.getSessionID(),
-		WorkflowID:        wo.getWorkflowID(),
-		RequestID:         requestID,
-		VerificationType:  verificationType,
-		NextPhase:         nextPhase,
-		Title:             title,
-		ActionLabel:       actionLabel,
-		ActionDescription: actionDescription,
+		Question:      questionText,
+		AllowFeedback: true, // Allow text feedback in frontend
+		Context:       contextMsg,
+		SessionID:     wo.getSessionID(),
+		WorkflowID:    wo.getWorkflowID(),
+		RequestID:     requestID,
+		YesNoOnly:     false, // false = frontend shows textarea + "Approve & Continue" button
+		YesLabel:      yesLabel,
+		NoLabel:       "Reject",
 	}
 
 	// Create agent event
 	agentEvent := &events.AgentEvent{
-		Type:      events.RequestHumanFeedback,
+		Type:      events.BlockingHumanFeedback,
 		Timestamp: time.Now(),
 		Data:      eventData,
 	}
@@ -793,8 +809,20 @@ func (wo *WorkflowOrchestrator) emitRequestHumanFeedback(ctx context.Context, ob
 		if bridge, ok := wo.GetContextAwareBridge().(interface {
 			HandleEvent(context.Context, *events.AgentEvent) error
 		}); ok {
-			return bridge.HandleEvent(ctx, agentEvent)
+			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+				return err
+			}
 		}
+	}
+
+	// Note: blocking_human_feedback events do NOT send Slack notifications
+	// Only request_human_feedback events send Slack notifications
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+
+	// Create feedback request without notifications (only registers in store for WaitForResponse)
+	if err := feedbackStore.CreateRequestWithoutNotification(requestID, questionText); err != nil {
+		wo.GetLogger().Warnf("⚠️ Failed to create feedback request: %v", err)
+		// Don't return error, as the event is already emitted to frontend
 	}
 
 	return nil

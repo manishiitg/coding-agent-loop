@@ -4,7 +4,7 @@
 
 The Workflow Orchestrator (specifically implemented as the **Human-Controlled Todo Creation Orchestrator**) is a multi-phase execution system that transforms high-level objectives into executable plans with automated execution, validation, and learning capabilities. It manages complex workflows through distinct phases: variable extraction, planning, execution, validation, learning, and post-execution optimization.
 
-**Features**: 🎯 Human-in-loop • 🔄 Learning-based • 📊 Validation-driven • 🤖 Multi-agent • 📝 Markdown-based • 🔀 Conditional Logic • ⚡ Fast Execution
+**Features**: 🎯 Human-in-loop • 🔄 Learning-based • 📊 Validation-driven • 🤖 Multi-agent • 📝 Markdown-based • 🔀 Conditional Logic • ⚡ Fast Execution • 🔄 Prerequisite Detection
 
 **Key Benefits:**
 - **Phase isolation:** Each phase (variable extraction, planning, execution, etc.) runs independently and can be triggered separately
@@ -40,6 +40,8 @@ The Workflow Orchestrator (specifically implemented as the **Human-Controlled To
 |-----------|------|---------------------|
 | **Orchestrator Core** | [`workflow_orchestrator.go`](agent_go/pkg/orchestrator/types/workflow_orchestrator.go) | `WorkflowOrchestrator`, `NewWorkflowOrchestrator()`, `Execute()`, `GetWorkflowConstants()` |
 | **Controller** | [`controller.go`](agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go) | `HumanControlledTodoPlannerOrchestrator`, `CreateTodoList()`, `executeSingleStep()` |
+| **Execution Manager** | [`execution_manager.go`](agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_manager.go) | `ExecutionManager`, `CleanupForFreshStart()`, `CleanupForSingleStep()`, `PrepareExecution()` |
+| **Execution Types** | [`execution_types.go`](agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_types.go) | `ExecutionMode`, `CleanupScope`, `ExecutionSetup` |
 | **Planning Agent** | [`planning_agent.go`](agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `HumanControlledTodoPlannerPlanningAgent`, `PlanningResponse`, `PlanStep` |
 | **Execution Agent** | [`execution_agent.go`](agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_agent.go) | `HumanControlledTodoPlannerExecutionAgent`, `Execute()` |
 | **Execution-Only Agent** | [`execution_only_agent.go`](agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | `HumanControlledTodoPlannerExecutionOnlyAgent` - Uses pre-discovered learning context |
@@ -64,6 +66,7 @@ The orchestrator uses **dedicated managers** for independent workflow phases, en
 | **Variable Extraction** | `VariableManager` | ✅ Independent | Manages variable extraction and validation independently |
 | **Anonymization** | `AnonymizationManager` | ✅ Independent | Manages learnings anonymization independently |
 | **Plan Improvement** | `PlanImprovementManager` | ✅ Independent | Manages plan improvement analysis independently |
+| **Execution Lifecycle** | `ExecutionManager` | ✅ Internal | Manages cleanup, progress init, and folder operations |
 | **Planning** | - | ⚠️ Orchestrator | Uses full orchestrator (complex dependencies) |
 | **Execution** | - | ⚠️ Orchestrator | Main orchestrator method |
 
@@ -73,6 +76,158 @@ The orchestrator uses **dedicated managers** for independent workflow phases, en
 - **Consistency**: All managers follow the same pattern and use `CreateAndSetupStandardAgentWithConfig`
 - **LLM Config**: Proper preservation of `FallbackModels`, `CrossProviderFallback`, and `APIKeys`
 - **No Dependencies**: Independent phases don't depend on each other's code
+
+### ExecutionManager Architecture
+
+The `ExecutionManager` centralizes all execution lifecycle decisions (cleanup, progress initialization, folder management) that were previously scattered across the controller.
+
+#### Controller ↔ ExecutionManager Relationship
+
+**Ownership Pattern:**
+```go
+// Controller CREATES ExecutionManager on-demand
+func (hcpo *HumanControlledTodoPlannerOrchestrator) GetExecutionManager() *ExecutionManager {
+    return NewExecutionManager(hcpo)
+}
+
+// ExecutionManager HOLDS reference to Controller
+type ExecutionManager struct {
+    orchestrator *HumanControlledTodoPlannerOrchestrator
+}
+
+// ExecutionManager CALLS Controller's low-level methods
+func (em *ExecutionManager) CleanupForFreshStart(...) error {
+    orch := em.orchestrator
+    orch.deleteStepProgress(ctx, runFolder)           // Low-level call
+    orch.CleanupDirectory(ctx, executionDir, "...")   // Low-level call
+    orch.initializeFreshProgress(ctx, totalSteps)     // Low-level call
+}
+```
+
+**Key Relationships:**
+1. **Controller → ExecutionManager**: Controller creates and uses ExecutionManager for cleanup decisions
+2. **ExecutionManager → Controller**: ExecutionManager calls back to Controller's low-level operations
+3. **No Circular Logic**: ExecutionManager only orchestrates WHAT to clean, Controller methods do the actual work
+
+**Usage Flow:**
+```
+Controller decides strategy (e.g., "start fresh")
+         │
+         ▼
+em := hcpo.GetExecutionManager()
+         │
+         ▼
+em.CleanupForFreshStart(ctx, runFolder, totalSteps)
+         │
+         ├──► hcpo.deleteStepProgress()
+         ├──► hcpo.CleanupDirectory()
+         └──► hcpo.initializeFreshProgress()
+```
+
+#### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│           HumanControlledTodoPlannerOrchestrator               │
+│                      (controller.go)                            │
+│                                                                 │
+│   GetExecutionManager() ─────────────────────────────────────┐ │
+│                                                               │ │
+│   ┌─────────────────────────────────────────────────────────┐ │ │
+│   │                  ExecutionManager                        │◄┘ │
+│   │              (execution_manager.go)                      │   │
+│   │                                                          │   │
+│   │  High-Level API (Strategy-Based):                        │   │
+│   │  • CleanupForFreshStart()      - New execution           │   │
+│   │  • CleanupForSingleStep()      - Re-run one step         │   │
+│   │  • CleanupForResumeFromStep()  - Resume from step N      │   │
+│   │  • CleanupForFastExecute*()    - Fast re-execution       │   │
+│   │                                                          │   │
+│   │  Batch Execution:                                        │   │
+│   │  • PrepareExecution()          - Resolve execution setup │   │
+│   │  • PrepareForBatchGroup()      - Setup per group         │   │
+│   │  • ApplyCleanup()              - Apply cleanup scope     │   │
+│   │  • ApplyExecutionContext()     - Set controller state    │   │
+│   └──────────────────────┬───────────────────────────────────┘   │
+│                          │                                       │
+│                          │ Calls back to                         │
+│                          ▼                                       │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │             Low-Level Operations                         │   │
+│   │   (controller_progress.go, controller_run_manager.go)    │   │
+│   │                                                          │   │
+│   │  • deleteStepProgress()         - Remove steps from JSON │   │
+│   │  • initializeFreshProgress()    - Create new JSON        │   │
+│   │  • deleteStepExecutionFolder()  - Delete step-N folder   │   │
+│   │  • CleanupDirectory()           - Delete any directory   │   │
+│   │  • cleanupExecutionArtifacts... - Fresh start cleanup    │   │
+│   └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Why This Pattern?
+
+| Before (Scattered) | After (Centralized) |
+|--------------------|---------------------|
+| Cleanup logic duplicated across 10+ places | Single source of truth in `ExecutionManager` |
+| Inconsistent cleanup between batch/normal | Consistent behavior via shared methods |
+| Hard to understand what gets cleaned when | Clear strategy → cleanup mapping |
+| Controller 4000+ lines | Controller delegates to specialized manager |
+
+#### Responsibility Split
+
+| Component | Responsibility |
+|-----------|----------------|
+| **Controller** | Decision logic (which strategy?), flow control, state management |
+| **ExecutionManager** | Cleanup orchestration (what to clean, in what order) |
+| **Low-level methods** | Actual file/folder operations |
+
+#### Execution Modes & Cleanup Scopes
+
+The `ExecutionManager` maps execution strategies to specific cleanup operations:
+
+| Mode | Deletes Progress | Deletes Folders | Inits Progress |
+|------|------------------|-----------------|----------------|
+| `CleanupForFreshStart` | ✅ | All `execution/` | ✅ Fresh |
+| `CleanupForSingleStep` | Step N+ | `step-N/` only | Update |
+| `CleanupForResumeFromStep` | Step N+ | `step-N/` through end | Update |
+| `CleanupForFastExecuteProgressOnly` | ✅ | ❌ | ✅ Fresh |
+| `CleanupForFastExecuteRange` | Range | Range folders | Update |
+
+#### Key Types
+
+```go
+// ExecutionMode defines the type of execution
+type ExecutionMode string
+const (
+    ExecutionModeFresh          ExecutionMode = "fresh"
+    ExecutionModeResume         ExecutionMode = "resume"
+    ExecutionModeResumeFromStep ExecutionMode = "resume_from_step"
+    ExecutionModeSingleStep     ExecutionMode = "single_step"
+    ExecutionModeFastExecute    ExecutionMode = "fast_execute"
+)
+
+// CleanupScope defines WHAT should be cleaned
+type CleanupScope struct {
+    DeleteProgress    bool  // Delete steps_done.json
+    InitFreshProgress bool  // Create new steps_done.json
+    UpdateProgress    bool  // Update existing progress
+    CleanAllSteps     bool  // Delete entire execution/ folder
+    CleanFromStep     int   // Delete step-{N} through end
+    CleanSpecificStep int   // Delete only step-{N}
+    NewTotalSteps     int   // Total steps for fresh progress
+}
+
+// ExecutionSetup contains fully resolved execution configuration
+type ExecutionSetup struct {
+    Mode          ExecutionMode
+    Context       *ExecutionContext  // Immutable execution flags
+    Cleanup       CleanupScope       // What to clean
+    StartFromStep int                // 0-based start index
+    RunFolder     string             // Target run folder path
+    GroupID       string             // For batch: current group ID
+}
+```
 
 ### Component Interaction
 
@@ -135,9 +290,9 @@ graph TB
 ### 4. Validation Agent
 **Purpose**: Validates step execution against success criteria and loop conditions.
 - **Files**: `validation_agent.go`
-- **Input**: Step details, Execution history, Workspace path, Loop condition
-- **Output**: Structured `ValidationResponse` (Success/Partial/Failed, Reasoning, Feedback, Loop Condition status)
-- **Features**: Structured Output, Loop Validation, Feedback Generation, Workspace Inspection
+- **Input**: Step details, Execution history, Workspace path, Loop condition, Prerequisite information (when enabled)
+- **Output**: Structured `ValidationResponse` (Success/Partial/Failed, Reasoning, Feedback, Loop Condition status, Failure Type, Navigation target)
+- **Features**: Structured Output, Loop Validation, Feedback Generation, Workspace Inspection, **Prerequisite Failure Detection** (see below)
 
 ### 5. Learning Agent (Unified)
 **Purpose**: Analyzes both successful and failed executions to capture patterns.
@@ -217,6 +372,17 @@ Executes the approved plan step-by-step. Requires both `variables.json` and `pla
 - **Fast Execute:** Skips learning and human feedback
 - **Skip Human Input:** Runs learning but auto-approves steps
 
+**Batch Execution (Multiple Variable Groups):**
+When multiple variable groups are enabled, the workflow executes sequentially for each group:
+- **Folder Structure:** 
+  - Single group: `runs/iteration-X/` (flat structure)
+  - Multiple groups: `runs/iteration-X/group-Y/` (nested structure)
+- **Run Mode Behavior:**
+  - **User Selected Folder:** Uses selected folder, extracts base iteration if nested
+  - **Create New Run:** Always creates new iteration folder (`iteration-X`)
+  - **Use Same Run:** Uses latest existing iteration folder, creates group subfolders within it
+- **Progress Tracking:** Each group execution is tracked independently with `steps_done.json` in its respective folder
+
 **Step Execution Flow:**
 ```mermaid
 graph TD
@@ -291,7 +457,16 @@ workspace/
 │       │   ├── execution/           # Execution outputs
 │       │   ├── validation/          # Validation reports
 │       │   └── steps_done.json      # Progress tracking
-│       └── iteration-N/             # Numbered run folders
+│       ├── iteration-N/             # Single group or numbered run folders
+│       │   ├── execution/
+│       │   └── steps_done.json
+│       └── iteration-N/             # Multi-group batch execution (nested)
+│           ├── group-1/             # First variable group
+│           │   ├── execution/
+│           │   └── steps_done.json
+│           └── group-2/             # Second variable group
+│               ├── execution/
+│               └── steps_done.json
 ```
 
 ### variables.json
@@ -383,6 +558,7 @@ Each agent can be configured with custom LLM settings.
 ### Validation Configuration
 - **Toggles**: `disable_validation` (auto-approve)
 - **Loop Validation**: Checks both success criteria AND loop condition
+- **Prerequisite Failure Detection**: Per-step configuration to detect missing prerequisites and navigate back to prerequisite steps (see [Prerequisite Failure Detection](prerequisite_failure_implementation.md))
 
 ---
 
@@ -422,16 +598,18 @@ Each agent can be configured with custom LLM settings.
 ### Goal
 Split the monolithic `controller.go` (4300+ lines) into smaller, focused files to improve maintainability.
 
-### Proposed File Structure
+### Current File Structure
 All files belong to `package todo_creation_human`.
 
-1.  **`controller.go` (Core)**: Main struct `HumanControlledTodoPlannerOrchestrator`, constructor, and high-level entry points (`Execute`, `CreateTodoList`).
-2.  **`controller_types.go` (Types)**: Data structures like `StepProgress`, `TodoStep`, `BranchStepProgress`.
-3.  **`controller_run_manager.go` (File/Folder Management)**: Logic for `runs/` folder management, cleanup, and file operations.
-4.  **`controller_progress.go` (State Management)**: Loading, saving, and tracking step progress in `steps_done.json`.
-5.  **`controller_execution.go` (Step Execution)**: Core logic for `executeSingleStep`, `executeConditionalStep`, and feedback loops.
-6.  **`controller_learning.go` (Learning Logic)**: Success/Failure learning phases and history formatting.
-7.  **`controller_agent_factory.go` (Agent Creation)**: Factory methods for creating Execution, Validation, and Learning agents.
+| File | Purpose | Status |
+|------|---------|--------|
+| **`controller.go`** | Main orchestrator, entry points (`Execute`, `CreateTodoList`) | Core |
+| **`controller_types.go`** | Data structures (`StepProgress`, `TodoStep`, `BranchStepProgress`) | Core |
+| **`controller_run_manager.go`** | `runs/` folder management, cleanup, file operations | Core |
+| **`controller_progress.go`** | Loading, saving, tracking step progress in `steps_done.json` | Core |
+| **`controller_batch_execution.go`** | Batch execution for multiple variable groups | Core |
+| **`execution_manager.go`** | Centralized cleanup/progress orchestration | ✅ New |
+| **`execution_types.go`** | `ExecutionMode`, `CleanupScope`, `ExecutionSetup` types | ✅ New |
 
 ### Implementation Strategy
 1.  Create new files in `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/`.

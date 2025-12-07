@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+
+	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
 )
 
 // ShouldFilterWriteTool checks if a write tool should be filtered out (not registered)
@@ -313,7 +315,7 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 			}
 
 			// Inject event emitter into context before calling executor
-			ctx = context.WithValue(ctx, "workspace_event_emitter", bo.contextAwareBridge)
+			ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, bo.contextAwareBridge)
 
 			// All validations passed and paths normalized - call original executor
 			return originalExecutor(ctx, args)

@@ -17,7 +17,6 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
-import { VariablesIcon } from './workflow/VariablesIcon'
 
 interface ChatAreaProps {
   // New chat handler
@@ -61,8 +60,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     requiresNewChat
   } = useAppStore()
   
-  const { selectedModeCategory } = useModeStore()
+  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore()
   const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = usePresetApplication()
+  
+  // Derive correct agent mode from selectedModeCategory (source of truth)
+  const correctAgentMode = useMemo(() => {
+    if (selectedModeCategory) {
+      return getAgentModeFromCategory(selectedModeCategory) as AgentMode
+    }
+    return agentMode // Fallback to agentMode if selectedModeCategory is null
+  }, [selectedModeCategory, agentMode, getAgentModeFromCategory])
   
   const { 
     primaryConfig: llmConfig,
@@ -78,15 +85,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     selectedServers
   } = useMCPStore()
   
-  // Determine which servers to use based on agent mode
+  // Determine which servers to use based on mode category
   const effectiveServers = useMemo(() => {
     // For workflow mode, use preset servers
-    if (agentMode === 'workflow') {
+    if (selectedModeCategory === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
-    // For simple mode, use manually selected servers
+    // For chat mode, use manually selected servers
     return selectedServers
-  }, [agentMode, currentPresetServers, selectedServers])
+  }, [selectedModeCategory, currentPresetServers, selectedServers])
   
   // Filter tools to only include those from effective servers
   // If "NO_SERVERS" is selected, return empty tools (pure LLM mode)
@@ -147,10 +154,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
-    if (agentMode !== 'workflow') return true; // No validation needed for other modes
+    if (selectedModeCategory !== 'workflow') return true; // No validation needed for other modes
 
     // Workflow mode requires Workflow/ folder
-    if (agentMode === 'workflow') {
+    if (selectedModeCategory === 'workflow') {
       const hasWorkflowFolder = chatFileContext.some((file: { type: string; path: string }) => 
         file.type === 'folder' && file.path.startsWith('Workflow/')
       );
@@ -158,7 +165,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     return true;
-  }, [agentMode, chatFileContext])
+  }, [selectedModeCategory, chatFileContext])
 
   // Use currentPresetServers from props (passed from App.tsx when preset is selected)
 
@@ -710,15 +717,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           })
           
         // Process workflow-specific events (after filtering)
-        if (agentMode === 'workflow') {
+        if (selectedModeCategory === 'workflow') {
           const phases = useWorkflowStore.getState().phases
           for (const event of response.events) {
             // Handle todo list generation from workflow agent
             // Note: orchestrator events removed, using agent_end events instead
             if (event.type === 'agent_end') {
-              const agentEvent = event.data?.agent_end
-              if (agentEvent && (agentEvent as { agent_type?: string })?.agent_type === 'todo_planner') {
-                const result = (agentEvent as { result?: string })?.result || ''
+              // Access the nested event data: event.data.data contains the actual AgentEndEvent
+              const agentEventData = event.data as { data?: { agent_type?: string; result?: string } }
+              const agentEvent = agentEventData?.data
+              if (agentEvent && agentEvent.agent_type === 'todo_planner') {
+                const result = agentEvent.result || ''
                 if (result) {
                   // Get planning phase (second phase if available)
                   const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
@@ -756,13 +765,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             return false
           }
           
-          // Completion detection based on agent mode
-          if (agentMode === 'workflow') {
+          // Completion detection based on mode category
+          if (selectedModeCategory === 'workflow') {
             // For workflow mode, check workflow-specific events
             return event.type === 'workflow_end' ||
                    event.type === 'request_human_feedback'
           } else {
-            // For simple mode, check standard completion events
+            // For chat mode, check standard completion events
             return event.type === 'unified_completion' ||
                    event.type === 'agent_end' ||
                    event.type === 'conversation_end' || 
@@ -790,11 +799,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           setIsCompleted(true)
           setHasActiveChat(false)
           
-          // Check for unified_completion event first - it takes precedence (only for non-Deep Search modes)
+          // Check for unified_completion event first - it takes precedence (only for chat mode)
           let hasError = false
           let finalResult = ''
           
-          if (agentMode !== 'workflow') {
+          if (selectedModeCategory !== 'workflow') {
             const unifiedCompletionEvent = completionEvents.find((event: PollingEvent) => 
               event.type === 'unified_completion'
             )
@@ -816,14 +825,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           
           // If no unified_completion event or no final result, check for individual error events
           if (!finalResult) {
-            if (agentMode === 'workflow') {
+            if (selectedModeCategory === 'workflow') {
               // For workflow mode, check workflow-specific errors
               hasError = completionEvents.some((event: PollingEvent) => 
                 event.type === 'agent_error' || 
                 event.type === 'workflow_error'
               )
             } else {
-              // For simple mode, check standard errors
+              // For chat mode, check standard errors
               hasError = completionEvents.some((event: PollingEvent) => 
                 event.type === 'conversation_error' || 
                 event.type === 'agent_error'
@@ -842,12 +851,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             // Skip processing other completion events since we already have the result
             return
           } else {
-            // Extract final response from completion events - AGENT MODE SPECIFIC LOGIC
+            // Extract final response from completion events - MODE CATEGORY SPECIFIC LOGIC
             let foundFinalResponse = false
             for (const event of completionEvents) {
               let result: string | undefined
               
-              if (agentMode === 'workflow') {
+              if (selectedModeCategory === 'workflow') {
                 // For workflow mode, check workflow_end events
                 if (event.type === 'workflow_end' && event.data && typeof event.data === 'object') {
                   if ('result' in event.data) {
@@ -1149,12 +1158,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
 
     // Add validation check for Tasks folder requirement in Deep Search and Workflow modes
-    if (agentMode === 'workflow' && !isRequiredFolderSelected) {
+    if (selectedModeCategory === 'workflow' && !isRequiredFolderSelected) {
       console.error(
         '[SUBMIT] Validation failed -',
-        agentMode === 'workflow' ? 'Workflow' : 'Tasks',
+        selectedModeCategory === 'workflow' ? 'Workflow' : 'Tasks',
         'folder required for',
-        agentMode,
+        selectedModeCategory,
         'mode'
       )
       return
@@ -1166,7 +1175,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       : query.trim()
     
     // Handle workflow mode - submit query directly to backend
-    if (agentMode === 'workflow') {
+    // Use selectedModeCategory as source of truth
+    if (selectedModeCategory === 'workflow') {
       // For all workflow phases, submit the query directly to the backend
       // The backend will handle the appropriate workflow logic based on the current phase
       setCurrentQuery(queryWithContext)
@@ -1209,16 +1219,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     const enhancedQuery = queryWithContext
     
     // Add user message as an event instead of floating popup
+    // Structure matches the actual wire format: event.data.data contains the typed event
     const userMessageEvent: PollingEvent = {
       id: `user-message-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: 'user_message',
       timestamp: new Date().toISOString(),
       data: {
-        user_message: {
+        type: 'user_message',
+        timestamp: new Date().toISOString(),
+        data: {
           content: query.trim(),
           timestamp: new Date().toISOString()
         }
-      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any
     }
     
     // Add user message event to the events array
@@ -1269,8 +1283,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // "*" markers indicate "all tools" mode, which is represented as an empty array
       const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
       
-      console.log('[CHATAREA] Starting workflow with:', {
-        agentMode,
+      // Use the correctAgentMode calculated at component level (derived from selectedModeCategory)
+      console.log('[CHATAREA] Starting query with:', {
+        selectedModeCategory,
+        agentModeFromStore: agentMode,
+        correctAgentMode,
         selectedWorkflowPreset,
         currentPresetServers,
         currentPresetTools,
@@ -1283,7 +1300,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Get code execution mode: prefer preset value, fallback to ChatInput ref (only for chat mode with simple agent)
       const activePreset = selectedWorkflowPreset ? getActivePreset('workflow') : getActivePreset('chat')
       const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
-      const chatInputUseCodeExecutionMode = agentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
+      const chatInputUseCodeExecutionMode = correctAgentMode === 'simple' && chatInputRef.current?.getCodeExecutionMode() === true
       
       // Determine final code execution mode value
       // If preset has explicit value (true or false), use it
@@ -1291,7 +1308,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       let useCodeExecutionMode: boolean | undefined
       if (presetUseCodeExecutionMode !== undefined) {
         useCodeExecutionMode = presetUseCodeExecutionMode
-      } else if (agentMode === 'simple') {
+      } else if (correctAgentMode === 'simple') {
         useCodeExecutionMode = chatInputUseCodeExecutionMode
       } else {
         // For workflow mode without preset, don't set it (let backend use default)
@@ -1302,7 +1319,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         activePreset: activePreset?.label,
         presetUseCodeExecutionMode,
         chatInputUseCodeExecutionMode,
-        agentMode,
+        selectedModeCategory,
+        correctAgentMode,
         finalUseCodeExecutionMode: useCodeExecutionMode
       })
       
@@ -1321,7 +1339,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Prepare API request payload
       const requestPayload = {
         query: enhancedQuery,
-        agent_mode: agentMode,
+        agent_mode: correctAgentMode,
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
         enabled_servers: effectiveServers,
         selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? filteredPresetTools : undefined, // Only send when preset is active
@@ -1366,7 +1384,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       setHasActiveChat(false)
     }
 
-  }, [agentMode, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
+  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {
@@ -1384,7 +1402,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     // For workflow mode, preserve the selected preset but reset workflow phase
-    if (agentMode === 'workflow' && selectedWorkflowPreset) {
+    if (selectedModeCategory === 'workflow' && selectedWorkflowPreset) {
       // Keep the preset selected, just reset the workflow phase to default
       const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
       setCurrentWorkflowPhase(defaultPhase)
@@ -1409,7 +1427,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Call the parent's new chat handler
     onNewChat()
-  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, agentMode, selectedWorkflowPreset, setCurrentWorkflowPhase])
+  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {
@@ -1465,8 +1483,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
       {/* Chat Content - Separated to prevent input re-renders */}
       <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative ${compact ? 'text-sm' : ''}`}>
-        {/* Variables Icon - Top Right */}
-        <VariablesIcon onSubmitQuery={submitQueryWithQuery} />
         
         <div className={`min-w-0 ${compact ? 'p-2' : 'p-4'}`}>
           {/* Loading indicator for historical events */}
@@ -1513,13 +1529,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           
 
           {/* Show workflow explanation when in workflow mode but no preset selected */}
-          <WorkflowExplanation agentMode={agentMode} selectedWorkflowPreset={selectedWorkflowPreset} />
+          {selectedModeCategory === 'workflow' && (
+            <WorkflowExplanation agentMode={correctAgentMode} selectedWorkflowPreset={selectedWorkflowPreset} />
+          )}
 
 
           {/* Show Deep Search explanation when in Deep Search mode */}
 
 
-        {agentMode === 'workflow' ? (
+        {selectedModeCategory === 'workflow' ? (
           <WorkflowModeHandler
             ref={workflowModeHandlerRef}
             onPresetSelected={handleWorkflowPresetSelected}

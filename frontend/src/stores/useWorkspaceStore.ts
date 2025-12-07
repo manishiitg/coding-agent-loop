@@ -3,6 +3,8 @@ import { devtools } from 'zustand/middleware'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { findFileInTree, extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
+import { getTypedEventData } from '../generated/event-types'
+import type { WorkspaceFileOperationEvent } from '../generated/events-bridge'
 
 interface WorkspaceState {
   // File Management
@@ -515,30 +517,74 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // Process workspace events and trigger highlighting or file removal
       processWorkspaceEvent: (event: PollingEvent) => {
         // Handle workspace_file_operation events
-        if (event.type === 'workspace_file_operation' && event.data) {
-          const eventData = event.data as {
-            operation: 'read' | 'update' | 'delete' | 'list' | 'patch' | 'move'
-            filepath: string
-            folder?: string
-            turn: number
-            server_name: string
-          }
-          const { operation, filepath } = eventData
-          
-          console.log('[WorkspaceStore] Processing workspace_file_operation event:', {
-            operation,
-            filepath,
-            folder: eventData.folder,
-            turn: eventData.turn,
-            server_name: eventData.server_name
-          })
-          
-          // Backend emits full filepaths (e.g., "Workflow/MyProject/file.txt")
-          // highlightFile searches in raw unfiltered files, so full paths work correctly
-          // Workspace component handles filtering and path adjustment for display
-          
-          if (operation === 'read' || operation === 'update' || operation === 'patch') {
-            if (filepath) {
+        if (event.type === 'workspace_file_operation') {
+          try {
+            // Try multiple ways to extract event data (event structure may vary)
+            let eventData: WorkspaceFileOperationEvent | undefined
+            
+            // Method 1: Use typed helper (for properly structured events)
+            const typedData = getTypedEventData(event, 'workspace_file_operation')
+            if (typedData) {
+              eventData = typedData as WorkspaceFileOperationEvent
+            }
+            
+            // Method 2: Fallback - access nested data directly
+            if (!eventData && event.data && typeof event.data === 'object') {
+              const agentEvent = event.data as { data?: unknown }
+              const nestedData = agentEvent.data
+              if (nestedData && typeof nestedData === 'object') {
+                const dataObj = nestedData as Record<string, unknown>
+                if (dataObj.operation || dataObj.filepath) {
+                  eventData = nestedData as WorkspaceFileOperationEvent
+                  console.log('[WorkspaceStore] Using fallback data extraction')
+                }
+              }
+            }
+            
+            // Method 3: Last resort - check if data is directly on event.data
+            if (!eventData && event.data && typeof event.data === 'object') {
+              const directData = event.data as Record<string, unknown>
+              if (directData.operation || directData.filepath) {
+                eventData = directData as WorkspaceFileOperationEvent
+                console.log('[WorkspaceStore] Using direct data extraction')
+              }
+            }
+            
+            if (!eventData) {
+              console.warn('[WorkspaceStore] Could not extract workspace_file_operation event data', {
+                eventType: event.type,
+                hasData: !!event.data,
+                eventDataStructure: event.data,
+                eventKeys: event.data ? Object.keys(event.data) : []
+              })
+              return true
+            }
+            
+            const { operation, filepath } = eventData
+            
+            console.log('[WorkspaceStore] Processing workspace_file_operation event:', {
+              operation,
+              filepath,
+              folder: eventData.folder,
+              turn: eventData.turn,
+              server_name: eventData.server_name
+            })
+            
+            if (!operation) {
+              console.warn('[WorkspaceStore] No operation in workspace_file_operation event')
+              return true
+            }
+            
+            // Backend emits full filepaths (e.g., "Workflow/MyProject/file.txt")
+            // highlightFile searches in raw unfiltered files, so full paths work correctly
+            // Workspace component handles filtering and path adjustment for display
+            
+            if (operation === 'read' || operation === 'update' || operation === 'patch') {
+              if (!filepath) {
+                console.warn('[WorkspaceStore] No filepath in event for operation:', operation)
+                return true
+              }
+              
               // Check if file exists in raw file tree, refresh if new, then highlight
               const state = get()
               const fileExists = findFileInTree(state.files, filepath)
@@ -546,63 +592,73 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 filepath,
                 fileExists,
                 operation,
-                totalFiles: state.files.length
+                totalFiles: state.files.length,
+                firstFewFiles: state.files.slice(0, 3).map(f => f.filepath)
               })
               
-              if (!fileExists && operation === 'update') {
-                // New file created - refresh tree to show it
-                console.log('[WorkspaceStore] File not found, refreshing tree for new file:', filepath)
+              // Always try to highlight - if file doesn't exist, refresh first
+              if (!fileExists) {
+                // File not found - refresh tree to show it (especially for new files)
+                console.log('[WorkspaceStore] File not found, refreshing tree:', filepath)
                 get().fetchFiles().then(() => {
+                  // Wait a bit longer for state to update after refresh
                   setTimeout(() => {
                     console.log('[WorkspaceStore] Calling highlightFile after refresh:', filepath)
                     get().highlightFile(filepath)
                     // Expand folders to show the file (works with workflow folder filtering)
                     get().expandFoldersForFile(filepath)
-                  }, 200)
+                  }, 300)
+                }).catch(err => {
+                  console.error('[WorkspaceStore] Error refreshing files:', err)
+                  // Still try to highlight even if refresh fails
+                  setTimeout(() => {
+                    get().highlightFile(filepath)
+                    get().expandFoldersForFile(filepath)
+                  }, 100)
                 })
               } else {
-                // File exists - highlight and expand folders
+                // File exists - highlight and expand folders immediately
                 console.log('[WorkspaceStore] File exists, calling highlightFile:', filepath)
                 get().highlightFile(filepath)
                 get().expandFoldersForFile(filepath)
               }
-            } else {
-              console.warn('[WorkspaceStore] No filepath in event for operation:', operation)
-            }
-          } else if (operation === 'delete') {
-            if (filepath) {
-              get().removeFile(filepath)
-              // Clear selection if deleted file was selected
-              const state = get()
-              if (state.selectedFile?.path === filepath) {
-                set({ selectedFile: null, fileContent: '', showFileContent: false })
+            } else if (operation === 'delete') {
+              if (filepath) {
+                get().removeFile(filepath)
+                // Clear selection if deleted file was selected
+                const state = get()
+                if (state.selectedFile?.path === filepath) {
+                  set({ selectedFile: null, fileContent: '', showFileContent: false })
+                }
+              }
+            } else if (operation === 'list') {
+              // List operation - no highlighting needed
+            } else if (operation === 'move') {
+              // Move operation: source file is deleted, destination file is updated
+              // Both events are emitted separately, so we handle them individually
+              // The delete event removes the source, the update event highlights the destination
+              if (filepath) {
+                const state = get()
+                const fileExists = findFileInTree(state.files, filepath)
+                if (!fileExists) {
+                  get().fetchFiles().then(() => {
+                    setTimeout(() => {
+                      get().highlightFile(filepath)
+                      get().expandFoldersForFile(filepath)
+                    }, 300)
+                  })
+                } else {
+                  get().highlightFile(filepath)
+                  get().expandFoldersForFile(filepath)
+                }
               }
             }
-          } else if (operation === 'list') {
-            // List operation - no highlighting needed
-          } else if (operation === 'move') {
-            // Move operation: source file is deleted, destination file is updated
-            // Both events are emitted separately, so we handle them individually
-            // The delete event removes the source, the update event highlights the destination
-            if (filepath) {
-              // This is the destination filepath from the update event
-              const state = get()
-              const fileExists = findFileInTree(state.files, filepath)
-              if (!fileExists) {
-                get().fetchFiles().then(() => {
-                  setTimeout(() => {
-                    get().highlightFile(filepath)
-                    get().expandFoldersForFile(filepath)
-                  }, 200)
-                })
-              } else {
-                get().highlightFile(filepath)
-                get().expandFoldersForFile(filepath)
-              }
-            }
+            
+            return true
+          } catch (error) {
+            console.error('[WorkspaceStore] Error processing workspace_file_operation event:', error, event)
+            return true // Return true to indicate we handled it (even if there was an error)
           }
-          
-          return true
         }
         
         return false

@@ -131,18 +131,23 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		// Ensure iteration folder is applied to bridge (for token persistence)
+		// This ensures all agents automatically get the iteration folder if it's been set
+		bo.applyIterationFolderToBridge()
 		mcpAgent.AddEventListener(cab)
-		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
 		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
 	} else {
 		// Fallback for interface-based bridge
 		if cab, ok := eventBridge.(interface {
-			SetOrchestratorContext(phase string, step, iteration int, agentName string)
+			SetOrchestratorContext(phase string, step int, agentName string)
 		}); ok {
-			cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+			cab.SetOrchestratorContext(phase, step, baseAgentName)
+			// Ensure iteration folder is applied to bridge (for token persistence)
+			bo.applyIterationFolderToBridge()
 			mcpAgent.AddEventListener(eventBridge)
-			bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+			bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
 			bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
 		} else {
 			return fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
@@ -435,9 +440,12 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
 	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, iteration, baseAgentName)
+		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		// Ensure iteration folder is applied to bridge (for token persistence)
+		// This ensures all agents automatically get the iteration folder if it's been set
+		bo.applyIterationFolderToBridge()
 		mcpAgent.AddEventListener(cab)
-		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName)
+		bo.GetLogger().Infof("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName)
 		bo.GetLogger().Infof("ℹ️ Skipping StartAgentSession for %s - handled at orchestrator level", phase)
 	} else {
 		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)

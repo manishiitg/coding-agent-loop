@@ -123,6 +123,51 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 	}
 }
 
+// cleanupProgressFromStep removes completed step indices from targetStepIndex onward and cleans up branch steps
+func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupProgressFromStep(ctx context.Context, targetStepIndex int, progress *StepProgress) error {
+	if progress == nil {
+		return fmt.Errorf("progress is nil")
+	}
+
+	hcpo.GetLogger().Infof("🧹 Cleaning up progress from step %d onward", targetStepIndex+1)
+
+	// Remove completed indices from target step onward
+	newCompletedIndices := make([]int, 0)
+	for _, idx := range progress.CompletedStepIndices {
+		if idx < targetStepIndex {
+			newCompletedIndices = append(newCompletedIndices, idx)
+		}
+	}
+
+	removedCount := len(progress.CompletedStepIndices) - len(newCompletedIndices)
+	progress.CompletedStepIndices = newCompletedIndices
+
+	// Clean up branch steps from target step onward
+	if progress.BranchSteps != nil {
+		branchStepsToRemove := make([]int, 0)
+		for stepIdx := range progress.BranchSteps {
+			if stepIdx >= targetStepIndex {
+				branchStepsToRemove = append(branchStepsToRemove, stepIdx)
+			}
+		}
+		for _, stepIdx := range branchStepsToRemove {
+			delete(progress.BranchSteps, stepIdx)
+		}
+		if len(branchStepsToRemove) > 0 {
+			hcpo.GetLogger().Infof("🧹 Removed %d branch step progress entries from step %d onward", len(branchStepsToRemove), targetStepIndex+1)
+		}
+	}
+
+	// Save updated progress
+	if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+		return fmt.Errorf("failed to save progress after cleanup: %w", err)
+	}
+
+	hcpo.GetLogger().Infof("✅ Progress cleanup completed: removed %d completed step indices from step %d onward. Remaining completed steps: %d", removedCount, targetStepIndex+1, len(progress.CompletedStepIndices))
+
+	return nil
+}
+
 // deleteStepProgress deletes steps_done.json file
 func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepProgress(ctx context.Context) error {
 	progressPath, err := hcpo.getStepsProgressPath()

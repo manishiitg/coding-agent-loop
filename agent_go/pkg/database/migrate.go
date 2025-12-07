@@ -206,6 +206,31 @@ func (mr *MigrationRunner) runMigration(migration Migration) error {
 				return nil
 			}
 		}
+		// Check if this is a duplicate column error for migration 011 (app_token)
+		if migration.Version == 11 && migration.Name == "update_slack_to_socket_mode" {
+			// Check if column actually exists before skipping
+			exists, checkErr := mr.columnExists(tx, "slack_feedback_config", "app_token")
+			if checkErr != nil {
+				return fmt.Errorf("failed to check column existence: %w", checkErr)
+			}
+
+			if exists {
+				fmt.Printf("⚠️  Migration %d: %s - Column 'app_token' already exists, skipping\n", migration.Version, migration.Name)
+
+				// Record migration as applied
+				_, recordErr := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, migration.Version)
+				if recordErr != nil {
+					return fmt.Errorf("failed to record migration: %w", recordErr)
+				}
+
+				if err := tx.Commit(); err != nil {
+					return fmt.Errorf("failed to commit migration: %w", err)
+				}
+
+				fmt.Printf("✅ Applied migration %d: %s (skipped duplicate column)\n", migration.Version, migration.Name)
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to execute migration SQL: %w", err)
 	}
 

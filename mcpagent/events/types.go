@@ -127,6 +127,7 @@ const (
 	StepExecutionStart     EventType = "step_execution_start"
 	StepExecutionEnd       EventType = "step_execution_end"
 	StepExecutionFailed    EventType = "step_execution_failed"
+	PrerequisiteNavigation EventType = "prerequisite_navigation"
 
 	// Additional event types from mcpagent
 	AgentProcessing                  EventType = "agent_processing"
@@ -166,6 +167,13 @@ const (
 	VariablesExtracted  EventType = "variables_extracted"
 	StepProgressUpdated EventType = "step_progress_updated"
 
+	// Batch execution events (for variable groups)
+	BatchExecutionStart    EventType = "batch_execution_start"
+	BatchGroupStart        EventType = "batch_group_start"
+	BatchGroupEnd          EventType = "batch_group_end"
+	BatchExecutionEnd      EventType = "batch_execution_end"
+	BatchExecutionCanceled EventType = "batch_execution_canceled"
+
 	// Human Verification events
 	HumanVerificationResponse EventType = "human_verification_response"
 	RequestHumanFeedback      EventType = "request_human_feedback"
@@ -173,6 +181,9 @@ const (
 
 	// Step token usage event
 	StepTokenUsage EventType = "step_token_usage"
+
+	// Learning events
+	LearningSkipped EventType = "learning_skipped"
 )
 
 // Unified Event structure with hierarchy support

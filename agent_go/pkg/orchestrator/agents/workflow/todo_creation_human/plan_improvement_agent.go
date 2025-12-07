@@ -11,6 +11,7 @@ import (
 	"mcp-agent/agent_go/pkg/orchestrator"
 	"mcp-agent/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	"mcpagent/events"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
@@ -362,6 +363,31 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	sessionID := templateVars["SessionID"]
 	workflowID := templateVars["WorkflowID"]
 
+	// Emit plan improvement started event
+	if agent.baseOrchestrator != nil {
+		eventBridge := agent.baseOrchestrator.GetContextAwareBridge()
+		if eventBridge != nil {
+			startedEvent := &events.OrchestratorAgentStartEvent{
+				BaseEventData: events.BaseEventData{
+					Timestamp: time.Now(),
+					Component: "orchestrator",
+				},
+				AgentType: "plan-improvement",
+				AgentName: "plan-improvement-agent",
+				Objective: "Improve plan based on execution results and user feedback",
+				InputData: planImprovementTemplateVars,
+			}
+			eventBridge.HandleEvent(ctx, &events.AgentEvent{
+				Type:      events.OrchestratorAgentStart,
+				Timestamp: time.Now(),
+				Data:      startedEvent,
+			})
+			if logger != nil {
+				logger.Infof("📤 Emitted plan improvement started event")
+			}
+		}
+	}
+
 	// Main execution loop with blocking human feedback
 	for iteration < maxIterations {
 		iteration++
@@ -473,6 +499,33 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, currentConversationHistory, workspacePath, readFile)
 	if logger != nil {
 		logger.Infof("🔍 [PlanImprovementAgent] CheckAndEmitPlanUpdateEvent call completed")
+	}
+
+	// Emit plan improvement completed event
+	if agent.baseOrchestrator != nil {
+		eventBridge := agent.baseOrchestrator.GetContextAwareBridge()
+		if eventBridge != nil {
+			completedEvent := &events.OrchestratorAgentEndEvent{
+				BaseEventData: events.BaseEventData{
+					Timestamp: time.Now(),
+					Component: "orchestrator",
+				},
+				AgentType: "plan-improvement",
+				AgentName: "plan-improvement-agent",
+				Objective: "Improve plan based on execution results and user feedback",
+				Result:    currentResult,
+				Success:   true,
+				InputData: planImprovementTemplateVars,
+			}
+			eventBridge.HandleEvent(ctx, &events.AgentEvent{
+				Type:      events.OrchestratorAgentEnd,
+				Timestamp: time.Now(),
+				Data:      completedEvent,
+			})
+			if logger != nil {
+				logger.Infof("📤 Emitted plan improvement completed event")
+			}
+		}
 	}
 
 	return currentResult, currentConversationHistory, nil

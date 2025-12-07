@@ -868,7 +868,7 @@ func MoveDocument(c *gin.Context) {
 	}
 
 	// Check if destination file already exists
-	if _, err := os.Stat(destinationPath); err == nil {
+	if _, err := os.Stat(destinationFilePath); err == nil {
 		c.JSON(http.StatusConflict, models.APIResponse[any]{
 			Success: false,
 			Message: "Destination file already exists",
@@ -901,7 +901,7 @@ func MoveDocument(c *gin.Context) {
 	defer lockManager.ReleaseLock(destinationLock)
 
 	// Create destination directory if it doesn't exist
-	destDir := filepath.Dir(destinationPath)
+	destDir := filepath.Dir(destinationFilePath)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
@@ -912,7 +912,7 @@ func MoveDocument(c *gin.Context) {
 	}
 
 	// Move file
-	if err := os.Rename(sourcePath, destinationPath); err != nil {
+	if err := os.Rename(sourceFilePath, destinationFilePath); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to move document",

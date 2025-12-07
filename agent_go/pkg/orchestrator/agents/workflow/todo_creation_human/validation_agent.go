@@ -41,11 +41,8 @@ type ValidationResponse struct {
 	ExecutionStatus      string               `json:"execution_status"` // COMPLETED/PARTIAL/FAILED/INCOMPLETE
 	Reasoning            string               `json:"reasoning"`
 	Feedback             []ValidationFeedback `json:"feedback"`
-	LoopConditionMet     bool                 `json:"loop_condition_met,omitempty"`     // For loop steps: whether loop condition is met (only when LoopCondition is provided)
-	LoopReasoning        string               `json:"loop_reasoning,omitempty"`         // For loop steps: reasoning for loop condition check (only when LoopCondition is provided)
-	FailureType          string               `json:"failure_type,omitempty"`           // "prerequisite" | "execution" - type of failure detected
-	ShouldRetryFromStep  *int                 `json:"should_retry_from_step,omitempty"` // 0-based index of step to retry from (for prerequisite failures)
-	RetryReason          string               `json:"retry_reason,omitempty"`           // Reason for retrying from specific step
+	LoopConditionMet     bool                 `json:"loop_condition_met,omitempty"` // For loop steps: whether loop condition is met (only when LoopCondition is provided)
+	LoopReasoning        string               `json:"loop_reasoning,omitempty"`     // For loop steps: reasoning for loop condition check (only when LoopCondition is provided)
 }
 
 // HumanControlledTodoPlannerValidationAgent validates if tasks were completed properly
@@ -80,14 +77,9 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 	hasLoopCondition := templateVars["LoopCondition"] != "" && strings.TrimSpace(templateVars["LoopCondition"]) != ""
 	// Check if code execution mode was used
 	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
-	// Check if prerequisite detection is enabled
-	enablePrerequisiteDetection := templateVars["EnablePrerequisiteDetection"] == "true"
 
-	// Build reasoning description based on whether prerequisite detection is enabled
+	// Build reasoning description
 	reasoningDescription := "Detailed reasoning for the validation decision. MUST explain: (1) What evidence was found (or missing) for each part of success criteria, (2) Any errors or failures in execution history, (3) Why the decision was made (pass/fail). Be specific and reference actual execution history content."
-	if enablePrerequisiteDetection {
-		reasoningDescription += " (4) If prerequisite detection is enabled, MUST mention that prerequisites were checked and explain why it's an execution failure vs prerequisite failure."
-	}
 
 	// Build base schema
 	baseSchema := `{
@@ -146,27 +138,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 		requiredFields = append(requiredFields, "loop_condition_met", "loop_reasoning")
 	}
 
-	if enablePrerequisiteDetection {
-		// Add comma prefix only if additionalFields is already non-empty (from loop condition)
-		// This prevents double commas when both conditions are true
-		commaPrefix := ","
-		additionalFields += commaPrefix + `
-			"failure_type": {
-				"type": "string",
-				"enum": ["prerequisite", "execution"],
-				"description": "Type of failure detected. Use 'prerequisite' if the failure is due to missing prerequisite from previous step (as described in one of the prerequisite rules). Use 'execution' if the failure is due to execution issues."
-			},
-			"should_retry_from_step": {
-				"type": "integer",
-				"description": "0-based index of step to retry from. Only set this when failure_type is 'prerequisite' and the condition in one of the prerequisite rules is met. Use the dependency_step_info.step_index from the matching rule. Leave null/undefined for execution failures."
-			},
-			"retry_reason": {
-				"type": "string",
-				"description": "Reason for retrying from specific step. Required when should_retry_from_step is set. Should indicate which prerequisite rule matched."
-			}`
-		// Note: failure_type, should_retry_from_step, and retry_reason are optional fields
-	}
-
 	// Build required fields JSON array
 	requiredFieldsJSON := `["` + strings.Join(requiredFields, `", "`) + `"]`
 
@@ -215,28 +186,20 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 	currentDate := now.Format("2006-01-02")
 	currentTime := now.Format("15:04:05")
 
-	// Check if prerequisite detection is enabled
-	enablePrerequisiteDetection := templateVars["EnablePrerequisiteDetection"] == "true"
-	prerequisiteInfoJSON := templateVars["PrerequisiteInfo"]
-
-	// Create template data with loop condition flag, code execution mode, and prerequisite detection
+	// Create template data with loop condition flag and code execution mode
 	type SystemPromptTemplate struct {
-		WorkspacePath               string
-		HasLoopCondition            bool
-		IsCodeExecutionMode         bool
-		EnablePrerequisiteDetection bool
-		PrerequisiteInfo            string
-		CurrentDate                 string
-		CurrentTime                 string
+		WorkspacePath       string
+		HasLoopCondition    bool
+		IsCodeExecutionMode bool
+		CurrentDate         string
+		CurrentTime         string
 	}
 	templateData := SystemPromptTemplate{
-		WorkspacePath:               templateVars["WorkspacePath"],
-		HasLoopCondition:            hasLoopCondition,
-		IsCodeExecutionMode:         isCodeExecutionMode,
-		EnablePrerequisiteDetection: enablePrerequisiteDetection,
-		PrerequisiteInfo:            prerequisiteInfoJSON,
-		CurrentDate:                 currentDate,
-		CurrentTime:                 currentTime,
+		WorkspacePath:       templateVars["WorkspacePath"],
+		HasLoopCondition:    hasLoopCondition,
+		IsCodeExecutionMode: isCodeExecutionMode,
+		CurrentDate:         currentDate,
+		CurrentTime:         currentTime,
 	}
 
 	// Define the system prompt template
@@ -483,59 +446,6 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 - ✅ **LOOP CONDITION MET**: Loop condition is satisfied - step can exit loop
 - ❌ **LOOP CONDITION NOT MET**: Loop condition is not satisfied - step must continue looping
 
-{{if .EnablePrerequisiteDetection}}
-## 🔄 PREREQUISITE FAILURE DETECTION MODE (When Applicable)
-
-**⚠️ IMPORTANT**: Prerequisite failure detection is enabled for this step. You must analyze if the validation failure is due to a missing prerequisite from a previous step.
-
-**Prerequisite Information:**
-{{.PrerequisiteInfo}}
-
-**Your Task:**
-1. **Parse Prerequisite Rules**: The prerequisite information contains an array of prerequisite rules. Each rule has:
-   - ` + "`" + `depends_on_step` + "`" + `: The step ID this rule depends on
-   - ` + "`" + `description` + "`" + `: User description of when to detect prerequisite failures for this specific step (e.g., "if login session is missing or expired, go back to step 0")
-   - ` + "`" + `dependency_step_info` + "`" + `: Information about the dependency step (step index, title, completion status, context output)
-
-2. **Evaluate Each Rule**: For each prerequisite rule:
-   - **Analyze the Description**: Understand when to detect prerequisite failures based on the rule's description
-   - **Parse the Description**: Extract the condition (e.g., "login is missing") and target step (e.g., "step 0" or step index)
-   - **Analyze Execution History**: Check if the condition in the description is met in the execution history:
-     - Look for error messages matching the condition (e.g., "session expired", "logged out", "authentication failed")
-     - Check if prerequisite state matches description (e.g., "login session missing", "not authenticated")
-     - Verify if the failure is due to missing prerequisite vs execution error
-   - **Check Dependency Step Info**: Review the dependency step information:
-     - Whether the dependency step completed successfully
-     - Whether context output files from the dependency exist
-     - Step index for navigation
-
-3. **Make Decision**:
-   - **If ANY rule's condition is met** → This is a **PREREQUISITE FAILURE**
-     - Set failure_type to "prerequisite"
-     - Set should_retry_from_step to the target step index (0-based) from the matching rule's dependency_step_info.step_index
-     - Set retry_reason to explain which rule matched and why (e.g., "Login session expired as described in prerequisite rule for step 0")
-     - **In reasoning field**: Explicitly mention that prerequisite failure was detected and which rule matched
-   - **If NO rule's condition is met** → This is an **EXECUTION FAILURE**
-     - Set failure_type to "execution"
-     - **CRITICAL**: Do NOT set should_retry_from_step (leave it null/undefined) - execution failures only retry the current step, never navigate to other steps
-     - **In reasoning field**: MUST mention that prerequisites were checked and explain why this is an execution failure (not a prerequisite failure). For example: "Prerequisites were checked: [list which prerequisites were evaluated]. None of the prerequisite conditions were met. This is an execution failure because [reason]."
-
-**Examples:**
-- Rule 1: depends_on_step: "step-0", description: "If login session is missing or expired, go back to step 0"
-  - If execution history shows "session expired" or "not logged in" → PREREQUISITE FAILURE → should_retry_from_step: 0 (from dependency_step_info.step_index)
-  - If execution history shows other errors (e.g., "API timeout") → Continue checking other rules
-
-- Rule 2: depends_on_step: "step-1", description: "If config file is missing, go back to step 1"
-  - If execution history shows "config file not found" → PREREQUISITE FAILURE → should_retry_from_step: 1 (from dependency_step_info.step_index)
-  - If execution history shows "invalid config format" → EXECUTION FAILURE → no should_retry_from_step
-
-**CRITICAL**: 
-- Only set should_retry_from_step if ONE of the rule's conditions is clearly met
-- Use the dependency_step_info.step_index from the matching rule for should_retry_from_step
-- If you're unsure or no rules match, default to EXECUTION FAILURE (no navigation)
-- Each rule is independent - evaluate all rules and use the first one that matches
-{{end}}
-
 ## 📤 OUTPUT FORMAT
 
 **USE THE 'submit_validation_result' TOOL TO SUBMIT YOUR VALIDATION ANALYSIS**
@@ -552,11 +462,6 @@ The tool accepts a structured object with:
 - loop_reasoning: string - **REQUIRED** - Detailed reasoning for loop condition evaluation
 {{else}}
 **CRITICAL**: Do NOT include loop_condition_met or loop_reasoning fields in your JSON response. These fields are ONLY used when LoopCondition is provided in the user message. Since LoopCondition is NOT provided, these fields must NOT appear in your response at all.
-{{end}}
-{{if .EnablePrerequisiteDetection}}
-- failure_type: string - **OPTIONAL** - Type of failure ("prerequisite" or "execution"). Only include when validation fails (is_success_criteria_met is false).
-- should_retry_from_step: integer - **OPTIONAL** - 0-based index of step to retry from. Only set when failure_type is "prerequisite" and condition in one of the prerequisite rules is met. Use the dependency_step_info.step_index from the matching rule. Leave null/undefined for execution failures or when success criteria is met.
-- retry_reason: string - **OPTIONAL** - Reason for retrying from specific step. Include when should_retry_from_step is set. Should indicate which prerequisite rule matched.
 {{end}}
 
 **Example JSON structure:**

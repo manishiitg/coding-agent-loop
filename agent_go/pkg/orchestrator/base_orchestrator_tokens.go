@@ -168,6 +168,8 @@ func (bo *BaseOrchestrator) GetAllModelTokenUsage() map[string]*ModelTokenUsage 
 }
 
 // PersistTokenUsage saves accumulated token usage to token_usage.json in the iteration folder
+// It reads existing token data from the file, merges it with current in-memory accumulators,
+// and preserves the original CreatedAt timestamp.
 func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFolder string) error {
 	if iterationFolder == "" {
 		bo.GetLogger().Warnf("⚠️ No iteration folder provided, skipping token usage persistence")
@@ -180,16 +182,89 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 
 	bo.GetLogger().Infof("💾 Persisting token usage to: %s", filePath)
 
+	// Read existing token usage file if it exists
+	var existingFile *TokenUsageFile
+	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
+	if err == nil && existingContent != "" {
+		// File exists, try to parse it
+		if err := json.Unmarshal([]byte(existingContent), &existingFile); err != nil {
+			bo.GetLogger().Warnf("⚠️ Failed to parse existing token_usage.json: %v (will create new file)", err)
+			existingFile = nil
+		} else {
+			bo.GetLogger().Debugf("📖 Read existing token usage file with %d models, %d steps", len(existingFile.ByModel), len(existingFile.ByStep))
+		}
+	} else if err != nil {
+		// File doesn't exist or error reading - this is expected for new files
+		// Only log if it's not a "file not found" type error
+		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+			bo.GetLogger().Debugf("📋 Token usage file does not exist yet (will create new): %s", filePath)
+		}
+		existingFile = nil
+	}
+
 	// Lock both mutexes to get a consistent snapshot
 	bo.stepTokenMutex.RLock()
 	bo.modelTokenMutex.RLock()
 
 	// Build the token usage file structure
+	// Start with existing data if available, otherwise create new
 	tokenFile := &TokenUsageFile{
 		UpdatedAt:  time.Now(),
 		ByModel:    make(map[string]*ModelTokenUsage),
 		ByStep:     make(map[string]*StepTokenSummary),
 		ByStepType: make(map[string]*StepTypeTokenUsage),
+	}
+
+	// Preserve CreatedAt from existing file, or set to now if new file
+	if existingFile != nil {
+		tokenFile.CreatedAt = existingFile.CreatedAt
+		// Initialize maps from existing data
+		if existingFile.ByModel != nil {
+			for k, v := range existingFile.ByModel {
+				// Deep copy to avoid modifying original
+				tokenFile.ByModel[k] = &ModelTokenUsage{
+					Provider:         v.Provider,
+					PromptTokens:     v.PromptTokens,
+					CompletionTokens: v.CompletionTokens,
+					TotalTokens:      v.TotalTokens,
+					CacheTokens:      v.CacheTokens,
+					ReasoningTokens:  v.ReasoningTokens,
+					LLMCallCount:     v.LLMCallCount,
+				}
+			}
+		}
+		if existingFile.ByStep != nil {
+			for k, v := range existingFile.ByStep {
+				// Deep copy to avoid modifying original
+				tokenFile.ByStep[k] = &StepTokenSummary{
+					StepType:         v.StepType,
+					StepTitle:        v.StepTitle,
+					PromptTokens:     v.PromptTokens,
+					CompletionTokens: v.CompletionTokens,
+					TotalTokens:      v.TotalTokens,
+					CacheTokens:      v.CacheTokens,
+					ReasoningTokens:  v.ReasoningTokens,
+					LLMCallCount:     v.LLMCallCount,
+				}
+			}
+		}
+		if existingFile.ByStepType != nil {
+			for k, v := range existingFile.ByStepType {
+				// Deep copy to avoid modifying original
+				tokenFile.ByStepType[k] = &StepTypeTokenUsage{
+					StepType:         v.StepType,
+					PromptTokens:     v.PromptTokens,
+					CompletionTokens: v.CompletionTokens,
+					TotalTokens:      v.TotalTokens,
+					CacheTokens:      v.CacheTokens,
+					ReasoningTokens:  v.ReasoningTokens,
+					LLMCallCount:     v.LLMCallCount,
+				}
+			}
+		}
+	} else {
+		// New file - set CreatedAt to now
+		tokenFile.CreatedAt = time.Now()
 	}
 
 	// Copy step token titles while holding lock
@@ -198,10 +273,10 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		stepTitlesCopy[k] = v
 	}
 
-	// Copy model token usage, converting from raw integers to millions
+	// Merge model token usage from in-memory accumulators (convert from raw integers to millions)
 	const tokensPerMillion = 1_000_000.0
 	for modelID, usage := range bo.modelTokenAccumulator {
-		tokenFile.ByModel[modelID] = &ModelTokenUsage{
+		newTokens := &ModelTokenUsage{
 			Provider:         usage.Provider,
 			PromptTokens:     float64(usage.PromptTokens) / tokensPerMillion,
 			CompletionTokens: float64(usage.CompletionTokens) / tokensPerMillion,
@@ -210,11 +285,37 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 			ReasoningTokens:  float64(usage.ReasoningTokens) / tokensPerMillion,
 			LLMCallCount:     usage.LLMCallCount,
 		}
+
+		// Merge with existing data if present
+		if existing, exists := tokenFile.ByModel[modelID]; exists {
+			existing.PromptTokens += newTokens.PromptTokens
+			existing.CompletionTokens += newTokens.CompletionTokens
+			existing.TotalTokens += newTokens.TotalTokens
+			existing.CacheTokens += newTokens.CacheTokens
+			existing.ReasoningTokens += newTokens.ReasoningTokens
+			existing.LLMCallCount += newTokens.LLMCallCount
+			// Preserve provider from existing (should be same, but prefer existing)
+		} else {
+			tokenFile.ByModel[modelID] = newTokens
+		}
 	}
 
-	// Copy step token usage, converting from raw integers to millions
+	// Merge step token usage from in-memory accumulators (convert from raw integers to millions)
 	// Also aggregate by step type
 	stepTypeAggregator := make(map[string]*StepTypeTokenUsage)
+	// Initialize aggregator from existing step types
+	for stepType, usage := range tokenFile.ByStepType {
+		stepTypeAggregator[stepType] = &StepTypeTokenUsage{
+			StepType:         usage.StepType,
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			TotalTokens:      usage.TotalTokens,
+			CacheTokens:      usage.CacheTokens,
+			ReasoningTokens:  usage.ReasoningTokens,
+			LLMCallCount:     usage.LLMCallCount,
+		}
+	}
+
 	for stepKey, usage := range bo.stepTokenAccumulator {
 		stepTitle := stepTitlesCopy[stepKey]
 		// Extract step type (phase) from key format "phase:step"
@@ -230,16 +331,31 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		cacheTokens := float64(usage.CacheTokens) / tokensPerMillion
 		reasoningTokens := float64(usage.ReasoningTokens) / tokensPerMillion
 
-		// Store individual step
-		tokenFile.ByStep[stepKey] = &StepTokenSummary{
-			StepType:         stepType,
-			StepTitle:        stepTitle,
-			PromptTokens:     promptTokens,
-			CompletionTokens: completionTokens,
-			TotalTokens:      totalTokens,
-			CacheTokens:      cacheTokens,
-			ReasoningTokens:  reasoningTokens,
-			LLMCallCount:     usage.LLMCallCount,
+		// Merge individual step data
+		if existing, exists := tokenFile.ByStep[stepKey]; exists {
+			// Merge with existing step data
+			existing.PromptTokens += promptTokens
+			existing.CompletionTokens += completionTokens
+			existing.TotalTokens += totalTokens
+			existing.CacheTokens += cacheTokens
+			existing.ReasoningTokens += reasoningTokens
+			existing.LLMCallCount += usage.LLMCallCount
+			// Update step title if we have a new one (prefer newer title)
+			if stepTitle != "" {
+				existing.StepTitle = stepTitle
+			}
+		} else {
+			// New step - create entry
+			tokenFile.ByStep[stepKey] = &StepTokenSummary{
+				StepType:         stepType,
+				StepTitle:        stepTitle,
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				TotalTokens:      totalTokens,
+				CacheTokens:      cacheTokens,
+				ReasoningTokens:  reasoningTokens,
+				LLMCallCount:     usage.LLMCallCount,
+			}
 		}
 
 		// Aggregate by step type
@@ -265,16 +381,35 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		}
 	}
 
-	// Copy aggregated step type data
-	tokenFile.ByStepType = stepTypeAggregator
+	// Update aggregated step type data (recalculate from all steps for accuracy)
+	// Clear and rebuild from scratch to ensure consistency
+	tokenFile.ByStepType = make(map[string]*StepTypeTokenUsage)
+	for _, stepSummary := range tokenFile.ByStep {
+		if stepSummary.StepType == "" {
+			continue
+		}
+		if agg, exists := tokenFile.ByStepType[stepSummary.StepType]; exists {
+			agg.PromptTokens += stepSummary.PromptTokens
+			agg.CompletionTokens += stepSummary.CompletionTokens
+			agg.TotalTokens += stepSummary.TotalTokens
+			agg.CacheTokens += stepSummary.CacheTokens
+			agg.ReasoningTokens += stepSummary.ReasoningTokens
+			agg.LLMCallCount += stepSummary.LLMCallCount
+		} else {
+			tokenFile.ByStepType[stepSummary.StepType] = &StepTypeTokenUsage{
+				StepType:         stepSummary.StepType,
+				PromptTokens:     stepSummary.PromptTokens,
+				CompletionTokens: stepSummary.CompletionTokens,
+				TotalTokens:      stepSummary.TotalTokens,
+				CacheTokens:      stepSummary.CacheTokens,
+				ReasoningTokens:  stepSummary.ReasoningTokens,
+				LLMCallCount:     stepSummary.LLMCallCount,
+			}
+		}
+	}
 
 	bo.stepTokenMutex.RUnlock()
 	bo.modelTokenMutex.RUnlock()
-
-	// Set created_at timestamp
-	// Note: This is a new feature - we write fresh data from memory accumulator each time
-	// No backward compatibility needed - memory accumulator is the source of truth
-	tokenFile.CreatedAt = time.Now()
 
 	// Marshal to JSON
 	jsonData, err := json.MarshalIndent(tokenFile, "", "  ")

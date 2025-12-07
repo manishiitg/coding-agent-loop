@@ -160,7 +160,7 @@ export const PrerequisiteConfigPanel: React.FC<PrerequisiteConfigPanelProps> = (
                       <option value="">Select a step...</option>
                       {getAvailableStepsForRule(ruleIndex).map((step) => (
                         <option key={step.id} value={step.id}>
-                          {step.title}
+                          Step {step.index + 1} - {step.title}
                         </option>
                       ))}
                     </select>

@@ -162,12 +162,51 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 ### **How to Extract Go Code from ExecutionHistory:**
 The ExecutionHistory section contains the complete execution conversation. Parse it to extract BOTH successful and failed Go code from write_code tool calls that relate to achieving the step description:
 
-**From "## Tool Call" sections with tool_name="write_code", extract:**
+**ExecutionHistory Format:**
+- Tool calls appear as "### Tool Call" sections with:
+  - **Tool Name**: The tool name (e.g., "write_code")
+  - **Tool ID**: Unique identifier for this tool call
+  - **Arguments**: JSON string containing the tool arguments (for write_code, this includes the "code" field)
+- Tool responses appear as "### Tool Response" sections with:
+  - **Tool ID**: Matches the Tool Call ID
+  - **Tool Name**: The tool name
+  - **Response**: The execution result (success output or error message)
+
+**From "### Tool Call" sections with tool_name="write_code", extract:**
 - **Tool Name**: "write_code" (virtual tool)
-- **Code Content**: The COMPLETE Go code that was written (from the "code" argument)
-- **Code Execution Result**: The response/output from code execution (success or error)
-- **Success/Failure Status**: Whether the code execution succeeded or failed
+- **Code Content**: The COMPLETE Go code that was written (from the "code" argument in the Arguments JSON)
+- **Code Execution Result**: Find the matching "### Tool Response" section with the same Tool ID to get the response/output from code execution (success or error)
+- **Success/Failure Status**: Whether the code execution succeeded or failed (check if response contains error indicators)
 - **Relevance to Step**: How this code contributed to (or failed to contribute to) achieving the step description
+
+**CRITICAL - Extract Code Execution Errors from ExecutionHistory:**
+
+When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="write_code" to discover ALL code execution failures:
+
+**Error Discovery Process:**
+1. Find all "### Tool Call" sections with tool_name="write_code" in ExecutionHistory
+2. For each write_code tool call:
+   - Extract the Tool ID
+   - Find the matching "### Tool Response" section with the same Tool ID
+   - Check if the Response contains error indicators (look for "❌ EXECUTION ERROR", "go run failed", "exit status", error messages, etc.)
+3. For each error found:
+   - Extract the complete error message from the tool response
+   - Extract the code that caused it (from the "code" argument in write_code tool call)
+   - Analyze the error message to identify:
+     * What type of error it is (compilation, runtime, syntax, type mismatch, path validation, JSON parsing, etc.)
+     * The specific root cause (what exactly went wrong)
+     * Which part of the code caused the failure (line, function, operation)
+   - Determine what the correct approach should be (how to fix it)
+4. Document each discovered error in "❌ FAILURES TO AVOID" section with:
+   - What failed (the specific code pattern that failed)
+   - Why it failed (root cause analysis from the error message)
+   - Error details (the exact error message from execution)
+   - Prevention (what should future code do differently to avoid this error)
+   - Code example (wrong): Show the failing code snippet
+   - Code example (correct): Show the corrected code pattern (if you can determine it)
+   - Use instead (reference to successful code pattern if available)
+
+**Key Principle:** Let the actual errors in ExecutionHistory guide what you document. Don't assume what errors might exist - discover them from the execution results. Every error message contains valuable information about what went wrong and how to prevent it.
 
 **From Code Content, extract:**
 - **Package Imports**: Which generated packages were imported (e.g., "aws_tools", "workspace_tools")
@@ -212,13 +251,17 @@ The ExecutionHistory section contains the complete execution conversation. Parse
 ### **Failure Documentation (Critical for Improvement):**
 **CRITICAL**: Every failure is a learning opportunity. Document what went wrong and how to prevent it.
 
-**Enhanced Failure Format:**
-- **What failed**: Code pattern + approach (1 line)
-- **Why it failed**: Root cause analysis (auth error, data format, timing, missing prerequisite, etc.)
-- **Error details**: Specific error message or validation failure reason
-- **Prevention**: What should future code do differently to AVOID this failure?
-- **Use instead**: Reference to successful code pattern
-- **Update code patterns**: If code failed, identify what needs to be fixed in the code pattern
+**Enhanced Failure Format for Code Execution Errors:**
+When documenting errors discovered from ExecutionHistory, use this format:
+- **What failed**: Code pattern + error type (discovered from error message)
+- **Why it failed**: Root cause (analyzed from the error message)
+- **Error details**: Exact error message from "go run failed" output
+- **Prevention**: Specific code fix (determined by analyzing the error)
+- **Code example (wrong)**: Show the failing code snippet from ExecutionHistory
+- **Code example (correct)**: Show the corrected code pattern (if you can determine it from context)
+- **Use instead**: Reference to successful code pattern or general guidance
+
+**Important:** Don't assume what errors exist. Discover them from the actual ExecutionHistory. Analyze each error message to understand what went wrong and document it clearly for future executions to avoid.
 
 **Learn from Validation Failures:**
 - If ValidationResult shows failure: Analyze what went wrong in the code

@@ -3,10 +3,9 @@ package agents
 import (
 	"context"
 	"fmt"
+	loggerv2 "mcpagent/logger/v2"
 	"strings"
 	"time"
-
-	loggerv2 "mcpagent/logger/v2"
 
 	mcpagent "mcpagent/agent"
 	internalLLM "mcpagent/llm"

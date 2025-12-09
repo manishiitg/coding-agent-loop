@@ -68,7 +68,7 @@ func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAge
 // Execute implements the OrchestratorAgent interface
 // NOTE: This method is NOT USED - use ExecuteStructured() instead
 func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	return "", nil, fmt.Errorf("Execute() is not used for validation agent - use ExecuteStructured() instead")
+	return "", nil, fmt.Errorf(fmt.Sprintf("Execute() is not used for validation agent - use ExecuteStructured() instead"), nil)
 }
 
 // ExecuteStructured executes the validation agent and returns structured output

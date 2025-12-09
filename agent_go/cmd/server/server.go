@@ -1319,6 +1319,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 2 not provided (disabled or not set) - will clear existing override")
 				}
 
+				// Convert TempOverrideLLM2 if present
+				if req.ExecutionOptions.TempOverrideLLM2 != nil {
+					controllerOpts.TempOverrideLLM2 = &todo_creation_human.AgentLLMConfig{
+						Provider: req.ExecutionOptions.TempOverrideLLM2.Provider,
+						ModelID:  req.ExecutionOptions.TempOverrideLLM2.ModelID,
+					}
+				}
+
 				// Set execution options on the workflow orchestrator
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
 			}

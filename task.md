@@ -44,3 +44,8 @@ planning/changelog
 📏 Max Depth:.. if there a single path only.. can we prefix auto?
 
 12. multiple chats?
+h) check if external package is even required
+
+8.. also store token_usage. for overlal planning etc.. in main folder
+
+9. for slack integration, we should add optino in ui when to use this..

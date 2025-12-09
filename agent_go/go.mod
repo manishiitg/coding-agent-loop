@@ -1,4 +1,4 @@
-module mcp-agent/agent_go
+module mcp-agent-builder-go/agent_go
 
 go 1.24.4
 

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 )
 
 // HumanFeedbackRequest represents a pending feedback request
@@ -82,25 +82,55 @@ func (s *HumanFeedbackStore) CreateRequestWithoutNotification(uniqueID, message 
 	return nil
 }
 
-// CreateRequestWithSlack creates a new feedback request and optionally sends Slack notification
+// CreateRequestWithSlack creates a new feedback request and sends Slack notification after 2 minutes if no response
 func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions) error {
 	// First register the request (without notifications)
 	if err := s.CreateRequestWithoutNotification(uniqueID, message); err != nil {
 		return err
 	}
 
-	// Send notifications via notification manager (async, non-blocking)
-	// This will send to all enabled connectors (Slack, Gmail, WhatsApp, etc.)
+	// Start delayed notification: wait 2 minutes, then check if user responded
+	// If no response, send Slack notification
 	go func() {
+		// Wait 2 minutes
+		time.Sleep(2 * time.Minute)
+
+		// Check if user has already responded
+		s.mu.RLock()
+		request, exists := s.requests[uniqueID]
+		hasResponded := exists && request != nil && request.IsCompleted
+		s.mu.RUnlock()
+
+		if !exists {
+			log.Printf("[HUMAN_FEEDBACK_STORE] Request %s no longer exists, skipping delayed notification", uniqueID)
+			return
+		}
+
+		if hasResponded {
+			log.Printf("[HUMAN_FEEDBACK_STORE] User already responded to %s, skipping delayed Slack notification", uniqueID)
+			return
+		}
+
+		// User hasn't responded after 2 minutes, send Slack notification
+		log.Printf("[HUMAN_FEEDBACK_STORE] No response after 2 minutes for %s, sending Slack notification", uniqueID)
 		notificationManager := services.GetNotificationManager()
-		log.Printf("[HUMAN_FEEDBACK_STORE] CreateRequestWithSlack - uniqueID=%s, buttonOptions is nil: %v", uniqueID, buttonOptions == nil)
+		if notificationManager == nil {
+			log.Printf("[HUMAN_FEEDBACK_STORE] Notification manager not available")
+			return
+		}
+
 		if buttonOptions != nil {
-			log.Printf("[HUMAN_FEEDBACK_STORE] CreateRequestWithSlack - buttonOptions: YesNoOnly=%v, YesLabel=%s, NoLabel=%s, Options=%v",
+			log.Printf("[HUMAN_FEEDBACK_STORE] Sending delayed notification - buttonOptions: YesNoOnly=%v, YesLabel=%s, NoLabel=%s, Options=%v",
 				buttonOptions.YesNoOnly, buttonOptions.YesLabel, buttonOptions.NoLabel, buttonOptions.Options)
 		}
-		if err := notificationManager.SendNotification(ctx, uniqueID, message, contextMsg, buttonOptions); err != nil {
-			// Log error but don't fail the request creation
-			// Error logging is handled inside SendNotification
+
+		// Send notification via notification manager (async, non-blocking)
+		// This will send to all enabled connectors (Slack, Gmail, WhatsApp, etc.)
+		if err := notificationManager.SendNotification(context.Background(), uniqueID, message, contextMsg, buttonOptions); err != nil {
+			// Log error but don't fail - this is a reminder notification
+			log.Printf("[HUMAN_FEEDBACK_STORE] Failed to send delayed notification: %v", err)
+		} else {
+			log.Printf("[HUMAN_FEEDBACK_STORE] ✅ Delayed Slack notification sent for %s", uniqueID)
 		}
 	}()
 

@@ -450,3 +450,315 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 
 	return nil
 }
+
+// phaseTokenFileMutex ensures thread-safe access to phase token_usage.json in main workspace folder
+var phaseTokenFileMutex sync.Mutex
+
+// IsPhaseOnlyAgent checks if a phase is a phase-only agent (not step-based)
+// Phase-only agents run independently and don't have step numbers
+// This is exported so context_aware_bridge can use it
+func IsPhaseOnlyAgent(phase string) bool {
+	phaseOnlyPhases := []string{
+		"planning",
+		"plan-tool-optimization",
+		"plan-learnings-alignment",
+		"variable-extraction",
+		"learning-consolidation",
+		"anonymization",
+		"plan-improvement",
+	}
+	for _, p := range phaseOnlyPhases {
+		if phase == p {
+			return true
+		}
+	}
+	return false
+}
+
+// PersistPhaseTokenUsage saves token usage directly to token_usage.json in the main workspace folder
+// It reads existing token data from the file, merges the new token data, and writes back.
+// The file is the single source of truth - no in-memory accumulation.
+// This is used for phase-only agents (planning, plan-tool-optimization, etc.) that don't have iteration folders.
+func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
+	phaseTokenData *PhaseTokenData, modelTokenData *ModelTokenData) error {
+	if phaseTokenData == nil || phaseTokenData.Phase == "" {
+		return nil
+	}
+
+	// Acquire mutex to prevent race conditions when multiple phase agents complete concurrently
+	phaseTokenFileMutex.Lock()
+	defer phaseTokenFileMutex.Unlock()
+
+	// Build file path: workspace/token_usage.json (main workspace folder, not in runs/)
+	workspacePath := bo.GetWorkspacePath()
+	filePath := filepath.Join(workspacePath, "token_usage.json")
+
+	bo.GetLogger().Debug(fmt.Sprintf("💾 Persisting phase token usage to: %s", filePath))
+
+	// Read existing token usage file if it exists
+	var existingFile *PhaseTokenUsageFile
+	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
+	if err == nil && existingContent != "" {
+		// File exists, try to parse it
+		if err := json.Unmarshal([]byte(existingContent), &existingFile); err != nil {
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing phase token_usage.json: %v (will create new file)", err))
+			existingFile = nil
+		}
+	} else if err != nil {
+		// File doesn't exist or error reading - this is expected for new files
+		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+			bo.GetLogger().Debug("📝 Phase token usage file doesn't exist yet, will create new one")
+		}
+		existingFile = nil
+	}
+
+	// Build the token usage file structure
+	// Start with existing data if available, otherwise create new
+	tokenFile := &PhaseTokenUsageFile{
+		UpdatedAt:       time.Now(),
+		ByPhaseAndModel: make(map[string]map[string]*ModelTokenUsage),
+		ByModel:         make(map[string]*ModelTokenUsage),
+	}
+
+	// Preserve CreatedAt from existing file, or set to now if new file
+	if existingFile != nil {
+		tokenFile.CreatedAt = existingFile.CreatedAt
+		// Copy existing ByPhaseAndModel data
+		if existingFile.ByPhaseAndModel != nil {
+			for phaseKey, modelMap := range existingFile.ByPhaseAndModel {
+				tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*ModelTokenUsage)
+				for modelID, v := range modelMap {
+					tokenFile.ByPhaseAndModel[phaseKey][modelID] = &ModelTokenUsage{
+						Provider:         v.Provider,
+						InputTokens:      v.InputTokens,
+						OutputTokens:     v.OutputTokens,
+						InputTokensM:     v.InputTokensM,
+						OutputTokensM:    v.OutputTokensM,
+						CacheTokens:      v.CacheTokens,
+						CacheTokensM:     v.CacheTokensM,
+						ReasoningTokens:  v.ReasoningTokens,
+						ReasoningTokensM: v.ReasoningTokensM,
+						LLMCallCount:     v.LLMCallCount,
+					}
+				}
+			}
+		}
+		// Copy existing ByModel data
+		if existingFile.ByModel != nil {
+			for k, v := range existingFile.ByModel {
+				tokenFile.ByModel[k] = &ModelTokenUsage{
+					Provider:         v.Provider,
+					InputTokens:      v.InputTokens,
+					OutputTokens:     v.OutputTokens,
+					InputTokensM:     v.InputTokensM,
+					OutputTokensM:    v.OutputTokensM,
+					CacheTokens:      v.CacheTokens,
+					CacheTokensM:     v.CacheTokensM,
+					ReasoningTokens:  v.ReasoningTokens,
+					ReasoningTokensM: v.ReasoningTokensM,
+					LLMCallCount:     v.LLMCallCount,
+				}
+			}
+		}
+	} else {
+		// New file - set CreatedAt to now
+		tokenFile.CreatedAt = time.Now()
+	}
+
+	// Merge new model token data if provided (aggregate across all phases)
+	if modelTokenData != nil {
+		if existing, exists := tokenFile.ByModel[modelTokenData.ModelID]; exists {
+			// Merge with existing data (add raw integers)
+			existing.InputTokens += modelTokenData.InputTokens
+			existing.OutputTokens += modelTokenData.OutputTokens
+			existing.CacheTokens += modelTokenData.CacheTokens
+			existing.ReasoningTokens += modelTokenData.ReasoningTokens
+			existing.LLMCallCount += modelTokenData.LLMCallCount
+			// Recalculate formatted strings
+			existing.InputTokensM = formatTokensM(existing.InputTokens)
+			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
+			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
+			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
+		} else {
+			// New model - create entry
+			tokenFile.ByModel[modelTokenData.ModelID] = &ModelTokenUsage{
+				Provider:         modelTokenData.Provider,
+				InputTokens:      modelTokenData.InputTokens,
+				OutputTokens:     modelTokenData.OutputTokens,
+				InputTokensM:     formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:    formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:      modelTokenData.CacheTokens,
+				CacheTokensM:     formatTokensM(modelTokenData.CacheTokens),
+				ReasoningTokens:  modelTokenData.ReasoningTokens,
+				ReasoningTokensM: formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:     modelTokenData.LLMCallCount,
+			}
+		}
+	}
+
+	// Store phase+model token data if modelTokenData is provided
+	// phaseTokenData is guaranteed to be non-nil (checked at function start)
+	if modelTokenData != nil {
+		phaseKey := phaseTokenData.Phase
+		modelID := modelTokenData.ModelID
+
+		// Initialize phase map if it doesn't exist
+		if tokenFile.ByPhaseAndModel[phaseKey] == nil {
+			tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*ModelTokenUsage)
+		}
+
+		// Merge with existing model data for this phase if it exists
+		if existing, exists := tokenFile.ByPhaseAndModel[phaseKey][modelID]; exists {
+			// Merge with existing data (add raw integers)
+			existing.InputTokens += modelTokenData.InputTokens
+			existing.OutputTokens += modelTokenData.OutputTokens
+			existing.CacheTokens += modelTokenData.CacheTokens
+			existing.ReasoningTokens += modelTokenData.ReasoningTokens
+			existing.LLMCallCount += modelTokenData.LLMCallCount
+			// Recalculate formatted strings
+			existing.InputTokensM = formatTokensM(existing.InputTokens)
+			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
+			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
+			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
+		} else {
+			// New model for this phase - create entry
+			tokenFile.ByPhaseAndModel[phaseKey][modelID] = &ModelTokenUsage{
+				Provider:         modelTokenData.Provider,
+				InputTokens:      modelTokenData.InputTokens,
+				OutputTokens:     modelTokenData.OutputTokens,
+				InputTokensM:     formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:    formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:      modelTokenData.CacheTokens,
+				CacheTokensM:     formatTokensM(modelTokenData.CacheTokens),
+				ReasoningTokens:  modelTokenData.ReasoningTokens,
+				ReasoningTokensM: formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:     modelTokenData.LLMCallCount,
+			}
+		}
+	}
+
+	// Marshal to JSON
+	jsonData, err := json.MarshalIndent(tokenFile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal phase token usage data: %w", err)
+	}
+
+	// Write to file
+	if err := bo.WriteWorkspaceFile(ctx, filePath, string(jsonData)); err != nil {
+		return fmt.Errorf("failed to write phase token usage file: %w", err)
+	}
+
+	bo.GetLogger().Debug("✅ Persisted phase token usage to file")
+
+	return nil
+}
+
+// GetPhaseTokenUsage reads token usage from file for a specific phase (aggregated across all models)
+func (bo *BaseOrchestrator) GetPhaseTokenUsage(phase string) *StepTokenUsage {
+	ctx := context.Background()
+	workspacePath := bo.GetWorkspacePath()
+	filePath := filepath.Join(workspacePath, "token_usage.json")
+
+	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
+	if err != nil || existingContent == "" {
+		return &StepTokenUsage{}
+	}
+
+	var tokenFile *PhaseTokenUsageFile
+	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
+		return &StepTokenUsage{}
+	}
+
+	modelMap, exists := tokenFile.ByPhaseAndModel[phase]
+	if !exists || modelMap == nil {
+		return &StepTokenUsage{}
+	}
+
+	// Aggregate across all models for this phase
+	result := &StepTokenUsage{}
+	for _, modelUsage := range modelMap {
+		result.InputTokens += modelUsage.InputTokens
+		result.OutputTokens += modelUsage.OutputTokens
+		result.CacheTokens += modelUsage.CacheTokens
+		result.ReasoningTokens += modelUsage.ReasoningTokens
+		result.LLMCallCount += modelUsage.LLMCallCount
+	}
+
+	return result
+}
+
+// GetPhaseModelTokenUsage reads token usage from file for a specific phase and model
+func (bo *BaseOrchestrator) GetPhaseModelTokenUsage(phase string, modelID string) *ModelTokenUsage {
+	ctx := context.Background()
+	workspacePath := bo.GetWorkspacePath()
+	filePath := filepath.Join(workspacePath, "token_usage.json")
+
+	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
+	if err != nil || existingContent == "" {
+		return &ModelTokenUsage{}
+	}
+
+	var tokenFile *PhaseTokenUsageFile
+	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
+		return &ModelTokenUsage{}
+	}
+
+	if tokenFile.ByPhaseAndModel == nil {
+		return &ModelTokenUsage{}
+	}
+
+	modelMap, exists := tokenFile.ByPhaseAndModel[phase]
+	if !exists || modelMap == nil {
+		return &ModelTokenUsage{}
+	}
+
+	usage, exists := modelMap[modelID]
+	if !exists {
+		return &ModelTokenUsage{}
+	}
+
+	return usage
+}
+
+// GetAllPhaseTokenUsage reads all phase token usage from file
+func (bo *BaseOrchestrator) GetAllPhaseTokenUsage() map[string]map[string]*ModelTokenUsage {
+	ctx := context.Background()
+	workspacePath := bo.GetWorkspacePath()
+	filePath := filepath.Join(workspacePath, "token_usage.json")
+
+	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
+	if err != nil || existingContent == "" {
+		return make(map[string]map[string]*ModelTokenUsage)
+	}
+
+	var tokenFile *PhaseTokenUsageFile
+	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
+		return make(map[string]map[string]*ModelTokenUsage)
+	}
+
+	if tokenFile.ByPhaseAndModel == nil {
+		return make(map[string]map[string]*ModelTokenUsage)
+	}
+
+	// Return a copy to avoid external modifications
+	result := make(map[string]map[string]*ModelTokenUsage)
+	for phase, modelMap := range tokenFile.ByPhaseAndModel {
+		result[phase] = make(map[string]*ModelTokenUsage)
+		for modelID, usage := range modelMap {
+			result[phase][modelID] = &ModelTokenUsage{
+				Provider:         usage.Provider,
+				InputTokens:      usage.InputTokens,
+				OutputTokens:     usage.OutputTokens,
+				InputTokensM:     usage.InputTokensM,
+				OutputTokensM:    usage.OutputTokensM,
+				CacheTokens:      usage.CacheTokens,
+				CacheTokensM:     usage.CacheTokensM,
+				ReasoningTokens:  usage.ReasoningTokens,
+				ReasoningTokensM: usage.ReasoningTokensM,
+				LLMCallCount:     usage.LLMCallCount,
+			}
+		}
+	}
+
+	return result
+}

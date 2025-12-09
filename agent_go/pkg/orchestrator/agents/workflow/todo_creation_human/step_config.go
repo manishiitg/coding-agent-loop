@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 // StepConfig represents a single step's configuration in step_config.json
@@ -17,133 +17,39 @@ type StepConfig struct {
 	AgentConfigs *AgentConfigs `json:"agent_configs,omitempty"`
 }
 
-// StepConfigFile represents the entire step_config.json file structure
+// StepConfigFile represents the step_config.json file format
+// Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
 type StepConfigFile struct {
 	Steps []StepConfig `json:"steps"`
 }
 
-// FlatStepConfig represents a flat step config format (array format with step_id and top-level fields)
-type FlatStepConfig struct {
-	StepID             string   `json:"step_id"`
-	ID                 string   `json:"id"` // Also support "id" field
-	SelectedServers    []string `json:"selected_servers,omitempty"`
-	SelectedTools      []string `json:"selected_tools,omitempty"`
-	EnabledCustomTools []string `json:"enabled_custom_tools,omitempty"`
-	HasConfig          *bool    `json:"has_config,omitempty"`
-	// Allow other fields to pass through
-	AgentConfigs *AgentConfigs `json:"agent_configs,omitempty"`
-}
-
-// ParseStepConfigContent parses step_config.json content and handles multiple formats:
-// 1. Expected format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
-// 2. Array format: [{ "step_id": "...", "selected_servers": [...], ... }]
-// 3. Flat object format: { "step_id": "...", "selected_servers": [...], ... }
-func ParseStepConfigContent(content string) (*StepConfigFile, error) {
-	// First, try to parse as expected format
+// ParseStepConfigContent parses step_config.json content in object format:
+// Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
+func ParseStepConfigContent(content string) ([]StepConfig, error) {
+	// Parse as object format with "steps" field
 	var configFile StepConfigFile
-	if err := json.Unmarshal([]byte(content), &configFile); err == nil {
-		// Check if it's actually the expected format (has "steps" field)
-		// If content starts with "{" and contains "steps", it's likely the expected format
-		var testObj map[string]interface{}
-		if err := json.Unmarshal([]byte(content), &testObj); err == nil {
-			if _, hasSteps := testObj["steps"]; hasSteps {
-				return &configFile, nil
-			}
-		}
+	if err := json.Unmarshal([]byte(content), &configFile); err != nil {
+		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: expected format { \"steps\": [...] }, got error: %w", err), nil)
 	}
 
-	// Try parsing as array format
-	var flatArray []FlatStepConfig
-	if err := json.Unmarshal([]byte(content), &flatArray); err == nil && len(flatArray) > 0 {
-		// Convert array format to expected format
-		steps := make([]StepConfig, 0, len(flatArray))
-		for _, flat := range flatArray {
-			stepID := flat.StepID
-			if stepID == "" {
-				stepID = flat.ID
-			}
-			if stepID == "" {
-				continue // Skip items without step_id or id
-			}
-
-			// Convert flat structure to nested agent_configs
-			agentConfigs := &AgentConfigs{}
-			if flat.AgentConfigs != nil {
-				agentConfigs = flat.AgentConfigs
-			}
-			// Top-level fields take precedence (preserve even if empty arrays)
-			if flat.SelectedServers != nil {
-				agentConfigs.SelectedServers = flat.SelectedServers
-			}
-			if flat.SelectedTools != nil {
-				agentConfigs.SelectedTools = flat.SelectedTools
-			}
-			if flat.EnabledCustomTools != nil {
-				agentConfigs.EnabledCustomTools = flat.EnabledCustomTools
-			}
-
-			steps = append(steps, StepConfig{
-				ID:           stepID,
-				AgentConfigs: agentConfigs,
-			})
-		}
-		return &StepConfigFile{Steps: steps}, nil
-	}
-
-	// Try parsing as flat object format (single step)
-	var flatObj FlatStepConfig
-	if err := json.Unmarshal([]byte(content), &flatObj); err == nil {
-		stepID := flatObj.StepID
-		if stepID == "" {
-			stepID = flatObj.ID
-		}
-		if stepID == "" {
-			return nil, fmt.Errorf(fmt.Sprintf("flat format missing step_id or id field"), nil)
-		}
-
-		agentConfigs := &AgentConfigs{}
-		if flatObj.AgentConfigs != nil {
-			agentConfigs = flatObj.AgentConfigs
-		}
-		// Top-level fields take precedence (preserve even if empty arrays)
-		if flatObj.SelectedServers != nil {
-			agentConfigs.SelectedServers = flatObj.SelectedServers
-		}
-		if flatObj.SelectedTools != nil {
-			agentConfigs.SelectedTools = flatObj.SelectedTools
-		}
-		if flatObj.EnabledCustomTools != nil {
-			agentConfigs.EnabledCustomTools = flatObj.EnabledCustomTools
-		}
-
-		return &StepConfigFile{
-			Steps: []StepConfig{
-				{
-					ID:           stepID,
-					AgentConfigs: agentConfigs,
-				},
-			},
-		}, nil
-	}
-
-	// If all parsing attempts failed, return the original error
-	return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: unsupported format"), nil)
+	// Return the steps array directly
+	return configFile.Steps, nil
 }
 
 // ReadStepConfigs reads step_config.json from the workspace
 // Public method that accepts BaseOrchestrator, workspacePath, and runWorkspacePath as parameters
-func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath string) (*StepConfigFile, error) {
+func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath string) ([]StepConfig, error) {
 	// First, try to read from run folder (run-specific config)
 	runConfigPath := filepath.Join(runWorkspacePath, "planning", "step_config.json")
 	content, err := bo.ReadWorkspaceFile(ctx, runConfigPath)
 	if err == nil {
 		// Run folder config exists - use it
-		configFile, err := ParseStepConfigContent(content)
+		configs, err := ParseStepConfigContent(content)
 		if err != nil {
 			return nil, fmt.Errorf(fmt.Sprintf("failed to parse run folder step_config.json: %w", err), nil)
 		}
 		bo.GetLogger().Info(fmt.Sprintf("📁 Using run-specific step_config.json from: %s", runConfigPath))
-		return configFile, nil
+		return configs, nil
 	}
 
 	// Fallback to workspace default config
@@ -151,26 +57,26 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
 	content, err = bo.ReadWorkspaceFile(ctx, configPath)
 	if err != nil {
-		// File doesn't exist yet - return empty structure
+		// File doesn't exist yet - return empty array
 		if os.IsNotExist(err) {
 			bo.GetLogger().Info(fmt.Sprintf("📁 No step_config.json found (neither run-specific nor default) - using defaults"))
-			return &StepConfigFile{Steps: []StepConfig{}}, nil
+			return []StepConfig{}, nil
 		}
 		return nil, fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 	}
 
-	configFile, err := ParseStepConfigContent(content)
+	configs, err := ParseStepConfigContent(content)
 	if err != nil {
 		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: %w", err), nil)
 	}
 
 	bo.GetLogger().Info(fmt.Sprintf("📁 Using default step_config.json from: %s", configPath))
-	return configFile, nil
+	return configs, nil
 }
 
 // ReadStepConfigs is a private wrapper that uses receiver fields (for backward compatibility)
 // Uses run folder path if available, otherwise falls back to base workspace path
-func (hcpo *HumanControlledTodoPlannerOrchestrator) ReadStepConfigs(ctx context.Context) (*StepConfigFile, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) ReadStepConfigs(ctx context.Context) ([]StepConfig, error) {
 	workspacePath := hcpo.GetWorkspacePath()
 	// Build run folder path if selectedRunFolder is set
 	var runWorkspacePath string
@@ -185,9 +91,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) ReadStepConfigs(ctx context.
 	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath)
 }
 
-// WriteStepConfigs writes step_config.json to the workspace
+// WriteStepConfigs writes step_config.json to the workspace in object format
+// Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
 // Uses the orchestrator's WriteWorkspaceFile method
-func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context.Context, configs *StepConfigFile) error {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context.Context, configs []StepConfig) error {
 	workspacePath := hcpo.GetWorkspacePath()
 	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
 
@@ -197,7 +104,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 		return fmt.Errorf(fmt.Sprintf("failed to create planning directory: %w", err), nil)
 	}
 
-	jsonData, err := json.MarshalIndent(configs, "", "  ")
+	// Write in object format with "steps" field
+	configFile := StepConfigFile{
+		Steps: configs,
+	}
+	jsonData, err := json.MarshalIndent(configFile, "", "  ")
 	if err != nil {
 		return fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json: %w", err), nil)
 	}
@@ -212,15 +123,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 // MatchStepConfigs matches new plan steps with existing configs by ID only
 // Returns a map of step index -> matched AgentConfigs
 // Returns an error if any step is missing a required ID field
-func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) (map[int]*AgentConfigs, error) {
+func MatchStepConfigs(newSteps []PlanStep, oldConfigs []StepConfig) (map[int]*AgentConfigs, error) {
 	result := make(map[int]*AgentConfigs)
 
 	// Create lookup map: ID -> config
 	idConfigMap := make(map[string]*AgentConfigs)
 
-	for i := range oldConfigs.Steps {
-		if oldConfigs.Steps[i].AgentConfigs != nil && oldConfigs.Steps[i].ID != "" {
-			idConfigMap[oldConfigs.Steps[i].ID] = oldConfigs.Steps[i].AgentConfigs
+	for i := range oldConfigs {
+		if oldConfigs[i].AgentConfigs != nil && oldConfigs[i].ID != "" {
+			idConfigMap[oldConfigs[i].ID] = oldConfigs[i].AgentConfigs
 		}
 	}
 
@@ -265,15 +176,15 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs *StepConfigFile) (map[int]
 // MatchStepConfigByID matches a step config by ID (for branch steps)
 // stepID: the step ID to match (from plan.json)
 // Returns the matched AgentConfigs or nil if not found
-func MatchStepConfigByID(stepID string, oldConfigs *StepConfigFile) *AgentConfigs {
+func MatchStepConfigByID(stepID string, oldConfigs []StepConfig) *AgentConfigs {
 	if stepID == "" {
 		return nil
 	}
 
 	// Look up by ID
-	for i := range oldConfigs.Steps {
-		if oldConfigs.Steps[i].ID == stepID {
-			return oldConfigs.Steps[i].AgentConfigs
+	for i := range oldConfigs {
+		if oldConfigs[i].ID == stepID {
+			return oldConfigs[i].AgentConfigs
 		}
 	}
 

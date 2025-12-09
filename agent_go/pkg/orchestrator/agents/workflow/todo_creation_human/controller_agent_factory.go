@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
+	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
+	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -228,8 +233,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningReadingAgent(c
 
 // createExecutionOnlyAgent creates an execution-only agent that receives pre-discovered learning history
 // isRetryAfterValidationFailure: if true and fallbackToOriginalLLMOnFailure is enabled, will skip tempOverrideLLM and use original LLM
+// stepPath: Step path identifier (e.g., "step-1" for regular steps, "step-3-if-true-0" for branch steps)
 // retryAttempt: current retry attempt number (1 = first attempt, 2 = second attempt, etc.) - used for cascading LLM fallback
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int) (agents.OrchestratorAgent, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, iteration int, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from learnings (read-only) and execution (via writePaths), writes only to execution
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
@@ -254,12 +260,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 
 	// Set folder guard paths:
 	// READ: learnings folder + execution folder (to read previous step results)
-	// WRITE: only the specific step folder (execution/step_{X}/) to prevent writing to other steps
-	stepFolderPath := fmt.Sprintf("%s/step-%d", executionWorkspacePath, step+1) // step is 0-based, convert to 1-based
+	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) to prevent writing to other steps
+	// Use getExecutionFolderPath to support both regular and branch steps
+	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
 	readPaths := []string{learningsPath, executionWorkspacePath}
 	writePaths := []string{stepFolderPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/ and execution/, can only write to step-%d/)", readPaths, writePaths, step+1))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/ and execution/, can only write to %s)", readPaths, writePaths, stepPath))
 
 	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
@@ -271,25 +278,94 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	// Determine LLM config with cascading fallback: tempLLM1 → tempLLM2 → step LLM
 	// Priority: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default > orchestrator default
 	// Exception: If retrying after validation failure and fallbackToOriginalLLMOnFailure is enabled, skip temp overrides
+	// NEW: Only use tempLLM if step learnings folder has files (has existing learnings to improve upon)
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
 
+	// Parse stepPath to extract step number for learnings folder check
+	// For branch steps, we'll check the parent step's learnings folder (for tempLLM logic)
+	pathInfo := parseStepPath(stepPath)
+	stepNumber := pathInfo.ParentStepNumber // Use parent step number (works for both regular and branch steps)
+	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepNumber)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step %d learnings folder is empty: %v, assuming empty (will skip tempLLM)", stepNumber, err))
+		learningsFolderEmpty = true // Conservative: assume empty on error, skip tempLLM
+	}
+
 	// Cascading LLM selection based on retry attempt:
-	// - retryAttempt == 1: Use tempLLM1 (if available)
-	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available)
+	// - retryAttempt == 1: Use tempLLM1 (if available AND learnings folder has files)
+	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available AND learnings folder has files)
 	// - retryAttempt >= 3: Use step LLM (step config > preset > orchestrator)
 	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
 	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v, learningsFolderEmpty=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2, learningsFolderEmpty))
 
 	if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)"))
 	}
 
+	if learningsFolderEmpty && (hasTempLLM1 || hasTempLLM2) {
+		hcpo.GetLogger().Info(fmt.Sprintf("📚 Step %s has no learnings - skipping temp override LLM and using original LLM (learnings folder is empty)", stepPath))
+
+		// Emit event when tempLLM is skipped due to learnings folder being empty
+		eventBridge := hcpo.GetContextAwareBridge()
+		if eventBridge != nil {
+			stepTitle := ""
+			stepId := ""
+			if stepConfig != nil {
+				// Try to get step info from stepConfig if available
+				// Note: stepConfig doesn't directly have title/ID, but we can construct basic info
+			}
+			if stepId == "" {
+				stepId = stepPath
+			}
+
+			// Determine which tempLLM was skipped (tempLLM1 or tempLLM2)
+			var tempLLMProvider, tempLLMModel string
+			if retryAttempt == 1 && hasTempLLM1 {
+				tempLLMProvider = hcpo.tempOverrideLLM.Provider
+				tempLLMModel = hcpo.tempOverrideLLM.ModelID
+			} else if retryAttempt == 2 && hasTempLLM2 {
+				tempLLMProvider = hcpo.tempOverrideLLM2.Provider
+				tempLLMModel = hcpo.tempOverrideLLM2.ModelID
+			} else if hasTempLLM1 {
+				// Default to tempLLM1 if available
+				tempLLMProvider = hcpo.tempOverrideLLM.Provider
+				tempLLMModel = hcpo.tempOverrideLLM.ModelID
+			}
+
+			stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
+			tempLLMSkippedEvent := &events.TempLLMSkippedEvent{
+				BaseEventData: events.BaseEventData{
+					Timestamp: time.Now(),
+					Component: "orchestrator",
+				},
+				StepID:          stepId,
+				StepIndex:       stepNumber - 1, // Convert to 0-based for StepIndex
+				StepTitle:       stepTitle,
+				StepPath:        stepPath,
+				IsBranchStep:    pathInfo.IsBranchStep,
+				Reason:          "learnings_folder_empty",
+				TempLLMProvider: tempLLMProvider,
+				TempLLMModel:    tempLLMModel,
+				LearningsPath:   stepLearningsPath,
+				RunFolder:       hcpo.selectedRunFolder,
+				WorkspacePath:   baseWorkspacePath,
+			}
+			eventBridge.HandleEvent(ctx, &events.AgentEvent{
+				Type:      events.TempLLMSkipped,
+				Timestamp: time.Now(),
+				Data:      tempLLMSkippedEvent,
+			})
+			hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted temp_llm_skipped event for %s: %s (learnings folder empty, skipped tempLLM: %s/%s)", stepPath, stepPath, tempLLMProvider, tempLLMModel))
+		}
+	}
+
 	// Cascading logic: tempLLM1 → tempLLM2 → step LLM
-	if !shouldSkipTempOverride && retryAttempt == 1 && hasTempLLM1 {
+	// Only use tempLLM if learnings folder has files (has existing learnings to improve upon)
+	if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
 		// First attempt: Use tempLLM1
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.tempOverrideLLM.Provider,
@@ -297,8 +373,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 			FallbackModels: []string{},                    // Use empty fallback for temp override
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 (attempt %d): %s/%s", retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
-	} else if !shouldSkipTempOverride && retryAttempt == 2 && hasTempLLM1 && hasTempLLM2 {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
+	} else if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 2 && hasTempLLM1 && hasTempLLM2 {
 		// Second attempt: Use tempLLM2 (tempLLM1 was used in attempt 1 and failed)
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       hcpo.tempOverrideLLM2.Provider,
@@ -306,7 +382,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 			FallbackModels: []string{},                    // Use empty fallback for temp override
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 (attempt %d, tempLLM1 failed): %s/%s", retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 (attempt %d, tempLLM1 failed, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
 	} else if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       stepConfig.ExecutionLLM.Provider,
@@ -391,9 +467,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	// Connect agent to orchestrator's main event bridge
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		// Extract step number from stepPath for SetOrchestratorContext (which expects numeric step)
+		pathInfo := parseStepPath(stepPath)
+		stepNumberForContext := pathInfo.ParentStepNumber - 1 // Convert to 0-based for SetOrchestratorContext
+		cab.SetOrchestratorContext(phase, stepNumberForContext, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (%s, agent %s)", phase, stepPath, baseAgentName))
 	} else {
 		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
@@ -805,8 +884,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionA
 // Note: Learning integration functions removed - execution agent now auto-discovers learning files and scripts
 
 // createSuccessLearningAgent creates a success learning agent for analyzing successful executions
+// learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, iteration int, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from execution and learnings (read-only), writes only to learnings
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
@@ -822,10 +902,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 	wasCodeExecutionMode := isCodeExecutionMode
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Success learning agent using step-specific code execution mode: %v (matches execution agent)", wasCodeExecutionMode))
 
-	// Step-specific learnings: write to learnings/step-{X} at workspace root (not inside runs/)
-	// step parameter is already 1-based (passed from runSuccessLearningPhase/runFailureLearningPhase)
-	stepNumber := step
-	learningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
+	// Step-specific learnings: write to learnings/{learningPathIdentifier} at workspace root (not inside runs/)
+	// Supports both regular steps (step-{X}) and branch steps (step-{X}-{true/false}-{Y})
+	learningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, learningPathIdentifier)
 	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - writing to step folder: %s", learningsPath))
 
 	// Build read paths: execution path + base learnings path (for reading existing learnings)
@@ -931,9 +1010,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 	// Connect agent to orchestrator's main event bridge
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		// Extract step number from learningPathIdentifier for SetOrchestratorContext (which expects numeric step)
+		pathInfo := parseStepPath(learningPathIdentifier)
+		stepNumberForContext := pathInfo.ParentStepNumber - 1 // Convert to 0-based for SetOrchestratorContext
+		cab.SetOrchestratorContext(phase, stepNumberForContext, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (%s, agent %s)", phase, learningPathIdentifier, baseAgentName))
 	} else {
 		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
@@ -1036,8 +1118,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(c
 
 // createFailureLearningAgent creates a failure learning agent for analyzing failed executions
 // Note: This now uses the unified learning agent which handles both success and failure cases
+// learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, iteration int, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from execution and learnings (read-only), writes only to learnings
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
@@ -1053,10 +1136,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 	wasCodeExecutionMode := isCodeExecutionMode
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Failure learning agent using step-specific code execution mode: %v (matches execution agent)", wasCodeExecutionMode))
 
-	// Step-specific learnings: write to learnings/step-{X} at workspace root (not inside runs/)
-	// step parameter is already 1-based (passed from runSuccessLearningPhase/runFailureLearningPhase)
-	stepNumber := step
-	learningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
+	// Step-specific learnings: write to learnings/{learningPathIdentifier} at workspace root (not inside runs/)
+	// Supports both regular steps (step-{X}) and branch steps (step-{X}-{true/false}-{Y})
+	learningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, learningPathIdentifier)
 	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - writing to step folder: %s", learningsPath))
 
 	// Build read paths: execution path + base learnings path (for reading existing learnings)
@@ -1162,9 +1244,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 	// Connect agent to orchestrator's main event bridge
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		// Extract step number from learningPathIdentifier for SetOrchestratorContext (which expects numeric step)
+		pathInfo := parseStepPath(learningPathIdentifier)
+		stepNumberForContext := pathInfo.ParentStepNumber - 1 // Convert to 0-based for SetOrchestratorContext
+		cab.SetOrchestratorContext(phase, stepNumberForContext, baseAgentName)
 		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (%s, agent %s)", phase, learningPathIdentifier, baseAgentName))
 	} else {
 		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
 	}
@@ -1262,6 +1347,124 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 		}
 	}
 
+	return agent, nil
+}
+
+// createConditionalAgent creates a conditional agent using the standard factory pattern
+// This ensures proper event bridge connection, context setup, and tool registration
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createConditionalAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, conditionalLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
+	// Conditional agent doesn't need folder guard (no file operations)
+	// It only evaluates conditions using tools
+
+	// Determine max turns: use orchestrator default (conditional agents don't have step-specific max turns config)
+	maxTurns := hcpo.GetMaxTurns()
+	// Note: ConditionalMaxTurns doesn't exist in AgentConfigs - using orchestrator default
+
+	// Determine LLM config: Priority: step config > preset default > orchestrator default
+	var llmConfig *orchestrator.LLMConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	if conditionalLLMConfig != nil && conditionalLLMConfig.Provider != "" && conditionalLLMConfig.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       conditionalLLMConfig.Provider,
+			ModelID:        conditionalLLMConfig.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM: %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
+		// Use validation LLM as default for conditional agent (similar purpose - structured decision making)
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       hcpo.presetValidationLLM.Provider,
+			ModelID:        hcpo.presetValidationLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default validation LLM for conditional agent: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID))
+	} else {
+		llmConfig = orchestratorLLMConfig
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
+	}
+
+	// Create agent config with custom LLM if needed
+	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+
+	// Use step-specific servers/tools if provided, otherwise use orchestrator defaults (same as execution agent)
+	if stepConfig != nil && len(stepConfig.SelectedServers) > 0 {
+		config.ServerNames = stepConfig.SelectedServers
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional servers: %v", stepConfig.SelectedServers))
+	} else {
+		config.ServerNames = hcpo.GetSelectedServers()
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional servers: %v", config.ServerNames))
+	}
+	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
+		config.SelectedTools = stepConfig.SelectedTools
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional tools: %v", stepConfig.SelectedTools))
+	} else {
+		config.SelectedTools = hcpo.GetSelectedTools()
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional tools: %v", config.SelectedTools))
+	}
+
+	// Code execution mode: Priority: step config > orchestrator default (same as execution agent)
+	var isCodeExecutionMode bool
+	if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
+		isCodeExecutionMode = *stepConfig.UseCodeExecutionMode
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional agent: %v", isCodeExecutionMode))
+	} else {
+		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator code execution mode for conditional agent: %v", isCodeExecutionMode))
+	}
+	config.UseCodeExecutionMode = isCodeExecutionMode
+
+	// Set EnableLargeOutputVirtualTools if specified
+	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
+		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
+	}
+
+	// Prepare custom tools and executors (same as execution agent)
+	// Filter by enabled categories and/or specific tools if specified
+	var toolsToRegister []llmtypes.Tool
+	var executorsToUse map[string]interface{}
+
+	if stepConfig != nil && (len(stepConfig.EnabledCustomToolCategories) > 0 || len(stepConfig.EnabledCustomTools) > 0) {
+		// Convert old format (categories + tools) to new unified format (category:tool or category:*)
+		unifiedEnabledTools := orchestrator.ConvertOldFormatToNewFormat(
+			stepConfig.EnabledCustomToolCategories,
+			stepConfig.EnabledCustomTools,
+		)
+		// Filter tools based on unified format
+		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
+			hcpo.WorkspaceTools,
+			hcpo.WorkspaceToolExecutors,
+			unifiedEnabledTools,
+		)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools for conditional agent: %d tools enabled from %d entries: %v", len(toolsToRegister), len(unifiedEnabledTools), unifiedEnabledTools))
+	} else {
+		// Backward compatible: use all tools if no filtering specified (default behavior)
+		toolsToRegister = hcpo.WorkspaceTools
+		executorsToUse = hcpo.WorkspaceToolExecutors
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for conditional agent: %d tools", len(toolsToRegister)))
+	}
+
+	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
+	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		phase,
+		step,
+		iteration,
+		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewHumanControlledTodoPlannerConditionalAgent(cfg, logger, tracer, eventBridge)
+		},
+		toolsToRegister, // Pass workspace tools (filtered by step config if specified)
+		executorsToUse,  // Pass workspace tool executors
+		false,           // Don't overwrite system prompt - conditional agent manages its own prompt
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conditional agent: %w", err)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created conditional agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
 	return agent, nil
 }
 

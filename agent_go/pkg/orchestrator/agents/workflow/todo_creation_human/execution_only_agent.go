@@ -7,10 +7,10 @@ import (
 	"text/template"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/agent/prompt"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -26,6 +26,7 @@ type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 	WorkspacePath           string
 	IsCodeExecutionMode     string // "true" or "false" - indicates if code execution mode is enabled
 	ValidationFeedback      string
+	HumanFeedback           string // Human guidance provided after validation failure (highest priority)
 	PreviousIterationOutput string // Previous loop iteration execution output (for loop steps)
 	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
@@ -35,6 +36,8 @@ type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 	CurrentIteration        string // Current iteration number
 	MaxIterations           string // Max iterations allowed
 	LearningHistory         string // Formatted learning conversation history (REQUIRED for execution-only mode)
+	StepNumber              string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+	StepExecutionPath       string // Full execution folder path (e.g., "execution/step-8")
 }
 
 // HumanControlledTodoPlannerExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -80,6 +83,8 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 	stepContextOutput := templateVars["StepContextOutput"]
 	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
 	learningHistory := templateVars["LearningHistory"]
+	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-if-true-0"
+	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
 
 	// Get current date and time
 	now := time.Now()
@@ -125,7 +130,15 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 **Variable Handling**:
 - **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, StepSuccessCriteria, etc.
 - **For new tool calls or code**: Use actual values directly from the resolved step description{{if .IsCodeExecutionMode}}
-- **For Go code**: Pass values as CLI arguments via write_code 'args' parameter, access via os.Args[1], os.Args[2], etc.{{end}}
+- **For Go code**: 
+  - **🚨 CRITICAL**: WorkspacePath ({{.WorkspacePath}}) MUST be passed as FIRST CLI argument (ONLY base path)
+  - **Tool call args**: args=["{{.WorkspacePath}}", ...other vars...] - NO full file paths in args
+  - **Access workspace path**: workspacePath := os.Args[1] (always first argument)
+  - **File paths in code**: Use filepath.Join(workspacePath, "step-N/file.json") for ALL files
+  - **Context dependencies**: Use relative paths like "step-1/output.json" with filepath.Join()
+  - **Other variables**: Pass via write_code 'args' parameter, access via os.Args[2], os.Args[3], etc.
+  - **NEVER hardcode workspace paths** - they change between iterations (run-1 → run-2 → run-3)
+  - **Example**: args=["{{.WorkspacePath}}", "account-id-value", "region-value"]{{end}}
 - **Don't hardcode values** - reference them from the step context
 {{end}}
 
@@ -166,7 +179,8 @@ The step description, success criteria, and context dependencies define WHAT you
   - **Use this when stuck**: Read learnings files directly for detailed workflows{{if .IsCodeExecutionMode}}, code examples{{end}}, or troubleshooting
 - **Execution folder** ("execution/") - To read previous step results and context dependencies
 **WRITE**: 
-- Only your current step folder ({{.WorkspacePath}}/step-{X}/) - you can only write to your own step's directory
+- **🚨 CRITICAL**: Only your current step folder: {{.StepExecutionPath}}/ (which is {{.WorkspacePath}}/{{.StepNumber}}/)
+- **Your step identifier**: {{.StepNumber}} - ALWAYS use this exact step number when writing files
 - Cannot write to other steps' folders, learnings folder, or validation reports
 - Path validation is enforced at the code level - invalid paths will be rejected
 
@@ -204,20 +218,66 @@ The step description, success criteria, and context dependencies define WHAT you
 - If learnings are outdated → **ignore and solve directly**
 
 {{if .IsCodeExecutionMode}}## 💻 Code Execution Rules
-- **Variables**: Pass via write_code 'args' parameter (e.g., args=["value1", "value2"])  
-- **Access**: Read from os.Args[1], os.Args[2], etc. (os.Args[0] is program name)  
-- **NO Hardcoding**: Never hardcode variable values in Go code  
-- **Packages**: Import generated tool packages (aws_tools, workspace_tools, etc.)  
-- **File Ops**: Always use workspace_tools for file operations
+
+**🚨 CRITICAL - WorkspacePath is ALWAYS os.Args[1]**
+
+**Two-Step Process (Tool Call vs. Go Code):**
+
+1. **Tool Call (write_code)**: You MUST pass ONLY the base workspace path as the first argument
+   - ✅ **Correct**: args=["{{.WorkspacePath}}", "other_var1", "other_var2"]
+   - ❌ **Wrong**: args=["{{.WorkspacePath}}/step-1/file.json", ...] (passing full file paths)
+   - ❌ **Wrong**: args=["other_var1"] (missing workspace path)
+
+2. **Go Code Content**: You MUST read the workspace path from os.Args[1] and use relative paths
+   - ✅ **Correct**: workspacePath := os.Args[1], then filepath.Join(workspacePath, "step-1/file.json")
+   - ❌ **Wrong**: filepath := "workspace/runs/run-1/execution/step-1" (hardcoded path)
+   - ❌ **Wrong**: filepath := os.Args[2] where Args[2] is a full path (defeats purpose)
+
+**Why This Matters:**
+- Workspace paths change between iterations (run-1 → run-2 → run-3)
+- Passing ONLY the base path makes code reusable
+- Use relative paths for all file operations: filepath.Join(basePath, "step-1/file.json")
+
+**Path Handling (CRITICAL):**
+- **Base Path**: os.Args[1] is the base execution workspace (e.g., "Workflow/runs/iteration-11/execution")
+- **Context Dependencies**: Use relative paths like "step-1/step_1_output.json" (NOT full paths)
+- **File Construction**: filepath.Join(basePath, relativePath) for all file operations
+- **Example**: 
+  - Base: os.Args[1] → "Workflow/runs/iteration-11/execution"
+  - Relative: "step-1/credentials.json"
+  - Full: filepath.Join(basePath, "step-1/credentials.json")
+
+**Variable Handling:**
+- **Pass**: All variables via args parameter: args=["{{.WorkspacePath}}", "value1", "value2"]
+- **Access**: Read from os.Args[1] (workspace path), os.Args[2], os.Args[3], etc. (os.Args[0] is program name)
+- **NO Hardcoding**: Never hardcode variable values OR workspace paths inside the Go code string
+- **NO Full Paths in Args**: Never pass full file paths as CLI arguments - use relative paths in code
+
+**Packages & Operations:**
+- **Packages**: Import generated tool packages (aws_tools, workspace_tools, etc.)
+- **File Ops**: Always use workspace_tools for file operations with filepath.Join(basePath, relativePath)
+- **Path Construction**: Always use filepath.Join() to construct paths from base + relative
 
 **BEFORE GENERATING GO CODE - CRITICAL CHECKLIST:**
-1. **Check FAILURES TO AVOID section** in learning context above - review ALL documented error patterns from previous executions
-2. **Avoid documented error patterns**: For each error documented in learnings, ensure your code doesn't repeat the same mistake
-3. **Use correct patterns** from successful code examples in learnings
-4. **If learnings show specific errors**: Make sure your code doesn't repeat them - follow the prevention guidance provided
-5. **Verify Go syntax**: Ensure your code uses proper Go syntax and functions
-6. **Check path conventions**: Match the directory naming conventions used in successful patterns
-7. **Parse tool responses correctly**: Follow the patterns shown in successful code examples for handling tool responses
+1. **🚨 WorkspacePath as FIRST CLI argument**: ALWAYS pass ONLY base WorkspacePath as os.Args[1] - NEVER pass full file paths
+2. **🚨 Use Relative Paths**: ALL file paths in code must use filepath.Join(basePath, "step-N/file.json") - NEVER hardcode full paths
+3. **Check FAILURES TO AVOID section** in learning context above - review ALL documented error patterns from previous executions
+4. **Avoid documented error patterns**: For each error documented in learnings, ensure your code doesn't repeat the same mistake
+5. **Use correct patterns** from successful code examples in learnings (but replace hardcoded paths with filepath.Join())
+6. **If learnings show specific errors**: Make sure your code doesn't repeat them - follow the prevention guidance provided
+7. **Verify Go syntax**: Ensure your code uses proper Go syntax and functions
+8. **Path construction**: ALWAYS use filepath.Join(basePath, relativePath) for ALL file operations
+9. **Parse tool responses correctly**: Follow the patterns shown in successful code examples for handling tool responses
+
+**SUCCESS CRITERIA ASSERTION:**
+Your Go code MUST verify success criteria programmatically. Don't just execute - assert each criterion:
+
+Example patterns:
+- File exists: if strings.HasPrefix(result, "Error:") → fmt.Println("❌ FAIL") + os.Exit(1)
+- Count matches: if count != expected → fmt.Printf("❌ FAIL: Expected %%d, got %%d", expected, count) + os.Exit(1)
+- Pattern found: if !strings.Contains(data, pattern) → fmt.Printf("❌ FAIL: Pattern not found") + os.Exit(1)
+
+Print "✅ PASS: [criterion]" for each success, "❌ FAIL: [reason]" + os.Exit(1) for failures.
 {{end}}
 
 ## 📤 Output Format
@@ -247,6 +307,8 @@ Validation agent will verify your work - focus on execution and evidence.`
 		"LearningHistory":           learningHistory,
 		"VariableNames":             variableNames,
 		"VariableValues":            variableValues,
+		"StepNumber":                stepNumber,
+		"StepExecutionPath":         stepExecutionPath,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)
@@ -267,6 +329,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 		WorkspacePath:           templateVars["WorkspacePath"],
 		IsCodeExecutionMode:     templateVars["IsCodeExecutionMode"],
 		ValidationFeedback:      templateVars["ValidationFeedback"],
+		HumanFeedback:           templateVars["HumanFeedback"],
 		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
 		VariableNames:           templateVars["VariableNames"],
 		VariableValues:          templateVars["VariableValues"],
@@ -276,13 +339,16 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 		CurrentIteration:        templateVars["CurrentIteration"],
 		MaxIterations:           templateVars["MaxIterations"],
 		LearningHistory:         templateVars["LearningHistory"],
+		StepNumber:              templateVars["StepNumber"],
+		StepExecutionPath:       templateVars["StepExecutionPath"],
 	}
 
 	// Define the user message template
 	templateStr := `## 🎯 Execute Step: {{.StepTitle}}
 
 **STEP DESCRIPTION**: {{.StepDescription}}  
-**WORKSPACE**: {{.WorkspacePath}}
+**WORKSPACE**: {{.WorkspacePath}}  
+**STEP NUMBER**: {{.StepNumber}} (write all output files to {{.StepExecutionPath}}/)
 
 {{if .VariableNames}}## 📋 Variables
 {{.VariableNames}}
@@ -290,7 +356,50 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 **Values**: {{.VariableValues}}
 {{end}}
 {{if eq .IsCodeExecutionMode "true"}}
-**Code Execution**: Pass variables as CLI args via write_code 'args' parameter, access via os.Args[1], os.Args[2], etc.
+## 📝 Code Execution Example
+
+**Task**: Read a context dependency file and write output to current step folder.
+
+**Tool Call Format**:
+write_code(
+  code="...",
+  args=["{{.WorkspacePath}}", "userId123"]
+)
+
+**Go Code Content Pattern**:
+package main
+import (
+    "os"
+    "path/filepath"
+    "workspace_tools"
+)
+
+func main() {
+    // 1. Read base workspace path (ALWAYS first argument)
+    basePath := os.Args[1]      // e.g., "Workflow/runs/iteration-11/execution"
+    userId := os.Args[2]        // Additional variables
+    
+    // 2. Use relative paths with filepath.Join()
+    // Read context dependency (previous step output)
+    inputPath := filepath.Join(basePath, "step-1/credentials.json")
+    inputData := workspace_tools.ReadWorkspaceFile(workspace_tools.ReadWorkspaceFileParams{
+        Filepath: inputPath,
+    })
+    
+    // Write to current step folder (ALWAYS use {{.StepNumber}} - never hardcode step numbers)
+    outputPath := filepath.Join(basePath, "{{.StepNumber}}/analysis.json")
+    result := workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
+        Filepath: outputPath,
+        Content:  "...",
+    })
+}
+
+**Key Points**:
+- Tool call: Pass ONLY base workspace path (NOT full file paths)
+- Go code: Use relative paths like "{{.StepNumber}}/file.json" (ALWAYS use {{.StepNumber}}, never hardcode step numbers)
+- Path construction: Always use filepath.Join(basePath, "{{.StepNumber}}", filename)
+- Context dependencies: Relative paths from base execution folder (e.g., "step-1/file.json" for previous steps)
+- **🚨 CRITICAL**: When writing output files, ALWAYS use "{{.StepNumber}}" - never guess or hardcode step numbers!
 {{end}}{{end}}
 {{if eq .HasLoop "true"}}
 ## 🔄 Loop Mode Active
@@ -298,7 +407,8 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 {{if .LoopDescription}}**Loop Description**: {{.LoopDescription}}  
 {{end}}**Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
 
-**Task**: Execute step repeatedly until loop condition met. **Save progress after EACH iteration** to {{.WorkspacePath}}/{{.StepContextOutput}} (update/append, don't overwrite).
+**Task**: Execute step repeatedly until loop condition met. **Save progress after EACH iteration** to {{.StepExecutionPath}}/{{.StepContextOutput}} (update/append, don't overwrite).  
+**🚨 CRITICAL**: Always write to {{.StepNumber}} folder - never use a different step number!
 {{end}}
 {{if .PreviousIterationOutput}}
 ## 🔄 Previous Iteration Output
@@ -312,6 +422,13 @@ Review what was done previously to avoid unnecessary repetition.
 
 Address the issues above and improve your approach.
 {{end}}
+{{if .HumanFeedback}}
+## 👤 **HUMAN GUIDANCE - HIGHEST PRIORITY**
+
+{{.HumanFeedback}}
+
+**⚠️ CRITICAL: This human guidance takes precedence over all other instructions (validation feedback, learnings, step descriptions).**
+{{end}}
 
 ## 📋 Step Details
 **Success Criteria**: {{.StepSuccessCriteria}}  
@@ -319,6 +436,11 @@ Address the issues above and improve your approach.
 **Context Output**: {{.StepContextOutput}}
 
 ## ✅ Execution Checklist
+
+**STEP 0: 🧠 ANALYSIS & PLAN**
+- Briefly analyze the step requirements.
+- Identify which variables need to be passed to write_code.
+- Confirm you will use os.Args[1] for the workspace path.
 
 **ALWAYS (Step Requirements are PRIMARY):**
 1. ✓ **Understand step description** ← THIS IS YOUR GOAL
@@ -332,10 +454,11 @@ Address the issues above and improve your approach.
    - If learnings don't match: Ignore and solve directly
 5. ✓ Execute using MCP tools{{if eq .IsCodeExecutionMode "true"}} or Go code{{end}}:
 {{if eq .IsCodeExecutionMode "true"}}   - discover_code_files (see available packages)
-   - write_code (pass vars via args, access via os.Args[1,2,...])
+   - write_code (🚨 ALWAYS pass WorkspacePath as FIRST arg: args=["{{.WorkspacePath}}", ...other vars...], access via os.Args[1], os.Args[2], etc.)
 {{else}}   - Use appropriate MCP tools to accomplish step
 {{end}}6. ✓ **Verify success criteria met** (collect evidence)
-7. ✓ Create context output file{{if eq .HasLoop "true"}} (update/append after each iteration){{end}}
+7. ✓ Create context output file at {{.StepExecutionPath}}/{{.StepContextOutput}}{{if eq .HasLoop "true"}} (update/append after each iteration){{end}}
+   - **🚨 CRITICAL**: Always write to {{.StepNumber}} folder - use filepath.Join(basePath, "{{.StepNumber}}", filename)
 
 **REMEMBER:**
 - Step description = WHAT to do (mandatory)

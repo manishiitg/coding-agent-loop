@@ -282,6 +282,7 @@ graph TB
 - **Input**: Step details, Context dependencies, Variable values, Workspace path, Learnings path
 - **Output**: Execution result, Conversation history, Context output files
 - **Features**: Full MCP Tool Access, Loop Support, Retry Logic (Max 5), Code Execution Mode, Learning Discovery
+- **Code Execution Mode**: See [Code Execution Mode](code_execution_mode.md) for workspace path handling and CLI argument requirements
 
 **Specialized Variant: Execution-Only Agent**
 - **File**: `execution_only_agent.go`
@@ -300,6 +301,9 @@ graph TB
 - **Modes**: Success Learning (What worked), Failure Learning (Root cause + retry guidance)
 - **Output**: Learning analysis, Updates to `plan.json`, Learning files in `learnings/`
 - **Features**: Pattern Extraction, Plan Enhancement, Detail Levels (`exact`/`general`)
+- **Step-Specific Folders**: 
+  - Regular steps: `learnings/step-{X}/` (at workspace root)
+  - Branch steps: `learnings/step-{parentStep}-{true/false}-{branchIdx}/` (at workspace root)
 
 **Specialized Variant: Code Execution Learning Agent**
 - **File**: `learning_agent_code_execution.go`
@@ -311,10 +315,11 @@ graph TB
 
 ### 6. Conditional Agent (ConditionalLLM)
 **Purpose**: Evaluates conditional branching decisions.
-- **Files**: `controller.go` (uses `orchestratorllm.ConditionalLLM`)
-- **Input**: Condition question, Execution context
-- **Output**: Boolean result, Reasoning
-- **Features**: Context-Aware, Nested Support (depth 2), Branch Tracking
+- **Files**: `conditional_agent.go`, `controller_agent_factory.go`, `controller.go`
+- **Input**: Condition question, Last previous step execution output (in-memory), Learning history (separate)
+- **Output**: Structured `ConditionalResponse` (Boolean result, Reasoning) - JSON emitted in event `result` field
+- **Features**: Context-Aware Event Bridge, Tool-Based Verification, Factory Pattern, Step-Specific Config, Code Execution Mode Support
+- **Documentation**: See [Conditional Agent Implementation](conditional_agent_implementation.md) for detailed implementation details
 
 ### 7. Anonymization Agent
 **Purpose**: Replaces actual values in learnings with variable placeholders.
@@ -448,10 +453,16 @@ workspace/
 │   │   ├── plan.json               # Phase 1: Execution plan
 │   │   └── step_config.json        # Per-step agent configurations
 │   ├── learnings/                   # Learning patterns
-│   │   ├── success_patterns.md     # What worked
-│   │   ├── failure_analysis.md     # What failed
-│   │   ├── step_X_learning.md      # Per-step learnings
-│   │   └── scripts/                # Python/Go scripts from code execution
+│   │   ├── success_patterns.md     # What worked (shared)
+│   │   ├── failure_analysis.md     # What failed (shared)
+│   │   ├── step-{X}/               # Regular step learnings (step-specific)
+│   │   │   ├── *_learning.md       # Step learning files
+│   │   │   ├── scripts/            # Python scripts (if code execution mode)
+│   │   │   └── code/               # Go code patterns (if code execution mode)
+│   │   └── step-{X}-{true/false}-{Y}/  # Branch step learnings (conditional branches)
+│   │       ├── *_learning.md       # Branch step learning files
+│   │       ├── scripts/            # Python scripts (if code execution mode)
+│   │       └── code/               # Go code patterns (if code execution mode)
 │   └── runs/                        # Execution runs
 │       ├── iteration-same/          # Default run folder
 │       │   ├── execution/           # Execution outputs
@@ -550,6 +561,27 @@ Each agent can be configured with custom LLM settings.
 **Per-Step Overrides** (`step_config.json`):
 - `execution_llm`, `validation_llm`, `learning_llm`
 
+### Temporary LLM Override (tempLLM)
+**Purpose**: Override execution agent LLM for specific runs without modifying plan config.
+
+**Behavior**:
+- **When used**: Only when step has learnings (`learnings/step-{N}/` or `learnings/step-{N}-{true/false}-{Y}/` has files)
+- **When skipped**: When step has no learnings (folder empty) → uses original LLM
+- **Scope**: Execution agents only (not validation/learning agents)
+- **Cascading**: `tempLLM1` (attempt 1) → `tempLLM2` (attempt 2) → step LLM
+- **Fallback**: If `fallback_to_original_llm_on_failure=true`, uses original LLM on validation failure
+
+**Configuration** (via frontend toolbar):
+- `temp_override_llm`: First override LLM (used on first attempt)
+- `temp_override_llm2`: Second override LLM (used if tempLLM1 fails)
+- `temp_override_llm_enabled`: Enable/disable toggle (preserves configs when disabled)
+- `fallback_to_original_llm_on_failure`: Use original LLM instead of temp override on validation failure
+
+**Files**:
+- Frontend: `frontend/src/stores/useWorkflowStore.ts` - `buildExecutionOptions()`
+- Backend: `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go` - `createExecutionOnlyAgent()`
+- Backend: `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go` - `SetExecutionOptions()`
+
 ### Learning Configuration
 - **Detail Levels**: `exact` (actual values), `general` (anonymized), `none`
 - **Toggles**: `disable_learning`, `learning_after_loop_iteration`
@@ -559,6 +591,38 @@ Each agent can be configured with custom LLM settings.
 - **Toggles**: `disable_validation` (auto-approve)
 - **Loop Validation**: Checks both success criteria AND loop condition
 - **Prerequisite Failure Detection**: Per-step configuration to detect missing prerequisites and navigate back to prerequisite steps (see [Prerequisite Failure Detection](prerequisite_failure_implementation.md))
+
+---
+
+## 📂 Step-Specific Learning & Execution Folders
+
+**Location**: All step-specific folders are at workspace root, not inside `runs/`.
+
+### Regular Steps
+- **Learning folder**: `learnings/step-{X}/` (e.g., `learnings/step-1/`, `learnings/step-3/`)
+- **Execution folder**: `execution/step-{X}/` (e.g., `execution/step-1/`, `execution/step-3/`)
+- **Step path format**: `step-{X}` where X is the 1-based step number
+
+### Branch Steps (Conditional Steps)
+- **Learning folder**: `learnings/step-{parentStep}-{true/false}-{branchIdx}/` 
+  - Example: `learnings/step-3-true-0/` (first "if true" branch of step 3)
+  - Example: `learnings/step-3-false-1/` (second "if false" branch of step 3)
+- **Execution folder**: `execution/step-{parentStep}-{true/false}-{branchIdx}/`
+  - Example: `execution/step-3-true-0/`
+- **Step path format**: `step-{parentStep}-if-{true/false}-{branchIdx}` (e.g., `step-3-if-true-0`)
+
+### Key Rules
+- **Regular steps**: Use numeric step index (1-based) in folder name
+- **Branch steps**: Include parent step number, branch type (true/false), and branch index (0-based)
+- **All folders**: Located at workspace root, not inside `runs/` directory
+- **Learning agents**: Automatically use correct folder based on `stepPath` (regular or branch)
+- **Execution agents**: Use `getExecutionFolderPath()` and `getLearningFolderPath()` helpers
+
+### Helper Functions
+- **`parseStepPath(stepPath string) StepPathInfo`**: Parses step paths into structured info
+- **`getExecutionFolderPath(executionWorkspacePath string, stepPath string) string`**: Returns execution folder path
+- **`getLearningFolderPath(baseWorkspacePath string, stepPath string) string`**: Returns learning folder path
+- **`getLearningPathIdentifier(stepPath string) string`**: Returns learning folder identifier (e.g., `step-3-true-0`)
 
 ---
 

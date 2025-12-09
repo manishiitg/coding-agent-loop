@@ -93,11 +93,18 @@ func ExecuteShellCommand(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
+	// Default to shell execution for better user experience and flexibility
+	// This handles commands with quotes, pipes, redirects, etc. naturally
+	// Since UseShell is a bool, we can't distinguish "not provided" from "explicitly false",
+	// so we always default to shell mode for simplicity and better UX
+	// If someone needs direct execution, they can request that as a feature
+	useShell := true
+
 	// Build command
 	var cmd *exec.Cmd
 	var fullCommand string
 
-	if req.UseShell {
+	if useShell {
 		// Execute through shell to support complex commands (pipes, redirects, &&, ||, etc.)
 		// Combine command and args into a single command string
 		if len(req.Args) > 0 {

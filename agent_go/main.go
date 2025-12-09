@@ -1,7 +1,7 @@
 package main
 
 import (
-	"mcp-agent/agent_go/cmd"
+	"mcp-agent-builder-go/agent_go/cmd"
 )
 
 func main() {

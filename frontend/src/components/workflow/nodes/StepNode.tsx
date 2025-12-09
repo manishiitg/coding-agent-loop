@@ -75,7 +75,7 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun = true, workspacePath, selectedRunFolder } = data
+  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun = true, workspacePath, selectedRunFolder } = data
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
@@ -105,15 +105,15 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const handleSettingsClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     e.preventDefault() // Prevent any default behavior
-    console.log('[StepNode] Settings button clicked:', { stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
+    console.log('[StepNode] Settings button clicked:', { nodeId: id, stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
     if (onOpenSidebar && typeof onOpenSidebar === 'function') {
-      const nodeId = step.id || `step-${stepIndex}`
-      console.log('[StepNode] Calling onOpenSidebar with:', nodeId)
-      onOpenSidebar(nodeId)
+      // Use the node's actual ID (data.id) instead of step.id to ensure we find the correct node
+      console.log('[StepNode] Calling onOpenSidebar with node ID:', id)
+      onOpenSidebar(id)
     } else {
       console.warn('[StepNode] onOpenSidebar callback not available')
     }
-  }, [onOpenSidebar, stepIndex, step.id])
+  }, [onOpenSidebar, id, stepIndex, step.id])
 
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
@@ -190,7 +190,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs])
 
-  // Learning detail level (defaults to 'general', but 'exact' in code exec mode)
+  // Learning detail level (defaults to 'exact', but 'exact' in code exec mode)
   const learningDetailLevel = useMemo(() => {
     if (stepConfig?.agent_configs?.disable_learning === true) {
       return null
@@ -199,7 +199,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     if (useCodeExecutionMode) {
       return 'exact'
     }
-    return stepConfig?.agent_configs?.learning_detail_level || 'general'
+    return stepConfig?.agent_configs?.learning_detail_level || 'exact'
   }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
 
   // Execution max turns (defaults to 25)

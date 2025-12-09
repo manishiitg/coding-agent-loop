@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
@@ -55,9 +55,7 @@ type AnonymizationManager struct {
 	sessionID  string
 	workflowID string
 
-	// Anonymization LLM config (optional preset)
-	presetAnonymizationLLM *AgentLLMConfig
-	// Learning LLM config (fallback for anonymization if presetAnonymizationLLM not set)
+	// Learning LLM config (primary LLM for anonymization agent)
 	presetLearningLLM *AgentLLMConfig
 }
 
@@ -66,15 +64,13 @@ func NewAnonymizationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetAnonymizationLLM *AgentLLMConfig,
 	presetLearningLLM *AgentLLMConfig,
 ) *AnonymizationManager {
 	return &AnonymizationManager{
-		BaseOrchestrator:       baseOrchestrator,
-		sessionID:              sessionID,
-		workflowID:             workflowID,
-		presetAnonymizationLLM: presetAnonymizationLLM,
-		presetLearningLLM:      presetLearningLLM,
+		BaseOrchestrator:  baseOrchestrator,
+		sessionID:         sessionID,
+		workflowID:        workflowID,
+		presetLearningLLM: presetLearningLLM,
 	}
 }
 
@@ -98,20 +94,11 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	am.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	am.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (learnings folder)", readPaths, writePaths))
 
-	// Determine LLM config: Priority: presetAnonymizationLLM > presetLearningLLM > orchestrator default
+	// Use preset learning LLM if available, otherwise fall back to orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := am.GetLLMConfig()
-	if am.presetAnonymizationLLM != nil && am.presetAnonymizationLLM.Provider != "" && am.presetAnonymizationLLM.ModelID != "" {
-		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              am.presetAnonymizationLLM.Provider,
-			ModelID:               am.presetAnonymizationLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
-			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
-		}
-		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset default anonymization LLM: %s/%s", am.presetAnonymizationLLM.Provider, am.presetAnonymizationLLM.ModelID))
-	} else if am.presetLearningLLM != nil && am.presetLearningLLM.Provider != "" && am.presetLearningLLM.ModelID != "" {
-		// Fallback to learning LLM if anonymization LLM not set
+	if am.presetLearningLLM != nil && am.presetLearningLLM.Provider != "" && am.presetLearningLLM.ModelID != "" {
+		// Use preset learning LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Provider:              am.presetLearningLLM.Provider,
 			ModelID:               am.presetLearningLLM.ModelID,
@@ -119,7 +106,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
-		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for anonymization: %s/%s", am.presetLearningLLM.Provider, am.presetLearningLLM.ModelID))
+		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for anonymization: %s/%s", am.presetLearningLLM.Provider, am.presetLearningLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		am.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default anonymization LLM: %s/%s", am.GetProvider(), am.GetModel()))
@@ -400,10 +387,11 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 ## LEARNING FILES LOCATION
 
 When step-specific learnings are enabled, learning files are stored in step-specific folders:
-- Shared learnings: {WorkspacePath}/learnings/ and {WorkspacePath}/learnings/
-- Step-specific learnings: {WorkspacePath}/learnings/step-{X}/ and {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
+- Shared learnings: {WorkspacePath}/learnings/
+- Regular step learnings: {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
+- Branch step learnings: {WorkspacePath}/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
 
-You must scan BOTH shared and step-specific folders. Use list_workspace_files to discover step-specific folders in runs/ directory recursively.
+You must scan BOTH shared and step-specific folders (including branch step folders). Use list_workspace_files to discover all step-specific folders recursively.
 `
 	}
 
@@ -445,8 +433,9 @@ This makes learnings reusable across different environments, accounts, and confi
 		if useStepSpecific {
 			return `
    - **Shared folders**: Scan learnings/ (including subdirectories)
-   - **Step-specific folders**: Scan learnings/step-{X}/ (all step folders, at workspace root, not inside runs/)
-   - Scan all .md files in both shared and step-specific folders
+   - **Regular step folders**: Scan learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
+   - **Branch step folders**: Scan learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+   - Scan all .md files in shared, regular step, and branch step folders
    - Scan all .py files in learnings/scripts/ and step-specific folders (if scripts folder exists)
    - Scan all .go files in learnings/code/ and step-specific folders (if code folder exists)
    - Identify all files that may contain actual values`
@@ -560,10 +549,10 @@ This makes learnings reusable across different environments, accounts, and confi
 6. **File Types**: Process all:` + func() string {
 		if useStepSpecific {
 			return `
-   - Markdown files (.md) in learnings/ and learnings/step-{X}/ (learning documentation)
-   - Python files (.py) in learnings/scripts/ and step-specific folders (Python scripts)
-   - Markdown files (.md) in learnings/ and learnings/step-{X}/ (code execution learning documentation)
-   - Go files (.go) in learnings/code/ and step-specific folders (Go code patterns)`
+   - Markdown files (.md) in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/ (learning documentation)
+   - Python files (.py) in learnings/scripts/ and step-specific folders (regular and branch step folders)
+   - Markdown files (.md) in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/ (code execution learning documentation)
+   - Go files (.go) in learnings/code/ and step-specific folders (regular and branch step folders)`
 		}
 		return `
    - Markdown files (.md) in learnings/ (learning documentation)
@@ -606,13 +595,14 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationUserMess
 	learningsFoldersNote := ""
 	if useStepSpecific {
 		learningsFoldersNote = `
-- **Shared Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/ and ` + templateVars["WorkspacePath"] + `/learnings/
-- **Step-Specific Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ and ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (at workspace root, not inside runs/)
-- **IMPORTANT**: Scan BOTH shared and step-specific folders. Use list_workspace_files to discover all run folders and step folders.
+- **Shared Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/
+- **Regular Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (at workspace root, not inside runs/, e.g., step-1/, step-2/)
+- **Branch Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+- **IMPORTANT**: Scan BOTH shared, regular step, and branch step folders. Use list_workspace_files to discover all step folders recursively.
 `
 	} else {
 		learningsFoldersNote = `
-- **Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/ and ` + templateVars["WorkspacePath"] + `/learnings/
+- **Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/
 `
 	}
 
@@ -654,9 +644,11 @@ These variables are available for replacement. When you find actual values in le
 			return `
    - **Shared folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
    - **Shared folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
-   - **Step-specific folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all step folders, at workspace root, not inside runs/)
-   - **Step-specific folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all step folders, at workspace root, not inside runs/)
-   - Use list_workspace_files recursively to discover all run folders and step folders`
+   - **Regular step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
+   - **Branch step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+   - **Regular step folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
+   - **Branch step folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/)
+   - Use list_workspace_files recursively to discover all step folders (regular and branch)`
 		}
 		return `
    - .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
@@ -699,10 +691,10 @@ These variables are available for replacement. When you find actual values in le
 7. **Process all file types**:` + func() string {
 		if useStepSpecific {
 			return `
-   - .md files in learnings/ and learnings/step-{X}/
-   - .py files in learnings/scripts/ and step-specific folders
-   - .md files in learnings/ and learnings/step-{X}/
-   - .go files in learnings/code/ and step-specific folders`
+   - .md files in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/
+   - .py files in learnings/scripts/ and step-specific folders (regular and branch step folders)
+   - .md files in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/
+   - .go files in learnings/code/ and step-specific folders (regular and branch step folders)`
 		}
 		return `
    - .md files in learnings/

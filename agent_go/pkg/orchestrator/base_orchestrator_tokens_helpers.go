@@ -72,3 +72,23 @@ func extractCacheTokens(tokenEvent *events.TokenUsageEvent) int {
 
 	return totalCacheTokens
 }
+
+// extractLLMCallCount extracts LLM call count from a TokenUsageEvent's GenerationInfo
+// Returns 1 if not available (fallback for single-call events like smart routing)
+// For conversation end events, this returns the cumulative call count
+func extractLLMCallCount(tokenEvent *events.TokenUsageEvent) int {
+	if tokenEvent.GenerationInfo == nil {
+		return 1 // Default to 1 for single-call events (smart routing, etc.)
+	}
+
+	// Check for cumulative_llm_call_count (from conversation end event)
+	if count, ok := tokenEvent.GenerationInfo["llm_call_count"].(int); ok {
+		return count
+	}
+	if count, ok := tokenEvent.GenerationInfo["llm_call_count"].(float64); ok {
+		return int(count)
+	}
+
+	// Fallback: return 1 for single-call events (smart routing, etc.)
+	return 1
+}

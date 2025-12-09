@@ -1,8 +1,8 @@
 # step_config.json Format Specification
 
-## Canonical Format (Agreed Standard)
+## Object Format (Only Supported Format)
 
-Both frontend and backend **read** multiple formats for backward compatibility, but **always write** in the canonical format:
+Both frontend and backend **read and write** only the object format with `steps` field:
 
 ```json
 {
@@ -41,78 +41,50 @@ Both frontend and backend **read** multiple formats for backward compatibility, 
 }
 ```
 
-## Supported Input Formats (Read-Only, for Backward Compatibility)
+## Format Details
 
-### Format 1: Canonical (Preferred)
-```json
-{
-  "steps": [
-    {
-      "id": "step-id",
-      "agent_configs": { ... }
-    }
-  ]
-}
-```
+### Object Format Structure
+- **Root**: Always an object `{}` with a `steps` field
+- **Steps Field**: An array `[]` containing step configurations
+- **Items**: Each array item represents one step's configuration
+- **Identifier**: Each item must have an `id` field (required)
+- **Fields**: All configuration is nested in `agent_configs` object
 
-### Format 2: Array Format (Legacy)
-```json
-[
-  {
-    "step_id": "step-id",
-    "selected_servers": ["server1"],
-    "selected_tools": ["server1:tool1"],
-    "enabled_custom_tools": ["workspace_tools:read_file"]
-  }
-]
-```
+### Field Structure
 
-### Format 3: Flat Object Format (Legacy, Single Step)
-```json
-{
-  "step_id": "step-id",
-  "selected_servers": ["server1"],
-  "selected_tools": ["server1:tool1"],
-  "enabled_custom_tools": ["workspace_tools:read_file"]
-}
-```
-
-## Conversion Rules
-
-When reading non-canonical formats:
-1. `step_id` → `id`
-2. Top-level `selected_servers`, `selected_tools`, `enabled_custom_tools` → nested in `agent_configs`
-3. If both top-level and nested `agent_configs` exist, top-level fields take precedence
+Each step in the `steps` array:
+- **`id`** (required): Stable step ID from plan.json
+- **`title`** (optional): Step title for reference/display only
+- **`agent_configs`** (optional): Nested configuration object containing all step-specific settings
 
 ## Implementation
 
 ### Frontend (`usePlanData.ts`)
-- **Read**: `normalizeStepConfigFile()` - converts all formats to canonical
-- **Write**: Always writes canonical format via `JSON.stringify(stepConfigFile, null, 2)`
+- **Read**: `normalizeStepConfigFile()` - parses object format with `steps` field and extracts `StepConfig[]` array
+- **Write**: Always writes object format via `JSON.stringify({ steps: stepConfigs }, null, 2)`
 
 ### Backend (`step_config.go`)
-- **Read**: `ParseStepConfigContent()` - converts all formats to canonical
-- **Write**: Always writes canonical format via `json.MarshalIndent(configs, "", "  ")`
+- **Read**: `ParseStepConfigContent()` - parses object format with `steps` field and extracts `[]StepConfig` array
+- **Write**: Always writes object format via `json.MarshalIndent(StepConfigFile{Steps: configs}, "", "  ")`
 
 ## Key Points
 
-1. ✅ **Both sides read** multiple formats (backward compatible)
-2. ✅ **Both sides write** only canonical format (ensures consistency)
-3. ✅ **Conversion is automatic** - no manual migration needed
-4. ✅ **Top-level fields take precedence** when both exist in legacy formats
+1. ✅ **Object format only** - `{ "steps": [...] }` format is the only supported format
+2. ✅ **Both sides read and write** object format consistently
+3. ✅ **Backward compatibility** - Legacy array format is still supported during migration (with warning)
+4. ✅ **Nested structure** - All configuration is in `agent_configs` object
 
 ## Field Mapping
 
-| Legacy Format | Canonical Format |
-|--------------|------------------|
-| `step_id` | `id` |
-| `selected_servers` (top-level) | `agent_configs.selected_servers` |
-| `selected_tools` (top-level) | `agent_configs.selected_tools` |
-| `enabled_custom_tools` (top-level) | `agent_configs.enabled_custom_tools` |
+| Object Format (File) | Internal Structure |
+|---------------------|-------------------|
+| `steps[].id` | `StepConfig.id` |
+| `steps[].title` | `StepConfig.title` |
+| `steps[].agent_configs` | `StepConfig.agent_configs` |
 
 ## Notes
 
-- The `has_config` field in legacy formats is ignored (computed from presence of configs)
-- Empty arrays are preserved (not removed)
+- The `steps` field is required in the root object
+- Empty `steps` array `[]` is valid (no step configs)
 - `agent_configs` can be `null` or `undefined` if no config exists for a step
-
+- When writing, the file always uses object format with `steps` field

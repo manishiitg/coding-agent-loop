@@ -24,6 +24,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     if (t === 'validation') return 'Validation Agent'
     if (t === 'organizer') return 'Organizer Agent'
     if (t === 'plan_breakdown') return 'Plan Breakdown Agent'
+    if (t === 'conditional') return 'Conditional LLM'
     return 'Agent'
   }
 
@@ -34,6 +35,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     if (t === 'execution') return '⚡'
     if (t === 'validation') return '✅'
     if (t === 'organizer') return '🗂️'
+    if (t === 'conditional') return '🔀'
     return '🤖'
   }
 
@@ -44,6 +46,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     if (t === 'execution') return 'purple'
     if (t === 'validation') return 'emerald'
     if (t === 'organizer') return 'orange'
+    if (t === 'conditional') return 'indigo'
     return 'yellow'
   }
 
@@ -91,6 +94,14 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
           text: 'text-orange-700 dark:text-orange-300',
           textSecondary: 'text-orange-600 dark:text-orange-400',
           hover: 'hover:text-orange-800 dark:hover:text-orange-200'
+        };
+      case 'indigo':
+        return {
+          bg: 'bg-indigo-50 dark:bg-indigo-900/20',
+          border: 'border-indigo-200 dark:border-indigo-800',
+          text: 'text-indigo-700 dark:text-indigo-300',
+          textSecondary: 'text-indigo-600 dark:text-indigo-400',
+          hover: 'hover:text-indigo-800 dark:hover:text-indigo-200'
         };
       default:
         return {
@@ -176,6 +187,13 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                 )}
                 {Object.entries(event.input_data || {})
                   .filter(([key]) => key !== 'step_number')
+                  .filter(([, value]) => {
+                    // Filter out empty values: null, undefined, empty string
+                    if (value === null || value === undefined || value === '') return false;
+                    // For string values, check if trimmed string is empty
+                    if (typeof value === 'string' && value.trim() === '') return false;
+                    return true;
+                  })
                   .map(([key, value]) => (
                     <div key={key} className="mb-2 last:mb-0">
                       <div className={`font-medium ${colors.text} mb-1`}>{key}:</div>

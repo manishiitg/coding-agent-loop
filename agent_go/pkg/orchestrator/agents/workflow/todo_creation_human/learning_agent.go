@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -62,9 +62,9 @@ func (agent *HumanControlledTodoPlannerLearningAgent) Execute(ctx context.Contex
 	validationResult := templateVars["ValidationResult"]
 	variableNames := templateVars["VariableNames"]
 	learningDetailLevel := templateVars["LearningDetailLevel"]
-	// Default to "general" if not provided
+	// Default to "exact" if not provided
 	if learningDetailLevel == "" {
-		learningDetailLevel = "general"
+		learningDetailLevel = "exact"
 	}
 
 	// Prepare template variables
@@ -124,10 +124,11 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 	}
 
 	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
-	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
-	scriptsPath := workspacePath + "/learnings/step-" + stepNumber + "/scripts"
+	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
+	scriptsPath := workspacePath + "/learnings/" + stepNumber + "/scripts"
 
 	return `# Learning Analysis Agent
 
@@ -217,13 +218,42 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 			return `7`
 		}
 		return `6`
-	}() + `. Read Existing File First** - **MANDATORY**:
+	}() + `. Handle Existing Files** - **MANDATORY**:
+
+**Consolidation Behavior** (when multiple files detected):
+- **Detection**: Multiple files if path contains commas or ends with "/" or "\"
+- **Process**:
+  1. If comma-separated: Split by comma and read each file
+  2. If folder path: Use 'list_workspace_files' to find all *_learning.md files, then read each
+  3. Read all files and extract patterns from each
+  4. **Consolidate Logic**:
+     - Compare patterns across all files
+     - **Keep Latest**: Patterns from most recent files (by modification time or content freshness)
+     - **Keep Best**: Patterns with highest success rates [Runs: X | Success: Y%]
+     - **Merge Duplicates**: When same pattern appears in multiple files, combine run counts and recalculate success rate
+     - **Remove Outdated**: Patterns with low success (<50%) that have better alternatives
+     - **Preserve Unique**: Keep all unique valuable patterns from all files
+  5. **Output**: Write consolidated content to single file
+  6. **Cleanup**: After successful consolidation, optionally remove old/duplicate files (only if explicitly safe)
+- **Priority**: Latest patterns → Best success rates → Most runs → Unique patterns
+- **Note**: Consolidation is SECONDARY - PRIMARY goal is always to learn from current execution
+
+**Read Existing Files**:
    ` + func() string {
 		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			return `- **EXISTING LEARNINGS FOUND**: Read ` + existingPath + `
+			// Check if path contains multiple files (comma-separated) or is a folder
+			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
+
+			if hasMultipleFiles {
+				return `- **MULTIPLE EXISTING LEARNINGS FOUND**: ` + existingPath + `
+   - **SECONDARY**: Consolidate all files using consolidation process from system prompt
+   - **PRIMARY**: Then merge new learnings from current execution with consolidated existing learnings`
+			} else {
+				return `- **EXISTING LEARNINGS FOUND**: Read ` + existingPath + `
    - Merge new learnings with existing (preserve all previous content)
    - Update existing patterns if latest run differs from file
    - Update pattern scores: [Runs: X | Success: Y%]`
+			}
 		}
 		return `- **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
    - **Action**: Create new file at ` + writePath + `/{StepTitle}_learning.md with all current learnings`
@@ -498,9 +528,10 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningUserMessageProcess
 	}
 
 	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	stepNumber := templateVars["StepNumber"]
 	workspacePath := templateVars["WorkspacePath"]
-	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
+	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
 
 	return `# ` + func() string {
 		if learningDetailLevel == "exact" {
@@ -610,14 +641,36 @@ Failures teach us what NOT to do - use them to refine the workflow until it succ
 **File Handling**:
 ` + func() string {
 		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			return `1. **READ FIRST**: ` + existingPath + `
+			// Check if path contains multiple files (comma-separated) or is a folder
+			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
+
+			if hasMultipleFiles {
+				return `1. **PRIMARY GOAL FIRST**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
+   
+2. **SECONDARY - CONSOLIDATE EXISTING FILES**: ` + existingPath + `
+   - Follow consolidation process from system prompt (detect files, read all, consolidate patterns)
+   - **Note**: This is secondary - don't spend excessive time on consolidation
+   
+3. **PRIMARY - MERGE WITH NEW LEARNINGS**: ` + func() string {
+					if learningDetailLevel == "exact" {
+						return `Refine consolidated workflow based on latest run (PRIMARY FOCUS)`
+					}
+					return `Append new patterns from current execution to consolidated learnings (PRIMARY FOCUS)`
+				}() + `
+   
+4. **UPDATE**: If latest run differs from consolidated patterns, update them
+   
+5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md`
+			} else {
+				return `1. **READ FIRST**: ` + existingPath + `
 2. **MERGE**: Preserve all previous learnings, ` + func() string {
-				if learningDetailLevel == "exact" {
-					return `refine workflow based on latest run`
-				}
-				return `append new patterns`
-			}() + `  
+					if learningDetailLevel == "exact" {
+						return `refine workflow based on latest run`
+					}
+					return `append new patterns`
+				}() + `  
 3. **UPDATE**: If latest run differs from existing patterns, update them`
+			}
 		}
 		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
 2. **CREATE NEW FILE**: Create new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`

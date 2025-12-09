@@ -212,6 +212,32 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     return activePreset?.useCodeExecutionMode ?? false
   }, [activePreset])
 
+  // Helper function to convert PlanStep to TodoStepWithConfigs
+  // Defined before useMemo to avoid "Cannot access before initialization" error
+  const convertPlanStepToTodoStep = useCallback((planStep: PlanStep): TodoStepWithConfigs => {
+    return {
+      id: planStep.id,
+      title: planStep.title,
+      description: planStep.description,
+      success_criteria: planStep.success_criteria,
+      why_this_step: planStep.why_this_step,
+      context_dependencies: planStep.context_dependencies,
+      context_output: Array.isArray(planStep.context_output) 
+        ? planStep.context_output.join(', ') 
+        : planStep.context_output,
+      has_loop: planStep.has_loop,
+      loop_condition: planStep.loop_condition,
+      max_iterations: planStep.max_iterations,
+      loop_description: planStep.loop_description,
+      has_condition: planStep.has_condition,
+      condition_question: planStep.condition_question,
+      condition_context: planStep.condition_context,
+      condition_result: planStep.condition_result,
+      condition_reason: planStep.condition_reason,
+      agent_configs: (planStep as PlanStep & { agent_configs?: AgentConfigs }).agent_configs
+    }
+  }, [])
+
   // Convert PlanStep to TodoStepWithConfigs
   const stepWithConfigs: TodoStepWithConfigs | null = useMemo(() => {
     if (!node) return null
@@ -259,32 +285,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     return todoStep
-  }, [node])
-
-  // Helper function to convert PlanStep to TodoStepWithConfigs
-  const convertPlanStepToTodoStep = (planStep: PlanStep): TodoStepWithConfigs => {
-    return {
-      id: planStep.id,
-      title: planStep.title,
-      description: planStep.description,
-      success_criteria: planStep.success_criteria,
-      why_this_step: planStep.why_this_step,
-      context_dependencies: planStep.context_dependencies,
-      context_output: Array.isArray(planStep.context_output) 
-        ? planStep.context_output.join(', ') 
-        : planStep.context_output,
-      has_loop: planStep.has_loop,
-      loop_condition: planStep.loop_condition,
-      max_iterations: planStep.max_iterations,
-      loop_description: planStep.loop_description,
-      has_condition: planStep.has_condition,
-      condition_question: planStep.condition_question,
-      condition_context: planStep.condition_context,
-      condition_result: planStep.condition_result,
-      condition_reason: planStep.condition_reason,
-      agent_configs: (planStep as PlanStep & { agent_configs?: AgentConfigs }).agent_configs
-    }
-  }
+  }, [node, convertPlanStepToTodoStep]) // node dependency ensures updates when step data changes
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
@@ -353,6 +354,49 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
     setIsSaving(true)
     try {
+      // Get the actual step ID from step data (not node.id which is React Flow node ID)
+      const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+      const stepId = stepData.step?.id
+      
+      if (!stepId) {
+        console.error('[StepSidebar] Cannot save step config: step ID is missing')
+        throw new Error('Step ID is required to save configuration')
+      }
+
+      // Log detailed information for debugging
+      const stepDataForLogging = stepData.step
+      console.log('[StepSidebar] Saving step config:', {
+        stepId,
+        nodeId: node.id,
+        nodeType: node.type,
+        stepTitle: updatedStep.title,
+        stepHasCondition: stepDataForLogging?.has_condition,
+        stepHasLoop: stepDataForLogging?.has_loop,
+        stepIndex: stepData.stepIndex,
+        hasAgentConfigs: !!updatedStep.agent_configs,
+        agentConfigsKeys: updatedStep.agent_configs ? Object.keys(updatedStep.agent_configs) : [],
+        // Log the actual step object to verify it's the right one
+        stepObjectId: stepDataForLogging?.id,
+        stepObjectTitle: stepDataForLogging?.title
+      })
+      
+      // Verify step ID matches
+      if (stepDataForLogging?.id !== stepId) {
+        console.error('[StepSidebar] Step ID mismatch!', {
+          stepIdFromData: stepDataForLogging?.id,
+          stepIdBeingUsed: stepId,
+          nodeId: node.id,
+          nodeType: node.type
+        })
+        throw new Error(`Step ID mismatch: step data has ID "${stepDataForLogging?.id}" but using "${stepId}"`)
+      }
+      
+      // Deep clone agent_configs only to break any potential reference sharing
+      // (The StepEditPanel should already create new objects, but this is a safety measure)
+      const agentConfigs = updatedStep.agent_configs 
+        ? JSON.parse(JSON.stringify(updatedStep.agent_configs))
+        : undefined
+
       // Convert TodoStepWithConfigs back to PlanStep format for updateStep
       const updates: Partial<PlanStep> = {
         title: updatedStep.title,
@@ -370,11 +414,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         condition_context: updatedStep.condition_context,
         condition_result: updatedStep.condition_result,
         condition_reason: updatedStep.condition_reason,
-        // Include agent_configs in the update
-        agent_configs: updatedStep.agent_configs
+        // Include agent_configs in the update (deep cloned to avoid reference sharing)
+        agent_configs: agentConfigs
       } as Partial<PlanStep>
 
-      await onEditStep(node.id, updates)
+      await onEditStep(stepId, updates)
     } catch (error) {
       console.error('[StepSidebar] Error saving step:', error)
     } finally {
@@ -796,148 +840,245 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       {/* Content - Scrollable */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-5">
-          {/* Step Information */}
-          <div className="space-y-4">
-            {isEditing ? (
-              // Edit mode
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Title
-                  </label>
-                  <input
-                    type="text"
-                    value={editedTitle}
-                    onChange={(e) => setEditedTitle(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:focus:ring-gray-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Description
-                  </label>
-                  <textarea
-                    value={editedDescription}
-                    onChange={(e) => setEditedDescription(e.target.value)}
-                    rows={3}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:focus:ring-gray-400 resize-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Success Criteria
-                  </label>
-                  <textarea
-                    value={editedSuccessCriteria}
-                    onChange={(e) => setEditedSuccessCriteria(e.target.value)}
-                    rows={2}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:focus:ring-gray-400 resize-none"
-                  />
-                </div>
-              </div>
-            ) : (
-              // View mode
-              <>
-                <div className="space-y-2">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                    {step.title}
-                  </h3>
-                  {step.description && (
-                    <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-wrap">
-                      {step.description}
-                    </p>
-                  )}
-                </div>
-
-                {step.success_criteria && (
-                  <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800/50">
-                    <span className="text-xs font-semibold text-green-700 dark:text-green-300 uppercase tracking-wide">
-                      Success Criteria:
+          {/* For conditional steps, only show condition and edit option */}
+          {step.has_condition && node.type === 'conditional' ? (
+            <div className="space-y-4">
+              {/* Condition Display */}
+              {step.condition_question && (
+                <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wide">
+                      Condition:
                     </span>
+                    {!isEditing && (
+                      <button
+                        onClick={handleStartEdit}
+                        className="p-1.5 rounded-md hover:bg-purple-100 dark:hover:bg-purple-800 text-purple-600 dark:text-purple-400 transition-colors"
+                        title="Edit condition"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  {isEditing ? (
+                    <div className="space-y-3">
+                      <textarea
+                        value={editedDescription || step.condition_question}
+                        onChange={(e) => setEditedDescription(e.target.value)}
+                        rows={4}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 resize-y"
+                        placeholder="Enter condition question..."
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleCancelEdit}
+                          disabled={isSaving}
+                          className="px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (node) {
+                              await onEditStep(node.id, {
+                                condition_question: editedDescription || step.condition_question
+                              })
+                              setIsEditing(false)
+                            }
+                          }}
+                          disabled={isSaving}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors disabled:opacity-50"
+                        >
+                          <Save className="w-3 h-3" />
+                          {isSaving ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
                     <p className="text-sm text-gray-700 dark:text-gray-300 mt-2 whitespace-pre-wrap">
-                      {step.success_criteria}
+                      {step.condition_question}
                     </p>
-                  </div>
-                )}
-              </>
-            )}
-
-            {step.has_condition && step.condition_question && (
-              <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded">
-                <span className="text-xs font-medium text-purple-600 dark:text-purple-400">
-                  Condition:
-                </span>
-                <p className="text-sm text-gray-700 dark:text-gray-300 mt-1">
-                  {step.condition_question}
-                </p>
-              </div>
-            )}
-
-            {step.has_loop && (
-              <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
-                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
-                  Loop:
-                </span>
-                {step.loop_condition && (
-                  <div className="mt-2">
-                    <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Until: </span>
-                    <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap">
-                      {step.loop_condition}
-                    </p>
-                  </div>
-                )}
-                {step.max_iterations && (
-                  <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mt-2">
-                    Max iterations: <span className="text-gray-700 dark:text-gray-300">{step.max_iterations}</span>
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Dependencies */}
-            {(step.context_dependencies?.length || step.context_output) && (
-              <div className="space-y-2">
-                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                  Dependencies:
-                </span>
-                <div className="space-y-2 text-sm">
-                  {step.context_dependencies && step.context_dependencies.length > 0 && (
-                    <div>
-                      <span className="font-medium text-blue-600 dark:text-blue-400">Inputs: </span>
-                      <span className="text-gray-600 dark:text-gray-400">
-                        {step.context_dependencies.join(', ')}
-                      </span>
-                    </div>
-                  )}
-                  {step.context_output && (
-                    <div>
-                      <span className="font-medium text-emerald-600 dark:text-emerald-400">Output: </span>
-                      <span className="text-gray-600 dark:text-gray-400">
-                        {Array.isArray(step.context_output) ? step.context_output.join(', ') : step.context_output}
-                      </span>
-                    </div>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+              
+              {/* Condition Context (if provided) */}
+              {step.condition_context && (
+                <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Context: </span>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap">
+                    {step.condition_context}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Regular step display (non-conditional or conditional but not in conditional node) */
+            <div className="space-y-4">
+              {isEditing ? (
+                // Edit mode
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Title
+                    </label>
+                    <input
+                      type="text"
+                      value={editedTitle}
+                      onChange={(e) => setEditedTitle(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:focus:ring-gray-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Description
+                    </label>
+                    <textarea
+                      value={editedDescription}
+                      onChange={(e) => setEditedDescription(e.target.value)}
+                      rows={8}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:focus:ring-gray-400 resize-y min-h-[120px]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Success Criteria
+                    </label>
+                    <textarea
+                      value={editedSuccessCriteria}
+                      onChange={(e) => setEditedSuccessCriteria(e.target.value)}
+                      rows={5}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 dark:focus:ring-gray-400 resize-y min-h-[100px]"
+                    />
+                  </div>
+                </div>
+              ) : (
+                // View mode
+                <>
+                  <div className="space-y-2">
+                    <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                      {step.title}
+                    </h3>
+                    {step.description && (
+                      <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-wrap">
+                        {step.description}
+                      </p>
+                    )}
+                  </div>
+
+                  {step.success_criteria && (
+                    <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800/50">
+                      <span className="text-xs font-semibold text-green-700 dark:text-green-300 uppercase tracking-wide">
+                        Success Criteria:
+                      </span>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mt-2 whitespace-pre-wrap">
+                        {step.success_criteria}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {step.has_condition && step.condition_question && (
+                <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded">
+                  <span className="text-xs font-medium text-purple-600 dark:text-purple-400">
+                    Condition:
+                  </span>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 mt-1">
+                    {step.condition_question}
+                  </p>
+                </div>
+              )}
+
+              {step.has_loop && (
+                <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+                    Loop:
+                  </span>
+                  {step.loop_condition && (
+                    <div className="mt-2">
+                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Until: </span>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap">
+                        {step.loop_condition}
+                      </p>
+                    </div>
+                  )}
+                  {step.max_iterations && (
+                    <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mt-2">
+                      Max iterations: <span className="text-gray-700 dark:text-gray-300">{step.max_iterations}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Dependencies */}
+              {(step.context_dependencies?.length || step.context_output) && (
+                <div className="space-y-2">
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                    Dependencies:
+                  </span>
+                  <div className="space-y-2 text-sm">
+                    {step.context_dependencies && step.context_dependencies.length > 0 && (
+                      <div>
+                        <span className="font-medium text-blue-600 dark:text-blue-400">Inputs: </span>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          {step.context_dependencies.join(', ')}
+                        </span>
+                      </div>
+                    )}
+                    {step.context_output && (
+                      <div>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">Output: </span>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          {Array.isArray(step.context_output) ? step.context_output.join(', ') : step.context_output}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Step Configuration Panel */}
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-            <StepEditPanel
-              step={stepWithConfigs}
-              stepIndex={stepIndex}
-              onSave={handleSave}
-              onCancel={() => {}}
-              isSaving={isSaving}
-              presetServers={presetServers}
-              presetLLMConfig={presetLLMConfig}
-              presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-              isExpanded={true}
-              onToggleExpanded={() => {}}
-              planSteps={plan?.steps || []}
-            />
-          </div>
+          {step.has_condition && node.type === 'conditional' ? (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                <p className="text-xs text-blue-700 dark:text-blue-300">
+                  <strong>Note:</strong> This configuration applies to the conditional LLM and branch step agents. The conditional step itself is not executed.
+                </p>
+              </div>
+              <StepEditPanel
+                step={stepWithConfigs}
+                stepIndex={stepIndex}
+                onSave={handleSave}
+                onCancel={() => {}}
+                isSaving={isSaving}
+                presetServers={presetServers}
+                presetLLMConfig={presetLLMConfig}
+                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isExpanded={true}
+                onToggleExpanded={() => {}}
+                planSteps={plan?.steps || []}
+              />
+            </div>
+          ) : (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              <StepEditPanel
+                step={stepWithConfigs}
+                stepIndex={stepIndex}
+                onSave={handleSave}
+                onCancel={() => {}}
+                isSaving={isSaving}
+                presetServers={presetServers}
+                presetLLMConfig={presetLLMConfig}
+                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isExpanded={true}
+                onToggleExpanded={() => {}}
+                planSteps={plan?.steps || []}
+              />
+            </div>
+          )}
         </div>
       </div>
 

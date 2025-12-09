@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	"mcpagent/events"
 	"mcpagent/mcpclient"
 
@@ -115,19 +115,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	}
 
 	// Determine user message based on mode
-	// - For CREATE mode: Use "Generate plan"
-	// - For UPDATE mode: Use human feedback if provided, otherwise "Generate plan"
+	// - For CREATE mode: Use clear, action-oriented instruction
+	// - For UPDATE mode: Use human feedback if provided, otherwise clear instruction
 	var userMessage string
 	if existingPlan != nil {
-		// UPDATE mode: Use human feedback as user message
+		// UPDATE mode: Use human feedback as user message (user's natural language feedback)
 		if humanFeedback != "" && strings.TrimSpace(humanFeedback) != "" {
 			userMessage = humanFeedback
 		} else {
-			userMessage = "Generate plan" // Fallback if no human feedback
+			// Fallback: Clear instruction for plan updates
+			userMessage = "Review the existing plan and update it based on the objective. Use the plan modification tools (update_plan_steps, delete_plan_steps, add_plan_steps) to make changes. Always use human_feedback tool first to confirm changes with the user."
 		}
 	} else {
-		// CREATE mode: Use static message for first-time plan generation
-		userMessage = "Generate plan"
+		// CREATE mode: Clear, action-oriented instruction for first-time plan generation
+		// System prompt contains all detailed guidelines - user message should be concise and directive
+		userMessage = "Generate a comprehensive structured plan to achieve the objective. Include detailed steps with clear success criteria, context dependencies, and loop/conditional logic where appropriate. Call submit_planning_response when complete."
 	}
 
 	// Create fresh planning agent with proper context
@@ -406,8 +408,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestPlanApproval(
 // convertPlanStepsToTodoSteps converts PlanStep to TodoStep format
 // Merges agent configs from step_config.json by step index matching
 // convertBranchSteps converts a slice of PlanStep to TodoStep (helper for recursive conversion)
-// stepConfigs: step configs file for matching branch step configs by ID
-func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) ([]TodoStep, error) {
+// stepConfigs: step configs array for matching branch step configs by ID
+func convertBranchSteps(planSteps []PlanStep, stepConfigs []StepConfig) ([]TodoStep, error) {
 	if len(planSteps) == 0 {
 		return nil, nil
 	}
@@ -479,6 +481,8 @@ func convertBranchSteps(planSteps []PlanStep, stepConfigs *StepConfigFile) ([]To
 			ConditionContext:    step.ConditionContext,
 			IfTrueSteps:         ifTrueSteps,
 			IfFalseSteps:        ifFalseSteps,
+			IfTrueNextStepID:    step.IfTrueNextStepID,
+			IfFalseNextStepID:   step.IfFalseNextStepID,
 			AgentConfigs:        agentConfigs, // Matched from step_config.json by ID
 		}
 	}
@@ -490,13 +494,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 	if err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults for all steps)", err))
-		stepConfigs = &StepConfigFile{Steps: []StepConfig{}}
+		stepConfigs = []StepConfig{}
 	}
 
 	// Log available config IDs for debugging
-	if stepConfigs != nil && len(stepConfigs.Steps) > 0 {
-		configIDs := make([]string, 0, len(stepConfigs.Steps))
-		for _, config := range stepConfigs.Steps {
+	if len(stepConfigs) > 0 {
+		configIDs := make([]string, 0, len(stepConfigs))
+		for _, config := range stepConfigs {
 			if config.ID != "" {
 				configIDs = append(configIDs, config.ID)
 			}
@@ -538,6 +542,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			val := false
 			enabledConfigs.DisableValidation = &val
 			agentConfigs = &enabledConfigs
+		}
+
+		// Conditional steps should never have validation - they only evaluate conditions
+		// Ensure validation is disabled for conditional steps
+		if step.HasCondition {
+			if agentConfigs == nil {
+				// Create new configs with validation disabled
+				val := true
+				agentConfigs = &AgentConfigs{
+					DisableValidation: &val,
+				}
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Conditional step '%s' - created configs with validation disabled", step.Title))
+			} else if agentConfigs.DisableValidation == nil || !*agentConfigs.DisableValidation {
+				// Validation is not disabled - force disable it
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step '%s' is a conditional step but has validation enabled - disabling validation (conditional steps only evaluate conditions)", step.Title))
+				// Create a copy of configs with validation disabled
+				disabledConfigs := *agentConfigs
+				val := true
+				disabledConfigs.DisableValidation = &val
+				agentConfigs = &disabledConfigs
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Conditional step '%s' already has validation disabled", step.Title))
+			}
 		}
 
 		// Convert branch steps recursively
@@ -594,6 +621,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			ConditionContext:    step.ConditionContext,
 			IfTrueSteps:         ifTrueSteps,
 			IfFalseSteps:        ifFalseSteps,
+			IfTrueNextStepID:    step.IfTrueNextStepID,
+			IfFalseNextStepID:   step.IfFalseNextStepID,
 			AgentConfigs:        agentConfigs, // Merged from step_config.json (validation enforced for loops)
 		}
 	}

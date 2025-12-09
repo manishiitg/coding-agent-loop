@@ -18,12 +18,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent/agent_go/internal/events"
-	agent "mcp-agent/agent_go/pkg/agentwrapper"
-	"mcp-agent/agent_go/pkg/database"
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
-	orchtypes "mcp-agent/agent_go/pkg/orchestrator/types"
+	"mcp-agent-builder-go/agent_go/internal/events"
+	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
+	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
 	unifiedevents "mcpagent/events"
 	"mcpagent/executor"
 	"mcpagent/llm"
@@ -33,13 +33,13 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	"mcp-agent/agent_go/pkg/logger"
+	"mcp-agent-builder-go/agent_go/pkg/logger"
 
 	"github.com/joho/godotenv"
 
-	eventbridge "mcp-agent/agent_go/cmd/server/event_bridge"
-	slackservice "mcp-agent/agent_go/cmd/server/services"
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
+	eventbridge "mcp-agent-builder-go/agent_go/cmd/server/event_bridge"
+	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	mcpagent "mcpagent/agent"
 	"strconv"
 )
@@ -1275,8 +1275,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Pass execution options from frontend if provided
 			if req.ExecutionOptions != nil {
-				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v",
-					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupIDs)
+				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v",
+					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupIDs, req.ExecutionOptions.SkipLearningWhenTempLLM1, req.ExecutionOptions.SkipLearningWhenTempLLM2)
 
 				// Convert to controller ExecutionOptions and pass to workflow orchestrator
 				controllerOpts := &todo_creation_human.ExecutionOptions{
@@ -1288,6 +1288,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					PlanChangeAction:               req.ExecutionOptions.PlanChangeAction,
 					AllStepsCompletedAction:        req.ExecutionOptions.AllStepsCompletedAction,
 					FallbackToOriginalLLMOnFailure: req.ExecutionOptions.FallbackToOriginalLLMOnFailure,
+					SkipLearningWhenTempLLM1:       req.ExecutionOptions.SkipLearningWhenTempLLM1,
+					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 				}
 
@@ -1297,6 +1299,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						Provider: req.ExecutionOptions.TempOverrideLLM.Provider,
 						ModelID:  req.ExecutionOptions.TempOverrideLLM.ModelID,
 					}
+					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 1 included: %s/%s", controllerOpts.TempOverrideLLM.Provider, controllerOpts.TempOverrideLLM.ModelID)
+				} else {
+					// Explicitly set to nil to ensure backend clears any existing override
+					controllerOpts.TempOverrideLLM = nil
+					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 1 not provided (disabled or not set) - will clear existing override")
+				}
+
+				// Convert TempOverrideLLM2 if present
+				if req.ExecutionOptions.TempOverrideLLM2 != nil {
+					controllerOpts.TempOverrideLLM2 = &todo_creation_human.AgentLLMConfig{
+						Provider: req.ExecutionOptions.TempOverrideLLM2.Provider,
+						ModelID:  req.ExecutionOptions.TempOverrideLLM2.ModelID,
+					}
+					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 2 included: %s/%s", controllerOpts.TempOverrideLLM2.Provider, controllerOpts.TempOverrideLLM2.ModelID)
+				} else {
+					// Explicitly set to nil to ensure backend clears any existing override
+					controllerOpts.TempOverrideLLM2 = nil
+					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 2 not provided (disabled or not set) - will clear existing override")
 				}
 
 				// Convert TempOverrideLLM2 if present

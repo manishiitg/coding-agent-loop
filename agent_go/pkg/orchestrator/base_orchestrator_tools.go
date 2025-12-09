@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"strings"
 
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

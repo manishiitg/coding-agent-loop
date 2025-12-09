@@ -10,3 +10,8 @@ mcp-agent-server
 
 # Service account credentials (contains secrets)
 service_account.json
+
+# Tool output folder - contains temporary generated code files
+# These files should not be included in go mod tidy or version control
+tool_output_folder/*
+tool_output_folder

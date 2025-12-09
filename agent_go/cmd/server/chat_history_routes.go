@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"mcp-agent/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcpagent/events"
 
 	"github.com/gin-gonic/gin"

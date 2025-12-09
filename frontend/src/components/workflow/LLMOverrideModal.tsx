@@ -24,6 +24,10 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
   const setTempOverrideLLMEnabled = useWorkflowStore(state => state.setTempOverrideLLMEnabled)
   const fallbackToOriginalLLMOnFailure = useWorkflowStore(state => state.fallbackToOriginalLLMOnFailure)
   const setFallbackToOriginalLLMOnFailure = useWorkflowStore(state => state.setFallbackToOriginalLLMOnFailure)
+  const skipLearningWhenTempLLM1 = useWorkflowStore(state => state.skipLearningWhenTempLLM1)
+  const setSkipLearningWhenTempLLM1 = useWorkflowStore(state => state.setSkipLearningWhenTempLLM1)
+  const skipLearningWhenTempLLM2 = useWorkflowStore(state => state.skipLearningWhenTempLLM2)
+  const setSkipLearningWhenTempLLM2 = useWorkflowStore(state => state.setSkipLearningWhenTempLLM2)
   
   // Convert tempOverrideLLM to LLMOption format for the dropdown
   const selectedLLM1: LLMOption | null = tempOverrideLLM
@@ -178,6 +182,24 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
             <p className="text-xs text-muted-foreground">
               Cheaper LLM for first attempt. Falls back to Temp LLM 2 if validation fails.
             </p>
+            {/* Skip learning checkbox for Temp LLM 1 */}
+            <label className={`flex items-start gap-2 cursor-pointer group ${!tempOverrideLLMEnabled ? 'opacity-50' : ''}`}>
+              <input
+                type="checkbox"
+                checked={skipLearningWhenTempLLM1}
+                onChange={(e) => setSkipLearningWhenTempLLM1(e.target.checked)}
+                disabled={!tempOverrideLLMEnabled}
+                className="mt-0.5 w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 focus:ring-offset-0 disabled:opacity-50"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-foreground">
+                  Skip learning when Temp LLM 1 is used
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  When enabled, learning phases will be skipped when Temp LLM 1 is used. By default, learning runs to capture patterns.
+                </div>
+              </div>
+            </label>
           </div>
           
           {/* Temp LLM 2 */}
@@ -211,6 +233,24 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
             <p className="text-xs text-muted-foreground">
               More expensive, more capable LLM for second attempt. Falls back to step LLM if validation fails.
             </p>
+            {/* Skip learning checkbox for Temp LLM 2 */}
+            <label className={`flex items-start gap-2 cursor-pointer group ${!tempOverrideLLMEnabled ? 'opacity-50' : ''}`}>
+              <input
+                type="checkbox"
+                checked={skipLearningWhenTempLLM2}
+                onChange={(e) => setSkipLearningWhenTempLLM2(e.target.checked)}
+                disabled={!tempOverrideLLMEnabled}
+                className="mt-0.5 w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 focus:ring-offset-0 disabled:opacity-50"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-foreground">
+                  Skip learning when Temp LLM 2 is used
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  When enabled, learning phases will be skipped when Temp LLM 2 is used. By default, learning runs to capture patterns.
+                </div>
+              </div>
+            </label>
           </div>
           
           {/* Fallback to original LLM on failure checkbox */}

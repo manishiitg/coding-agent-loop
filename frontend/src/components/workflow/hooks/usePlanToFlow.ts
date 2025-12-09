@@ -113,7 +113,7 @@ interface UsePlanToFlowOptions {
 // Dagre layout configuration
 const DAGRE_CONFIG = {
   rankdir: 'LR', // Left to right (tree layout)
-  nodesep: 80,   // Vertical spacing between nodes in same rank
+  nodesep: 300,  // Vertical spacing between nodes in same rank (increased significantly to prevent branch overlap)
   ranksep: 150,  // Horizontal spacing between ranks (columns)
   marginx: 60,
   marginy: 60
@@ -129,6 +129,103 @@ const NODE_DIMENSIONS = {
   start: { width: 80, height: 36 },
   end: { width: 80, height: 36 },
   variables: { width: 260, height: 180 }
+}
+
+/**
+ * Post-process layout to fix overlapping conditional branches
+ * Ensures branches from different conditionals don't overlap vertically
+ */
+function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
+  // Find all conditional nodes and their branch nodes
+  const conditionalNodes = nodes.filter(n => n.type === 'conditional')
+  const branchGroups: Array<{ 
+    conditionalId: string
+    conditionalNode: WorkflowNode
+    branchNodes: WorkflowNode[] 
+  }> = []
+
+  conditionalNodes.forEach(conditionalNode => {
+    const branchNodes = nodes.filter(n => 
+      n.id.startsWith(`${conditionalNode.id}-true-`) || 
+      n.id.startsWith(`${conditionalNode.id}-false-`)
+    )
+    if (branchNodes.length > 0) {
+      branchGroups.push({
+        conditionalId: conditionalNode.id,
+        conditionalNode,
+        branchNodes
+      })
+    }
+  })  
+
+  // If we have multiple conditional branches, check for overlaps and adjust
+  if (branchGroups.length < 2) {
+    return nodes // No need to adjust if less than 2 conditionals
+  }
+
+  // Sort branch groups by their conditional node's x position (left to right)
+  branchGroups.sort((a, b) => a.conditionalNode.position.x - b.conditionalNode.position.x)
+
+  const adjustedNodes = [...nodes]
+  const nodeMap = new Map(adjustedNodes.map(n => [n.id, n]))
+
+  // Get vertical bounds for a branch group using current adjusted positions
+  const getGroupBounds = (group: typeof branchGroups[0]): { top: number; bottom: number } | null => {
+    if (group.branchNodes.length === 0) return null
+    const positions = group.branchNodes.map(branchNode => {
+      const node = nodeMap.get(branchNode.id)!
+      const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+      return {
+        top: node.position.y,
+        bottom: node.position.y + dimensions.height
+      }
+    })
+    return {
+      top: Math.min(...positions.map(p => p.top)),
+      bottom: Math.max(...positions.map(p => p.bottom))
+    }
+  }
+
+  // For each branch group (after the first), ensure it doesn't overlap with previous groups
+  for (let i = 1; i < branchGroups.length; i++) {
+    const currentGroup = branchGroups[i]
+    const currentBounds = getGroupBounds(currentGroup)
+    if (!currentBounds) continue
+
+    // Check overlap with all previous groups
+    let maxBottom = -Infinity
+    for (let j = 0; j < i; j++) {
+      const prevGroup = branchGroups[j]
+      const prevBounds = getGroupBounds(prevGroup)
+      if (prevBounds) {
+        maxBottom = Math.max(maxBottom, prevBounds.bottom)
+      }
+    }
+
+    // If current group overlaps with previous groups, move it down
+    if (currentBounds.top < maxBottom) {
+      const minSeparation = 800 // Minimum vertical separation between branch groups (increased significantly)
+      const separationNeeded = maxBottom - currentBounds.top + minSeparation
+      
+      // Move all nodes in current branch group down
+      currentGroup.branchNodes.forEach(branchNode => {
+        const nodeIndex = adjustedNodes.findIndex(n => n.id === branchNode.id)
+        if (nodeIndex >= 0) {
+          adjustedNodes[nodeIndex] = {
+            ...adjustedNodes[nodeIndex],
+            position: {
+              ...adjustedNodes[nodeIndex].position,
+              y: adjustedNodes[nodeIndex].position.y + separationNeeded
+            }
+          }
+          // Update the map so subsequent calculations use adjusted positions
+          nodeMap.set(branchNode.id, adjustedNodes[nodeIndex])
+        }
+      })
+    }
+  }
+
+  return adjustedNodes
 }
 
 /**
@@ -167,7 +264,10 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
     }
   })
 
-  return { nodes: layoutedNodes, edges }
+  // Post-process to fix overlapping branches
+  const fixedNodes = fixOverlappingBranches(layoutedNodes)
+
+  return { nodes: fixedNodes, edges }
 }
 
 /**
@@ -217,9 +317,25 @@ function stepToNode(
     status = isCompleted ? 'completed' as const : 'pending' as const
   }
 
+  // For conditional nodes, use condition_question as title if step.title is missing
+  // For other steps, use step.title or fallback to "Step N"
+  const getStepTitle = () => {
+    if (step.has_condition) {
+      // For conditional nodes, prefer condition_question over generic "Step N"
+      return step.title || step.condition_question || `Condition ${stepIndex + 1}`
+    }
+    // For regular steps, use step.title or fallback
+    // For nested branch steps, use a more descriptive fallback
+    if (parentId) {
+      // This is a step inside a branch
+      return step.title || `Branch Step ${stepIndex + 1}`
+    }
+    return step.title || `Step ${stepIndex + 1}`
+  }
+
   const baseData = {
     id: nodeId,
-    title: step.title || `Step ${stepIndex + 1}`,
+    title: getStepTitle(),
     description: step.description,
     success_criteria: step.success_criteria,
     status,
@@ -441,28 +557,88 @@ function processSteps(
   completedStepIndices: number[] = [],
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
-  selectedRunFolder?: string
+  selectedRunFolder?: string,
+  stepIdToNodeIdMap?: Map<string, string> // Map of step ID to node ID for next_step_id lookups
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   const nodes: WorkflowNode[] = []
   const edges: WorkflowEdge[] = []
   
   // Track the last "exit" node ID for edge connections
-  let lastExitNodeId: string | null = null
+  // Can be a single node ID, array of branch exit nodes, or null
+  let lastExitNodeId: string | string[] | null = null
+  // Track conditional nodes with empty branches for label purposes
+  const conditionalEmptyBranches = new Map<string, { trueEmpty: boolean; falseEmpty: boolean }>()
 
   steps.forEach((step, index) => {
     const node = stepToNode(step, index, parentId, branchType, changes, completedStepIndices, stepStatusMap, workspacePath, selectedRunFolder)
     nodes.push(node)
 
     // Create edge from previous step's exit node (sequential flow)
+    // If lastExitNodeId is an array, it means we're connecting from multiple branch exits
     if (lastExitNodeId) {
-      edges.push({
-        id: `${lastExitNodeId}-to-${node.id}`,
-        source: lastExitNodeId,
-        target: node.id,
-        type: 'smoothstep',
-        animated: false,
-        style: { stroke: '#6b7280', strokeWidth: 2 }
-      })
+      if (Array.isArray(lastExitNodeId)) {
+        // Connect from all branch exit nodes to this step
+        lastExitNodeId.forEach((exitNodeId, i) => {
+          if (exitNodeId) {
+            // Check if this exit node is a conditional with empty branches
+            const emptyInfo = conditionalEmptyBranches.get(exitNodeId)
+            const isConditionalWithEmptyBranch = emptyInfo && (emptyInfo.trueEmpty || emptyInfo.falseEmpty)
+            
+            edges.push({
+              id: `${exitNodeId}-to-${node.id}-${i}`,
+              source: exitNodeId,
+              target: node.id,
+              type: 'smoothstep',
+              animated: false,
+              style: { 
+                stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280', 
+                strokeWidth: 2 
+              },
+              label: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? 'Yes' : 'No') : undefined,
+              labelStyle: isConditionalWithEmptyBranch ? {
+                fill: emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444',
+                fontWeight: 600,
+                fontSize: 11
+              } : undefined,
+              labelBgStyle: isConditionalWithEmptyBranch ? {
+                fill: emptyInfo?.trueEmpty ? '#f0fdf4' : '#fef2f2',
+                fillOpacity: 0.9
+              } : undefined,
+              labelBgPadding: isConditionalWithEmptyBranch ? [4, 4] as [number, number] : undefined,
+              labelBgBorderRadius: isConditionalWithEmptyBranch ? 4 : undefined
+            })
+          }
+        })
+      } else {
+        // Single exit node (normal sequential flow)
+        // Check if this exit node is a conditional with empty branches
+        const emptyInfo = conditionalEmptyBranches.get(lastExitNodeId)
+        const isConditionalWithEmptyBranch = emptyInfo && (emptyInfo.trueEmpty || emptyInfo.falseEmpty)
+        
+        edges.push({
+          id: `${lastExitNodeId}-to-${node.id}`,
+          source: lastExitNodeId,
+          target: node.id,
+          type: 'smoothstep',
+          animated: false,
+          style: { 
+            stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280', 
+            strokeWidth: 2 
+          },
+          label: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? 'Yes' : 'No') : undefined,
+          labelStyle: isConditionalWithEmptyBranch ? {
+            fill: emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444',
+            fontWeight: 600,
+            fontSize: 11
+          } : undefined,
+          labelBgStyle: isConditionalWithEmptyBranch ? {
+            fill: emptyInfo?.trueEmpty ? '#f0fdf4' : '#fef2f2',
+            fillOpacity: 0.9
+          } : undefined,
+          labelBgPadding: isConditionalWithEmptyBranch ? [4, 4] as [number, number] : undefined,
+          labelBgBorderRadius: isConditionalWithEmptyBranch ? 4 : undefined
+        })
+      }
     }
     
     // Add validation/learning nodes for non-conditional steps
@@ -480,13 +656,16 @@ function processSteps(
       edges.push(...vlResult.edges)
       lastExitNodeId = vlResult.exitNodeId
     } else {
-      // For conditional nodes, they connect to branches, not directly to validation/learning
+      // For conditional nodes, track branch exit nodes to reconnect to next step
       lastExitNodeId = null
     }
 
     // Handle conditional branches
     if (step.has_condition) {
+      const branchExitNodes: string[] = []
+      
       // Process if_true_steps
+      let trueBranchExitNodeId: string | null = null
       if (step.if_true_steps && step.if_true_steps.length > 0) {
         const trueBranch = processSteps(
           step.if_true_steps, 
@@ -501,7 +680,8 @@ function processSteps(
           completedStepIndices,
           stepStatusMap,
           workspacePath,
-          selectedRunFolder
+          selectedRunFolder,
+          stepIdToNodeIdMap
         )
         nodes.push(...trueBranch.nodes)
         edges.push(...trueBranch.edges)
@@ -521,10 +701,28 @@ function processSteps(
             style: { stroke: '#22c55e', strokeWidth: 2 },
             animated: false
           })
+          
+          // Find the last node in the true branch (exit node)
+          // This could be a step, validation, or learning node
+          const lastTrueNode = trueBranch.nodes[trueBranch.nodes.length - 1]
+          if (lastTrueNode) {
+            trueBranchExitNodeId = lastTrueNode.id
+            branchExitNodes.push(lastTrueNode.id)
+          }
         }
+      } else {
+        // No true branch steps - conditional node itself is an exit
+        // We'll create an edge to the next step below (either via next_step_id or sequential)
+        trueBranchExitNodeId = node.id
+        branchExitNodes.push(node.id)
+        // Track that true branch is empty
+        const emptyInfo = conditionalEmptyBranches.get(node.id) || { trueEmpty: false, falseEmpty: false }
+        emptyInfo.trueEmpty = true
+        conditionalEmptyBranches.set(node.id, emptyInfo)
       }
 
       // Process if_false_steps
+      let falseBranchExitNodeId: string | null = null
       if (step.if_false_steps && step.if_false_steps.length > 0) {
         const falseBranch = processSteps(
           step.if_false_steps, 
@@ -539,7 +737,8 @@ function processSteps(
           completedStepIndices,
           stepStatusMap,
           workspacePath,
-          selectedRunFolder
+          selectedRunFolder,
+          stepIdToNodeIdMap
         )
         nodes.push(...falseBranch.nodes)
         edges.push(...falseBranch.edges)
@@ -559,6 +758,128 @@ function processSteps(
             style: { stroke: '#ef4444', strokeWidth: 2 },
             animated: false
           })
+          
+          // Find the last node in the false branch (exit node)
+          const lastFalseNode = falseBranch.nodes[falseBranch.nodes.length - 1]
+          if (lastFalseNode) {
+            falseBranchExitNodeId = lastFalseNode.id
+            branchExitNodes.push(lastFalseNode.id)
+          }
+        }
+      } else {
+        // No false branch steps - conditional node itself is an exit (if not already added)
+        if (!branchExitNodes.includes(node.id)) {
+          falseBranchExitNodeId = node.id
+          branchExitNodes.push(node.id)
+        }
+        // Track that false branch is empty
+        const emptyInfo = conditionalEmptyBranches.get(node.id) || { trueEmpty: false, falseEmpty: false }
+        emptyInfo.falseEmpty = true
+        conditionalEmptyBranches.set(node.id, emptyInfo)
+      }
+      
+      // Handle next_step_id connections
+      // Check if_true_next_step_id and if_false_next_step_id to create explicit connections
+      const nextStepEdges: WorkflowEdge[] = []
+      
+      // Handle true branch next_step_id
+      if (trueBranchExitNodeId) {
+        if (step.if_true_next_step_id) {
+          // Explicit next_step_id provided
+          const targetNodeId = stepIdToNodeIdMap?.get(step.if_true_next_step_id)
+          if (targetNodeId) {
+            // Create edge from true branch exit node to target
+            nextStepEdges.push({
+              id: `${trueBranchExitNodeId}-to-${targetNodeId}-true-next`,
+              source: trueBranchExitNodeId,
+              target: targetNodeId,
+              type: 'smoothstep',
+              label: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 'Yes', // Show "Yes" label if branch is empty
+              labelStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#f0fdf4', fillOpacity: 0.9 },
+              labelBgPadding: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : [4, 4] as [number, number],
+              labelBgBorderRadius: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 4,
+              style: { stroke: '#22c55e', strokeWidth: 2, strokeDasharray: step.if_true_steps && step.if_true_steps.length > 0 ? '5,5' : undefined },
+              animated: false
+            })
+          } else if (step.if_true_next_step_id === 'end') {
+            // Connect to end node
+            nextStepEdges.push({
+              id: `${trueBranchExitNodeId}-to-end-true-next`,
+              source: trueBranchExitNodeId,
+              target: 'end',
+              type: 'smoothstep',
+              label: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 'Yes', // Show "Yes" label if branch is empty
+              labelStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : { fill: '#f0fdf4', fillOpacity: 0.9 },
+              labelBgPadding: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : [4, 4] as [number, number],
+              labelBgBorderRadius: step.if_true_steps && step.if_true_steps.length > 0 ? undefined : 4,
+              style: { stroke: '#22c55e', strokeWidth: 2, strokeDasharray: step.if_true_steps && step.if_true_steps.length > 0 ? '5,5' : undefined },
+              animated: false
+            })
+          }
+        }
+        // If no explicit next_step_id and branch is empty, we'll use default sequential flow (handled below)
+      }
+      
+      // Handle false branch next_step_id
+      if (falseBranchExitNodeId) {
+        if (step.if_false_next_step_id) {
+          // Explicit next_step_id provided
+          const targetNodeId = stepIdToNodeIdMap?.get(step.if_false_next_step_id)
+          if (targetNodeId) {
+            // Create edge from false branch exit node to target
+            nextStepEdges.push({
+              id: `${falseBranchExitNodeId}-to-${targetNodeId}-false-next`,
+              source: falseBranchExitNodeId,
+              target: targetNodeId,
+              type: 'smoothstep',
+              label: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 'No', // Show "No" label if branch is empty
+              labelStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#fef2f2', fillOpacity: 0.9 },
+              labelBgPadding: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : [4, 4] as [number, number],
+              labelBgBorderRadius: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 4,
+              style: { stroke: '#ef4444', strokeWidth: 2, strokeDasharray: step.if_false_steps && step.if_false_steps.length > 0 ? '5,5' : undefined },
+              animated: false
+            })
+          } else if (step.if_false_next_step_id === 'end') {
+            // Connect to end node
+            nextStepEdges.push({
+              id: `${falseBranchExitNodeId}-to-end-false-next`,
+              source: falseBranchExitNodeId,
+              target: 'end',
+              type: 'smoothstep',
+              label: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 'No', // Show "No" label if branch is empty
+              labelStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : { fill: '#fef2f2', fillOpacity: 0.9 },
+              labelBgPadding: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : [4, 4] as [number, number],
+              labelBgBorderRadius: step.if_false_steps && step.if_false_steps.length > 0 ? undefined : 4,
+              style: { stroke: '#ef4444', strokeWidth: 2, strokeDasharray: step.if_false_steps && step.if_false_steps.length > 0 ? '5,5' : undefined },
+              animated: false
+            })
+          }
+        }
+        // If no explicit next_step_id and branch is empty, we'll use default sequential flow (handled below)
+      }
+      
+      // Add next_step_id edges if any were created
+      edges.push(...nextStepEdges)
+      
+      // Set lastExitNodeId to array of branch exit nodes (or single node if only one branch)
+      // Only use this for sequential flow if next_step_id is not provided
+      // If next_step_id is provided, we've already created explicit edges above
+      if (step.if_true_next_step_id || step.if_false_next_step_id) {
+        // Explicit next_step_id provided - don't set lastExitNodeId (edges already created)
+        lastExitNodeId = null
+      } else {
+        // No explicit next_step_id - use default sequential flow
+        if (branchExitNodes.length === 1) {
+          lastExitNodeId = branchExitNodes[0]
+        } else if (branchExitNodes.length > 1) {
+          lastExitNodeId = branchExitNodes
+        } else {
+          // No branches at all - conditional node itself is the exit
+          lastExitNodeId = node.id
         }
       }
     }
@@ -810,6 +1131,28 @@ export function usePlanToFlow(
       return { nodes: [], edges: [] }
     }
 
+    // Create step ID to node ID map for next_step_id lookups
+    // First pass: create all nodes to build the map
+    const stepIdToNodeIdMap = new Map<string, string>()
+    const buildStepIdMap = (steps: PlanStep[], parentId?: string, branchType?: 'true' | 'false') => {
+      steps.forEach((step, index) => {
+        const nodeId = parentId 
+          ? `${parentId}-${branchType}-${index}`
+          : step.id || `step-${index}`
+        if (step.id) {
+          stepIdToNodeIdMap.set(step.id, nodeId)
+        }
+        // Recursively process branch steps
+        if (step.if_true_steps) {
+          buildStepIdMap(step.if_true_steps, nodeId, 'true')
+        }
+        if (step.if_false_steps) {
+          buildStepIdMap(step.if_false_steps, nodeId, 'false')
+        }
+      })
+    }
+    buildStepIdMap(plan.steps)
+
     // Process all steps to create nodes and sequential edges (with change highlighting)
     const { nodes: processedNodes, edges: sequentialEdges } = processSteps(
       plan.steps, 
@@ -824,7 +1167,8 @@ export function usePlanToFlow(
       completedStepIndices,
       stepStatusMap,
       options.workspacePath,
-      options.selectedRunFolder
+      options.selectedRunFolder,
+      stepIdToNodeIdMap
     )
 
     // Add start node
@@ -920,12 +1264,119 @@ export function usePlanToFlow(
       const hasCondition = isStepType && lastNode.data.step.has_condition
       
       if (!hasCondition) {
+        // Regular step - connect to end
         edges.push({
           id: 'last-to-end',
           source: lastNode.id,
           target: 'end',
           type: 'smoothstep',
           style: { stroke: '#6b7280', strokeWidth: 2 }
+        })
+      } else {
+        // Conditional step - check if branch exit nodes need to connect to end
+        const conditionalStep = lastNode.data.step as PlanStep
+        const stepId = conditionalStep.id || lastNode.id
+        
+        // Check which edges already exist to "end" (from explicit next_step_id)
+        const existingEndEdges = edges.filter(e => e.target === 'end' && (
+          e.id.includes(stepId) || 
+          e.id.includes(lastNode.id) ||
+          e.source === lastNode.id
+        ))
+        
+        // Find branch exit nodes that need connection to end
+        // These are nodes that don't already have an edge to "end" or to another step
+        const branchExitNodes: string[] = []
+        
+        // Check true branch
+        if (conditionalStep.if_true_steps && conditionalStep.if_true_steps.length > 0) {
+          // Branch has steps - find the last node in the branch
+          const trueBranchNodes = processedNodes.filter(n => 
+            n.id.startsWith(`${lastNode.id}-true-`) && 
+            !n.id.includes('-false-')
+          )
+          if (trueBranchNodes.length > 0) {
+            const lastTrueNode = trueBranchNodes[trueBranchNodes.length - 1]
+            // Check if this node already has an edge to end or to another step
+            const hasConnection = edges.some(e => 
+              e.source === lastTrueNode.id && (e.target === 'end' || !e.target.includes('-true-') && !e.target.includes('-false-'))
+            )
+            if (!hasConnection && !conditionalStep.if_true_next_step_id) {
+              branchExitNodes.push(lastTrueNode.id)
+            }
+          }
+        } else {
+          // Empty true branch - conditional node itself is the exit
+          const hasConnection = existingEndEdges.some(e => 
+            e.id.includes('true') || (e.source === lastNode.id && e.id.includes('true'))
+          )
+          if (!hasConnection && !conditionalStep.if_true_next_step_id) {
+            branchExitNodes.push(lastNode.id)
+          }
+        }
+        
+        // Check false branch
+        if (conditionalStep.if_false_steps && conditionalStep.if_false_steps.length > 0) {
+          // Branch has steps - find the last node in the branch
+          const falseBranchNodes = processedNodes.filter(n => 
+            n.id.startsWith(`${lastNode.id}-false-`) && 
+            !n.id.includes('-true-')
+          )
+          if (falseBranchNodes.length > 0) {
+            const lastFalseNode = falseBranchNodes[falseBranchNodes.length - 1]
+            // Check if this node already has an edge to end or to another step
+            const hasConnection = edges.some(e => 
+              e.source === lastFalseNode.id && (e.target === 'end' || !e.target.includes('-true-') && !e.target.includes('-false-'))
+            )
+            if (!hasConnection && !conditionalStep.if_false_next_step_id) {
+              branchExitNodes.push(lastFalseNode.id)
+            }
+          }
+        } else {
+          // Empty false branch - conditional node itself is the exit (if not already added)
+          if (!branchExitNodes.includes(lastNode.id)) {
+            const hasConnection = existingEndEdges.some(e => 
+              e.id.includes('false') || (e.source === lastNode.id && e.id.includes('false'))
+            )
+            if (!hasConnection && !conditionalStep.if_false_next_step_id) {
+              branchExitNodes.push(lastNode.id)
+            }
+          }
+        }
+        
+        // Connect branch exit nodes to end
+        branchExitNodes.forEach((exitNodeId, index) => {
+          // Determine label based on which branch this is
+          const isTrueBranch = conditionalStep.if_true_steps && conditionalStep.if_true_steps.length === 0 && exitNodeId === lastNode.id
+            ? true
+            : exitNodeId.includes('-true-') || (exitNodeId === lastNode.id && conditionalStep.if_true_steps && conditionalStep.if_true_steps.length === 0)
+          const isFalseBranch = !isTrueBranch && (
+            exitNodeId.includes('-false-') || 
+            (exitNodeId === lastNode.id && conditionalStep.if_false_steps && conditionalStep.if_false_steps.length === 0)
+          )
+          
+          edges.push({
+            id: `${exitNodeId}-to-end-conditional-${index}`,
+            source: exitNodeId,
+            target: 'end',
+            type: 'smoothstep',
+            label: isTrueBranch ? 'Yes' : isFalseBranch ? 'No' : undefined,
+            labelStyle: isTrueBranch || isFalseBranch ? {
+              fill: isTrueBranch ? '#22c55e' : '#ef4444',
+              fontWeight: 600,
+              fontSize: 11
+            } : undefined,
+            labelBgStyle: isTrueBranch || isFalseBranch ? {
+              fill: isTrueBranch ? '#f0fdf4' : '#fef2f2',
+              fillOpacity: 0.9
+            } : undefined,
+            labelBgPadding: isTrueBranch || isFalseBranch ? [4, 4] as [number, number] : undefined,
+            labelBgBorderRadius: isTrueBranch || isFalseBranch ? 4 : undefined,
+            style: { 
+              stroke: isTrueBranch ? '#22c55e' : isFalseBranch ? '#ef4444' : '#6b7280', 
+              strokeWidth: 2 
+            }
+          })
         })
       }
     }

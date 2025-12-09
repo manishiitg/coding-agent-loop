@@ -1,7 +1,7 @@
 package server
 
 import (
-	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent-builder-go/agent_go/internal/utils"
 	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/sirupsen/logrus"

@@ -17,6 +17,8 @@ const TEMP_OVERRIDE_LLM_KEY = 'workflow_temp_override_llm'
 const TEMP_OVERRIDE_LLM2_KEY = 'workflow_temp_override_llm2'
 const TEMP_OVERRIDE_LLM_ENABLED_KEY = 'workflow_temp_override_llm_enabled'
 const FALLBACK_TO_ORIGINAL_LLM_KEY = 'workflow_fallback_to_original_llm_on_failure'
+const SKIP_LEARNING_WHEN_TEMP_LLM1_KEY = 'workflow_skip_learning_when_temp_llm1'
+const SKIP_LEARNING_WHEN_TEMP_LLM2_KEY = 'workflow_skip_learning_when_temp_llm2'
 
 export interface RunFolder {
   name: string
@@ -45,6 +47,11 @@ interface WorkflowStore {
       // Execution options
       selectedExecutionMode: ExecutionModeType
       selectedStartPoint: number // 0 = beginning, >0 = step number (1-based)
+      selectedBranchStep: {  // For resuming from branch steps
+        parentStepIndex: number;  // 0-based index of conditional step
+        branchType: 'if_true' | 'if_false';  // Which branch
+        branchStepIndex: number;  // 0-based index within the branch
+      } | null
   
       // Temporary LLM overrides (persists across page refreshes via localStorage)
       // Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
@@ -52,6 +59,8 @@ interface WorkflowStore {
       tempOverrideLLM2: AgentLLMConfig | null  // Second override LLM (used on second attempt if tempLLM1 fails)
       tempOverrideLLMEnabled: boolean  // Whether temp LLM overrides are enabled (configs are preserved when disabled)
       fallbackToOriginalLLMOnFailure: boolean  // If true, use original LLM instead of temp override when validation fails
+      skipLearningWhenTempLLM1: boolean  // If true, skip learning phases when tempLLM1 is used
+      skipLearningWhenTempLLM2: boolean  // If true, skip learning phases when tempLLM2 is used
 
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
@@ -82,6 +91,7 @@ interface WorkflowStore {
   // Execution options
   setExecutionMode: (mode: ExecutionModeType) => void
   setStartPoint: (step: number) => void
+  setBranchStep: (branchStep: { parentStepIndex: number; branchType: 'if_true' | 'if_false'; branchStepIndex: number } | null) => void
   buildExecutionOptions: () => ExecutionOptions
   
   // Temporary LLM overrides
@@ -91,6 +101,8 @@ interface WorkflowStore {
   clearTempOverrideLLM2: () => void
   setTempOverrideLLMEnabled: (enabled: boolean) => void
   setFallbackToOriginalLLMOnFailure: (enabled: boolean) => void
+  setSkipLearningWhenTempLLM1: (enabled: boolean) => void
+  setSkipLearningWhenTempLLM2: (enabled: boolean) => void
 
   // Variables manifest
   setVariablesManifest: (manifest: VariablesManifest | null) => void
@@ -197,6 +209,36 @@ export const useWorkflowStore = create<WorkflowStore>()(
           }
         } catch (error) {
           console.error('[WorkflowStore] Failed to load fallback to original LLM on failure from localStorage:', error)
+        }
+        return false  // Default to false
+      })(),
+      // Skip learning when tempLLM1 is active (persists across page refreshes via localStorage)
+      // Load from localStorage on initialization
+      skipLearningWhenTempLLM1: (() => {
+        try {
+          const saved = localStorage.getItem(SKIP_LEARNING_WHEN_TEMP_LLM1_KEY)
+          if (saved !== null) {
+            const parsed = JSON.parse(saved) as boolean
+            console.log(`[WorkflowStore] Loaded skip learning when tempLLM1 from localStorage: ${parsed}`)
+            return parsed
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load skip learning when tempLLM1 from localStorage:', error)
+        }
+        return false  // Default to false
+      })(),
+      // Skip learning when tempLLM2 is active (persists across page refreshes via localStorage)
+      // Load from localStorage on initialization
+      skipLearningWhenTempLLM2: (() => {
+        try {
+          const saved = localStorage.getItem(SKIP_LEARNING_WHEN_TEMP_LLM2_KEY)
+          if (saved !== null) {
+            const parsed = JSON.parse(saved) as boolean
+            console.log(`[WorkflowStore] Loaded skip learning when tempLLM2 from localStorage: ${parsed}`)
+            return parsed
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load skip learning when tempLLM2 from localStorage:', error)
         }
         return false  // Default to false
       })(),
@@ -421,27 +463,31 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       setStartPoint: (step: number) => {
-        set({ selectedStartPoint: step })
+        set({ selectedStartPoint: step, selectedBranchStep: null }) // Clear branch step when setting regular step
+      },
+      setBranchStep: (branchStep: { parentStepIndex: number; branchType: 'if_true' | 'if_false'; branchStepIndex: number } | null) => {
+        set({ selectedBranchStep: branchStep, selectedStartPoint: 0 }) // Clear regular step when setting branch step
       },
 
       // Build execution options from current state
       buildExecutionOptions: () => {
         const state = get()
         const isResuming = state.selectedStartPoint > 0
+        const isResumingBranch = state.selectedBranchStep !== null
 
         // Convert UI selections to backend ExecutionStrategy
         let executionStrategy: string
         if (state.selectedExecutionMode === 'fast_execution') {
-          executionStrategy = isResuming
+          executionStrategy = (isResuming || isResumingBranch)
             ? ExecutionStrategy.FAST_RESUME_FROM_STEP
             : ExecutionStrategy.FAST_EXECUTE_ALL
         } else if (state.selectedExecutionMode === 'with_learning') {
-          executionStrategy = isResuming
+          executionStrategy = (isResuming || isResumingBranch)
             ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN
             : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
         } else {
           // Human approval (default)
-          executionStrategy = isResuming
+          executionStrategy = (isResuming || isResumingBranch)
             ? ExecutionStrategy.RESUME_FROM_STEP
             : ExecutionStrategy.START_FROM_BEGINNING
         }
@@ -452,21 +498,33 @@ export const useWorkflowStore = create<WorkflowStore>()(
           execution_strategy: executionStrategy,
         }
 
-        // Only include resume_from_step if we're actually resuming
-        // Double-check: if strategy is start_from_beginning, don't include resume_from_step
-        if (isResuming && 
+        // Include resume_from_step for regular step resuming
+        if (isResuming && !isResumingBranch &&
             (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
              executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
              executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP ||
              executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP)) {
           options.resume_from_step = state.selectedStartPoint
-        } else if (state.selectedStartPoint > 0) {
+        } else if (state.selectedStartPoint > 0 && !isResumingBranch) {
           // Log warning if selectedStartPoint > 0 but strategy is not a resume strategy
           console.warn('[WorkflowStore] selectedStartPoint is', state.selectedStartPoint, 
             'but strategy is', executionStrategy, '- not including resume_from_step')
         }
+
+        // Include resume_from_branch_step for branch step resuming
+        if (isResumingBranch && state.selectedBranchStep &&
+            (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
+             executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
+             executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP)) {
+          options.resume_from_branch_step = {
+            parent_step_index: state.selectedBranchStep.parentStepIndex,
+            branch_type: state.selectedBranchStep.branchType,
+            branch_step_index: state.selectedBranchStep.branchStepIndex
+          }
+        }
         
         // Include temporary LLM overrides if enabled and set (cascading fallback: tempLLM1 → tempLLM2 → step LLM)
+        // When disabled, explicitly set to null to ensure backend clears them
         if (state.tempOverrideLLMEnabled) {
           if (state.tempOverrideLLM) {
             options.temp_override_llm = state.tempOverrideLLM
@@ -474,6 +532,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
           if (state.tempOverrideLLM2) {
             options.temp_override_llm2 = state.tempOverrideLLM2
           }
+        } else {
+          // Explicitly set to undefined when disabled to ensure backend clears any existing overrides
+          options.temp_override_llm = undefined
+          options.temp_override_llm2 = undefined
         }
         
         // Include fallback to original LLM on failure if enabled
@@ -482,6 +544,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.log('[WorkflowStore] Including fallback_to_original_llm_on_failure=true in execution options')
         } else {
           console.log('[WorkflowStore] fallbackToOriginalLLMOnFailure is false, not including in execution options')
+        }
+
+        // Include skip learning when tempLLM flags if set
+        if (state.skipLearningWhenTempLLM1) {
+          options.skip_learning_when_temp_llm1 = true
+          console.log('[WorkflowStore] Including skip_learning_when_temp_llm1=true in execution options')
+        }
+        if (state.skipLearningWhenTempLLM2) {
+          options.skip_learning_when_temp_llm2 = true
+          console.log('[WorkflowStore] Including skip_learning_when_temp_llm2=true in execution options')
         }
 
         // Check if selectedRunFolder contains a specific group path
@@ -608,6 +680,28 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.error('[WorkflowStore] Failed to save fallback to original LLM on failure to localStorage:', error)
         }
       },
+      
+      setSkipLearningWhenTempLLM1: (enabled: boolean) => {
+        set({ skipLearningWhenTempLLM1: enabled })
+        try {
+          // Save to localStorage
+          localStorage.setItem(SKIP_LEARNING_WHEN_TEMP_LLM1_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Skip learning when tempLLM1 set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save skip learning when tempLLM1 to localStorage:', error)
+        }
+      },
+      
+      setSkipLearningWhenTempLLM2: (enabled: boolean) => {
+        set({ skipLearningWhenTempLLM2: enabled })
+        try {
+          // Save to localStorage
+          localStorage.setItem(SKIP_LEARNING_WHEN_TEMP_LLM2_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Skip learning when tempLLM2 set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save skip learning when tempLLM2 to localStorage:', error)
+        }
+      },
 
       setVariablesManifest: (manifest: VariablesManifest | null) => {
         set({ variablesManifest: manifest })
@@ -679,6 +773,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           stepProgress: null,
           selectedExecutionMode: 'human_approval',
           selectedStartPoint: 0,
+          selectedBranchStep: null,
           variablesManifest: null,
           currentRunningGroupId: null,
           activePhase: null,

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"mcp-agent/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/internal/events"
 
 	"github.com/gorilla/mux"
 )

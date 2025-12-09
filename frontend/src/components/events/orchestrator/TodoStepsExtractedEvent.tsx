@@ -4,7 +4,7 @@ import { agentApi } from "../../../services/api";
 import { usePresetApplication } from "../../../stores/useGlobalPresetStore";
 import { useModeStore } from "../../../stores/useModeStore";
 import type { TodoStepsExtractedEvent } from "../../../generated/events-bridge";
-import type { TodoStepWithConfigs, AgentConfigs, StepConfig, StepConfigFile, PlanningResponse } from "../../../utils/stepConfigMatching";
+import type { TodoStepWithConfigs, AgentConfigs, StepConfig, PlanningResponse } from "../../../utils/stepConfigMatching";
 import type { PresetLLMConfig } from "../../../services/api-types";
 import ConfirmationDialog from "../../ui/ConfirmationDialog";
 import { Edit2, Trash2, Save, X, ChevronDown, ChevronRight, GitBranch, RefreshCw, CheckCircle2 } from "lucide-react";
@@ -131,12 +131,16 @@ export const TodoStepsExtractedEventDisplay: React.FC<
           return;
         }
 
-        const stepConfigFile: StepConfigFile = JSON.parse(response.data.content);
+        // Parse step_config.json in object format: { "steps": [...] }
+        const rawContent = JSON.parse(response.data.content);
+        const stepConfigs: StepConfig[] = Array.isArray(rawContent) 
+          ? rawContent  // Legacy array format support
+          : (rawContent?.steps || []);  // Object format with "steps" field
         
         // Create map for ID-based matching
         const idConfigMap = new Map<string, AgentConfigs>();      // ID -> config
         
-        for (const stepConfig of stepConfigFile.steps) {
+        for (const stepConfig of stepConfigs) {
           if (stepConfig.agent_configs && stepConfig.id) {
             idConfigMap.set(stepConfig.id, stepConfig.agent_configs);
           }
@@ -144,9 +148,9 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         
         // Debug: Log all IDs in the map (for debugging matching issues)
         console.log('[TodoStepsExtractedEvent] All IDs loaded from step_config.json:', {
-          totalConfigs: stepConfigFile.steps.length,
+          totalConfigs: stepConfigs.length,
           idsWithConfigs: Array.from(idConfigMap.keys()),
-          idDetails: stepConfigFile.steps
+          idDetails: stepConfigs
             .filter(s => s.id && s.agent_configs)
             .map(s => ({
               id: s.id,
@@ -478,14 +482,14 @@ export const TodoStepsExtractedEventDisplay: React.FC<
       const stepConfigFilePath = getStepConfigFilePath();
       
       // Read current step_config.json (or create empty if doesn't exist)
-      let stepConfigFile: StepConfigFile = { steps: [] };
+      let stepConfigs: StepConfig[] = [];
       try {
         const response = await agentApi.getPlannerFileContent(stepConfigFilePath);
         if (response.success && response.data) {
-          stepConfigFile = JSON.parse(response.data.content);
+          stepConfigs = JSON.parse(response.data.content);
         }
       } catch {
-        // File doesn't exist yet - use empty structure
+        // File doesn't exist yet - use empty array
         console.log("step_config.json doesn't exist yet, creating new file");
       }
 
@@ -512,7 +516,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
       const stepId = updatedStep.id;
       
       // Match existing config by ID only
-      const existingConfigIndex = stepConfigFile.steps.findIndex(
+      const existingConfigIndex = stepConfigs.findIndex(
         (step) => step.id === stepId
       );
       
@@ -540,10 +544,10 @@ export const TodoStepsExtractedEventDisplay: React.FC<
 
       if (existingConfigIndex >= 0) {
         // Update existing step config
-        stepConfigFile.steps[existingConfigIndex] = stepConfig;
+        stepConfigs[existingConfigIndex] = stepConfig;
       } else {
         // Add new step config
-        stepConfigFile.steps.push(stepConfig);
+        stepConfigs.push(stepConfig);
       }
 
       // Cleanup: Remove orphaned step configs (IDs that no longer exist in plan.json)
@@ -551,8 +555,8 @@ export const TodoStepsExtractedEventDisplay: React.FC<
       const validStepIds = collectAllStepIds(steps);
       
       // Filter out configs with IDs that don't exist in the current plan
-      const beforeCleanupCount = stepConfigFile.steps.length;
-      stepConfigFile.steps = stepConfigFile.steps.filter((config) => {
+      const beforeCleanupCount = stepConfigs.length;
+      stepConfigs = stepConfigs.filter((config) => {
         if (!config.id) {
           // Remove configs without IDs (shouldn't happen, but be safe)
           return false;
@@ -564,13 +568,13 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         return isValid;
       });
       
-      const removedCount = beforeCleanupCount - stepConfigFile.steps.length;
+      const removedCount = beforeCleanupCount - stepConfigs.length;
       if (removedCount > 0) {
         console.log(`[TodoStepsExtractedEvent] Cleaned up ${removedCount} orphaned step config(s) from step_config.json`);
       }
 
-      // Write back to step_config.json
-      const updatedContent = JSON.stringify(stepConfigFile, null, 2);
+      // Write back to step_config.json in object format: { "steps": [...] }
+      const updatedContent = JSON.stringify({ steps: stepConfigs }, null, 2);
       
       // Debug logging to verify what's being saved
       const stepType = stepPath ? 'branch step' : 'top-level step';

@@ -6,9 +6,9 @@ import (
 	"log"
 	"net/http"
 
-	slackservice "mcp-agent/agent_go/cmd/server/services"
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
-	"mcp-agent/agent_go/pkg/database"
+	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/database"
 
 	"github.com/gorilla/mux"
 )

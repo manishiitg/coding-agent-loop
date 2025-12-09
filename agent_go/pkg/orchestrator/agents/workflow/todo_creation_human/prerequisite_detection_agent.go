@@ -9,7 +9,7 @@ import (
 	"time"
 
 	loggerv2 "mcpagent/logger/v2"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/observability"
 

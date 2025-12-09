@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
@@ -53,9 +53,7 @@ type LearningConsolidationManager struct {
 	sessionID  string
 	workflowID string
 
-	// Preset LLM config for learning consolidation agent
-	presetLearningConsolidationLLM *AgentLLMConfig
-	// Learning LLM config (fallback for learning consolidation if presetLearningConsolidationLLM not set)
+	// Learning LLM config (primary LLM for learning consolidation agent)
 	presetLearningLLM *AgentLLMConfig
 }
 
@@ -64,15 +62,13 @@ func NewLearningConsolidationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetLearningConsolidationLLM *AgentLLMConfig,
 	presetLearningLLM *AgentLLMConfig,
 ) *LearningConsolidationManager {
 	return &LearningConsolidationManager{
-		BaseOrchestrator:               baseOrchestrator,
-		sessionID:                      sessionID,
-		workflowID:                     workflowID,
-		presetLearningConsolidationLLM: presetLearningConsolidationLLM,
-		presetLearningLLM:              presetLearningLLM,
+		BaseOrchestrator:  baseOrchestrator,
+		sessionID:         sessionID,
+		workflowID:        workflowID,
+		presetLearningLLM: presetLearningLLM,
 	}
 }
 
@@ -95,21 +91,11 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	lcm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	lcm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to learnings/ folder only)", readPaths, writePaths))
 
-	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
+	// Use preset learning LLM if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := lcm.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
-	if lcm.presetLearningConsolidationLLM != nil && lcm.presetLearningConsolidationLLM.Provider != "" && lcm.presetLearningConsolidationLLM.ModelID != "" {
-		// Use preset LLM config
-		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              lcm.presetLearningConsolidationLLM.Provider,
-			ModelID:               lcm.presetLearningConsolidationLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
-		}
-		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning consolidation LLM: %s/%s", lcm.presetLearningConsolidationLLM.Provider, lcm.presetLearningConsolidationLLM.ModelID))
-	} else if lcm.presetLearningLLM != nil && lcm.presetLearningLLM.Provider != "" && lcm.presetLearningLLM.ModelID != "" {
-		// Fallback to learning LLM if learning consolidation LLM not set
+	if lcm.presetLearningLLM != nil && lcm.presetLearningLLM.Provider != "" && lcm.presetLearningLLM.ModelID != "" {
+		// Use preset learning LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Provider:              lcm.presetLearningLLM.Provider,
 			ModelID:               lcm.presetLearningLLM.ModelID,
@@ -117,7 +103,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for learning consolidation: %s/%s", lcm.presetLearningLLM.Provider, lcm.presetLearningLLM.ModelID))
+		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for learning consolidation: %s/%s", lcm.presetLearningLLM.Provider, lcm.presetLearningLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
@@ -384,9 +370,11 @@ Your main goal is to analyze all learning files, identify consolidation opportun
 1. **Discover All Learning Files**: **STEP-SPECIFIC LEARNINGS MODE**: Learning files are stored in step-specific folders within runs/ directory.
    - First, scan the runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
    - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
-     * Look for learnings/step-{X}/ folders (each step has its own folder, at workspace root)
+     * Regular steps: learnings/step-{X}/ folders (each step has its own folder, at workspace root)
+     * Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders (e.g., step-3-true-0/, step-3-false-1/)
    - **CRITICAL**: Consolidate within EACH step folder separately - do NOT merge patterns across different step folders
-   - **CRITICAL**: Each step folder (step-1/, step-2/, etc.) should be consolidated independently
+   - **CRITICAL**: Each step folder (step-1/, step-2/, step-3-true-0/, step-3-false-1/, etc.) should be consolidated independently
+   - **CRITICAL**: Branch step folders are separate from parent step folders - do NOT merge step-3/ with step-3-true-0/
    - For each step folder found:
      * List files in the step folder (look for *_learning.md files)
      * If consolidating 'learnings/': Also check step folder's scripts/ subfolder (look for *_script.py files)
@@ -400,8 +388,9 @@ Your main goal is to analyze all learning files, identify consolidation opportun
    - Identify tool names, arguments, code patterns, and approaches
 
 3. **Identify Consolidation Opportunities**:
-   - **CRITICAL STEP-SPECIFIC RULE**: Consolidate patterns ONLY within the SAME step folder (e.g., step-1/, step-2/, etc.)
+   - **CRITICAL STEP-SPECIFIC RULE**: Consolidate patterns ONLY within the SAME step folder (e.g., step-1/, step-2/, step-3-true-0/, etc.)
    - **NEVER merge across step folders**: Do NOT merge patterns from step-1/ with patterns from step-2/
+   - **NEVER merge branch with parent**: Do NOT merge patterns from step-3/ with patterns from step-3-true-0/ or step-3-false-1/
    - **NEVER merge across runs**: Do NOT merge patterns from different run folders
    - **Duplicate Patterns**: Same tool calls/approaches appearing in multiple learning files WITHIN THE SAME STEP FOLDER
      - Example: Same tool call pattern in multiple files within learnings/step-1/
@@ -576,13 +565,15 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidation
 1. **Discover all learning files**: **STEP-SPECIFIC LEARNINGS MODE**
    - First, scan runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
    - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
-     * Look for learnings/step-{X}/ folders (at workspace root)
-   - **CRITICAL**: Consolidate within EACH step folder separately (step-1/, step-2/, etc.)
+     * Regular steps: learnings/step-{X}/ folders (at workspace root, e.g., step-1/, step-2/)
+     * Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders (at workspace root, e.g., step-3-true-0/, step-3-false-1/)
+   - **CRITICAL**: Consolidate within EACH step folder separately (step-1/, step-2/, step-3-true-0/, etc.)
+   - **CRITICAL**: Branch step folders are separate from parent step folders - do NOT merge step-3/ with step-3-true-0/
    - For each step folder found:
      * List files in the step folder (look for *_learning.md files)
      * Check step folder's scripts/ subfolder (look for *_script.py files)
      * Check step folder's code/ subfolder (look for *_code.go files)
-   - **NOTE**: Each step folder should be analyzed and consolidated independently
+   - **NOTE**: Each step folder should be analyzed and consolidated independently (including branch step folders)
 
 2. **Read and analyze learning files**: For each learning file:
    - Read the complete content using 'read_workspace_file'

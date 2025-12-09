@@ -71,6 +71,90 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) saveStepProgress(ctx context
 	return nil
 }
 
+// emitStepStartedEvent emits a step started event
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepStartedEvent(ctx context.Context, step TodoStep, stepIndex int, stepPath string, isBranchStep bool) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		return
+	}
+
+	stepTitle := step.Title
+	if stepTitle == "" {
+		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
+	}
+	stepId := step.ID
+	if stepId == "" {
+		stepId = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+
+	startedEvent := &events.StepStartedEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+			Component: "orchestrator",
+		},
+		StepID:        stepId,
+		StepIndex:     stepIndex,
+		StepTitle:     stepTitle,
+		StepPath:      stepPath,
+		IsBranchStep:  isBranchStep,
+		RunFolder:     hcpo.selectedRunFolder,
+		WorkspacePath: hcpo.GetWorkspacePath(),
+	}
+
+	agentEvent := &events.AgentEvent{
+		Type:      events.StepExecutionStart,
+		Timestamp: time.Now(),
+		Data:      startedEvent,
+	}
+
+	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step started event: %v", err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_started event for step %d: %s", stepIndex+1, stepTitle))
+	}
+}
+
+// emitStepFinishedEvent emits a step finished event
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepFinishedEvent(ctx context.Context, step TodoStep, stepIndex int, stepPath string, isBranchStep bool) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		return
+	}
+
+	stepTitle := step.Title
+	if stepTitle == "" {
+		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
+	}
+	stepId := step.ID
+	if stepId == "" {
+		stepId = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+
+	finishedEvent := &events.StepFinishedEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+			Component: "orchestrator",
+		},
+		StepID:       stepId,
+		StepIndex:    stepIndex,
+		StepTitle:    stepTitle,
+		StepPath:     stepPath,
+		IsBranchStep: isBranchStep,
+	}
+
+	agentEvent := &events.AgentEvent{
+		Type:      events.StepExecutionEnd,
+		Timestamp: time.Now(),
+		Data:      finishedEvent,
+	}
+
+	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step finished event: %v", err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_finished event for step %d: %s", stepIndex+1, stepTitle))
+	}
+}
+
 // emitStepProgressUpdatedEvent emits an event when step progress is updated
 func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent(ctx context.Context, progress *StepProgress) {
 	bridge := hcpo.GetContextAwareBridge()
@@ -208,6 +292,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) initializeFreshProgress(ctx 
 // stepNumber is 1-based (e.g., step 1, step 2, etc.)
 // This is used when resuming from a step or running a single step to ensure clean re-execution
 // by removing any existing execution artifacts from previous runs
+// Also deletes all branch step folders for this step (e.g., step-3-if-true-0, step-3-if-false-1, etc.)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ctx context.Context, stepNumber int) error {
 	// Validate that run folder is set (required for building correct path)
 	if hcpo.selectedRunFolder == "" {
@@ -228,7 +313,48 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	// CleanupDirectory handles the recursive deletion and depth-first directory removal
 	if err := hcpo.CleanupDirectory(ctx, stepFolderPath, fmt.Sprintf("execution/step-%d", stepNumber)); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %w", stepNumber, err))
-		return err
+		// Continue to try deleting branch step folders even if main folder deletion failed
+	}
+
+	// Also delete all branch step folders for this step (e.g., step-3-if-true-0, step-3-if-false-1, etc.)
+	// This ensures that when resuming from a step before a conditional step, all branch executions are cleaned up
+	branchStepPrefix := fmt.Sprintf("step-%d-if-", stepNumber)
+	branchFoldersDeleted := 0
+	branchFoldersFound := []string{}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Searching for branch step folders with prefix '%s' in execution directory", branchStepPrefix))
+
+	// List all files/folders in the execution directory
+	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionWorkspacePath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list execution directory to find branch step folders: %w", err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Found %d items in execution directory", len(files)))
+
+		// Find and delete all branch step folders that match the pattern
+		for _, file := range files {
+			// Check if this is a branch step folder for the current step
+			// Pattern: step-{N}-if-true-{idx} or step-{N}-if-false-{idx}
+			if strings.HasPrefix(file, branchStepPrefix) {
+				branchFoldersFound = append(branchFoldersFound, file)
+				branchFolderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, file)
+				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting branch step folder: %s", file))
+				if err := hcpo.CleanupDirectory(ctx, branchFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete branch step folder %s: %w", file, err))
+				} else {
+					branchFoldersDeleted++
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted branch step folder: %s", file))
+				}
+			}
+		}
+
+		if len(branchFoldersFound) == 0 {
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No branch step folders found for step %d (prefix: %s)", stepNumber, branchStepPrefix))
+		}
+	}
+
+	if branchFoldersDeleted > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted %d/%d branch step folder(s) for step %d: %v", branchFoldersDeleted, len(branchFoldersFound), stepNumber, branchFoldersFound))
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted execution folder for step %d", stepNumber))

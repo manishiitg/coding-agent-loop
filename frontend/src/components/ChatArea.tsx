@@ -80,7 +80,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   
   const { 
     toolList: allTools,
-    selectedServers
+    selectedServers,
+    getAvailableServers
   } = useMCPStore()
   
   // Determine which servers to use based on mode category
@@ -90,8 +91,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
     // For chat mode, use manually selected servers
+    // If no servers are selected (empty array), default to all available servers (matches backend behavior)
+    // This ensures tools are available when user hasn't explicitly selected servers
+    if (selectedServers.length === 0) {
+      const availableServers = getAvailableServers()
+      return availableServers.length > 0 ? availableServers : []
+    }
+    // Return selected servers (including "NO_SERVERS" if explicitly selected)
     return selectedServers
-  }, [selectedModeCategory, currentPresetServers, selectedServers])
+  }, [selectedModeCategory, currentPresetServers, selectedServers, getAvailableServers])
   
   // Filter tools to only include those from effective servers
   // If "NO_SERVERS" is selected, return empty tools (pure LLM mode)

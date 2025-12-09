@@ -250,6 +250,45 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) workspaceFileExists(ctx cont
 	return false, nil
 }
 
+// isStepLearningsFolderEmpty checks if the step's learnings folder exists and has any files
+// Returns: (isEmpty bool, error)
+// - isEmpty: true if folder doesn't exist or is empty, false if it has files
+// - error: any error encountered during checking
+// stepNumber is 1-based (e.g., step 1 = learnings/step-1/)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) isStepLearningsFolderEmpty(ctx context.Context, stepNumber int) (bool, error) {
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	stepLearningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
+
+	// Check if folder exists
+	learningsFolderExists, err := hcpo.workspaceFileExists(ctx, stepLearningsPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step learnings folder exists for step %d: %v", stepNumber, err))
+		// On error, assume empty (conservative approach - will use tempLLM)
+		return true, err
+	}
+
+	if !learningsFolderExists {
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder does not exist: %s (will use tempLLM if available)", stepNumber, stepLearningsPath))
+		return true, nil
+	}
+
+	// Check if folder has any files
+	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in step learnings folder for step %d: %v", stepNumber, err))
+		// On error, assume empty (conservative approach - will use tempLLM)
+		return true, err
+	}
+
+	if len(files) == 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder is empty: %s (will use tempLLM if available)", stepNumber, stepLearningsPath))
+		return true, nil
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d learnings folder has %d files: %s (will use tempLLM if available)", stepNumber, len(files), stepLearningsPath))
+	return false, nil
+}
+
 // listRunFolders lists existing run folder names
 func (hcpo *HumanControlledTodoPlannerOrchestrator) listRunFolders(ctx context.Context, runsPath string) ([]string, error) {
 	// Use BaseOrchestrator's ListWorkspaceDirectories function

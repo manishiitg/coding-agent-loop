@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,6 +185,24 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		agentOptions = append(agentOptions, mcpagent.WithCrossProviderFallback(crossProviderFallback))
 		logger.Info(fmt.Sprintf("🔄 Cross-provider fallback configured - Provider: %s, Models: %v",
 			crossProviderFallback.Provider, crossProviderFallback.Models))
+	}
+
+	// Add selected servers for tool filtering
+	// Parse ServerName (comma-separated string) into array for WithSelectedServers
+	if config.ServerName != "" && config.ServerName != "all" {
+		// Split comma-separated server names and trim whitespace
+		serverNames := strings.Split(config.ServerName, ",")
+		trimmedServers := make([]string, 0, len(serverNames))
+		for _, name := range serverNames {
+			trimmed := strings.TrimSpace(name)
+			if trimmed != "" {
+				trimmedServers = append(trimmedServers, trimmed)
+			}
+		}
+		if len(trimmedServers) > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSelectedServers(trimmedServers))
+			logger.Info(fmt.Sprintf("🔧 Selected servers configured: %v", trimmedServers))
+		}
 	}
 
 	// Add selected tools if provided

@@ -7,21 +7,22 @@ import (
 	"path/filepath"
 	"strings"
 
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/shared"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
+// learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, error) {
-	// Use step-specific learning detail level, default to "general" if not set
-	learningDetailLevel := "general" // default
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, error) {
+	// Use step-specific learning detail level, default to "exact" if not set
+	learningDetailLevel := "exact" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
 		learningDetailLevel = step.AgentConfigs.LearningDetailLevel
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'general'"))
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -29,20 +30,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping success learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps))
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping success learning analysis for %s/%d (learning disabled)", learningPathIdentifier, totalSteps))
 		return "", nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing success learning for step %d/%d (overriding step config)", stepNumber, totalSteps))
-		// Override learning detail level to "general" if it was "none"
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing success learning for %s/%d (overriding step config)", learningPathIdentifier, totalSteps))
+		// Override learning detail level to "exact" if it was "none"
 		if learningDetailLevel == "none" {
-			learningDetailLevel = "general"
+			learningDetailLevel = "exact"
 		}
 	}
 
 	// Success learning agent ALWAYS runs - it writes learnings (creates folder if needed)
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
-	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting success learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title))
+	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting success learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.Title))
 
 	// Create success learning agent
 	// Resolve variables in step title before using in agent name
@@ -53,8 +54,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	if learningDetailLevel == "exact" {
 		learningMode = "exact"
 	}
-	successLearningAgentName := fmt.Sprintf("step-%d-success-learning-%s-%s", stepNumber, sanitizedTitle, learningMode)
-	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", stepNumber, 1, successLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
+	successLearningAgentName := fmt.Sprintf("%s-success-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
+	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, 1, successLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to create success learning agent: %w", err), nil)
 	}
@@ -82,9 +83,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// Calculate run workspace path - learnings are at the same level as execution/, not inside it
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	// StepExecutionPath should be runWorkspacePath (runs/{runFolder}), not execution path
-	// This allows learnings to be at learnings/step-{X}/ (at workspace root, not inside runs/)
+	// This allows learnings to be at learnings/step-{X}/ or learnings/step-{X}-{branch}/ (at workspace root, not inside runs/)
 	successLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
-	successLearningTemplateVars["StepNumber"] = fmt.Sprintf("%d", stepNumber)
+	successLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
 	successLearningTemplateVars["UseStepSpecificLearnings"] = "true"
 
 	// Add context dependencies as a comma-separated string
@@ -100,13 +101,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	}
 
 	// Check if existing learning file exists and pass its path
-	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumber, step.Title, isCodeExecutionMode)
+	// Extract step number from learning path identifier for getExistingLearningFilePath (which expects numeric step number)
+	// For branch steps, we'll use the parent step number
+	var stepNumberForFileCheck int
+	fmt.Sscanf(learningPathIdentifier, "step-%d", &stepNumberForFileCheck)
+	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumberForFileCheck, step.Title, isCodeExecutionMode)
 	if existingLearningFilePath != "" {
 		successLearningTemplateVars["ExistingLearningFilePath"] = existingLearningFilePath
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Found existing learning file: %s", existingLearningFilePath))
 	} else {
 		successLearningTemplateVars["ExistingLearningFilePath"] = ""
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for step %d", stepNumber))
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for %s", learningPathIdentifier))
 	}
 
 	// Execute success learning agent and capture output
@@ -115,20 +120,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		return "", fmt.Errorf(fmt.Sprintf("success learning analysis failed: %w", err), nil)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for step %d (detail level: %s)", stepNumber, learningDetailLevel))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
 	return successLearningOutput, nil
 }
 
 // runFailureLearningPhase analyzes failed executions to provide refined task descriptions for retry
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, stepNumber, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, string, error) {
-	// Use step-specific learning detail level, default to "general" if not set
-	learningDetailLevel := "general" // default
+// runFailureLearningPhase analyzes failed executions to provide refined task descriptions
+// learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
+// isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, string, error) {
+	// Use step-specific learning detail level, default to "exact" if not set
+	learningDetailLevel := "exact" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
 		learningDetailLevel = step.AgentConfigs.LearningDetailLevel
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'general'"))
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -136,32 +144,32 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping failure learning analysis for step %d/%d (learning disabled)", stepNumber, totalSteps))
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping failure learning analysis for %s/%d (learning disabled)", learningPathIdentifier, totalSteps))
 		return "", "", nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing failure learning for step %d/%d (overriding step config)", stepNumber, totalSteps))
-		// Override learning detail level to "general" if it was "none"
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing failure learning for %s/%d (overriding step config)", learningPathIdentifier, totalSteps))
+		// Override learning detail level to "exact" if it was "none"
 		if learningDetailLevel == "none" {
-			learningDetailLevel = "general"
+			learningDetailLevel = "exact"
 		}
 	}
 
 	// Failure learning agent ALWAYS runs - it writes learnings (creates folder if needed)
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
-	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting failure learning analysis for step %d/%d: %s", stepNumber, totalSteps, step.Title))
+	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting failure learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.Title))
 
 	// Create failure learning agent
 	// Resolve variables in step title before using in agent name
 	resolvedTitle := ResolveVariables(step.Title, hcpo.variableValues)
 	sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
 	// Include learning mode in agent name (exact or general)
-	learningMode := "general"
-	if learningDetailLevel == "exact" {
-		learningMode = "exact"
+	learningMode := "exact"
+	if learningDetailLevel == "general" {
+		learningMode = "general"
 	}
-	failureLearningAgentName := fmt.Sprintf("step-%d-failure-learning-%s-%s", stepNumber, sanitizedTitle, learningMode)
-	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", stepNumber, 1, failureLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
+	failureLearningAgentName := fmt.Sprintf("%s-failure-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
+	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", learningPathIdentifier, 1, failureLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
 		return "", "", fmt.Errorf(fmt.Sprintf("failed to create failure learning agent: %w", err), nil)
 	}
@@ -189,9 +197,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// Calculate run workspace path - learnings are at the same level as execution/, not inside it
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	// StepExecutionPath should be runWorkspacePath (runs/{runFolder}), not execution path
-	// This allows learnings to be at learnings/step-{X}/ (at workspace root, not inside runs/)
+	// This allows learnings to be at learnings/step-{X}/ or learnings/step-{X}-{branch}/ (at workspace root, not inside runs/)
 	failureLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
-	failureLearningTemplateVars["StepNumber"] = fmt.Sprintf("%d", stepNumber)
+	failureLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
 	failureLearningTemplateVars["UseStepSpecificLearnings"] = "true"
 
 	// Add context dependencies as a comma-separated string
@@ -207,13 +215,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	}
 
 	// Check if existing learning file exists and pass its path
-	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumber, step.Title, isCodeExecutionMode)
+	// Extract step number from learning path identifier for getExistingLearningFilePath (which expects numeric step number)
+	// For branch steps, we'll use the parent step number
+	var stepNumberForFileCheck int
+	fmt.Sscanf(learningPathIdentifier, "step-%d", &stepNumberForFileCheck)
+	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumberForFileCheck, step.Title, isCodeExecutionMode)
 	if existingLearningFilePath != "" {
 		failureLearningTemplateVars["ExistingLearningFilePath"] = existingLearningFilePath
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Found existing learning file: %s", existingLearningFilePath))
 	} else {
 		failureLearningTemplateVars["ExistingLearningFilePath"] = ""
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for step %d", stepNumber))
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for %s", learningPathIdentifier))
 	}
 
 	// Execute failure learning agent and capture output
@@ -226,7 +238,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	refinedTaskDescription := hcpo.extractRefinedTaskDescription(failureLearningOutput)
 	learningAnalysis := failureLearningOutput // Use the full output as learning analysis
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for step %d (detail level: %s)", stepNumber, learningDetailLevel))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
 	return refinedTaskDescription, learningAnalysis, nil
 }
 

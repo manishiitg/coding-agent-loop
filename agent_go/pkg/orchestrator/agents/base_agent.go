@@ -3,8 +3,10 @@ package agents
 import (
 	"context"
 	"fmt"
-	loggerv2 "mcpagent/logger/v2"
+	"strings"
 	"time"
+
+	loggerv2 "mcpagent/logger/v2"
 
 	mcpagent "mcpagent/agent"
 	internalLLM "mcpagent/llm"
@@ -39,6 +41,7 @@ const (
 	TodoPlannerPrerequisiteDetectionAgentType AgentType = "todo_planner_prerequisite_detection" // Detects if validation failure is due to missing prerequisites
 	TodoPlannerSuccessLearningAgentType       AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
 	TodoPlannerPlanToolOptimizationAgentType  AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
+	ConditionalAgentType                      AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
 )
 
 // BaseAgentInterface defines the interface for base agent operations
@@ -173,10 +176,16 @@ func NewBaseAgent(
 	// Use logger directly (already loggerv2.Logger)
 	v2Logger := logger
 
-	// Determine server name (use first server or empty string)
+	// Determine server name (join multiple servers with comma, or use first server, or empty string)
+	// NewAgentConnection supports comma-separated server names to connect to multiple servers
 	serverName := ""
 	if len(serverNames) > 0 {
-		serverName = serverNames[0]
+		if len(serverNames) == 1 {
+			serverName = serverNames[0]
+		} else {
+			// Multiple servers: join with comma for NewAgentConnection
+			serverName = strings.Join(serverNames, ",")
+		}
 	}
 
 	// Create agent with all options

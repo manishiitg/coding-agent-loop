@@ -14,6 +14,11 @@ type TokenPersister interface {
 	PersistTokenUsage(ctx context.Context, iterationFolder string, stepTokenData *StepTokenData, modelTokenData *ModelTokenData) error
 }
 
+// PhaseTokenPersister defines the interface for persisting phase token usage to file
+type PhaseTokenPersister interface {
+	PersistPhaseTokenUsage(ctx context.Context, phaseTokenData *PhaseTokenData, modelTokenData *ModelTokenData) error
+}
+
 // ContextAwareEventBridge wraps an existing AgentEventListener and adds orchestrator context
 type ContextAwareEventBridge struct {
 	underlyingBridge mcpagent.AgentEventListener
@@ -132,24 +137,11 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			// Extract cache tokens
 			cacheTokens := extractCacheTokens(tokenEvent)
 
-			// Prepare token data for persistence
-			var stepTokenData *StepTokenData
-			var modelTokenData *ModelTokenData
-
-			// Prepare step token data if we have phase context
-			if currentPhase != "" {
-				stepTokenData = &StepTokenData{
-					Phase:           currentPhase,
-					Step:            currentStep,
-					InputTokens:     tokenEvent.PromptTokens,     // input tokens
-					OutputTokens:    tokenEvent.CompletionTokens, // output tokens
-					CacheTokens:     cacheTokens,
-					ReasoningTokens: tokenEvent.ReasoningTokens,
-					LLMCallCount:    1, // Each token_usage event represents one LLM call
-				}
-			}
+			// Extract LLM call count from event (cumulative for conversation end, 1 for single calls)
+			llmCallCount := extractLLMCallCount(tokenEvent)
 
 			// Prepare model token data
+			var modelTokenData *ModelTokenData
 			if tokenEvent.ModelID != "" {
 				modelTokenData = &ModelTokenData{
 					ModelID:         tokenEvent.ModelID,
@@ -158,25 +150,78 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					OutputTokens:    tokenEvent.CompletionTokens, // output tokens
 					CacheTokens:     cacheTokens,
 					ReasoningTokens: tokenEvent.ReasoningTokens,
-					LLMCallCount:    1, // Each token_usage event represents one LLM call
+					LLMCallCount:    llmCallCount, // Extract actual call count from event
 				}
 			}
 
-			// Persist token usage directly to file (real-time persistence, no accumulation)
-			c.mu.RLock()
-			persister := c.tokenPersister
-			iterationFolder := c.iterationFolder
-			c.mu.RUnlock()
+			// Check if this is a phase-only agent (step == 0 and phase is a phase-only agent)
+			isPhaseOnly := currentPhase != "" && currentStep == 0 && IsPhaseOnlyAgent(currentPhase)
 
-			if persister != nil && iterationFolder != "" {
-				// Persist asynchronously to avoid blocking event processing
-				go func() {
-					if err := persister.PersistTokenUsage(ctx, iterationFolder, stepTokenData, modelTokenData); err != nil {
-						c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist token usage: %v", err))
-					} else {
-						c.logger.Debug(fmt.Sprintf("💾 Persisted token usage directly to file"))
+			if isPhaseOnly {
+				// Phase-only agent: persist to main workspace folder (phase-level tracking)
+				var phaseTokenData *PhaseTokenData
+				if currentPhase != "" {
+					phaseTokenData = &PhaseTokenData{
+						Phase:           currentPhase,
+						InputTokens:     tokenEvent.PromptTokens,     // input tokens
+						OutputTokens:    tokenEvent.CompletionTokens, // output tokens
+						CacheTokens:     cacheTokens,
+						ReasoningTokens: tokenEvent.ReasoningTokens,
+						LLMCallCount:    llmCallCount, // Extract actual call count from event
 					}
-				}()
+				}
+
+				// Persist phase token usage directly to file (real-time persistence, no accumulation)
+				c.mu.RLock()
+				persister := c.tokenPersister
+				c.mu.RUnlock()
+
+				if persister != nil {
+					// Check if persister implements PhaseTokenPersister interface
+					if phasePersister, ok := persister.(PhaseTokenPersister); ok {
+						// Persist asynchronously to avoid blocking event processing
+						go func() {
+							if err := phasePersister.PersistPhaseTokenUsage(ctx, phaseTokenData, modelTokenData); err != nil {
+								c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist phase token usage: %v", err))
+							} else {
+								c.logger.Debug(fmt.Sprintf("💾 Persisted phase token usage directly to file"))
+							}
+						}()
+					} else {
+						c.logger.Debug(fmt.Sprintf("⚠️ Token persister does not implement PhaseTokenPersister, skipping phase token persistence"))
+					}
+				}
+			} else {
+				// Step-based agent: persist to iteration folder (existing behavior)
+				var stepTokenData *StepTokenData
+				if currentPhase != "" {
+					stepTokenData = &StepTokenData{
+						Phase:           currentPhase,
+						Step:            currentStep,
+						InputTokens:     tokenEvent.PromptTokens,     // input tokens
+						OutputTokens:    tokenEvent.CompletionTokens, // output tokens
+						CacheTokens:     cacheTokens,
+						ReasoningTokens: tokenEvent.ReasoningTokens,
+						LLMCallCount:    llmCallCount, // Extract actual call count from event
+					}
+				}
+
+				// Persist token usage directly to file (real-time persistence, no accumulation)
+				c.mu.RLock()
+				persister := c.tokenPersister
+				iterationFolder := c.iterationFolder
+				c.mu.RUnlock()
+
+				if persister != nil && iterationFolder != "" {
+					// Persist asynchronously to avoid blocking event processing
+					go func() {
+						if err := persister.PersistTokenUsage(ctx, iterationFolder, stepTokenData, modelTokenData); err != nil {
+							c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist token usage: %v", err))
+						} else {
+							c.logger.Debug(fmt.Sprintf("💾 Persisted token usage directly to file"))
+						}
+					}()
+				}
 			}
 		}
 	}

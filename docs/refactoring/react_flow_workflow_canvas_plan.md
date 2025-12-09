@@ -320,6 +320,24 @@ const DAGRE_CONFIG = {
   - LLM settings
 - Run/Edit/Delete actions
 
+### 5.1. Step Legend (StepLegend.tsx)
+
+**Collapsible step list at bottom-left of canvas:**
+- Shows **all steps** from plan including branch steps (regular, conditional, loop, and nested branch steps)
+- **Includes conditional steps** - Displays with purple GitBranch icon and "Conditional" label
+- **Includes loop steps** - Displays with cyan Repeat icon and "Loop" label
+- **Includes branch steps** - Steps inside conditional branches (if_true_steps, if_false_steps)
+  - Displayed with indentation to show hierarchy
+  - Shows "Yes Branch" or "No Branch" badge with green/red colors
+  - Shows "Y" or "N" indicator instead of step number
+  - Indented based on nesting depth
+- Excludes validation nodes and learning nodes
+- Click any step to navigate to it on the canvas
+- Shows step status icons (pending, running, completed, failed)
+- Shows code execution mode icon when enabled
+- Displays step number (for top-level), branch indicator (for branch steps), title, and type badge
+- Collapsible to save space (collapsed by default)
+
 ### 6. ChatArea Integration & Observer ID Management
 
 **Single Source of Truth for Observer ID:**

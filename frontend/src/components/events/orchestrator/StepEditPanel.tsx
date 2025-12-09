@@ -275,7 +275,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   // Helper to get preset default LLM for an agent type
-  const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'learning'): LLMOption | null => {
+  const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'learning' | 'conditional'): LLMOption | null => {
     if (!presetLLMConfig) {
       return null;
     }
@@ -292,6 +292,12 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       } : undefined);
     } else if (agentType === 'learning') {
       config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        provider: presetLLMConfig.provider,
+        model_id: presetLLMConfig.model_id
+      } : undefined);
+    } else if (agentType === 'conditional') {
+      // Conditional LLM uses the same default as execution LLM (or preset default)
+      config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider,
         model_id: presetLLMConfig.model_id
       } : undefined);
@@ -479,6 +485,14 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }));
   };
 
+  // Update conditional LLM
+  const handleConditionalLLMSelect = (llm: LLMOption) => {
+    setAgentConfigs((prev) => ({
+      ...prev,
+      conditional_llm: optionToLLMConfig(llm),
+    }));
+  };
+
   // Update max turns
   const handleMaxTurnsChange = (
     agentType: 'execution' | 'validation' | 'learning',
@@ -657,7 +671,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }
     if (valLLM && !agentConfigs.disable_validation) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
-      const detailLevel = agentConfigs.learning_detail_level || 'general';
+      const detailLevel = agentConfigs.learning_detail_level || 'exact';
       const detailLabel = detailLevel === 'exact' ? 'Exact' : 'General';
       parts.push(`Learn: ${learnLLM.label} (${detailLabel})`);
     }
@@ -1107,7 +1121,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                       
                       return (
                         <select
-                          value={agentConfigs.learning_detail_level || 'general'}
+                          value={agentConfigs.learning_detail_level || 'exact'}
                           onChange={(e) => {
                             if (!isDisabled) {
                               const value = e.target.value as 'exact' | 'general';
@@ -1161,12 +1175,106 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 </div>
                 
                 {step.has_condition && (
-                  <div className="ml-6 space-y-2 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded">
-                    <div className="text-xs font-medium text-purple-700 dark:text-purple-400">
-                      Condition Question:
+                  <div className="ml-6 space-y-3 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded">
+                    <div>
+                      <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-1">
+                        Condition Question:
+                      </div>
+                      <div className="text-xs text-gray-700 dark:text-gray-300">
+                        {step.condition_question || '(Not set)'}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-700 dark:text-gray-300">
-                      {step.condition_question || '(Not set)'}
+                    
+                    {/* Conditional Agent Configuration */}
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold text-purple-700 dark:text-purple-400 uppercase tracking-wide mb-2">
+                        Conditional Agent
+                      </div>
+                      
+                      {/* Conditional LLM Configuration */}
+                      <div>
+                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-1">
+                          Conditional LLM:
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={llmConfigToOption(agentConfigs.conditional_llm) || getPresetDefaultLLM('conditional') || getCurrentLLMOption()}
+                            onLLMSelect={handleConditionalLLMSelect}
+                            inModal={false}
+                            openDirection="down"
+                          />
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-500 mt-1">
+                          LLM used to evaluate the condition. Defaults to execution LLM if not specified.
+                        </div>
+                      </div>
+                      
+                      {/* Conditional Agent Code Execution Mode Toggle */}
+                      <div>
+                        <div className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-1">
+                          Execution Mode:
+                        </div>
+                        <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    console.log('[StepEditPanel] Setting conditional agent use_code_execution_mode to false');
+                                    setAgentConfigs((prev) => ({
+                                      ...prev,
+                                      use_code_execution_mode: false,
+                                    }));
+                                  }}
+                                  className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                                    agentConfigs.use_code_execution_mode === false || 
+                                    (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode)
+                                      ? 'agent-mode-selected rounded-l-md rounded-r-none'
+                                      : 'agent-mode-unselected rounded-none'
+                                  }`}
+                                >
+                                  <Sparkles className="w-3 h-3 inline mr-1" />
+                                  Simple
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Simple mode - Direct MCP tool access for conditional agent</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    console.log('[StepEditPanel] Setting conditional agent use_code_execution_mode to true');
+                                    setAgentConfigs((prev) => ({
+                                      ...prev,
+                                      use_code_execution_mode: true,
+                                    }));
+                                  }}
+                                  className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                    agentConfigs.use_code_execution_mode === true ||
+                                    (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode)
+                                      ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                                      : 'agent-mode-unselected rounded-none'
+                                  }`}
+                                >
+                                  <Code2 className="w-3 h-3 inline mr-1" />
+                                  Code Exec
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Code Exec mode - MCP tools accessed via generated Go code for conditional agent</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-500 mt-1">
+                          Execution mode for the conditional agent. Controls how MCP tools are accessed.
+                        </div>
+                      </div>
                     </div>
                     
                     {step.condition_context && (
@@ -1225,7 +1333,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                   <input
                     type="checkbox"
                     id={`learning-after-loop-${stepIndex}`}
-                    checked={agentConfigs.learning_after_loop_iteration || false}
+                    checked={agentConfigs.learning_after_loop_iteration !== undefined ? agentConfigs.learning_after_loop_iteration : (step.has_loop ? true : false)}
                     onChange={(e) =>
                       handleToggleChange('learning_after_loop_iteration', e.target.checked)
                     }

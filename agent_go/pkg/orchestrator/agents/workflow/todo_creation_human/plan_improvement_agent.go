@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
@@ -541,10 +541,11 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementSyst
 ## LEARNING FILES LOCATION
 
 When step-specific learnings are enabled, learning files are stored in step-specific folders:
-- Shared learnings: {WorkspacePath}/learnings/ and {WorkspacePath}/learnings/
-- Step-specific learnings: {WorkspacePath}/learnings/step-{X}/ and {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
+- Shared learnings: {WorkspacePath}/learnings/
+- Regular step learnings: {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
+- Branch step learnings: {WorkspacePath}/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
 
-Check BOTH locations when analyzing learnings. Use list_workspace_files to discover step-specific folders in runs/ directory.
+Check BOTH shared and step-specific folders (including branch step folders) when analyzing learnings. Use list_workspace_files to discover all step-specific folders recursively.
 `
 	}
 
@@ -600,7 +601,10 @@ Success criteria MUST be **file-verifiable** (validation agent checks files):
 - **Paths**: Relative to workspace path` + func() string {
 		if useStepSpecific {
 			return `
-- **Step-Specific Learnings**: When analyzing learnings, check both shared folders (learnings/, learnings/) and step-specific folders in learnings/step-{X}/ and learnings/step-{X}/ (at workspace root, not inside runs/)
+- **Step-Specific Learnings**: When analyzing learnings, check:
+  * Shared folders: learnings/
+  * Regular step folders: learnings/step-{X}/ (at workspace root, not inside runs/)
+  * Branch step folders: learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
 `
 		}
 		return ""

@@ -308,6 +308,26 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 			UpdatedHistory: updatedHistory,
 			OriginalError:  fmt.Errorf("conversational input detected - LLM response: %s", conversationalInput),
 		}
+	} else {
+		// Structured output: marshal to JSON for result field and map for structuredResponse field
+		// This applies generically to all structured responses (conditional, validation, etc.)
+		resultBytes, marshalErr := json.Marshal(result.StructuredResult)
+		if marshalErr == nil {
+			// Set Result field to the JSON string of the structured response
+			resultStr = string(resultBytes)
+
+			// Also unmarshal to map for StructuredResponse field
+			var responseMap map[string]interface{}
+			if unmarshalErr := json.Unmarshal(resultBytes, &responseMap); unmarshalErr == nil {
+				structuredResponse = responseMap
+			} else {
+				boa.logger.Warn(fmt.Sprintf("⚠️ Failed to unmarshal structured response for event: %v", unmarshalErr), loggerv2.Field{Key: "error", Value: unmarshalErr})
+			}
+		} else {
+			// Fallback to generic message if marshaling fails
+			resultStr = fmt.Sprintf("Generated %s structured output (marshaling failed: %v)", boa.agentType, marshalErr)
+			boa.logger.Warn(fmt.Sprintf("⚠️ Failed to marshal structured response for event: %v", marshalErr), loggerv2.Field{Key: "error", Value: marshalErr})
+		}
 	}
 
 	boa.emitAgentEndEventWithStructuredResponse(ctx, templateVars, resultStr, structuredResponse, finalErr, duration)
@@ -428,7 +448,11 @@ type UserMessageProcessorSetter interface {
 
 // emitEvent emits an event through the event bridge
 func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType events.EventType, data events.EventData) {
-	// Removed verbose logging
+	// Check if event bridge is available
+	if boa.eventBridge == nil {
+		boa.logger.Debug(fmt.Sprintf("⚠️ Event bridge is nil, skipping event emission: %s", eventType))
+		return
+	}
 
 	// Create agent event
 	agentEvent := &events.AgentEvent{
@@ -441,6 +465,7 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 	if err := boa.eventBridge.HandleEvent(ctx, agentEvent); err != nil {
 		boa.logger.Warn(fmt.Sprintf("⚠️ Failed to emit event %s: %v", eventType, err), loggerv2.Field{Key: "error", Value: err})
 	} else {
+		boa.logger.Debug(fmt.Sprintf("✅ Successfully emitted event %s", eventType))
 	}
 }
 

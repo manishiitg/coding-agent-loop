@@ -7,9 +7,9 @@ import (
 	"text/template"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -68,7 +68,7 @@ func NewHumanControlledTodoPlannerValidationAgent(config *agents.OrchestratorAge
 // Execute implements the OrchestratorAgent interface
 // NOTE: This method is NOT USED - use ExecuteStructured() instead
 func (hctpva *HumanControlledTodoPlannerValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	return "", nil, fmt.Errorf(fmt.Sprintf("Execute() is not used for validation agent - use ExecuteStructured() instead"), nil)
+	return "", nil, fmt.Errorf("Execute() is not used for validation agent - use ExecuteStructured() instead")
 }
 
 // ExecuteStructured executes the validation agent and returns structured output
@@ -87,12 +87,12 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 		"properties": {
 			"is_success_criteria_met": {
 				"type": "boolean",
-				"description": "Whether the success criteria was met based on CLEAR, CONCRETE evidence in execution history. Be STRICT - only return true if ALL parts of success criteria have clear evidence and there are NO errors or failures in execution."
+				"description": "Whether the success criteria was met in the final state. Return true if ALL parts of success criteria are satisfied. Return false if ANY part is not satisfied. Ignore retries, failures, or execution path - focus only on whether the end result meets requirements."
 			},
 			"execution_status": {
 				"type": "string",
 				"enum": ["COMPLETED", "PARTIAL", "FAILED", "INCOMPLETE"],
-				"description": "Overall status of step execution. Use FAILED if there are any errors, tool call failures, or if success criteria is not met. Use COMPLETED only if ALL success criteria are met with clear evidence and NO errors."
+				"description": "Overall status: COMPLETED if ALL success criteria met in final state. FAILED if success criteria NOT met. PARTIAL if some (not all) criteria met. INCOMPLETE if cannot validate. Ignore how many attempts it took - only assess final outcome."
 			},
 			"reasoning": {
 				"type": "string",
@@ -105,16 +105,16 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 					"properties": {
 						"type": {
 							"type": "string",
-							"description": "Type of feedback (issue, recommendation, etc.)"
+							"description": "Type of feedback (issue, recommendation, observation)"
 						},
 						"description": {
 							"type": "string",
-							"description": "Description of the feedback"
+							"description": "Brief observation about execution quality or suggestions for improvement. Keep minimal - validation focuses on outcome, not process."
 						},
 						"severity": {
 							"type": "string",
 							"enum": ["HIGH", "MEDIUM", "LOW"],
-							"description": "Severity of the feedback"
+							"description": "Severity level. Use HIGH only for critical issues that caused failure. Use LOW for minor observations."
 						}
 					},
 					"required": ["type", "description", "severity"]
@@ -260,7 +260,38 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 
 ## 🔍 VALIDATION PROCESS
 
-**CRITICAL VALIDATION PRINCIPLE**: Be STRICT and CONSERVATIVE. Only mark as successful if there is CLEAR, CONCRETE EVIDENCE that ALL parts of the success criteria were met. If there is ANY doubt, uncertainty, or missing evidence, mark as FAILED.
+**CORE PRINCIPLE**: Only one question matters: **"Was the success criteria met?"**
+
+- ✅ If YES → Status is COMPLETED (regardless of how many retries, failures, or attempts it took)
+- ❌ If NO → Status is FAILED
+
+**The journey doesn't matter, only the destination.**
+
+### 🎯 SIMPLE DECISION TREE
+
+` + "```" + `
+START: Review execution history
+  ↓
+Q: Are ALL parts of success criteria met with clear evidence?
+  ├─ YES → COMPLETED (Done. Retries/failures don't matter.)
+  └─ NO  → FAILED (Success criteria not met)
+` + "```" + `
+
+### 📊 OUTCOME-FOCUSED VALIDATION
+
+| Did Success Criteria Get Met? | Status | Retries Matter? | Failures Matter? |
+|-------------------------------|--------|-----------------|------------------|
+| ✅ YES | COMPLETED | NO | NO |
+| ❌ NO | FAILED | NO | NO |
+
+**IGNORE:**
+- How many retries occurred
+- How many tool calls failed initially
+- How long it took
+- Whether execution was "messy" or "clean"
+
+**FOCUS ONLY ON:**
+- Does the final state meet ALL success criteria requirements?
 
 {{if .IsCodeExecutionMode}}
 ## ⚡ CODE EXECUTION MODE VALIDATION (CRITICAL - ANTI-HALLUCINATION)
@@ -342,91 +373,70 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 - [ ] Tool function calls match success criteria requirements
 {{end}}
 
-**Detailed Validation Steps:**
+### 📝 THREE-STEP VALIDATION PROCEDURE
 
-1. **Analyze Conversation History Structure**:
-   - Review ALL messages in the execution conversation history
-   {{if .IsCodeExecutionMode}}
-   - **For CODE EXECUTION MODE**: Follow the CODE EXECUTION MODE VALIDATION section above (extract Go code, analyze structure, verify tool calls)
-   {{else}}
-   - Identify ALL tool calls made by the execution agent
-   {{end}}
-   - Check ALL tool responses for success/failure indicators
-   - Look for error messages, exceptions, or failure indicators in tool responses
-   - Verify the conversation shows a complete execution flow (not just partial attempts)
+**STEP 1: Parse Success Criteria**
+Break success criteria into individual requirements
+- Example: "Create 3 files and summarize results"
+  - Requirement 1: 3 files exist
+  - Requirement 2: Summary provided
 
-2. **Verify Each Part of Success Criteria**:
-   - Break down the success criteria into individual requirements
-   - For EACH requirement, find SPECIFIC evidence in the conversation history:
-     {{if .IsCodeExecutionMode}}
-     - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (code execution results + workspace state verification)
-     {{else}}
-     - Tool calls that accomplished the requirement
-     - Tool responses that show the requirement was met
-     {{end}}
-     - Specific outputs, results, or confirmations
-   - If ANY requirement lacks clear evidence, mark as FAILED
+**STEP 2: Verify Each Requirement in Final State**
+{{if .IsCodeExecutionMode}}
+For CODE EXECUTION MODE: Use workspace tools to verify claims
+- If code claims files created → Use ` + "`list_workspace_files`" + ` or ` + "`read_workspace_file`" + ` to verify
+- If code claims data retrieved → Verify data exists in workspace
+{{else}}
+Find evidence for each requirement in execution history
+- Look for tool responses that confirm the requirement
+{{end}}
+Mark each: ✅ (evidence found) or ❌ (no evidence)
 
-3. **Check for Errors and Failures**:
-   {{if .IsCodeExecutionMode}}
-   - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (compilation errors, runtime errors, timeouts, exit codes)
-   {{else}}
-   - Look for tool call failures (error responses, exceptions, timeouts)
-   - Check for error messages in tool responses
-   {{end}}
-   - Identify incomplete tool calls (calls without responses)
-   - Look for execution agent statements indicating problems, failures, or inability to complete
-   - Check for any "failed", "error", "exception", "timeout", "not found" indicators
+**STEP 3: Determine Status**
+` + "```" + `
+ALL requirements ✅ → COMPLETED (is_success_criteria_met = true)
+ANY requirement ❌ → FAILED (is_success_criteria_met = false)
+` + "```" + `
 
-4. **Analyze Tool Usage and Results**:
-   {{if .IsCodeExecutionMode}}
-   - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (verify tool calls, verify workspace state)
-   {{else}}
-   - Verify tools were used appropriately for the task
-   - Check tool responses contain expected data/results
-   - Verify tool outputs match what success criteria requires
-   {{end}}
-   - Look for tool responses that indicate partial completion or missing data
-
-5. **Assess Evidence Quality**:
-   - Evidence must be CONCRETE and SPECIFIC (not vague or inferred)
-   {{if .IsCodeExecutionMode}}
-   - **For CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section above (code execution results + workspace state verification - MANDATORY)
-   {{else}}
-   - Evidence must come from ACTUAL tool responses (not just agent claims)
-   {{end}}
-   - Evidence must directly support the success criteria requirements
-   - If evidence is missing, ambiguous, or insufficient, mark as FAILED
+**That's it. Don't analyze retries, failures, or execution quality - only final outcome.**
 
 **Decision Criteria:**
-- ✅ **PASS**: ALL parts of success criteria met with CLEAR, CONCRETE evidence from conversation history - NO errors or failures detected
-- ❌ **FAIL**: ANY of the following:
-  - Success criteria not fully met
-  - Missing evidence for any part of success criteria
-  - Tool call failures or errors detected
-  - Incomplete execution (missing tool responses, partial completion)
-  - Execution agent reported failures or problems
-  - Insufficient or ambiguous evidence
+- ✅ **COMPLETED**: ALL parts of success criteria met with CLEAR, CONCRETE evidence in the final state
+- ❌ **FAILED**: Success criteria not fully met in the final state
+- ⚠️ **PARTIAL**: Some (but not all) parts of success criteria met
+- 📋 **INCOMPLETE**: Execution history missing or insufficient to validate
 
-**RED FLAGS (Mark as FAILED if you see):**
+**Single Question to Answer:**
+"Looking at the final state after all execution attempts, are ALL parts of the success criteria met?"
+- If YES → COMPLETED
+- If NO → FAILED
+
+**Examples:**
+- ✅ **COMPLETED**: Files were created, even if it took 5 retries → COMPLETED
+- ✅ **COMPLETED**: Data was retrieved correctly, even if first 3 tool calls failed → COMPLETED
+- ✅ **COMPLETED**: All requirements met, execution was messy → COMPLETED (messiness doesn't matter)
+- ❌ **FAILED**: Only 2 of 3 required files created → FAILED (incomplete requirements)
+- ❌ **FAILED**: No evidence files were created → FAILED (requirements not met)
+
+**Mark as FAILED only if:**
 {{if .IsCodeExecutionMode}}
-- **CODE EXECUTION MODE SPECIFIC**:
-  - Code only prints success without calling tools
-  - Code has hardcoded/fake return values
-  - Code execution output doesn't match workspace reality (verified with workspace tools)
-  - Code doesn't import or call generated tool functions
-  - File claims don't match actual workspace state
-  - Go compilation or runtime errors
-  - Code output is suspicious (simulated data, fake results)
+- **CODE EXECUTION MODE**: Success criteria not met in final workspace state (verified with workspace tools)
+  - Code claims files created but workspace verification shows they don't exist
+  - Code claims data retrieved but workspace state shows no data
+  - Success criteria requires specific outcomes that don't exist in workspace
 {{else}}
-- Any tool call failures, errors, or exceptions in tool responses
+- Success criteria not met in final execution state
+  - Required files not created
+  - Required data not retrieved
+  - Required actions not completed
 {{end}}
-- Execution agent mentions failures, being stuck, or inability to complete
-- Missing tool responses (tool calls without corresponding responses)
-- Tool responses contain error messages, "not found", "failed", "timeout", etc.
-- Success criteria requires specific outcomes that are not clearly demonstrated{{if .IsCodeExecutionMode}} in code execution results AND workspace state verification{{else}} in tool responses{{end}}
-- Execution conversation shows incomplete or partial completion
-- Agent claims success but{{if .IsCodeExecutionMode}} code output/workspace state doesn't support the claims{{else}} tool responses don't support the claims{{end}}
+- Missing evidence that success criteria requirements were satisfied
+
+**Do NOT mark as FAILED for:**
+- Retries or multiple attempts (if final state meets criteria)
+- Tool call failures that were eventually resolved
+- Errors that didn't prevent final success
+- "Messy" execution paths (if end result is correct)
 
 ## 🔄 LOOP CONDITION CHECK MODE (When Applicable)
 
@@ -590,22 +600,21 @@ Validate if the step "{{.StepTitle}}" was completed successfully by checking if 
 **Success Criteria**: {{.StepSuccessCriteria}}
 
 **CRITICAL INSTRUCTIONS:**
-1. **Be STRICT**: Only mark as successful if there is CLEAR, CONCRETE evidence that ALL parts of the success criteria were met
-2. **Check for Errors**: Look for ANY{{if eq .IsCodeExecutionMode "true"}} code execution errors{{else}} tool call failures, errors, or incomplete actions{{end}} in the execution history
-3. **Verify Each Part**: Verify that EACH part of the success criteria has corresponding evidence{{if eq .IsCodeExecutionMode "true"}} (follow CODE EXECUTION MODE VALIDATION section in system prompt){{end}}
-4. **If in Doubt, FAIL**: If there is ANY uncertainty or missing evidence, mark as FAILED
-5. **Look for Failure Indicators**: Check if the execution agent mentioned failures, being stuck, or inability to complete the task
+1. **Single Question**: Was the success criteria met in the final state? (Yes = COMPLETED, No = FAILED)
+2. **Ignore the Path**: Don't consider retries, failures, or how long it took - only evaluate the final outcome
+3. **Verify Each Requirement**: Check that EACH part of success criteria has clear evidence{{if eq .IsCodeExecutionMode "true"}} (use workspace tools to verify){{end}}
+4. **Final State Only**: Look at what exists after all execution attempts, not the journey to get there
 {{if eq .IsCodeExecutionMode "true"}}
-6. **CODE EXECUTION MODE**: Follow the CODE EXECUTION MODE VALIDATION section in the system prompt for mandatory anti-hallucination validation steps
+5. **CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section - verify workspace state matches claims
 {{end}}
 
 **Validation Checklist:**
-- [ ] All parts of success criteria have clear evidence{{if eq .IsCodeExecutionMode "true"}} (code execution + workspace state verification){{end}}
-- [ ] No{{if eq .IsCodeExecutionMode "true"}} code execution errors{{else}} tool call failures or errors{{end}} in execution
-- [ ] Execution agent did not report any failures or problems
-- [ ] Success criteria outcomes are clearly demonstrated
+- [ ] Break down success criteria into individual requirements
+- [ ] For EACH requirement, find clear evidence it was met in final state{{if eq .IsCodeExecutionMode "true"}} (verify with workspace tools){{end}}
+- [ ] ALL requirements have evidence? → COMPLETED
+- [ ] ANY requirement lacks evidence? → FAILED
 {{if eq .IsCodeExecutionMode "true"}}
-- [ ] CODE EXECUTION MODE checklist completed (see system prompt CODE EXECUTION MODE VALIDATION CHECKLIST)
+- [ ] CODE EXECUTION MODE: Verify workspace state matches all claims (see system prompt)
 {{end}}
 
 Follow the validation process in the system prompt. Analyze the execution conversation history CAREFULLY and call the 'submit_validation_result' tool with your validation results.

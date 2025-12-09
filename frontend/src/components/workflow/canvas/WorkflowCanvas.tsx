@@ -81,7 +81,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [])
 
   // Load plan data with change detection
-  const { plan, loading, error, changes, updateStep, deleteStep, refresh, clearChanges } = usePlanData(workspacePath)
+  const { plan, loading, error, changes, updateStep, deleteStep, refresh, clearChanges, savePlan, saveStepConfig } = usePlanData(workspacePath)
 
   // Load variables when workspace changes
   React.useEffect(() => {
@@ -185,11 +185,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         )
 
         // Optionally select the node (opens sidebar)
+        // Use nodesRef.current to get the latest node data (updated when nodes change)
         if (selectNode) {
-          const node = nodesRef.current.find(n => n.id === nodeId) as WorkflowNode | undefined
-          if (node) {
-            setSelectedNode(node)
-          }
+          // Use a function to get the latest node from current state
+          setSelectedNode(prev => {
+            const latestNode = nodesRef.current.find(n => n.id === nodeId) as WorkflowNode | undefined
+            // Only update if we found a node and it's different from current
+            if (latestNode && (!prev || prev.id !== latestNode.id)) {
+              return latestNode
+            }
+            // If node not found but we had a previous selection, keep it (might be a timing issue)
+            return prev || latestNode || null
+          })
         }
       }
     }, delay)
@@ -241,8 +248,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Helper function to highlight and position a specific step node
   const highlightStepNode = useCallback((stepId: string) => {
-    focusNode(stepId, { topPadding: 50, selectNode: true, delay: 100 })
-    console.log('[WorkflowCanvas] Highlighted step node:', stepId)
+    // Find the node by matching step.id in node data (works for both top-level and branch steps)
+    // Branch steps have node IDs like "step-3-true-0" but step.id is the actual step ID
+    const nodeToFocus = nodesRef.current.find(node => {
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop') {
+        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+        const nodeStepId = nodeData?.step?.id
+        // Match by step.id (for branch steps) or by node ID (for top-level steps)
+        return nodeStepId === stepId || (nodeStepId === undefined && node.id === stepId)
+      }
+      return false
+    })
+    
+    if (nodeToFocus) {
+      focusNode(nodeToFocus.id, { topPadding: 50, selectNode: true, delay: 100 })
+      console.log('[WorkflowCanvas] Highlighted step node:', stepId, '-> node ID:', nodeToFocus.id)
+    } else {
+      console.warn('[WorkflowCanvas] Could not find node for stepId:', stepId)
+    }
   }, [focusNode])
 
   // Handle "run from step" button click on nodes - runs only the single step
@@ -672,18 +695,104 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const totalSteps = plan?.steps?.length || 0
 
 
+  // Recursively find and update a step by ID (including branch steps)
+  const findAndUpdateStep = useCallback(async (steps: PlanStep[], stepId: string, updates: Partial<PlanStep>): Promise<boolean> => {
+    for (let i = 0; i < steps.length; i++) {
+      if (steps[i].id === stepId) {
+        // Found the step - update it
+        steps[i] = {
+          ...steps[i],
+          ...updates
+        }
+        return true
+      }
+      
+      // Check branch steps recursively
+      const trueSteps = steps[i].if_true_steps
+      if (trueSteps && trueSteps.length > 0) {
+        if (await findAndUpdateStep(trueSteps, stepId, updates)) {
+          return true
+        }
+      }
+      const falseSteps = steps[i].if_false_steps
+      if (falseSteps && falseSteps.length > 0) {
+        if (await findAndUpdateStep(falseSteps, stepId, updates)) {
+          return true
+        }
+      }
+    }
+    return false
+  }, [])
+
   // Handle edit step
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
     if (!plan) return
     
+    // First try to find in top-level steps (for backward compatibility)
     const stepIndex = plan.steps.findIndex(s => s.id === stepId)
+    
+    console.log('[WorkflowCanvas] handleEditStep:', {
+      stepId,
+      stepIndex,
+      foundStep: stepIndex >= 0,
+      stepTitle: stepIndex >= 0 ? plan.steps[stepIndex]?.title : 'N/A',
+      stepHasCondition: stepIndex >= 0 ? plan.steps[stepIndex]?.has_condition : false,
+      hasAgentConfigs: 'agent_configs' in updates,
+      updatesKeys: Object.keys(updates),
+      isBranchStep: stepIndex < 0
+    })
+    
     if (stepIndex >= 0) {
+      // Top-level step - use existing updateStep function
+      const foundStep = plan.steps[stepIndex]
+      if (foundStep.id !== stepId) {
+        console.error('[WorkflowCanvas] Step ID mismatch!', {
+          requestedStepId: stepId,
+          foundStepId: foundStep.id,
+          stepIndex,
+          foundStepTitle: foundStep.title,
+          foundStepHasCondition: foundStep.has_condition
+        })
+        throw new Error(`Step ID mismatch: requested ${stepId} but found ${foundStep.id} at index ${stepIndex}`)
+      }
+      
       await updateStep(stepIndex, updates)
       
       // Highlight the step node after saving config
       highlightStepNode(stepId)
+    } else {
+      // Branch step - recursively find and update
+      if (!plan.steps) {
+        throw new Error('Plan has no steps')
+      }
+      const updatedSteps = [...plan.steps]
+      const found = await findAndUpdateStep(updatedSteps, stepId, updates)
+      
+      if (found) {
+        // Save the updated plan
+        const updatedPlan = {
+          ...plan,
+          steps: updatedSteps
+        }
+        await savePlan(updatedPlan)
+        
+        // If agent_configs is in updates, also save to step_config.json
+        if ('agent_configs' in updates) {
+          await saveStepConfig(stepId, updates.agent_configs)
+        }
+        
+        // Highlight the step node after saving config
+        highlightStepNode(stepId)
+      } else {
+        console.error('[WorkflowCanvas] Step not found (including branch steps):', {
+          stepId,
+          totalSteps: plan.steps.length,
+          stepIds: plan.steps.map(s => ({ id: s.id, title: s.title }))
+        })
+        throw new Error(`Step with ID "${stepId}" not found in plan (including branch steps)`)
+      }
     }
-  }, [plan, updateStep, highlightStepNode])
+  }, [plan, updateStep, highlightStepNode, findAndUpdateStep, savePlan, saveStepConfig])
 
   // Handle delete step
   const handleDeleteStep = useCallback(async (stepId: string) => {
@@ -791,6 +900,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       <WorkflowToolbar
         status={status}
         hasPlan={true}
+        plan={plan}
         currentPhase={currentPhase}
         workspacePath={workspacePath}
         totalSteps={totalSteps}

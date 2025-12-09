@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"mcp-agent/agent_go/cmd/timeout"
+	"mcp-agent-builder-go/agent_go/cmd/timeout"
 )
 
 func main() {

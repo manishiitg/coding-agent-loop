@@ -1,4 +1,4 @@
-.PHONY: help lint lint-fix install-linter test build clean
+.PHONY: help lint lint-fix install-linter test build clean mod-tidy
 
 # Default target
 help:
@@ -9,6 +9,7 @@ help:
 	@echo "  make test        - Run Go tests"
 	@echo "  make build       - Build the project"
 	@echo "  make clean       - Clean build artifacts"
+	@echo "  make mod-tidy    - Run go mod tidy (excludes tool_output_folder)"
 
 # Install golangci-lint
 install-linter:
@@ -44,4 +45,14 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf bin/
 	@go clean ./...
+
+# Run go mod tidy (excludes tool_output_folder)
+mod-tidy:
+	@echo "Running go mod tidy (excluding tool_output_folder)..."
+	@if [ -f go-mod-tidy.sh ]; then \
+		./go-mod-tidy.sh; \
+	else \
+		echo "⚠️  go-mod-tidy.sh not found, running go mod tidy directly..."; \
+		go mod tidy; \
+	fi
 

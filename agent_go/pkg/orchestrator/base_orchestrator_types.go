@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 )
 
 // LLMConfig represents the LLM configuration from frontend
@@ -132,4 +132,22 @@ type StepTypeTokenUsage struct {
 	ReasoningTokens  int    `json:"reasoning_tokens"`   // raw count
 	ReasoningTokensM string `json:"reasoning_tokens_m"` // formatted as "0.000M"
 	LLMCallCount     int    `json:"llm_call_count"`     // count
+}
+
+// PhaseTokenData represents token data for a phase to be persisted
+type PhaseTokenData struct {
+	Phase           string
+	InputTokens     int
+	OutputTokens    int
+	CacheTokens     int
+	ReasoningTokens int
+	LLMCallCount    int
+}
+
+// PhaseTokenUsageFile represents persisted token usage data per phase (stored in main workspace folder)
+type PhaseTokenUsageFile struct {
+	CreatedAt       time.Time                              `json:"created_at"`
+	UpdatedAt       time.Time                              `json:"updated_at"`
+	ByPhaseAndModel map[string]map[string]*ModelTokenUsage `json:"by_phase_and_model"` // Nested map: phase -> modelID -> token usage
+	ByModel         map[string]*ModelTokenUsage            `json:"by_model"`           // Aggregated by model (across all phases)
 }

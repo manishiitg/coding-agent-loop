@@ -1,6 +1,6 @@
 package memory
 
-import "mcp-agent/agent_go/pkg/utils"
+import "mcp-agent-builder-go/agent_go/pkg/utils"
 
 // GetWorkflowMemoryRequirements returns generic memory management requirements for ALL workflow agents
 func GetWorkflowMemoryRequirements() string {

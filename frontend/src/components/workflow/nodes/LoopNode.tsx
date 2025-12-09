@@ -71,7 +71,7 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
-  const { title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+  const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
@@ -101,15 +101,15 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   const handleSettingsClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     e.preventDefault() // Prevent any default behavior
-    console.log('[LoopNode] Settings button clicked:', { stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
+    console.log('[LoopNode] Settings button clicked:', { nodeId: id, stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
     if (onOpenSidebar && typeof onOpenSidebar === 'function') {
-      const nodeId = step.id || `step-${stepIndex}`
-      console.log('[LoopNode] Calling onOpenSidebar with:', nodeId)
-      onOpenSidebar(nodeId)
+      // Use the node's actual ID (data.id) instead of step.id to ensure we find the correct node
+      console.log('[LoopNode] Calling onOpenSidebar with node ID:', id)
+      onOpenSidebar(id)
     } else {
       console.warn('[LoopNode] onOpenSidebar callback not available')
     }
-  }, [onOpenSidebar, stepIndex, step.id])
+  }, [onOpenSidebar, id, stepIndex, step.id])
 
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
@@ -189,7 +189,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs])
 
-  // Learning detail level (defaults to 'general', but 'exact' in code exec mode)
+  // Learning detail level (defaults to 'exact', but 'exact' in code exec mode)
   const learningDetailLevel = useMemo(() => {
     if (stepConfig?.agent_configs?.disable_learning === true) {
       return null
@@ -198,7 +198,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     if (useCodeExecutionMode) {
       return 'exact'
     }
-    return stepConfig?.agent_configs?.learning_detail_level || 'general'
+    return stepConfig?.agent_configs?.learning_detail_level || 'exact'
   }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
 
   // Execution max turns (defaults to 25)
@@ -275,7 +275,10 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0
   const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
-  const learningAfterLoopIteration = stepConfig?.agent_configs?.learning_after_loop_iteration === true
+  // Default to true for loop steps if not explicitly set
+  const learningAfterLoopIteration = stepConfig?.agent_configs?.learning_after_loop_iteration !== undefined 
+    ? stepConfig.agent_configs.learning_after_loop_iteration 
+    : true // Default to true for loop steps
 
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
 

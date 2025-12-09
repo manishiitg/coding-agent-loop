@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent/agent_go/internal/utils"
+	"mcp-agent-builder-go/agent_go/internal/utils"
 	mcpagent "mcpagent/agent"
 )
 

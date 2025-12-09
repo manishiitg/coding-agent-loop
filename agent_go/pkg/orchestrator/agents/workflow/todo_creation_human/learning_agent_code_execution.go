@@ -2,10 +2,11 @@ package todo_creation_human
 
 import (
 	"context"
+	"strings"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -99,10 +100,11 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) Execute(ctx c
 // learningSystemPromptProcessorCodeExecution creates the system prompt for code execution mode learning
 func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSystemPromptProcessorCodeExecution(templateVars map[string]string) string {
 	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
-	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
-	codePath := workspacePath + "/learnings/step-" + stepNumber + "/code"
+	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
+	codePath := workspacePath + "/learnings/" + stepNumber + "/code"
 
 	return `# Code Execution Learning Analysis Agent
 
@@ -137,14 +139,44 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 5. **Save Multiple Variations** - If multiple effective approaches exist, save all of them ranked by effectiveness (best first)
 6. **Document Failures to Avoid** - What code patterns wasted time or failed? (brief)
 7. **Create Code Library** - Document the best code examples so future executions can use them directly
-6. **Read Existing File First** - **CRITICAL STEP BEFORE WRITING**:
+6. **Handle Existing Files** - **CRITICAL STEP BEFORE WRITING**:
+
+**Consolidation Behavior** (when multiple files detected):
+- **Detection**: Multiple files if path contains commas or ends with "/" or "\\"
+- **Process**:
+  1. If comma-separated: Split by comma and read each file using 'read_workspace_file'
+  2. If folder path: Use 'list_workspace_files' to find all *_learning.md files, then read each
+  3. Read all files and extract code patterns from each
+  4. **Consolidate Logic**:
+     - Compare code patterns across all files
+     - **Keep Latest**: Code patterns from most recent files (by modification time or content freshness)
+     - **Keep Best**: Code patterns with highest success rates [Runs: X | Success: Y%]
+     - **Merge Duplicates**: When same code pattern appears in multiple files, combine run counts and recalculate success rate
+     - **Remove Outdated**: Code patterns with low success (<50%) that have better alternatives
+     - **Preserve Unique**: Keep all unique valuable code patterns from all files
+  5. **Output**: Write consolidated content to single file
+  6. **Cleanup**: After successful consolidation, optionally remove old/duplicate files (only if explicitly safe)
+- **Priority**: Latest patterns → Best success rates → Most runs → Unique patterns
+- **Note**: Consolidation is SECONDARY - PRIMARY goal is always to learn from current execution
+
+**Read Existing Files**:
    ` + func() string {
 		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			return `- **EXISTING LEARNINGS FOUND**: Use read_workspace_file tool to read the existing learning file BEFORE writing
+			// Check if path contains multiple files (comma-separated) or is a folder
+			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
+
+			if hasMultipleFiles {
+				return `- **MULTIPLE EXISTING LEARNINGS FOUND**: ` + existingPath + `
+   - **SECONDARY**: Consolidate all files using consolidation process from system prompt
+   - **PRIMARY**: Then merge new learnings from current execution with consolidated existing learnings
+   - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from consolidated patterns, UPDATE them to reflect the latest run results`
+			} else {
+				return `- **EXISTING LEARNINGS FOUND**: Use read_workspace_file tool to read the existing learning file BEFORE writing
    - **File Path**: ` + existingPath + `
    - **Purpose**: Preserve all existing learnings - never overwrite or lose previous content
    - **If file exists**: Merge new learnings with existing content (append new patterns, don't replace)
    - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results. Replace outdated patterns with current ones based on the most recent execution.`
+			}
 		}
 		return `- **NO EXISTING LEARNINGS**: No learning file exists for this step - create a NEW learning file with current learnings
    - **DO NOT** try to search for or read existing learnings - they don't exist for this step
@@ -385,10 +417,11 @@ You have access to all MCP tools to examine workspace files and gather additiona
 // learningUserMessageProcessorCodeExecution creates the user message for code execution mode learning
 func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningUserMessageProcessorCodeExecution(templateVars map[string]string) string {
 	// Step-specific learnings: always use step-specific paths at workspace root (not inside runs/)
+	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
-	writePath := workspacePath + "/learnings/step-" + stepNumber // Write to step-specific folder at workspace root
-	codePath := workspacePath + "/learnings/step-" + stepNumber + "/code"
+	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
+	codePath := workspacePath + "/learnings/" + stepNumber + "/code"
 
 	return `# Go Code Pattern Extraction Task (Focus on Execution Efficiency)
 
@@ -467,8 +500,27 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 **CRITICAL FILE HANDLING INSTRUCTIONS:**
 ` + func() string {
 		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			return `1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + existingPath + `
+			// Check if path contains multiple files (comma-separated) or is a folder
+			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
+
+			if hasMultipleFiles {
+				return `1. **PRIMARY GOAL FIRST**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
+   
+2. **SECONDARY - CONSOLIDATE EXISTING FILES**: ` + existingPath + `
+   - Follow consolidation process from system prompt (detect files, read all, consolidate patterns)
+   - **Note**: This is secondary - don't spend excessive time on consolidation
+   
+3. **PRIMARY - MERGE WITH NEW LEARNINGS**: Merge consolidated learnings with new patterns from latest run (PRIMARY FOCUS)
+   - Preserve ALL previous learnings from all files
+   - Append new success/failure patterns from current execution
+   
+4. **UPDATE EXISTING PATTERNS**: If latest run differs from consolidated patterns, update them
+   
+5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md`
+			} else {
+				return `1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + existingPath + `
 2. **IF FILE EXISTS**: Merge new learnings with existing content - preserve ALL previous learnings, append new success/failure patterns`
+			}
 		}
 		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
 2. **CREATE NEW FILE**: Create a new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"mcp-agent/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/database"
 
 	"github.com/gorilla/mux"
 )

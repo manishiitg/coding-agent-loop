@@ -1,6 +1,6 @@
 package server
 
-import "mcp-agent/agent_go/pkg/utils"
+import "mcp-agent-builder-go/agent_go/pkg/utils"
 
 // AgentInstructions contains custom instructions for both React and Simple agents
 type AgentInstructions struct {

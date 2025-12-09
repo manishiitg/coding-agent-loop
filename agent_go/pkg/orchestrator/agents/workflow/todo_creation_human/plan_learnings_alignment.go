@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
@@ -22,6 +22,7 @@ import (
 type HumanControlledTodoPlannerPlanLearningsAlignmentTemplate struct {
 	WorkspacePath            string
 	PlanJSON                 string
+	ChangelogJSON            string
 	AllowedPaths             string
 	SelectedFolder           string
 	IsCodeExecutionMode      string
@@ -59,9 +60,7 @@ type PlanLearningsAlignmentManager struct {
 	sessionID  string
 	workflowID string
 
-	// Preset LLM config for plan learnings alignment agent
-	presetPlanLearningsAlignmentLLM *AgentLLMConfig
-	// Learning LLM config (fallback for plan learnings alignment if presetPlanLearningsAlignmentLLM not set)
+	// Learning LLM config (primary LLM for plan learnings alignment agent)
 	presetLearningLLM *AgentLLMConfig
 }
 
@@ -70,15 +69,13 @@ func NewPlanLearningsAlignmentManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetPlanLearningsAlignmentLLM *AgentLLMConfig,
 	presetLearningLLM *AgentLLMConfig,
 ) *PlanLearningsAlignmentManager {
 	return &PlanLearningsAlignmentManager{
-		BaseOrchestrator:                baseOrchestrator,
-		sessionID:                       sessionID,
-		workflowID:                      workflowID,
-		presetPlanLearningsAlignmentLLM: presetPlanLearningsAlignmentLLM,
-		presetLearningLLM:               presetLearningLLM,
+		BaseOrchestrator:  baseOrchestrator,
+		sessionID:         sessionID,
+		workflowID:        workflowID,
+		presetLearningLLM: presetLearningLLM,
 	}
 }
 
@@ -87,12 +84,14 @@ func NewPlanLearningsAlignmentManager(
 // Always uses learnings/ folder (unified folder for all learning types)
 func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
 	selectedFolder := "learnings/"
-	// Set folder guard paths: read-only access to planning/, write access to selected learnings folder only
+	// Set folder guard paths: read-only access to planning/ (including changelog/), write access to selected learnings folder only
 	planningPath := fmt.Sprintf("%s/planning", workspacePath)
+	planningChangelogPath := fmt.Sprintf("%s/planning/changelog", workspacePath)
 	selectedLearningsPath := fmt.Sprintf("%s/%s", workspacePath, selectedFolder)
 
-	// Agent has read-only access to planning/ folder (for plan.json) and write access to selected learnings folder (for deleting orphaned files)
-	readPaths := []string{planningPath, selectedLearningsPath}
+	// Agent has read-only access to planning/ folder (for plan.json) and planning/changelog/ (for changelog files)
+	// Write access only to selected learnings folder (for deleting orphaned files)
+	readPaths := []string{planningPath, planningChangelogPath, selectedLearningsPath}
 	writePaths := []string{selectedLearningsPath} // Write access only to selected folder for deleting orphaned files
 
 	// Step-specific learnings: step-specific folders are at workspace root (not inside runs/)
@@ -100,23 +99,13 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	plam.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - agent can access step-specific folders in learnings/step-*/ (at workspace root)"))
 
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	plam.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/, write access to %s folder only)", readPaths, writePaths, selectedFolder))
+	plam.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/ and planning/changelog/, write access to %s folder only)", readPaths, writePaths, selectedFolder))
 
-	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
+	// Use preset learning LLM if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := plam.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
-	if plam.presetPlanLearningsAlignmentLLM != nil && plam.presetPlanLearningsAlignmentLLM.Provider != "" && plam.presetPlanLearningsAlignmentLLM.ModelID != "" {
-		// Use preset LLM config
-		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              plam.presetPlanLearningsAlignmentLLM.Provider,
-			ModelID:               plam.presetPlanLearningsAlignmentLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
-		}
-		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset plan learnings alignment LLM: %s/%s", plam.presetPlanLearningsAlignmentLLM.Provider, plam.presetPlanLearningsAlignmentLLM.ModelID))
-	} else if plam.presetLearningLLM != nil && plam.presetLearningLLM.Provider != "" && plam.presetLearningLLM.ModelID != "" {
-		// Fallback to learning LLM if plan learnings alignment LLM not set
+	if plam.presetLearningLLM != nil && plam.presetLearningLLM.Provider != "" && plam.presetLearningLLM.ModelID != "" {
+		// Use preset learning LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Provider:              plam.presetLearningLLM.Provider,
 			ModelID:               plam.presetLearningLLM.ModelID,
@@ -124,7 +113,7 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for plan learnings alignment: %s/%s", plam.presetLearningLLM.Provider, plam.presetLearningLLM.ModelID))
+		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for plan learnings alignment: %s/%s", plam.presetLearningLLM.Provider, plam.presetLearningLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
@@ -208,6 +197,21 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal filtered plan to JSON: %w", err), nil)
 	}
 
+	// Read changelog if it exists (reads all changelog-*.json files from planning/changelog/)
+	listFilesFunc := func(ctx context.Context, dirPath string) ([]string, error) {
+		return plam.ListWorkspaceFiles(ctx, dirPath)
+	}
+	changelog, err := readChangelog(ctx, plam.GetWorkspacePath(), plam.ReadWorkspaceFile, listFilesFunc)
+	if err != nil {
+		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read changelog: %v (continuing without changelog)", err))
+		changelog = &PlanChangeLog{Entries: []PlanChangeLogEntry{}}
+	}
+	changelogJSONBytes, err := json.MarshalIndent(changelog, "", "  ")
+	if err != nil {
+		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal changelog: %v (continuing without changelog)", err))
+		changelogJSONBytes = []byte("[]")
+	}
+
 	// Create alignment agent
 	alignmentAgent, err := plam.createPlanLearningsAlignmentAgent(ctx, plam.GetWorkspacePath())
 	if err != nil {
@@ -221,6 +225,7 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 	alignmentTemplateVars := map[string]string{
 		"WorkspacePath":            plam.GetWorkspacePath(),
 		"PlanJSON":                 string(planJSONBytes),
+		"ChangelogJSON":            string(changelogJSONBytes),
 		"AllowedPaths":             allowedPaths,
 		"SelectedFolder":           selectedFolder,
 		"IsCodeExecutionMode":      "false", // Not used anymore, but kept for template compatibility
@@ -259,13 +264,13 @@ func (plam *PlanLearningsAlignmentManager) filterPlanByExecutionMode(plan *Plann
 	stepConfigs, err := readStepConfigFromFile(context.Background(), plam.GetWorkspacePath(), plam.ReadWorkspaceFile)
 	if err != nil {
 		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (will filter based on preset default)", err))
-		stepConfigs = &StepConfigFile{Steps: []StepConfig{}}
+		stepConfigs = []StepConfig{}
 	}
 
 	// Create a map of step ID to config for quick lookup
 	idConfigMap := make(map[string]*AgentConfigs)
-	for i := range stepConfigs.Steps {
-		config := &stepConfigs.Steps[i]
+	for i := range stepConfigs {
+		config := &stepConfigs[i]
 		if config.ID != "" {
 			idConfigMap[config.ID] = config.AgentConfigs
 		}
@@ -342,6 +347,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	// Extract variables from template variables
 	workspacePath := templateVars["WorkspacePath"]
 	planJSON := templateVars["PlanJSON"]
+	changelogJSON := templateVars["ChangelogJSON"]
 
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
@@ -359,10 +365,23 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 		isCodeExecutionMode = "false" // Default to MCP Tool Mode
 	}
 
+	// If changelog not provided in template vars, try to read it
+	if changelogJSON == "" {
+		// Get base agent to access ReadWorkspaceFile
+		baseAgent := agent.GetBaseAgent()
+		if baseAgent != nil {
+			// Try to read changelog using workspace tools
+			// Note: We can't directly call readChangelog here without access to ReadWorkspaceFile
+			// So we'll rely on the agent reading it via workspace tools
+			changelogJSON = "[]" // Default to empty changelog
+		}
+	}
+
 	// Prepare template variables
 	alignmentTemplateVars := map[string]string{
 		"WorkspacePath":            workspacePath,
 		"PlanJSON":                 planJSON,
+		"ChangelogJSON":            changelogJSON,
 		"AllowedPaths":             allowedPaths,
 		"SelectedFolder":           selectedFolder,
 		"IsCodeExecutionMode":      isCodeExecutionMode,
@@ -373,6 +392,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	templateData := HumanControlledTodoPlannerPlanLearningsAlignmentTemplate{
 		WorkspacePath:            workspacePath,
 		PlanJSON:                 planJSON,
+		ChangelogJSON:            changelogJSON,
 		AllowedPaths:             allowedPaths,
 		SelectedFolder:           selectedFolder,
 		IsCodeExecutionMode:      isCodeExecutionMode,
@@ -492,32 +512,40 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSystemPromptProcessor(templateVars map[string]string) string {
 	selectedFolder := templateVars["SelectedFolder"]
 
-	// Step-specific learnings: always use learnings/step-{X}/ (unified folder for all learning types)
-	targetFolderPath := "learnings/step-{X}/"
+	// Step-specific learnings: always use learnings/step-{X}/ for regular steps, learnings/step-{X}-{true/false}-{Y}/ for branch steps
+	targetFolderPath := "learnings/step-{X}/ or learnings/step-{X}-{true/false}-{Y}/"
 	folderStructureSection := `**STEP-SPECIFIC LEARNINGS MODE**: Learning files are stored in step-specific folders within runs/ directory.
   - First, scan the runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
   - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
-    * All steps use learnings/step-{X}/ folders (each step has its own folder, at workspace root)
-  - **CRITICAL**: Each step folder (step-1/, step-2/, etc.) should be checked independently
-  - **CRITICAL STEP-SPECIFIC RULE**: Check alignment ONLY within the SAME step folder (e.g., step-1/, step-2/, etc.)
-  - **NEVER compare across step folders**: Do NOT check alignment between step-1/ and step-2/ files
+    * Regular steps use learnings/step-{X}/ folders (each step has its own folder, at workspace root)
+    * Branch steps use learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders (e.g., step-3-true-0/, step-3-false-1/)
+  - **CRITICAL**: Each step folder (step-1/, step-2/, step-3-true-0/, step-3-false-1/, etc.) should be checked independently
+  - **CRITICAL STEP-SPECIFIC RULE**: Check alignment ONLY within the SAME step folder (e.g., step-1/, step-2/, step-3-true-0/, etc.)
+  - **NEVER compare across step folders**: Do NOT check alignment between step-1/ and step-2/ files, or between step-3/ and step-3-true-0/ files
+  - **Branch step folders**: Branch steps (if_true_steps, if_false_steps) have their own folders separate from parent conditional steps
   - **Consolidation within step folders**: If multiple files exist within a single step folder, they should be consolidated (but that's handled by the consolidation agent, not this alignment agent)
 
 **Expected Folder Structure**:
-- learnings/step-{X}/ - All learnings for step X (MCP patterns, scripts, and code) (at workspace root)
+- learnings/step-{X}/ - All learnings for regular step X (MCP patterns, scripts, and code) (at workspace root)
+- learnings/step-{X}-{true/false}-{Y}/ - All learnings for branch step Y of conditional step X (at workspace root)
 - learnings/step-{X}/scripts/ - Python scripts for step X (if any)
-- learnings/step-{X}/code/ - Go code patterns for step X (if any)`
+- learnings/step-{X}/code/ - Go code patterns for step X (if any)
+- learnings/step-{X}-{true/false}-{Y}/scripts/ - Python scripts for branch step (if any)
+- learnings/step-{X}-{true/false}-{Y}/code/ - Go code patterns for branch step (if any)`
 	discoverSection := `
 **STEP-SPECIFIC MODE**:
 - First, scan runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
 - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
-  * All steps: learnings/step-{X}/ folders (at workspace root)
-- **CRITICAL**: Check alignment WITHIN each step folder separately (step-1/, step-2/, etc.)
-- **NEVER compare across step folders**: Each step folder is independent`
+  * Regular steps: learnings/step-{X}/ folders (at workspace root)
+  * Branch steps: learnings/step-{X}-{true/false}-{Y}/ folders (at workspace root, e.g., step-3-true-0/, step-3-false-1/)
+- **CRITICAL**: Check alignment WITHIN each step folder separately (step-1/, step-2/, step-3-true-0/, etc.)
+- **NEVER compare across step folders**: Each step folder is independent (including branch step folders)`
 	mismatchSection := `
 - Suggest moving to correct step-specific folder within the same run folder
-  * Example: learnings/step-{X}/ contains all learning types (MCP patterns, scripts, and code)
+  * Regular steps: learnings/step-{X}/ contains all learning types (MCP patterns, scripts, and code)
+  * Branch steps: learnings/step-{X}-{true/false}-{Y}/ contains all learning types for branch step Y of conditional step X
 - **CRITICAL**: Only move files WITHIN the same run folder, never across different run folders
+- **CRITICAL**: Branch step files must be in branch step folders (step-{X}-{true/false}-{Y}/), not in parent step folders
 - Present list to user via human_feedback and get approval
 - If approved, use move_workspace_file to relocate`
 	example1Section := `
@@ -525,19 +553,42 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
   Step: Setup AWS Credentials (step-1, use_code_execution_mode: false)
   → MATCHED ✅ - Filename matches, MCP mode step, in correct step-specific folder
 
+**Example 1b - MATCHED (Branch Step)**:
+  File: learnings/step-3-true-0/retrieve_otp_learning.md
+  Step: Retrieve and Submit OTP (step-3-if-true-0, branch step of conditional step 3)
+  → MATCHED ✅ - Filename matches branch step, in correct branch step folder
+
 **Example 2 - MISMATCH** (filename matches but wrong folder):
   File: learnings/step-2/deploy_to_kubernetes_learning.md  
   Step: Deploy to Kubernetes (step-2, use_code_execution_mode: true)
-  → All learnings are in learnings/step-{X}/ folder (unified folder)`
+  → All learnings are in learnings/step-{X}/ folder (unified folder)
+
+**Example 2b - MISMATCH (Branch Step in Wrong Folder)**:
+  File: learnings/step-3/retrieve_otp_learning.md
+  Step: Retrieve and Submit OTP (step-3-if-true-0, branch step of conditional step 3)
+  → MISMATCH ⚠️ - Branch step file is in parent step folder, should be in learnings/step-3-true-0/`
 	example4Section := `
   File: learnings/step-3/old_step_name_learning.md
   Content: Contains step_3, Deploy Application
   Step: Deploy Application (step-3, use_code_execution_mode: false)
   → CONTENT-MATCHED ✅ - Content references valid step, correct step-specific folder
 
+**Example 4b - CONTENT-MATCHED (Branch Step)**:
+  File: learnings/step-3-true-0/old_branch_name_learning.md
+  Content: Contains references to step-3-if-true-0, Retrieve OTP
+  Step: Retrieve and Submit OTP (step-3-if-true-0, branch step of conditional step 3)
+  → CONTENT-MATCHED ✅ - Content references valid branch step, correct branch step folder
+
 **Example 5 - ORPHANED** (no match anywhere):
   File: learnings/step-5/removed_feature_learning.md  
   Filename: Doesn't match any current step
+  Content: No references to current step IDs/titles
+  → ORPHANED ⚠️ - No relevance to current plan
+  → Action: Recommend deletion (with user approval)
+
+**Example 5b - ORPHANED (Branch Step)**:
+  File: learnings/step-4-false-1/old_branch_learning.md
+  Filename: Doesn't match any current branch step
   Content: No references to current step IDs/titles
   → ORPHANED ⚠️ - No relevance to current plan
   → Action: Recommend deletion (with user approval)`
@@ -553,7 +604,9 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
 
 **IMPORTANT**: You are checking alignment for learnings/ folder (unified folder for all learning types).
 
-**Plan**: The plan.json provided to you contains all steps. All learnings are stored in learnings/step-{X}/ folders.
+**Plan**: The plan.json provided to you contains all steps, including regular steps and branch steps (if_true_steps, if_false_steps). All learnings are stored in step-specific folders:
+- Regular steps: learnings/step-{X}/ folders
+- Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders
 
 **Target Folder**: ` + targetFolderPath + `
 
@@ -562,21 +615,29 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
 ### Execution Mode & Folder
 The selected folder corresponds to a specific execution mode:
 
-| Execution Mode | Learnings Folder | File Types |
-|----------------|------------------|------------|
-| **learnings/step-{X}/** | *_learning.md, scripts/*_script.py, code/*_code.go |
+| Step Type | Learnings Folder | File Types |
+|-----------|------------------|------------|
+| **Regular Steps** | learnings/step-{X}/ | *_learning.md, scripts/*_script.py, code/*_code.go |
+| **Branch Steps** | learnings/step-{X}-{true/false}-{Y}/ | *_learning.md, scripts/*_script.py, code/*_code.go |
 
-**Critical Rule**: All learnings for each step are stored in learnings/step-{X}/ folder (unified folder).
+**Critical Rule**: All learnings for each step are stored in step-specific folders:
+- Regular steps: learnings/step-{X}/ folder (unified folder)
+- Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder (separate from parent step)
 
 ` + folderStructureSection + `
 
 ### File Categories
 You will classify each learning file into one of these categories:
 
-- **MATCHED** ✅: File matches a step AND is in learnings/step-{X}/ folder
-- **MISMATCH** ⚠️: File matches a step BUT is not in learnings/step-{X}/ folder
+- **MATCHED** ✅: File matches a step AND is in correct step-specific folder
+  - Regular steps: learnings/step-{X}/ folder
+  - Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder
+- **MISMATCH** ⚠️: File matches a step BUT is not in correct step-specific folder
+  - Regular step file in wrong folder (e.g., step-1 file in step-2/)
+  - Branch step file in parent folder (e.g., step-3-true-0 file in step-3/)
+  - Branch step file in wrong branch folder (e.g., step-3-true-0 file in step-3-false-1/)
 - **CONSOLIDATED** ✅: Valid pattern file (e.g., consolidated_*, general_*) - preserve these
-- **CONTENT-MATCHED** ✅: Filename doesn't match any step, but content references valid step(s)
+- **CONTENT-MATCHED** ✅: Filename doesn't match any step, but content references valid step(s) AND is in correct folder
 - **ORPHANED** ⚠️: Filename doesn't match any step AND content doesn't reference any steps
 
 ## 🔄 MATCHING DECISION FLOW
@@ -584,9 +645,11 @@ You will classify each learning file into one of these categories:
 For each learning file, follow this decision process:
 
 **Step A**: Does filename match a step title?
-  - YES: Is file in learnings/step-{X}/ folder?
+  - YES: Is file in correct step-specific folder?
+    - Regular step: Is file in learnings/step-{X}/ folder?
+    - Branch step: Is file in learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder?
     - YES → **MATCHED** ✅
-    - NO → **MISMATCH** ⚠️ (suggest moving to learnings/step-{X}/ folder)
+    - NO → **MISMATCH** ⚠️ (suggest moving to correct step-specific folder)
   - NO: Continue to Step B
 
 **Step B**: Is this a consolidated file (consolidated_*, general_*, *_patterns_*)?
@@ -601,10 +664,38 @@ For each learning file, follow this decision process:
 
 ## 📋 STEP-BY-STEP PROCESS
 
+### 0. Read Plan Changelog (CRITICAL FIRST STEP)
+- **IMPORTANT**: Before analyzing alignment, read all changelog files from planning/changelog/ directory
+- Changelog files are named with timestamps: changelog-YYYY-MM-DD-HH-MM-SS.json (e.g., changelog-2025-01-27-14-30-25.json)
+- Each file contains all changes from a single planning agent execution session (multiple entries per file)
+- Each entry has: timestamp, change type, affected step IDs, description, and details
+- **Purpose**: Understanding recent changes helps identify which learnings might be out of sync
+- **How to read**:
+  1. Use list_workspace_files with folder="planning/changelog" to get all changelog files
+  2. Filter files that match pattern changelog-*.json
+  3. Read each file using read_workspace_file (each file contains an array of entries)
+  4. Combine all entries from all files and sort by timestamp (oldest first)
+- **What to look for**:
+  - Recent deletions: Steps that were deleted (learnings for these steps may be orphaned)
+  - Recent updates: Steps that were modified (learnings may reference old step titles/descriptions)
+  - Recent additions: New steps added (may not have learnings yet)
+  - Conditional conversions: Steps converted to/from conditional (branch step learnings may be in wrong folders)
+  - Branch step changes: Steps added/updated/deleted in conditional branches
+- **Use changelog to prioritize**: Focus alignment checks on steps that were recently changed
+- **Note**: If changelog directory doesn't exist or is empty, proceed with normal alignment check
+- **Note**: If changelog JSON is provided in template vars (ChangelogJSON), it's already combined from all files - use it directly
+
 ### 1. Extract Plan Information
 - Parse plan.json to get all step IDs, titles, and execution modes
 - For each step, note agent_configs.use_code_execution_mode value (true/false/missing)
-- Build a reference map: step ID → {title, execution_mode, expected_folder}
+- **CRITICAL**: Identify step types:
+  - Regular steps: Top-level steps in plan.steps array
+  - Branch steps: Steps nested in if_true_steps or if_false_steps arrays
+- For branch steps, note the parent step ID and branch type (true/false)
+- Build a reference map: step ID → {title, execution_mode, expected_folder, is_branch_step, parent_step_id, branch_type, branch_index}
+  - Regular steps: expected_folder = learnings/step-{X}/
+  - Branch steps: expected_folder = learnings/step-{parentStep}-{true/false}-{branchIdx}/
+- **Cross-reference with changelog**: Mark steps that appear in recent changelog entries as "recently changed"
 
 ### 2. Discover Learning Files in Selected Folder
 **FOCUS**: Only check files in ` + selectedFolder + `
@@ -615,8 +706,11 @@ For each learning file, follow this decision process:
 
 **Layer 1 - Filename Matching**:
 - Normalize filename and step titles (lowercase, remove special chars, spaces→underscores)
-- Check if filename (without suffix) matches any step title
-- If matched: Check if file is in correct folder → MATCHED ✅ or MISMATCH ⚠️
+- Check if filename (without suffix) matches any step title (regular or branch steps)
+- If matched: Check if file is in correct step-specific folder:
+  - Regular step: learnings/step-{X}/ folder
+  - Branch step: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder
+- Result: MATCHED ✅ or MISMATCH ⚠️
 
 **Layer 2 - Consolidated File Recognition**:
 - Check if filename starts with consolidated_, general_, or contains _patterns_
@@ -698,31 +792,58 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 	if isCodeExecutionMode {
 		discoverInstructions = `   - **STEP-SPECIFIC MODE**: First, scan runs/ directory to discover run folders
    - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it)
-   - **FOCUS**: Check learnings/step-{X}/ folders (at workspace root)
-   - **CRITICAL**: Check alignment WITHIN each step folder separately (step-1/, step-2/, etc.)
-   - **NEVER compare across step folders**: Each step folder is independent
+   - **FOCUS**: Check both regular and branch step folders (at workspace root):
+     * Regular steps: learnings/step-{X}/ folders (e.g., step-1/, step-2/)
+     * Branch steps: learnings/step-{X}-{true/false}-{Y}/ folders (e.g., step-3-true-0/, step-3-false-1/)
+   - **CRITICAL**: Check alignment WITHIN each step folder separately (step-1/, step-2/, step-3-true-0/, etc.)
+   - **NEVER compare across step folders**: Each step folder is independent (including branch step folders)
    - You should find all .md, .py, and .go files within step-specific learnings folders`
 	} else {
 		discoverInstructions = `   - **STEP-SPECIFIC MODE**: First, scan runs/ directory to discover run folders
    - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it)
-   - **FOCUS**: Only check learnings/step-{X}/ folders (at workspace root)
-   - **CRITICAL**: Check alignment WITHIN each step folder separately (step-1/, step-2/, etc.)
-   - **NEVER compare across step folders**: Each step folder is independent
+   - **FOCUS**: Check both regular and branch step folders (at workspace root):
+     * Regular steps: learnings/step-{X}/ folders (e.g., step-1/, step-2/)
+     * Branch steps: learnings/step-{X}-{true/false}-{Y}/ folders (e.g., step-3-true-0/, step-3-false-1/)
+   - **CRITICAL**: Check alignment WITHIN each step folder separately (step-1/, step-2/, step-3-true-0/, etc.)
+   - **NEVER compare across step folders**: Each step folder is independent (including branch step folders)
    - You should find all .md and .py files within step-specific learnings folders`
 	}
 
 	var expectedFolderNote string
 	if isCodeExecutionMode {
-		expectedFolderNote = `     * All steps in this plan have use_code_execution_mode: true
-     * Expect learnings in learnings/step-{X}/ (at workspace root, not inside runs/)`
+		expectedFolderNote = `     * Regular steps have use_code_execution_mode: true
+     * Branch steps inherit execution mode from parent conditional step
+     * Regular steps: Expect learnings in learnings/step-{X}/ (at workspace root, not inside runs/)
+     * Branch steps: Expect learnings in learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/)`
 	} else {
-		expectedFolderNote = `     * All steps in this plan have use_code_execution_mode: false or missing
-     * Expect learnings in learnings/step-{X}/ (at workspace root, not inside runs/)`
+		expectedFolderNote = `     * Regular steps have use_code_execution_mode: false or missing
+     * Branch steps inherit execution mode from parent conditional step
+     * Regular steps: Expect learnings in learnings/step-{X}/ (at workspace root, not inside runs/)
+     * Branch steps: Expect learnings in learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/)`
 	}
 
 	planJSON := templateVars["PlanJSON"]
 	if planJSON == "" {
 		planJSON = "No plan JSON provided."
+	}
+
+	changelogJSON := templateVars["ChangelogJSON"]
+	changelogSection := ""
+	if changelogJSON != "" && changelogJSON != "[]" {
+		changelogSection = `
+**Plan Changelog** (recent changes to the plan - combined from all changelog files):
+` + changelogJSON + `
+
+**IMPORTANT**: 
+- This changelog is already combined from all individual changelog files in planning/changelog/
+- Changelog files are named with timestamps: changelog-YYYY-MM-DD-HH-MM-SS.json
+- Use this changelog to identify which steps were recently modified, deleted, or added
+- This helps prioritize alignment checks and identify learnings that are likely out of sync
+`
+	} else {
+		changelogSection = `
+**Plan Changelog**: No changelog found or empty. You should still check planning/changelog/ directory using list_workspace_files to discover any changelog-*.json files, then read them individually.
+`
 	}
 
 	return `# Plan-Learnings Alignment Check Task
@@ -736,16 +857,47 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 
 **Current Plan** (to check alignment against):
 ` + planJSON + `
+` + changelogSection + `
 
 ## YOUR TASK CHECKLIST
+
+**Phase 0: Read Plan Changelog (CRITICAL FIRST STEP)**
+
+0. **Read the Plan Changelog**
+   - **IMPORTANT**: Changelog files are stored as session-based timestamped files in planning/changelog/
+   - File naming pattern: changelog-YYYY-MM-DD-HH-MM-SS.json (e.g., changelog-2025-01-27-14-30-25.json)
+   - Each file contains all changes from a single planning agent execution session (multiple entries per file)
+   - **How to read**:
+     1. Use list_workspace_files with folder="planning/changelog" to discover all changelog files
+     2. Filter files matching pattern changelog-*.json
+     3. Read each file using read_workspace_file
+     4. Each file contains an array of change entries (each entry has: timestamp, change_type, step_ids, description, details)
+     5. Combine all entries from all files and sort by timestamp (oldest first)
+   - **Alternative**: If ChangelogJSON is provided in template vars, it's already combined from all files - use it directly
+   - The changelog contains a history of all plan modifications
+   - **Purpose**: Understanding recent changes helps identify which learnings are likely out of sync
+   - **What to extract from changelog**:
+     * Deleted steps: Step IDs that were removed (their learnings may be orphaned)
+     * Updated steps: Step IDs that were modified (learnings may reference old titles/descriptions)
+     * Added steps: New step IDs (may not have learnings yet)
+     * Conditional conversions: Steps converted to/from conditional (branch learnings may be misplaced)
+     * Branch step changes: Steps added/updated/deleted in conditional branches
+   - **Prioritization**: Steps mentioned in recent changelog entries should be checked first
+   - **Note**: If changelog directory doesn't exist or is empty, that's fine - proceed with normal alignment check
+   - **If changelog is provided in template vars**: Use the ChangelogJSON variable directly (already combined from all files)
 
 **Phase 1: Analysis**
 
 1. **Extract Step Information from Plan**
    - Parse the plan.json above to extract all step IDs and titles
+   - **CRITICAL**: Identify step types:
+     * Regular steps: Top-level steps in plan.steps array
+     * Branch steps: Steps nested in if_true_steps or if_false_steps arrays (note parent step ID and branch type)
    - For each step, note the agent_configs.use_code_execution_mode value:
 ` + expectedFolderNote + `
-   - Create a mental map of: step ID → {title, execution_mode, expected_folder}
+   - Create a mental map of: step ID → {title, execution_mode, expected_folder, is_branch_step, parent_step_id, branch_type, branch_index}
+     * Regular steps: expected_folder = learnings/step-{X}/
+     * Branch steps: expected_folder = learnings/step-{parentStep}-{true/false}-{branchIdx}/
 
 2. **Discover All Learning Files**
 ` + discoverInstructions + `
@@ -753,8 +905,10 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 3. **Classify Each File** (Follow the decision flow from system prompt)
    
    For each file:
-   - **Step A**: Try filename matching against step titles
-     * If matched, check if folder is correct for step's execution mode
+   - **Step A**: Try filename matching against step titles (both regular and branch steps)
+     * If matched, check if folder is correct for step type:
+       - Regular step: Is file in learnings/step-{X}/ folder?
+       - Branch step: Is file in learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder?
      * Result: MATCHED ✅ or MISMATCH ⚠️
    
    - **Step B**: If no filename match, check if it's a consolidated file

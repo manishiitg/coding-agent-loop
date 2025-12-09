@@ -204,6 +204,11 @@ issues:
         - gosec
       text: "G302: Expect file permissions"
     
+    # Exclude unnecessary fmt.Sprintf warnings (S1039) - sometimes fmt.Sprintf is used for consistency in logging
+    - linters:
+        - gosimple
+      text: "unnecessary use of fmt.Sprintf"
+    
 
 # Severity configuration (optional - commented out for simpler config)
 # severity:

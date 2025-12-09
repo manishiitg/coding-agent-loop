@@ -7,7 +7,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
 
 // ShouldFilterWriteTool checks if a write tool should be filtered out (not registered)

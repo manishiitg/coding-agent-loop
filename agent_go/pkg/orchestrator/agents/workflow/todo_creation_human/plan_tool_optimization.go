@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
@@ -70,9 +70,7 @@ type PlanToolOptimizationManager struct {
 	sessionID  string
 	workflowID string
 
-	// Preset LLM config for plan tool optimization agent
-	presetPlanToolOptimizationLLM *AgentLLMConfig
-	// Learning LLM config (fallback for plan tool optimization if presetPlanToolOptimizationLLM not set)
+	// Learning LLM config (primary LLM for plan tool optimization agent)
 	presetLearningLLM *AgentLLMConfig
 }
 
@@ -81,15 +79,13 @@ func NewPlanToolOptimizationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetPlanToolOptimizationLLM *AgentLLMConfig,
 	presetLearningLLM *AgentLLMConfig,
 ) *PlanToolOptimizationManager {
 	return &PlanToolOptimizationManager{
-		BaseOrchestrator:              baseOrchestrator,
-		sessionID:                     sessionID,
-		workflowID:                    workflowID,
-		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
-		presetLearningLLM:             presetLearningLLM,
+		BaseOrchestrator:  baseOrchestrator,
+		sessionID:         sessionID,
+		workflowID:        workflowID,
+		presetLearningLLM: presetLearningLLM,
 	}
 }
 
@@ -140,7 +136,7 @@ func getUpdateStepConfigToolsSchema() string {
 }
 
 // readStepConfigFromFile reads step_config.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
-func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*StepConfigFile, error) {
+func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) ([]StepConfig, error) {
 	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
 
 	stepConfigFileMutex.Lock()
@@ -148,29 +144,34 @@ func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile 
 
 	content, err := readFile(ctx, configPath)
 	if err != nil {
-		// File doesn't exist yet - return empty structure
+		// File doesn't exist yet - return empty array
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			return &StepConfigFile{Steps: []StepConfig{}}, nil
+			return []StepConfig{}, nil
 		}
 		return nil, fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 	}
 
-	configFile, err := ParseStepConfigContent(content)
+	configs, err := ParseStepConfigContent(content)
 	if err != nil {
 		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: %w", err), nil)
 	}
 
-	return configFile, nil
+	return configs, nil
 }
 
-// writeStepConfigToFile writes StepConfigFile to step_config.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
-func writeStepConfigToFile(ctx context.Context, workspacePath string, config *StepConfigFile, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
+// writeStepConfigToFile writes step configs to step_config.json in object format using BaseOrchestrator's WriteWorkspaceFile
+// Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
+func writeStepConfigToFile(ctx context.Context, workspacePath string, configs []StepConfig, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
 	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
 
 	stepConfigFileMutex.Lock()
 	defer stepConfigFileMutex.Unlock()
 
-	data, err := json.MarshalIndent(config, "", "  ")
+	// Write in object format with "steps" field
+	configFile := StepConfigFile{
+		Steps: configs,
+	}
+	data, err := json.MarshalIndent(configFile, "", "  ")
 	if err != nil {
 		return fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json: %w", err), nil)
 	}
@@ -234,15 +235,15 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.L
 		}
 
 		// Read current step_config.json
-		configFile, err := readStepConfigFromFile(ctx, workspacePath, readFile)
+		configs, err := readStepConfigFromFile(ctx, workspacePath, readFile)
 		if err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 		}
 
 		// Create map of existing step configs by ID
 		existingConfigsMap := make(map[string]*StepConfig)
-		for i := range configFile.Steps {
-			existingConfigsMap[configFile.Steps[i].ID] = &configFile.Steps[i]
+		for i := range configs {
+			existingConfigsMap[configs[i].ID] = &configs[i]
 		}
 
 		// Apply updates
@@ -255,7 +256,7 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.L
 					AgentConfigs: &AgentConfigs{},
 				}
 				mergePartialStepConfigUpdate(&newConfig, partialUpdate)
-				configFile.Steps = append(configFile.Steps, newConfig)
+				configs = append(configs, newConfig)
 			} else {
 				// Step config exists - merge update
 				mergePartialStepConfigUpdate(existingConfig, partialUpdate)
@@ -263,7 +264,7 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.L
 		}
 
 		// Write updated step_config.json
-		if err := writeStepConfigToFile(ctx, workspacePath, configFile, readFile, writeFile, logger); err != nil {
+		if err := writeStepConfigToFile(ctx, workspacePath, configs, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
 		}
 
@@ -294,21 +295,11 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	ptom.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	ptom.GetLogger().Info(fmt.Sprintf("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/ and learnings folder, write access to planning/step_config.json)", readPaths, writePaths))
 
-	// Use preset LLM config if available, otherwise fall back to learning LLM, then orchestrator default
+	// Use preset learning LLM if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := ptom.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
-	if ptom.presetPlanToolOptimizationLLM != nil && ptom.presetPlanToolOptimizationLLM.Provider != "" && ptom.presetPlanToolOptimizationLLM.ModelID != "" {
-		// Use preset LLM config
-		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              ptom.presetPlanToolOptimizationLLM.Provider,
-			ModelID:               ptom.presetPlanToolOptimizationLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
-		}
-		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset plan tool optimization LLM: %s/%s", ptom.presetPlanToolOptimizationLLM.Provider, ptom.presetPlanToolOptimizationLLM.ModelID))
-	} else if ptom.presetLearningLLM != nil && ptom.presetLearningLLM.Provider != "" && ptom.presetLearningLLM.ModelID != "" {
-		// Fallback to learning LLM if plan tool optimization LLM not set
+	if ptom.presetLearningLLM != nil && ptom.presetLearningLLM.Provider != "" && ptom.presetLearningLLM.ModelID != "" {
+		// Use preset learning LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Provider:              ptom.presetLearningLLM.Provider,
 			ModelID:               ptom.presetLearningLLM.ModelID,
@@ -316,7 +307,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for plan tool optimization: %s/%s", ptom.presetLearningLLM.Provider, ptom.presetLearningLLM.ModelID))
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for plan tool optimization: %s/%s", ptom.presetLearningLLM.Provider, ptom.presetLearningLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
@@ -389,13 +380,13 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	ptom.GetLogger().Info(fmt.Sprintf("✅ Found plan.json with %d steps for tool optimization", len(existingPlan.Steps)))
 
 	// Read current step_config.json
-	stepConfigFile, err := readStepConfigFromFile(ctx, ptom.GetWorkspacePath(), ptom.ReadWorkspaceFile)
+	stepConfigs, err := readStepConfigFromFile(ctx, ptom.GetWorkspacePath(), ptom.ReadWorkspaceFile)
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 	}
 
 	// Create mapping of step IDs to their current tool configurations
-	currentToolConfigsMap := createCurrentToolConfigsMapping(stepConfigFile, existingPlan)
+	currentToolConfigsMap := createCurrentToolConfigsMapping(stepConfigs, existingPlan)
 	currentToolConfigsJSONBytes, err := json.MarshalIndent(currentToolConfigsMap, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal current tool configs mapping to JSON: %w", err), nil)
@@ -415,7 +406,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	}
 
 	// Prepare step_config.json for template
-	stepConfigJSONBytes, err := json.MarshalIndent(stepConfigFile, "", "  ")
+	stepConfigJSONBytes, err := json.MarshalIndent(stepConfigs, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json to JSON: %w", err), nil)
 	}
@@ -486,7 +477,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	// Create mapping of step IDs to their learnings folder paths based on code execution mode
 	presetCodeExecMode := ptom.GetUseCodeExecutionMode()
 	useStepSpecific := ptom.GetUseStepSpecificLearnings()
-	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigFile, existingPlan, presetCodeExecMode, useStepSpecific, ptom.GetWorkspacePath())
+	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigs, existingPlan, presetCodeExecMode, useStepSpecific, ptom.GetWorkspacePath())
 	stepLearningsFolderMappingJSONBytes, err := json.MarshalIndent(stepLearningsFolderMapping, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step learnings folder mapping to JSON: %w", err), nil)
@@ -621,24 +612,27 @@ type StepLearningsFolderMapping struct {
 
 // createStepLearningsFolderMapping creates a mapping of step IDs to their learnings folder paths
 // based on UseCodeExecutionMode setting in step_config.json
-// When useStepSpecific is true, returns step-specific paths in learnings/step-{X}/ format (at workspace root, not inside runs/)
+// When useStepSpecific is true, returns step-specific paths:
+//   - Regular steps: learnings/step-{X}/ format (at workspace root, not inside runs/)
+//   - Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ format (at workspace root, not inside runs/)
+//
 // Recursively handles branch steps (if_true_steps, if_false_steps)
-func createStepLearningsFolderMapping(stepConfigFile *StepConfigFile, plan *PlanningResponse, presetCodeExecMode bool, useStepSpecific bool, workspacePath string) []StepLearningsFolderMapping {
+func createStepLearningsFolderMapping(stepConfigs []StepConfig, plan *PlanningResponse, presetCodeExecMode bool, useStepSpecific bool, workspacePath string) []StepLearningsFolderMapping {
 	// Create lookup map: step ID -> AgentConfigs
 	idConfigMap := make(map[string]*AgentConfigs)
-	for i := range stepConfigFile.Steps {
-		if stepConfigFile.Steps[i].ID != "" {
-			idConfigMap[stepConfigFile.Steps[i].ID] = stepConfigFile.Steps[i].AgentConfigs
+	for i := range stepConfigs {
+		if stepConfigs[i].ID != "" {
+			idConfigMap[stepConfigs[i].ID] = stepConfigs[i].AgentConfigs
 		}
 	}
 
 	var mappings []StepLearningsFolderMapping
 	stepNumber := 0
 
-	var extractMappings func(steps []PlanStep)
-	extractMappings = func(steps []PlanStep) {
-		for _, step := range steps {
-			stepNumber++
+	// Helper function to extract mappings with branch context
+	var extractMappings func(steps []PlanStep, parentStepNumber int, branchType string, branchIndex int)
+	extractMappings = func(steps []PlanStep, parentStepNumber int, branchType string, branchIndex int) {
+		for branchIdx, step := range steps {
 			agentConfigs := idConfigMap[step.ID]
 
 			// Determine code execution mode: step config > preset default
@@ -650,8 +644,14 @@ func createStepLearningsFolderMapping(stepConfigFile *StepConfigFile, plan *Plan
 			// Determine learnings folder based on step-specific flag (always use learnings/)
 			var learningsPath string
 			if useStepSpecific {
-				// Step-specific paths: learnings/step-{X}/ (at workspace root, not inside runs/)
-				learningsPath = fmt.Sprintf("learnings/step-%d/", stepNumber)
+				if branchType != "" {
+					// Branch step: learnings/step-{parentStep}-{true/false}-{branchIdx}/
+					learningsPath = fmt.Sprintf("learnings/step-%d-%s-%d/", parentStepNumber, branchType, branchIdx)
+				} else {
+					// Regular step: learnings/step-{X}/ (at workspace root, not inside runs/)
+					stepNumber++
+					learningsPath = fmt.Sprintf("learnings/step-%d/", stepNumber)
+				}
 			} else {
 				// Shared paths: learnings/
 				learningsPath = "learnings/"
@@ -663,29 +663,36 @@ func createStepLearningsFolderMapping(stepConfigFile *StepConfigFile, plan *Plan
 				IsCodeExec:    isCodeExec,
 			})
 
-			// Recursively extract branch steps
+			// Determine current step number for branch steps (use parent step number for branch steps)
+			currentStepNumber := stepNumber
+			if branchType != "" {
+				currentStepNumber = parentStepNumber
+			}
+
+			// Recursively extract branch steps (nested conditionals)
 			if len(step.IfTrueSteps) > 0 {
-				extractMappings(step.IfTrueSteps)
+				extractMappings(step.IfTrueSteps, currentStepNumber, "true", branchIdx)
 			}
 			if len(step.IfFalseSteps) > 0 {
-				extractMappings(step.IfFalseSteps)
+				extractMappings(step.IfFalseSteps, currentStepNumber, "false", branchIdx)
 			}
 		}
 	}
 
-	extractMappings(plan.Steps)
+	// Start extraction with no parent (regular steps)
+	extractMappings(plan.Steps, 0, "", -1)
 
 	return mappings
 }
 
 // createCurrentToolConfigsMapping creates a mapping of step IDs to their current tool configurations from step_config.json
 // Recursively handles branch steps (if_true_steps, if_false_steps)
-func createCurrentToolConfigsMapping(stepConfigFile *StepConfigFile, plan *PlanningResponse) []StepCurrentToolConfig {
+func createCurrentToolConfigsMapping(stepConfigs []StepConfig, plan *PlanningResponse) []StepCurrentToolConfig {
 	// Create lookup map: step ID -> AgentConfigs
 	idConfigMap := make(map[string]*AgentConfigs)
-	for i := range stepConfigFile.Steps {
-		if stepConfigFile.Steps[i].ID != "" {
-			idConfigMap[stepConfigFile.Steps[i].ID] = stepConfigFile.Steps[i].AgentConfigs
+	for i := range stepConfigs {
+		if stepConfigs[i].ID != "" {
+			idConfigMap[stepConfigs[i].ID] = stepConfigs[i].AgentConfigs
 		}
 	}
 

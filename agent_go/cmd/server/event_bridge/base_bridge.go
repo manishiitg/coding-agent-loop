@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent/agent_go/internal/events"
-	"mcp-agent/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/pkg/database"
 	pkgevents "mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
 )

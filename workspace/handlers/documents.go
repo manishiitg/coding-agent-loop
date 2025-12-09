@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -415,20 +416,31 @@ func ListDocuments(c *gin.Context) {
 
 	// Build search path
 	var searchPath string
-	// Special handling for Downloads folder - use global path /app/workspace/Downloads
+	// Special handling for Downloads folder - use Downloads folder relative to docs-dir
 	if normalizedFolder == "Downloads" || strings.HasPrefix(normalizedFolder, "Downloads/") {
-		// Use fixed global Downloads path
+		// Use Downloads folder relative to docs-dir (e.g., /app/workspace-docs/Downloads)
 		if normalizedFolder == "Downloads" {
-			searchPath = "/app/workspace/Downloads"
+			searchPath = filepath.Join(docsDir, "Downloads")
 		} else {
 			// Handle Downloads/subfolder case
 			subfolder := strings.TrimPrefix(normalizedFolder, "Downloads/")
-			searchPath = filepath.Join("/app/workspace/Downloads", subfolder)
+			searchPath = filepath.Join(docsDir, "Downloads", subfolder)
 		}
 	} else if normalizedFolder != "" {
 		searchPath = filepath.Join(docsDir, normalizedFolder)
 	} else {
 		searchPath = docsDir
+	}
+
+	// Debug logging for Downloads folder access
+	if normalizedFolder == "Downloads" || strings.HasPrefix(normalizedFolder, "Downloads/") {
+		log.Printf("[DEBUG Downloads] docsDir=%s, normalizedFolder=%s, searchPath=%s", docsDir, normalizedFolder, searchPath)
+		// Check if searchPath exists
+		if info, err := os.Stat(searchPath); err == nil {
+			log.Printf("[DEBUG Downloads] Path exists: %s (isDir=%v)", searchPath, info.IsDir())
+		} else {
+			log.Printf("[DEBUG Downloads] Path does not exist: %s (error: %v)", searchPath, err)
+		}
 	}
 
 	// Check if the folder exists before attempting to read it
@@ -878,6 +890,8 @@ func MoveDocument(c *gin.Context) {
 	}
 
 	// Check if destination file already exists
+	// Note: We check this before creating the directory, so if the directory
+	// doesn't exist, os.Stat will fail and we'll continue to create it.
 	if _, err := os.Stat(destinationFilePath); err == nil {
 		c.JSON(http.StatusConflict, models.APIResponse[any]{
 			Success: false,
@@ -951,7 +965,7 @@ func MoveDocument(c *gin.Context) {
 	}
 
 	// Get new file info
-	fileInfo, err := os.Stat(destinationPath)
+	fileInfo, err := os.Stat(destinationFilePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,

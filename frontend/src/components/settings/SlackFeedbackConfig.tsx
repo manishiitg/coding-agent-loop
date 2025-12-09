@@ -210,7 +210,7 @@ export default function SlackFeedbackConfig({ isOpen, onClose }: SlackFeedbackCo
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Enable Slack Notifications</h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Send human feedback requests to Slack channel
+                      Send Slack notifications if user doesn't respond within 2 minutes
                     </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">

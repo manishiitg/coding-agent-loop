@@ -292,12 +292,13 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                               <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                                 {activePreset.label}
                               </span>
-                              {activePreset.selectedFolder && (
+                              {/* Show folder path and agent mode only for chat mode, not workflow mode */}
+                              {selectedModeCategory === 'chat' && activePreset.selectedFolder && (
                                 <span className="text-xs text-gray-500 dark:text-gray-400">
                                   ({activePreset.selectedFolder.filepath})
                                 </span>
                               )}
-                              {activePreset.agentMode && (
+                              {selectedModeCategory === 'chat' && activePreset.agentMode && (
                                 <span className="text-xs bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded">
                                   {activePreset.agentMode}
                                 </span>

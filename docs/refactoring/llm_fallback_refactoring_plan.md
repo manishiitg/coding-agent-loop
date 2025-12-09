@@ -377,7 +377,7 @@ func (o *BaseOrchestrator) createSubAgent(ctx context.Context, agentType string)
 ```go
 package orchestrator
 
-import "mcp-agent/agent_go/pkg/orchestrator/agents"
+import "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 // LLMConfig represents LLM configuration from frontend
 type LLMConfig struct {

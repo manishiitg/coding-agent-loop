@@ -1,8 +1,38 @@
-import { memo, useCallback, type ReactElement, type MouseEvent } from 'react'
+import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { HelpCircle, CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle } from 'lucide-react'
+import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useLLMStore } from '../../../stores/useLLMStore'
+import { getToolsByCategory } from '../../../utils/customToolNames'
+import { NodeConfigFooter } from './NodeConfigFooter'
 import type { ConditionalNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
+
+// Helper to parse tool entry (format: "category:tool" or "category:*")
+const parseToolEntry = (entry: string): { category: string; tool: string } | null => {
+  const parts = entry.split(':')
+  if (parts.length !== 2) return null
+  return { category: parts[0], tool: parts[1] }
+}
+
+// Helper to check if a category is fully enabled (all tools via "*")
+const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
+  if (enabledTools.length === 0) return true // Default: all enabled
+  return enabledTools.includes(`${category}:*`)
+}
+
+// Get tool count for a category
+const getCategoryToolCount = (category: string, enabledTools: string[], allCategoryTools: string[]): { enabled: number; total: number } => {
+  if (enabledTools.length === 0 || isCategoryEnabled(category, enabledTools)) {
+    return { enabled: allCategoryTools.length, total: allCategoryTools.length }
+  }
+  // Count specific tools enabled
+  const enabled = enabledTools.filter(entry => {
+    const parsed = parseToolEntry(entry)
+    return parsed && parsed.category === category && parsed.tool !== '*'
+  }).length
+  return { enabled, total: allCategoryTools.length }
+}
 
 interface ConditionalNodeProps {
   data: ConditionalNodeData
@@ -38,7 +68,183 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { title, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+  const { id, title, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+
+  // Get preset for config badges
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const customPresets = useGlobalPresetStore(state => state.customPresets)
+  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
+  
+  const activePreset = activePresetId
+    ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
+    : null
+
+  const { availableLLMs } = useLLMStore()
+
+  // Get step config (agent_configs)
+  const stepConfig = step as { agent_configs?: { 
+    use_code_execution_mode?: boolean
+    enable_prerequisite_detection?: boolean
+    prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
+    conditional_llm?: { provider?: string; model_id?: string }
+    execution_llm?: { provider?: string; model_id?: string }
+    learning_llm?: { provider?: string; model_id?: string }
+    disable_learning?: boolean
+    learning_detail_level?: string
+    execution_max_turns?: number
+    selected_servers?: string[]
+    selected_tools?: string[]
+    enabled_custom_tools?: string[]
+    enable_large_output_virtual_tools?: boolean
+  } }
+
+  // Determine code execution mode: step config > preset default
+  const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
+  const stepCodeExecSetting = stepConfig?.agent_configs?.use_code_execution_mode
+  const useCodeExecutionMode = stepCodeExecSetting !== undefined 
+    ? stepCodeExecSetting === true
+    : presetUseCodeExecutionMode
+
+  // Execution LLM: step config > preset execution_llm > preset default
+  const executionLLM = useMemo(() => {
+    const presetLLMConfig = activePreset?.llmConfig
+    const stepLLMConfig = stepConfig?.agent_configs?.execution_llm
+    const presetExecutionLLM = presetLLMConfig?.execution_llm
+    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+      ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
+    
+    const llmConfig = stepLLMConfig || presetExecutionLLM || presetDefaultLLM
+    if (!llmConfig?.provider || !llmConfig?.model_id) return null
+    
+    const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
+    return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
+  }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
+
+  // Conditional LLM: step config > execution LLM > preset default
+  const conditionalLLM = useMemo(() => {
+    const presetLLMConfig = activePreset?.llmConfig
+    const stepConditionalLLM = stepConfig?.agent_configs?.conditional_llm
+    const stepExecutionLLM = stepConfig?.agent_configs?.execution_llm
+    const presetExecutionLLM = presetLLMConfig?.execution_llm
+    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+      ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
+    
+    // Priority: step conditional_llm > step execution_llm > preset execution_llm > preset default
+    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetExecutionLLM || presetDefaultLLM
+    if (!llmConfig?.provider || !llmConfig?.model_id) return null
+    
+    const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
+    return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
+  }, [stepConfig?.agent_configs?.conditional_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
+
+  // Learning LLM: step config > preset learning_llm > preset default
+  const learningLLM = useMemo(() => {
+    // Check if learning is disabled
+    if (stepConfig?.agent_configs?.disable_learning === true) {
+      return null
+    }
+    
+    const presetLLMConfig = activePreset?.llmConfig
+    const stepLLMConfig = stepConfig?.agent_configs?.learning_llm
+    const presetLearningLLM = presetLLMConfig?.learning_llm
+    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+      ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
+    
+    const llmConfig = stepLLMConfig || presetLearningLLM || presetDefaultLLM
+    if (!llmConfig?.provider || !llmConfig?.model_id) return null
+    
+    const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
+    return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
+  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs])
+
+  // Learning detail level (defaults to 'exact', but 'exact' in code exec mode)
+  const learningDetailLevel = useMemo(() => {
+    if (stepConfig?.agent_configs?.disable_learning === true) {
+      return null
+    }
+    // In code execution mode, learning is always 'exact'
+    if (useCodeExecutionMode) {
+      return 'exact'
+    }
+    return stepConfig?.agent_configs?.learning_detail_level || 'exact'
+  }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
+
+  // Execution max turns (defaults to 25)
+  const executionMaxTurns = useMemo(() => {
+    return stepConfig?.agent_configs?.execution_max_turns || 25
+  }, [stepConfig?.agent_configs?.execution_max_turns])
+
+  // MCP Servers: step config > preset
+  const presetServers = useMemo(() => activePreset?.selectedServers || [], [activePreset?.selectedServers])
+  const stepServers = stepConfig?.agent_configs?.selected_servers
+  const effectiveServers = useMemo(() => {
+    // If step config explicitly sets servers (even if empty or NO_SERVERS), use it
+    if (stepServers !== undefined && stepServers !== null) {
+      // Filter out NO_SERVERS marker and return the result (empty array if only NO_SERVERS was present)
+      return stepServers.filter(s => s !== 'NO_SERVERS')
+    }
+    // Otherwise, fall back to preset servers
+    return presetServers
+  }, [stepServers, presetServers])
+
+  // Tools: step config > preset
+  const presetTools = useMemo(() => activePreset?.selectedTools || [], [activePreset?.selectedTools])
+  const effectiveTools = useMemo(() => {
+    // If no servers are selected (NO_SERVERS or empty array), no tools should be shown
+    if (effectiveServers.length === 0) {
+      return []
+    }
+    // Otherwise, use step config tools or fall back to preset tools
+    return stepConfig?.agent_configs?.selected_tools?.length 
+      ? stepConfig.agent_configs.selected_tools 
+      : presetTools
+  }, [effectiveServers.length, stepConfig?.agent_configs?.selected_tools, presetTools])
+
+  // Group tools by server and detect "all tools" (*) entries
+  const toolsDisplayInfo = useMemo(() => {
+    const serverMap = new Map<string, { hasAllTools: boolean; specificTools: number }>()
+    
+    effectiveTools.forEach(tool => {
+      const [server, toolName] = tool.split(':')
+      if (!server) return
+      
+      if (!serverMap.has(server)) {
+        serverMap.set(server, { hasAllTools: false, specificTools: 0 })
+      }
+      
+      const info = serverMap.get(server)!
+      if (toolName === '*') {
+        // If server has "*", it means all tools - reset specific tools count
+        info.hasAllTools = true
+        info.specificTools = 0
+      } else if (!info.hasAllTools) {
+        // Only count specific tools if we don't already have "all tools"
+        info.specificTools++
+      }
+    })
+    
+    return Array.from(serverMap.entries()).map(([server, info]) => ({
+      server,
+      ...info
+    }))
+  }, [effectiveTools])
+
+  // Parse custom tools (workspace_tools, human_tools)
+  const enabledCustomTools = useMemo(() => stepConfig?.agent_configs?.enabled_custom_tools || [], [stepConfig?.agent_configs?.enabled_custom_tools])
+  
+  const workspaceToolsInfo = useMemo(() => {
+    const allWorkspaceTools = getToolsByCategory('workspace_tools')
+    return getCategoryToolCount('workspace_tools', enabledCustomTools, allWorkspaceTools)
+  }, [enabledCustomTools])
+  
+  const humanToolsInfo = useMemo(() => {
+    const allHumanTools = getToolsByCategory('human_tools')
+    return getCategoryToolCount('human_tools', enabledCustomTools, allHumanTools)
+  }, [enabledCustomTools])
+
+  const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
+  const hasHumanTools = humanToolsInfo.enabled > 0
+  const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
 
   // Button is disabled if executing, can't run (previous steps not done), or no callback
   const isRunDisabled = isExecuting || !canRun || !onRunFromStep
@@ -65,15 +271,15 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   const handleSettingsClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     e.preventDefault() // Prevent any default behavior
-    console.log('[ConditionalNode] Settings button clicked:', { stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
+    console.log('[ConditionalNode] Settings button clicked:', { nodeId: id, stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
     if (onOpenSidebar && typeof onOpenSidebar === 'function') {
-      const nodeId = step.id || `step-${stepIndex}`
-      console.log('[ConditionalNode] Calling onOpenSidebar with:', nodeId)
-      onOpenSidebar(nodeId)
+      // Use the node's actual ID (data.id) instead of step.id to ensure we find the correct node
+      console.log('[ConditionalNode] Calling onOpenSidebar with node ID:', id)
+      onOpenSidebar(id)
     } else {
       console.warn('[ConditionalNode] onOpenSidebar callback not available')
     }
-  }, [onOpenSidebar, stepIndex, step.id])
+  }, [onOpenSidebar, id, stepIndex, step.id])
 
   return (
     <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
@@ -116,6 +322,32 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
             <Settings className="w-3.5 h-3.5" />
           </button>
         ) : null}
+        {/* Agent Mode Badge */}
+        {useCodeExecutionMode ? (
+          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold border border-amber-200 dark:border-amber-800">
+            <Terminal className="w-3 h-3" />
+            <span>Code</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 text-[10px] font-semibold border border-slate-200 dark:border-slate-700">
+            <Code className="w-3 h-3" />
+            <span>Agent</span>
+          </div>
+        )}
+        {/* Prerequisite Detection Badge */}
+        {stepConfig?.agent_configs?.enable_prerequisite_detection && (
+          <div 
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-semibold border border-orange-200 dark:border-orange-800"
+            title={
+              stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0
+                ? `Prerequisite detection enabled. ${stepConfig.agent_configs.prerequisite_rules.length} rule(s) configured`
+                : 'Prerequisite detection enabled'
+            }
+          >
+            <AlertTriangle className="w-3 h-3" />
+            <span>Prereq</span>
+          </div>
+        )}
       </div>
 
       {/* Condition Badge - Top */}
@@ -157,7 +389,6 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         {/* Content */}
         <div className="flex flex-col items-center justify-center px-12 py-5 pt-6 text-center min-h-[100px]">
           <div className="flex items-center gap-1.5 mb-2">
-            <HelpCircle className="w-4 h-4 text-purple-500 dark:text-purple-400" />
             {statusIcons[status]}
           </div>
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
@@ -192,6 +423,33 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           </p>
         </div>
       )}
+
+      {/* Config Footer - Show all configs including conditional LLM */}
+      <div className="mt-2 mx-4">
+        <NodeConfigFooter
+          executionLLM={executionLLM}
+          executionMaxTurns={executionMaxTurns}
+          learningLLM={learningLLM}
+          learningDetailLevel={learningDetailLevel}
+          effectiveServers={effectiveServers}
+          toolsDisplayInfo={toolsDisplayInfo}
+          workspaceToolsInfo={workspaceToolsInfo}
+          hasWorkspaceTools={hasWorkspaceTools}
+          humanToolsInfo={humanToolsInfo}
+          hasHumanTools={hasHumanTools}
+          hasLargeOutput={hasLargeOutput}
+        />
+        {/* Conditional LLM badge (separate from execution LLM) */}
+        {conditionalLLM && (
+          <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700 rounded-b-lg">
+            <div className="flex flex-wrap gap-1.5 justify-center">
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300" title="LLM used for condition evaluation">
+                Cond: {conditionalLLM}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 })

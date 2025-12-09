@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
-	"mcp-agent/agent_go/pkg/database"
-	"mcp-agent/agent_go/pkg/orchestrator"
-	"mcp-agent/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
@@ -557,8 +557,7 @@ func (wo *WorkflowOrchestrator) runAnonymization(ctx context.Context, objective 
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetAnonymizationLLM,
-		wo.presetLearningLLM, // Pass learning LLM for fallback
+		wo.presetLearningLLM, // Pass learning LLM (primary LLM for anonymization)
 	)
 
 	// Run only anonymization
@@ -603,8 +602,7 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetPlanLearningsAlignmentLLM,
-		wo.presetLearningLLM, // Pass learning LLM for fallback
+		wo.presetLearningLLM, // Pass learning LLM (primary LLM for plan learnings alignment)
 	)
 
 	// Run only alignment check
@@ -626,8 +624,7 @@ func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, ob
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetLearningConsolidationLLM,
-		wo.presetLearningLLM, // Pass learning LLM for fallback
+		wo.presetLearningLLM, // Pass learning LLM (primary LLM for learning consolidation)
 	)
 
 	// Run only consolidation
@@ -652,8 +649,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetPlanToolOptimizationLLM,
-		wo.presetLearningLLM, // Pass learning LLM for fallback
+		wo.presetLearningLLM, // Pass learning LLM (primary LLM for plan tool optimization)
 	)
 
 	// Run only tool optimization (with optional step ID for step-specific execution)

@@ -721,7 +721,12 @@ export interface ExecutionOptions {
   run_mode: 'use_same_run' | 'create_new_runs_always';
   selected_run_folder?: string;
   execution_strategy: string;
-  resume_from_step?: number;  // 1-based step number
+  resume_from_step?: number;  // 1-based step number (for top-level steps)
+  resume_from_branch_step?: {  // For resuming from branch steps
+    parent_step_index: number;  // 0-based index of conditional step
+    branch_type: 'if_true' | 'if_false';  // Which branch
+    branch_step_index: number;  // 0-based index within the branch
+  };
   fast_execute_end_step?: number;  // 0-based last step for fast execute range
   plan_change_action?: 'keep_old_progress' | 'delete_old_progress';
   all_steps_completed_action?: 'fast_execute_again' | 'skip_execution';
@@ -734,6 +739,10 @@ export interface ExecutionOptions {
   
   // Fallback behavior when validation fails
   fallback_to_original_llm_on_failure?: boolean;  // If true, use original LLM instead of temp override when validation fails
+  
+  // Learning behavior when tempLLM is active (per-model control)
+  skip_learning_when_temp_llm1?: boolean;  // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
+  skip_learning_when_temp_llm2?: boolean;  // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
   
   // Variable group execution options (for batch execution with multiple groups)
   enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)

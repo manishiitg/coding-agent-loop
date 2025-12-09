@@ -11,6 +11,7 @@ export interface AgentConfigs {
   execution_llm?: AgentLLMConfig;
   validation_llm?: AgentLLMConfig;
   learning_llm?: AgentLLMConfig;
+  conditional_llm?: AgentLLMConfig; // Step-specific conditional LLM for conditional step evaluation
   execution_max_turns?: number;
   validation_max_turns?: number;
   learning_max_turns?: number;
@@ -66,26 +67,20 @@ export interface StepConfig {
   agent_configs?: AgentConfigs;
 }
 
-// StepConfigFile represents the entire step_config.json file structure
-export interface StepConfigFile {
-  steps: StepConfig[];
-}
-
-
 /**
  * Matches new plan steps with existing configs by ID only
  * Returns a map of step index -> matched AgentConfigs
  */
 export function matchStepConfigs(
   newSteps: TodoStep[] | TodoStepWithConfigs[],
-  oldConfigs: StepConfigFile
+  oldConfigs: StepConfig[]
 ): Map<number, AgentConfigs> {
   const result = new Map<number, AgentConfigs>();
 
   // Create lookup map: ID -> config
   const idConfigMap = new Map<string, AgentConfigs>();
   
-  for (const stepConfig of oldConfigs.steps) {
+  for (const stepConfig of oldConfigs) {
     if (stepConfig.agent_configs !== undefined && stepConfig.id) {
       idConfigMap.set(stepConfig.id, stepConfig.agent_configs);
     }
@@ -131,6 +126,8 @@ export interface PlanStep {
   condition_context?: string;
   if_true_steps?: PlanStep[];
   if_false_steps?: PlanStep[];
+  if_true_next_step_id?: string;      // ID of step to connect to after true branch completes (or "end" to end workflow)
+  if_false_next_step_id?: string;     // ID of step to connect to after false branch completes (or "end" to end workflow)
   condition_result?: boolean;
   condition_reason?: string;
   agent_configs?: AgentConfigs;       // Merged from step_config.json

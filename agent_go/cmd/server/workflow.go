@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
-	"mcp-agent/agent_go/pkg/database"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/database"
 )
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
@@ -345,6 +345,10 @@ type ExecutionOptions struct {
 
 	// Fallback behavior when validation fails
 	FallbackToOriginalLLMOnFailure bool `json:"fallback_to_original_llm_on_failure,omitempty"` // If true, use original LLM instead of temp override when validation fails
+
+	// Learning behavior when tempLLM is active (per-model control)
+	SkipLearningWhenTempLLM1 bool `json:"skip_learning_when_temp_llm1,omitempty"` // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
+	SkipLearningWhenTempLLM2 bool `json:"skip_learning_when_temp_llm2,omitempty"` // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
 
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)

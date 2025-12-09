@@ -27,6 +27,7 @@ import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
 import { useWorkflowStore, type ExecutionModeType, type RunFolder } from '../../../stores/useWorkflowStore'
 import type { PlannerFile, WorkflowPhase, StepProgress } from '../../../services/api-types'
+import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
@@ -45,10 +46,15 @@ const EXECUTION_MODE_OPTIONS: { id: ExecutionModeType; label: string; icon: type
 ]
 
 // Start Point options - where to start execution
-type StartPointType = 'from_beginning' | 'resume' | 'single_step'
+type StartPointType = 'from_beginning' | 'resume' | 'single_step' | 'resume_branch'
 interface StartPointOption {  
   id: StartPointType
   stepNumber?: number  // For resume/single_step, which step to target (1-based)
+  branchStep?: {  // For resume_branch
+    parentStepIndex: number;  // 0-based index of conditional step
+    branchType: 'if_true' | 'if_false';  // Which branch
+    branchStepIndex: number;  // 0-based index within the branch
+  };
   label: string
   icon: typeof Play
   description: string
@@ -57,6 +63,7 @@ interface StartPointOption {
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
   hasPlan: boolean
+  plan?: PlanningResponse | null  // Plan data for identifying conditional steps and branches
   currentPhase?: string
   workspacePath?: string | null
   totalSteps?: number
@@ -76,6 +83,7 @@ interface WorkflowToolbarProps {
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
   hasPlan,
+  plan,
   currentPhase,
   workspacePath,
   totalSteps = 0,
@@ -112,8 +120,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const getCompletedStepIndices = useWorkflowStore(state => state.getCompletedStepIndices)
   const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
   const selectedStartPoint = useWorkflowStore(state => state.selectedStartPoint)
+  const selectedBranchStep = useWorkflowStore(state => state.selectedBranchStep)
   const setExecutionMode = useWorkflowStore(state => state.setExecutionMode)
   const setStartPoint = useWorkflowStore(state => state.setStartPoint)
+  const setBranchStep = useWorkflowStore(state => state.setBranchStep)
   const buildExecutionOptions = useWorkflowStore(state => state.buildExecutionOptions)
   const loadSavedSettings = useWorkflowStore(state => state.loadSavedSettings)
   const saveSettings = useWorkflowStore(state => state.saveSettings)
@@ -387,13 +397,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     return { sortedIterations, iterationMap, items }
   }, [runFolders, variablesManifest])
   
-  // Generate start point options based on completed steps
+  // Generate start point options based on completed steps and branch steps
   const startPointOptions = useMemo((): StartPointOption[] => {
     const options: StartPointOption[] = [
       { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
     ]
     
-    // Add resume options for all completed steps plus the next step
+    // Add resume options for all completed steps plus the next step after all completed
     if (completedStepIndices.length > 0 && totalSteps > 0) {
       // Convert 0-based indices to 1-based step numbers
       const completedStepNumbers = completedStepIndices.map(idx => idx + 1).sort((a, b) => a - b)
@@ -405,36 +415,133 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         options.push({
           id: 'resume',
           stepNumber: stepNum,
-          label: `Resume from Step ${stepNum}`,
-          icon: stepNum === lastCompletedStep ? RefreshCw : SkipForward,
-          description: stepNum === lastCompletedStep 
-            ? `Continue from step ${stepNum} (${completedStepCount} completed)`
-            : `Jump to step ${stepNum}`
+          label: `Start Again from Step ${stepNum}`,
+          icon: RefreshCw,
+          description: `Start again from step ${stepNum} (${completedStepCount} completed)`
         })
       })
       
-      // Add next step if it exists
+      // Add next step if it exists (resume from after all completed steps)
+      // This is a new step that will run, so it says "Resume" not "Start Again"
       if (nextStep <= totalSteps) {
         options.push({
           id: 'resume',
           stepNumber: nextStep,
           label: `Resume from Step ${nextStep}`,
           icon: RefreshCw,
-          description: `Continue from step ${nextStep} (${completedStepCount} completed)`
+          description: `Resume from step ${nextStep} (after ${completedStepCount} completed steps)`
         })
       }
     }
     
+    // Add branch step resume options for conditional steps with incomplete branches
+    if (plan && stepProgress?.branch_steps && Object.keys(stepProgress.branch_steps).length > 0) {
+      console.log('[WorkflowToolbar] Processing branch steps:', stepProgress.branch_steps)
+      Object.entries(stepProgress.branch_steps).forEach(([stepIndexStr, branchProgress]) => {
+        const parentStepIndex = parseInt(stepIndexStr, 10)
+        const parentStep = plan.steps?.[parentStepIndex]
+        
+        // Only process conditional steps
+        if (!parentStep || !parentStep.has_condition) {
+          return
+        }
+        
+        const branchType = branchProgress.branch_executed === 'if_true' ? 'if_true' : 'if_false'
+        const branchSteps = branchType === 'if_true' ? parentStep.if_true_steps : parentStep.if_false_steps
+        
+        if (!branchSteps || branchSteps.length === 0) {
+          return
+        }
+        
+        // Find first incomplete branch step
+        let firstIncompleteIndex = -1
+        for (let i = 0; i < branchSteps.length; i++) {
+          const branchStepPath = `step-${parentStepIndex + 1}-${branchType === 'if_true' ? 'if-true' : 'if-false'}-${i}`
+          const isCompleted = branchProgress.completed_steps?.includes(branchStepPath) || false
+          
+          if (!isCompleted) {
+            firstIncompleteIndex = i
+            break
+          }
+        }
+        
+        const branchLabel = branchType === 'if_true' ? 'Yes' : 'No'
+        const completedBranchSteps = branchProgress.completed_steps?.filter((path: string) => 
+          path.startsWith(`step-${parentStepIndex + 1}-${branchType === 'if_true' ? 'if-true' : 'if-false'}-`)
+        ).length || 0
+        
+        if (firstIncompleteIndex === -1) {
+          // All branch steps completed - add resume option to re-execute from the first branch step
+          // This allows re-running the branch even if all steps are completed (similar to regular steps)
+          console.log(`[WorkflowToolbar] Adding branch resume option (all completed): Step ${parentStepIndex + 1}, ${branchLabel} branch, step 1 (${completedBranchSteps}/${branchSteps.length} completed)`)
+          options.push({
+            id: 'resume_branch',
+            branchStep: {
+              parentStepIndex,
+              branchType,
+              branchStepIndex: 0 // Start from first branch step
+            },
+            label: `🔀 Resume: Step ${parentStepIndex + 1} → ${branchLabel} Branch → Step 1`,
+            icon: RefreshCw,
+            description: `Re-execute ${branchLabel} branch from step 1 (${completedBranchSteps}/${branchSteps.length} completed)`
+          })
+        } else {
+          // Add resume option for the first incomplete branch step
+          console.log(`[WorkflowToolbar] Adding branch resume option: Step ${parentStepIndex + 1}, ${branchLabel} branch, step ${firstIncompleteIndex + 1} (${completedBranchSteps}/${branchSteps.length} completed)`)
+          options.push({
+            id: 'resume_branch',
+            branchStep: {
+              parentStepIndex,
+              branchType,
+              branchStepIndex: firstIncompleteIndex
+            },
+            label: `🔀 Resume: Step ${parentStepIndex + 1} → ${branchLabel} Branch → Step ${firstIncompleteIndex + 1}`,
+            icon: RefreshCw,
+            description: `Continue from ${branchLabel} branch, step ${firstIncompleteIndex + 1} (${completedBranchSteps}/${branchSteps.length} completed)`
+          })
+        }
+      })
+    }
+    
+    // Sort options: from_beginning first, then regular resume options, then branch resume options
+    options.sort((a, b) => {
+      if (a.id === 'from_beginning') return -1
+      if (b.id === 'from_beginning') return 1
+      if (a.id === 'resume_branch' && b.id !== 'resume_branch') return 1
+      if (b.id === 'resume_branch' && a.id !== 'resume_branch') return -1
+      if (a.id === 'resume_branch' && b.id === 'resume_branch') {
+        // Sort branch options by parent step index, then branch step index
+        const aParent = a.branchStep?.parentStepIndex ?? 0
+        const bParent = b.branchStep?.parentStepIndex ?? 0
+        if (aParent !== bParent) return aParent - bParent
+        return (a.branchStep?.branchStepIndex ?? 0) - (b.branchStep?.branchStepIndex ?? 0)
+      }
+      // Regular resume options - sort by step number
+      return (a.stepNumber ?? 0) - (b.stepNumber ?? 0)
+    })
+    
+    console.log(`[WorkflowToolbar] Generated ${options.length} start point options:`, options.map(o => ({ id: o.id, label: o.label, hasBranchStep: !!o.branchStep })))
     return options
-  }, [completedStepIndices, totalSteps, completedStepCount])
+  }, [completedStepIndices, totalSteps, completedStepCount, plan, stepProgress])
 
   // Get current start point info
   const currentStartPointInfo = useMemo(() => {
+    if (selectedBranchStep && selectedBranchStep !== null && selectedBranchStep !== undefined) {
+      // Find branch step option
+      return startPointOptions.find(o => 
+        o.id === 'resume_branch' &&
+        o.branchStep !== undefined &&
+        o.branchStep !== null &&
+        o.branchStep.parentStepIndex === selectedBranchStep.parentStepIndex &&
+        o.branchStep.branchType === selectedBranchStep.branchType &&
+        o.branchStep.branchStepIndex === selectedBranchStep.branchStepIndex
+      ) || startPointOptions[0]
+    }
     if (selectedStartPoint === 0) {
       return startPointOptions[0] // "Start from Beginning"
     }
     return startPointOptions.find(o => o.stepNumber === selectedStartPoint) || startPointOptions[0]
-  }, [selectedStartPoint, startPointOptions])
+  }, [selectedStartPoint, selectedBranchStep, startPointOptions])
 
   // Get current phase details
   const currentPhaseDetails = phases.find((p: WorkflowPhase) => p.id === currentPhase)
@@ -460,10 +567,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [setExecutionMode])
   
   // Handle selecting start point from dropdown
-  const handleSelectStartPoint = useCallback((stepNumber: number) => {
-    setStartPoint(stepNumber)
+  const handleSelectStartPoint = useCallback((option: StartPointOption) => {
+    if (option.id === 'resume_branch' && option.branchStep) {
+      setBranchStep(option.branchStep)
+    } else if (option.stepNumber !== undefined) {
+      setStartPoint(option.stepNumber)
+      // Note: setStartPoint already clears selectedBranchStep in the store
+    } else if (option.id === 'from_beginning') {
+      setStartPoint(0) // "Start from Beginning"
+      // Note: setStartPoint already clears selectedBranchStep in the store
+    }
     setIsStartPointDropdownOpen(false)
-  }, [setStartPoint])
+  }, [setStartPoint, setBranchStep])
 
   // Handle selecting run folder
   const handleSelectRunFolder = useCallback(async (folder: string) => {
@@ -928,7 +1043,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       const Icon = currentStartPointInfo.icon
                       return <Icon className="w-3.5 h-3.5" />
                     })()}
-                    <span className="max-w-[110px] truncate">{currentStartPointInfo.label}</span>
+                    <span className="max-w-[120px] truncate" title={currentStartPointInfo.label}>{currentStartPointInfo.label}</span>
                     <ChevronDown className={`w-3 h-3 transition-transform ${isStartPointDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
                   
@@ -942,35 +1057,60 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         {startPointOptions.map((option: StartPointOption, idx: number) => {
                           const Icon = option.icon
                           const isSelected = option.id === 'from_beginning' 
-                            ? selectedStartPoint === 0 
+                            ? (selectedStartPoint === 0 && !selectedBranchStep)
+                            : option.id === 'resume_branch'
+                            ? (selectedBranchStep !== null && 
+                               selectedBranchStep !== undefined &&
+                               option.branchStep !== undefined &&
+                               option.branchStep !== null &&
+                               selectedBranchStep.parentStepIndex === option.branchStep.parentStepIndex &&
+                               selectedBranchStep.branchType === option.branchStep.branchType &&
+                               selectedBranchStep.branchStepIndex === option.branchStep.branchStepIndex)
                             : selectedStartPoint === option.stepNumber
-                          // Explicitly handle "Start from Beginning" to ensure it sets selectedStartPoint to 0
-                          const stepNumberToSet = option.id === 'from_beginning' ? 0 : (option.stepNumber || 0)
+                          
+                          // Check if previous option was not a branch option and this one is (add separator)
+                          const prevOption = idx > 0 ? startPointOptions[idx - 1] : null
+                          const showBranchSeparator = option.id === 'resume_branch' && prevOption && prevOption.id !== 'resume_branch'
+                          
                           return (
+                            <div key={`${option.id}-${option.stepNumber || option.branchStep?.parentStepIndex || idx}`}>
+                              {showBranchSeparator && (
+                                <div className="px-3 py-2">
+                                  <div className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+                                    Branch Resume Options
+                                  </div>
+                                </div>
+                              )}
                             <button
-                              key={`${option.id}-${option.stepNumber || idx}`}
-                              onClick={() => handleSelectStartPoint(stepNumberToSet)}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  handleSelectStartPoint(option)
+                                }}
                               className={`
-                                w-full text-left px-3 py-2.5 rounded-md transition-colors
+                                  w-full text-left px-3 py-2.5 rounded-md transition-colors cursor-pointer
                                 ${isSelected 
                                   ? 'bg-purple-100 dark:bg-purple-900/30' 
                                   : 'hover:bg-gray-100 dark:hover:bg-gray-700'
                                 }
+                                  ${option.id === 'resume_branch' ? 'border-l-4 border-blue-400 dark:border-blue-500 ml-0' : ''}
                               `}
+                                type="button"
                             >
                               <div className="flex items-start gap-3">
-                                <Icon className={`w-4 h-4 mt-0.5 ${isSelected ? 'text-purple-600 dark:text-purple-400' : 'text-gray-500 dark:text-gray-400'}`} />
+                                  <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isSelected ? 'text-purple-600 dark:text-purple-400' : option.id === 'resume_branch' ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`} />
                                 <div className="flex-1 min-w-0">
-                                  <div className={`font-medium text-sm ${isSelected ? 'text-purple-700 dark:text-purple-300' : 'text-gray-900 dark:text-gray-100'}`}>
+                                    <div className={`font-medium text-sm ${isSelected ? 'text-purple-700 dark:text-purple-300' : option.id === 'resume_branch' ? 'text-blue-700 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}>
                                     {option.label}
                                   </div>
                                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                                     {option.description}
                                   </div>
                                 </div>
-                                {isSelected && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400 mt-0.5" />}
+                                  {isSelected && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400 mt-0.5 flex-shrink-0" />}
                               </div>
                             </button>
+                            </div>
                           )
                         })}
                       </div>

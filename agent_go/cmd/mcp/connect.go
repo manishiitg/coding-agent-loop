@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"mcp-agent/agent_go/pkg/logger"
+	"mcp-agent-builder-go/agent_go/pkg/logger"
 	"mcpagent/mcpclient"
 
 	"github.com/spf13/cobra"

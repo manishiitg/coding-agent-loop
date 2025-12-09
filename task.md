@@ -33,6 +33,17 @@ g) add references as extra agent
 will index data
 i) prompt tempaltes, need to check variables on compile time
 
+9. for slack integration, we should add optino in ui when to use this..
+
+10. add tools so that planning.go know about prerequired step
+
+11. 📂 List Workspace Files • Turn: 1 • Server: custom
+11:01:01
+📁 Folder:
+planning/changelog
+📏 Max Depth:.. if there a single path only.. can we prefix auto?
+
+12. multiple chats?
 h) check if external package is even required
 
 8.. also store token_usage. for overlal planning etc.. in main folder

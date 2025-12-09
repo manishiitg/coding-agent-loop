@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	virtualtools "mcp-agent/agent_go/cmd/server/virtual-tools"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcpagent/events"
 )
 

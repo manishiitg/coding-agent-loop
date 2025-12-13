@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat } from 'lucide-react'
-import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData } from '../hooks/usePlanToFlow'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap } from 'lucide-react'
+import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 
@@ -42,10 +42,10 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
 
   // Type guard to check if node has step data
-  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData } => {
-    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop') &&
+  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData } => {
+    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') &&
            'step' in node.data &&
-           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData).step === 'object'
+           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData).step === 'object'
   }
 
   // Build a flat list of all steps including branch steps
@@ -291,12 +291,15 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                           ? 'font-semibold text-foreground' 
                           : 'font-medium text-foreground/90'
                       }`}>
-                        {/* Conditional or Loop Icon */}
+                        {/* Conditional, Loop, or Decision Icon */}
                         {nodeType === 'conditional' && (
                           <GitBranch className="w-3 h-3 text-purple-500 flex-shrink-0" />
                         )}
                         {nodeType === 'loop' && (
                           <Repeat className="w-3 h-3 text-cyan-500 flex-shrink-0" />
+                        )}
+                        {nodeType === 'decision' && (
+                          <Zap className="w-3 h-3 text-indigo-500 flex-shrink-0" />
                         )}
                         <span>{step.title || `Step ${stepIndex + 1}`}</span>
                         {useCodeExecutionMode && (

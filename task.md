@@ -48,4 +48,6 @@ h) check if external package is even required
 
 8.. also store token_usage. for overlal planning etc.. in main folder
 
-9. for slack integration, we should add optino in ui when to use this..
+15. all filesystem events like logs/ should not highlight files
+
+16. diff patch tool, corrupts json

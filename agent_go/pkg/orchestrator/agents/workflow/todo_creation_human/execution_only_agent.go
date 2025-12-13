@@ -38,6 +38,8 @@ type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 	LearningHistory         string // Formatted learning conversation history (REQUIRED for execution-only mode)
 	StepNumber              string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 	StepExecutionPath       string // Full execution folder path (e.g., "execution/step-8")
+	DecisionReasoning       string // Context from decision step that routed to this step (empty if not routed from decision)
+	PreviousStepsSummary    string // Summary of previous completed steps (titles, descriptions, outputs)
 }
 
 // HumanControlledTodoPlannerExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -85,6 +87,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 	learningHistory := templateVars["LearningHistory"]
 	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-if-true-0"
 	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
+	previousStepsSummary := templateVars["PreviousStepsSummary"]
 
 	// Get current date and time
 	now := time.Now()
@@ -145,6 +148,11 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 ## 🎯 PRIMARY: Step Requirements (SOURCE OF TRUTH)
 The step description, success criteria, and context dependencies define WHAT you must accomplish.
 **Always prioritize step requirements over learnings.**
+
+{{if .PreviousStepsSummary}}
+## 📋 Previous Steps Context
+{{.PreviousStepsSummary}}
+{{end}}
 
 ## 📚 SECONDARY: Learning Context (BEST PRACTICE GUIDANCE)
 {{.LearningHistory}}
@@ -309,6 +317,7 @@ Validation agent will verify your work - focus on execution and evidence.`
 		"VariableValues":            variableValues,
 		"StepNumber":                stepNumber,
 		"StepExecutionPath":         stepExecutionPath,
+		"PreviousStepsSummary":      previousStepsSummary,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)
@@ -341,6 +350,8 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 		LearningHistory:         templateVars["LearningHistory"],
 		StepNumber:              templateVars["StepNumber"],
 		StepExecutionPath:       templateVars["StepExecutionPath"],
+		DecisionReasoning:       templateVars["DecisionReasoning"],
+		PreviousStepsSummary:    templateVars["PreviousStepsSummary"],
 	}
 
 	// Define the user message template
@@ -350,6 +361,9 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 **WORKSPACE**: {{.WorkspacePath}}  
 **STEP NUMBER**: {{.StepNumber}} (write all output files to {{.StepExecutionPath}}/)
 
+{{if .PreviousStepsSummary}}
+{{.PreviousStepsSummary}}
+{{end}}
 {{if .VariableNames}}## 📋 Variables
 {{.VariableNames}}
 {{if .VariableValues}}
@@ -428,6 +442,21 @@ Address the issues above and improve your approach.
 {{.HumanFeedback}}
 
 **⚠️ CRITICAL: This human guidance takes precedence over all other instructions (validation feedback, learnings, step descriptions).**
+{{end}}
+{{if .DecisionReasoning}}
+## 🎯 **IMPORTANT: Decision Context - READ CAREFULLY**
+
+{{.DecisionReasoning}}
+
+**🚨 CRITICAL: This decision context is IMPORTANT and MUST be considered when executing this step.**
+
+**How to use this context:**
+- **READ AND UNDERSTAND** why this step is being executed (what condition was evaluated)
+- **USE the decision reasoning** to inform your approach and decision-making throughout execution
+- **CONSIDER the decision result and reasoning** when determining how to accomplish the step
+- The reasoning explains what was evaluated in the previous decision step and why routing led here
+- **The execution output from the decision step** provides context about what was done before the decision was made
+- **This context directly impacts** how you should approach and execute this step
 {{end}}
 
 ## 📋 Step Details

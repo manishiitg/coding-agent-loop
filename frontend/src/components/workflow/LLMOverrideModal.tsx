@@ -28,6 +28,8 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
   const setSkipLearningWhenTempLLM1 = useWorkflowStore(state => state.setSkipLearningWhenTempLLM1)
   const skipLearningWhenTempLLM2 = useWorkflowStore(state => state.skipLearningWhenTempLLM2)
   const setSkipLearningWhenTempLLM2 = useWorkflowStore(state => state.setSkipLearningWhenTempLLM2)
+  const saveValidationResponses = useWorkflowStore(state => state.saveValidationResponses)
+  const setSaveValidationResponses = useWorkflowStore(state => state.setSaveValidationResponses)
   
   // Convert tempOverrideLLM to LLMOption format for the dropdown
   const selectedLLM1: LLMOption | null = tempOverrideLLM
@@ -150,7 +152,7 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
         </div>
 
         {/* Content */}
-        <div className={`flex-1 p-6 space-y-6 min-h-[400px] ${!tempOverrideLLMEnabled ? 'opacity-60' : ''}`}>
+        <div className={`flex-1 p-6 space-y-6 min-h-[400px] overflow-y-auto ${!tempOverrideLLMEnabled ? 'opacity-60' : ''}`}>
           {/* Temp LLM 1 */}
           <div className="space-y-3">
             <label className="text-sm font-medium text-foreground block">
@@ -275,6 +277,26 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
               </label>
             </div>
           )}
+          
+          {/* Save execution logs checkbox */}
+          <div className="space-y-2 pt-2 border-t border-border">
+            <label className="flex items-start gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={saveValidationResponses}
+                onChange={(e) => setSaveValidationResponses(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 focus:ring-offset-0"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-foreground">
+                  Save execution logs to workspace
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  When enabled, execution logs are saved to the workspace: validation responses (logs/step-X/validation.json), execution results, and conversation history (logs/step-X/execution/).
+                </div>
+              </div>
+            </label>
+          </div>
         </div>
 
         {/* Footer */}

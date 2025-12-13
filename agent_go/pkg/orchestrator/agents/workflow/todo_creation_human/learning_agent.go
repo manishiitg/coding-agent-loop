@@ -88,7 +88,6 @@ func (agent *HumanControlledTodoPlannerLearningAgent) Execute(ctx context.Contex
 	if stepNumber, ok := templateVars["StepNumber"]; ok {
 		learningTemplateVars["StepNumber"] = stepNumber
 	}
-	learningTemplateVars["UseStepSpecificLearnings"] = "true"
 
 	// Create template data for learning
 	templateData := HumanControlledTodoPlannerLearningTemplate{
@@ -163,6 +162,7 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 		return ` (names only, no arguments)`
 	}() + `
 - ✅ Python scripts (.py files) - extract FULL script content
+- ✅ **OUTPUT FILE FORMATS** - The structure/format of JSON files and other output files created by the execution agent (especially files referenced in success criteria). Capture the exact JSON structure, field names, data types, and format so future executions can create files in the same format.
 - ✅ Both success patterns (what worked) AND failure patterns (what to avoid)
 
 **What to EXCLUDE**:
@@ -198,6 +198,19 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 		}
 		return `Tool Recipe** - Tool names, patterns, + full Python script content`
 	}() + `
+
+**3a. Capture Output File Formats** - **CRITICAL**: Extract the structure/format of output files created by the execution agent:
+- **Identify output files**: Look for files created by write_workspace_file or other file creation tools in ExecutionHistory
+- **Focus on JSON files**: Since success criteria files are mostly JSON, pay special attention to JSON output files
+- **Extract JSON structure**: Document the exact JSON structure including:
+  - Field names (exact names as they appear)
+  - Data types (string, number, boolean, array, object)
+  - Required vs optional fields
+  - Nested structure (if any)
+  - Example format with placeholders for dynamic values
+- **Document format**: Add a section showing the expected output file format so future executions can replicate it
+- **Example**: If execution created results.json with {"status": "completed", "count": 10}, document this exact structure
+
 ` + func() string {
 		if learningDetailLevel == "exact" {
 			return `
@@ -233,8 +246,8 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
      - **Merge Duplicates**: When same pattern appears in multiple files, combine run counts and recalculate success rate
      - **Remove Outdated**: Patterns with low success (<50%) that have better alternatives
      - **Preserve Unique**: Keep all unique valuable patterns from all files
-  5. **Output**: Write consolidated content to single file
-  6. **Cleanup**: After successful consolidation, optionally remove old/duplicate files (only if explicitly safe)
+  5. **Output**: Write consolidated content to single file at target path
+  6. **Cleanup (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)
 - **Priority**: Latest patterns → Best success rates → Most runs → Unique patterns
 - **Note**: Consolidation is SECONDARY - PRIMARY goal is always to learn from current execution
 
@@ -350,6 +363,16 @@ Step 1 → outputs: [what it produces]
 Step 2 → inputs: [from Step 1] → outputs: [what it produces]
 ... trace data through entire workflow ...
 
+**📄 OUTPUT FILE FORMATS:**
+**File**: {filename}.json (or other output files)
+**Format** (JSON structure):
+{
+  "field1": "<type>",
+  "field2": "<type>",
+  ...
+}
+**Notes**: [Any important details about the format, required fields, etc.]
+
 **🔀 DECISION POINTS:** (if any conditional logic was used)
 - After Step N: If [condition] → [action A], else [action B]
 
@@ -399,6 +422,16 @@ Alternative Path [Runs: X | Success: Y%]
 - **Tools**: kubernetes.kubectl_apply [Runs: 7 | Success: 87.5%] ✅, kubernetes.kubectl_rollout_status [Runs: 7 | Success: 87.5%] ✅
 - **Scripts**: Deploy_app_script.py [Runs: 7 | Success: 87.5%] ✅ (health checks)
 - **Approach**: Three-step validation with automation [Runs: 7 | Success: 87.5%] ✅
+
+**📄 OUTPUT FILE FORMATS:**
+**File**: {filename}.json (or other output files created by execution agent)
+**Format** (JSON structure):
+{
+  "field1": "<type>",
+  "field2": "<type>",
+  ...
+}
+**Notes**: [Any important details about the format, required fields, etc.]
 
 **📋 EXECUTION GUIDELINES:**
 **Workflow**: Setup → Dry-run → Deploy → Monitor → Verify
@@ -491,6 +524,7 @@ Alternative Path [Runs: X | Success: Y%]
 **Extract**:
 - Tool names (format: server_name.tool_name)
 - Full Python script content (save to ` + scriptsPath + `/)
+- **Output file formats** - Structure/format of JSON files and other output files created (especially files referenced in success criteria). Extract exact JSON structure, field names, data types.
 - Refactor scripts to accept variables as parameters (not placeholders)
 - Focus on MCP server tools (exclude workspace management tools)`
 	}() + `
@@ -660,7 +694,8 @@ Failures teach us what NOT to do - use them to refine the workflow until it succ
    
 4. **UPDATE**: If latest run differs from consolidated patterns, update them
    
-5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md`
+5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
+6. **CLEANUP (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)`
 			} else {
 				return `1. **READ FIRST**: ` + existingPath + `
 2. **MERGE**: Preserve all previous learnings, ` + func() string {
@@ -675,8 +710,17 @@ Failures teach us what NOT to do - use them to refine the workflow until it succ
 		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
 2. **CREATE NEW FILE**: Create new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`
 	}() + `
-4. **SCORES**: Update [Runs: X | Success: Y%] when patterns repeat
-5. **WRITE**: Merged content (existing + new)
+3. **SCORES**: Update [Runs: X | Success: Y%] when patterns repeat
+4. **WRITE**: Merged content (existing + new)` + func() string {
+		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
+			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
+			if hasMultipleFiles {
+				return `
+5. **CLEANUP**: Delete all old consolidated files after successful write`
+			}
+		}
+		return ""
+	}() + `
 
 **After writing, output ONLY the file path** (e.g., \"Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md\"). 
 

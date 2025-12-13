@@ -44,10 +44,9 @@ type BaseOrchestrator struct {
 	temperature              float64
 	agentMode                string
 	selectedServers          []string
-	selectedTools            []string   // Selected tools in "server:tool" format
-	useCodeExecutionMode     bool       // MCP code execution mode
-	useStepSpecificLearnings bool       // Store learnings in step-specific folders (execution/learnings/step-{X}/)
-	llmConfig                *LLMConfig // LLM configuration
+	selectedTools        []string   // Selected tools in "server:tool" format
+	useCodeExecutionMode bool       // MCP code execution mode
+	llmConfig            *LLMConfig // LLM configuration
 	maxTurns                 int        // Maximum turns for the orchestrator
 
 	// Optional simple state (for workflow orchestrators)
@@ -100,11 +99,10 @@ func NewBaseOrchestrator(
 		mcpConfigPath:            mcpConfigPath,
 		temperature:              temperature,
 		agentMode:                agentMode,
-		selectedServers:          selectedServers,
-		selectedTools:            selectedTools,        // NEW field
-		useCodeExecutionMode:     useCodeExecutionMode, // NEW field
-		useStepSpecificLearnings: true,                 // Default to true: store learnings in step-specific folders
-		llmConfig:                llmConfig,
+		selectedServers:      selectedServers,
+		selectedTools:        selectedTools,        // NEW field
+		useCodeExecutionMode: useCodeExecutionMode, // NEW field
+		llmConfig:            llmConfig,
 		maxTurns:                 maxTurns,
 	}
 

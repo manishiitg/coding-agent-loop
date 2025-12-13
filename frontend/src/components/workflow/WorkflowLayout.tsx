@@ -10,6 +10,7 @@ import { ChatHeader } from '../ChatHeader'
 import { X } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { type ExecutionOptions } from '../../services/api-types'
+import { getRawEventData } from '../../generated/event-types'
 
 interface WorkflowLayoutProps {
   className?: string
@@ -85,23 +86,56 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       console.log(`[WorkflowPlanUpdate] Event ${i}: type=${event.type}, timestamp=${event.timestamp}`)
       
       if (event.type === 'todo_steps_extracted') {
-        const eventData = event.data as { extracted_steps?: unknown[], total_steps_extracted?: number, plan_source?: string, extraction_method?: string, workspace_path?: string }
+        // Use helper function to extract raw event data (handles nested structure)
+        const rawData = getRawEventData(event)
+        const eventData = rawData as {
+          extracted_steps?: unknown[], 
+          total_steps_extracted?: number, 
+          plan_source?: string, 
+          extraction_method?: string, 
+          workspace_path?: string,
+          metadata?: {
+            [k: string]: unknown
+          }
+        } | undefined
+        
+        if (!eventData) {
+          console.warn('[WorkflowPlanUpdate] Could not extract event data from event:', event)
+          continue
+        }
+        
         const stepCount = (eventData?.extracted_steps?.length) || eventData?.total_steps_extracted || 0
         const planSource = eventData?.plan_source || 'unknown'
         const extractionMethod = eventData?.extraction_method || 'unknown'
+        
+        // Extract changed step IDs from metadata (granular event data)
+        // Metadata is at the top level of the event data (from BaseEventData)
+        const metadata = eventData?.metadata || {}
+        const changedStepIDs = (Array.isArray(metadata.changed_step_ids) 
+          ? metadata.changed_step_ids as string[] 
+          : []) || []
+        const deletedStepIDs = (Array.isArray(metadata.deleted_step_ids) 
+          ? metadata.deleted_step_ids as string[] 
+          : []) || []
         
         console.log(`[WorkflowPlanUpdate] Detected plan update event:`, {
           stepCount,
           planSource,
           extractionMethod,
           workspacePath: eventData?.workspace_path,
+          changedStepIDs,
+          deletedStepIDs,
+          hasMetadata: !!(eventData?.metadata),
+          metadataKeys: eventData?.metadata ? Object.keys(eventData.metadata) : [],
+          metadata: eventData?.metadata,
+          rawEventData: rawData,
           eventIndex: i
         })
         
-        // Trigger canvas refresh with change detection
+        // Trigger canvas refresh with granular change data
         if (canvasRef.current) {
-          console.log('[WorkflowPlanUpdate] Calling canvasRef.current.refresh()')
-          canvasRef.current.refresh().then((changes) => {
+          console.log('[WorkflowPlanUpdate] Calling canvasRef.current.refresh() with granular changes')
+          canvasRef.current.refresh(changedStepIDs, deletedStepIDs).then((changes) => {
             console.log('[WorkflowPlanUpdate] Canvas refresh completed, changes:', changes)
           }).catch((err) => {
             console.error('[WorkflowPlanUpdate] Canvas refresh failed:', err)

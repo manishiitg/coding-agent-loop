@@ -150,6 +150,13 @@ func runServer(cmd *cobra.Command, args []string) {
 			semantic.GET("/stats", handlers.GetSemanticStats)
 			semantic.POST("/resync", handlers.TriggerResync)
 		}
+
+		// Workspace backup routes
+		workspace := api.Group("/workspace")
+		{
+			workspace.POST("/export", handlers.ExportWorkspace)
+			workspace.POST("/import", handlers.ImportWorkspace)
+		}
 	}
 
 	// Start server

@@ -4,6 +4,7 @@ import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
 import ChatHistorySection from './sidebar/ChatHistorySection'
+import WorkflowBackupSection from './sidebar/WorkflowBackupSection'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
@@ -94,6 +95,11 @@ export default function WorkspaceSidebar({
       {!minimized && (
         <div className="flex-1 overflow-y-auto">
           <div className="p-3 space-y-3">
+
+            {/* Workflow Backup Section (only shown in workflow mode) */}
+            <WorkflowBackupSection
+              minimized={minimized}
+            />
 
             {/* LLM Configuration */}
             <LLMConfigurationSummary
@@ -194,6 +200,9 @@ export default function WorkspaceSidebar({
 
           {/* Chat History Icon */}
           <ChatHistorySection minimized={true} />
+
+          {/* Workflow Backup Icons (only shown in workflow mode) */}
+          <WorkflowBackupSection minimized={true} />
         </div>
       )}
 

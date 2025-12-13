@@ -83,3 +83,38 @@ func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agen
 		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit unified completion event: %v", err))
 	}
 }
+
+// EmitOrchestratorAgentError emits an orchestrator agent error event
+func (bo *BaseOrchestrator) EmitOrchestratorAgentError(ctx context.Context, agentType, agentName, objective, errorMsg string, stepIndex, iteration int) {
+	eventData := &events.OrchestratorAgentErrorEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+		},
+		AgentType: agentType,
+		AgentName: agentName,
+		Objective: objective,
+		Error:     errorMsg,
+		StepIndex: stepIndex,
+		Iteration: iteration,
+	}
+
+	bo.emitEvent(ctx, events.OrchestratorAgentError, eventData)
+}
+
+// EmitStepFailedEvent emits a step failed event
+func (bo *BaseOrchestrator) EmitStepFailedEvent(ctx context.Context, stepID, stepTitle, stepPath, errorMsg string, stepIndex int, isBranchStep bool) {
+	eventData := &events.StepFailedEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+			Component: "orchestrator",
+		},
+		StepID:       stepID,
+		StepIndex:    stepIndex,
+		StepTitle:    stepTitle,
+		StepPath:     stepPath,
+		IsBranchStep: isBranchStep,
+		Error:        errorMsg,
+	}
+
+	bo.emitEvent(ctx, events.StepExecutionFailed, eventData)
+}

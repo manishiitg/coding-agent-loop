@@ -22,6 +22,12 @@
   gap: 0.25rem;
 }
 
+.event-tree-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem; /* Reduced from 0.25rem for tighter spacing */
+}
+
 .event-tree-node {
   width: 100%;
 }
@@ -145,7 +151,7 @@
 }
 
 .event-details {
-  margin-top: 0.25rem;
+  margin-top: 0; /* Removed margin to reduce gaps between events */
 }
 
 .event-content {

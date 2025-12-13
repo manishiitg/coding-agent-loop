@@ -78,9 +78,9 @@ func GetWorkflowConstants() WorkflowConstants {
 			},
 			{
 				ID:          "plan-improvement",
-				Title:       "Plan Improvement",
+				Title:       "Plan Debugger",
 				Description: "Analyze execution results, plan.json, learnings folder, and validation reports to provide feedback and suggestions for improving the plan based on real execution outcomes.",
-				Options:     []WorkflowPhaseOption{}, // No options for plan improvement phase
+				Options:     []WorkflowPhaseOption{}, // No options for plan debugger phase
 			},
 			{
 				ID:          "plan-learnings-alignment",

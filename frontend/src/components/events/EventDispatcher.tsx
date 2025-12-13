@@ -61,7 +61,8 @@ import {
   IndependentStepsSelectedEventDisplay,
   TodoStepsExtractedEventDisplay,
   StepExecutionEventDisplay,
-  StepProgressUpdatedEventDisplay
+  StepProgressUpdatedEventDisplay,
+  DecisionEvaluatedEventDisplay
 } from './orchestrator'
 import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
@@ -90,7 +91,8 @@ import {
   CacheEventDisplay,
   ComprehensiveCacheEventDisplay,
   StructuredOutputStartEventDisplay,
-  StructuredOutputEndEventDisplay
+  StructuredOutputEndEventDisplay,
+  WorkspaceFileOperationEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
@@ -242,10 +244,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'tool_call_error')) {
     return <CompactWrapper><WithContext Component={ToolCallErrorEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
-  // Workspace file operation events are handled silently for file highlighting
-  // They don't need to be displayed in the event list
+  // Workspace file operation events - shown in advanced mode only
   if (isEventType(event, 'workspace_file_operation')) {
-    return null
+    return <CompactWrapper><WorkspaceFileOperationEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // System Events
@@ -471,6 +472,18 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return (
       <CompactWrapper>
         <StepProgressUpdatedEventDisplay 
+          event={getEventData(event)} 
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+
+  // Decision Evaluated Event
+  if (isEventType(event, 'decision_evaluated')) {
+    return (
+      <CompactWrapper>
+        <DecisionEvaluatedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
         />

@@ -19,6 +19,10 @@ interface EventNode {
   isExpanded: boolean;
 }
 
+// Performance optimization: Limit events processed to prevent browser freeze
+const MAX_EVENTS_TO_PROCESS = 300; // Process max 300 events at a time (reduced from 500 for better performance)
+const INITIAL_VISIBLE_EVENTS = 30; // Show first 30 events (reduced from 50 for better performance)
+
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
@@ -26,9 +30,47 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   const [manuallyExpandedSessions, setManuallyExpandedSessions] = useState<Set<string>>(new Set());
   // Track previously seen session keys to detect truly new sessions
   const previousSessionKeysRef = React.useRef<Set<string>>(new Set());
+  // Performance: Limit visible events to prevent browser freeze
+  const [visibleEventCount, setVisibleEventCount] = useState(INITIAL_VISIBLE_EVENTS);
+  // Track last event count to detect new events
+  const lastEventCountRef = React.useRef<number>(0);
   
-  // Display all events in normal list
-  const displayEvents = events;
+  // Limit events to prevent browser freeze - only process recent events
+  // ALWAYS takes the LATEST events (last N from the array)
+  const displayEvents = React.useMemo(() => {
+    if (events.length <= MAX_EVENTS_TO_PROCESS) {
+      return events;
+    }
+    // Only process the most recent MAX_EVENTS_TO_PROCESS events
+    // This prevents processing thousands of events
+    // slice(-N) ensures we always get the LATEST events
+    console.warn(`[PERF] Limiting events from ${events.length} to ${MAX_EVENTS_TO_PROCESS} to prevent freeze`);
+    return events.slice(-MAX_EVENTS_TO_PROCESS);
+  }, [events]);
+  
+  // Ensure we always show latest events when new ones arrive
+  // If user has loaded more events, keep showing latest (they'll see new events automatically)
+  React.useEffect(() => {
+    const currentEventCount = displayEvents.length;
+    const previousEventCount = lastEventCountRef.current;
+    
+    // If new events arrived and we're showing fewer than available, ensure we show at least INITIAL_VISIBLE_EVENTS
+    if (currentEventCount > previousEventCount && visibleEventCount < INITIAL_VISIBLE_EVENTS) {
+      // New events arrived - ensure we show at least the initial count (latest events)
+      setVisibleEventCount(INITIAL_VISIBLE_EVENTS);
+    }
+    
+    lastEventCountRef.current = currentEventCount;
+  }, [displayEvents.length, visibleEventCount]);
+  
+  // Limit visible events for rendering - show LATEST events first
+  // ALWAYS takes the last N events (most recent) - ensures latest events are always visible
+  const visibleEvents = React.useMemo(() => {
+    // Take the last N events (most recent) from displayEvents
+    // displayEvents is already the most recent MAX_EVENTS_TO_PROCESS events
+    // slice(-N) ensures we ALWAYS get the LATEST events, never older ones
+    return displayEvents.slice(-visibleEventCount);
+  }, [displayEvents, visibleEventCount]);
 
   // Extract parent_id from event data
   const getParentId = React.useCallback((event: PollingEvent): string | undefined => {
@@ -153,6 +195,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   }, []);
 
   // Find all events between orchestrator_agent_start and orchestrator_agent_end
+  // OPTIMIZATION: Only process visibleEvents to reduce computation
   const findEventsBetweenStartEnd = React.useMemo(() => {
     const sessionEvents = new Map<string, Set<string>>(); // sessionKey -> Set of event IDs
     
@@ -160,7 +203,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     const startEvents = new Map<string, { event: PollingEvent; index: number }>(); // sessionKey -> start event
     const endEvents = new Map<string, { event: PollingEvent; index: number }>(); // sessionKey -> end event
 
-    events.forEach((event, index) => {
+    visibleEvents.forEach((event, index) => {
       const sessionKey = getAgentSessionKey(event);
       if (!sessionKey) return;
 
@@ -184,7 +227,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       
       // Include all events between start and end (exclusive of end)
       for (let i = startInfo.index + 1; i < endInfo.index; i++) {
-        eventIds.add(events[i].id);
+        eventIds.add(visibleEvents[i].id);
       }
       
       // Include end event
@@ -194,14 +237,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     });
 
     return sessionEvents;
-  }, [events, getAgentSessionKey]);
+  }, [visibleEvents, getAgentSessionKey]);
 
   // Get ordered list of completed sessions by their end event index
+  // OPTIMIZATION: Only process visibleEvents to reduce computation
   const getOrderedCompletedSessions = React.useMemo(() => {
     const sessionEndIndices = new Map<string, number>(); // sessionKey -> end event index
     
     // Find all orchestrator_agent_end events and their indices
-    events.forEach((event, index) => {
+    visibleEvents.forEach((event, index) => {
       const sessionKey = getAgentSessionKey(event);
       if (sessionKey && event.type === 'orchestrator_agent_end') {
         // Only include sessions that have both start and end (completed sessions)
@@ -215,9 +259,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return Array.from(sessionEndIndices.entries())
       .sort(([, indexA], [, indexB]) => indexA - indexB)
       .map(([sessionKey]) => sessionKey);
-  }, [events, getAgentSessionKey, findEventsBetweenStartEnd]);
+  }, [visibleEvents, getAgentSessionKey, findEventsBetweenStartEnd]);
 
-  // Auto-collapse logic: Keep 1-5 sessions expanded, collapse all except newest when 6+ sessions
+  // Auto-collapse logic: Keep 1-5 sessions expanded, keep newest 5 expanded when 6+ sessions (collapse n-5 older ones)
   // This runs when new sessions complete or when session order changes
   React.useEffect(() => {
     if (getOrderedCompletedSessions.length === 0) {
@@ -272,19 +316,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
           }
         });
       } else {
-        // More than 5 sessions: collapse all except the newest session
-        const newestSession = orderedSessions[n - 1]; // Current newest session (n)
-        const olderSessions = orderedSessions.slice(0, n - 1); // All sessions except the newest
+        // More than 5 sessions: keep newest 5 expanded, collapse the rest (n-5)
+        // Get the newest 5 sessions (last 5 in the ordered list)
+        const newest5Sessions = orderedSessions.slice(Math.max(0, n - 5)); // Last 5 sessions
+        const olderSessions = orderedSessions.slice(0, Math.max(0, n - 5)); // All sessions except newest 5
         
-        // Keep the newest session expanded (unless manually collapsed by user)
-        if (newestSession) {
-          if (newCollapsed.has(newestSession) && !manuallyExpandedSessions.has(newestSession)) {
-            newCollapsed.delete(newestSession);
+        // Keep the newest 5 sessions expanded (unless manually collapsed by user)
+        newest5Sessions.forEach(sessionKey => {
+          if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
+            newCollapsed.delete(sessionKey);
             hasChanges = true;
           }
-        }
+        });
         
-        // Collapse all older sessions unless manually expanded
+        // Collapse all older sessions (n-5) unless manually expanded
         olderSessions.forEach(sessionKey => {
           // Only auto-collapse if user hasn't manually expanded it
           if (!manuallyExpandedSessions.has(sessionKey)) {
@@ -309,35 +354,47 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   }, [getOrderedCompletedSessions, findEventsBetweenStartEnd, manuallyExpandedSessions]);
 
 
-  const toggleNode = (eventId: string) => {
-    const newExpanded = new Set(expandedNodes);
-    if (newExpanded.has(eventId)) {
-      newExpanded.delete(eventId);
-    } else {
-      newExpanded.add(eventId);
-    }
-    setExpandedNodes(newExpanded);
-  };
+  const toggleNode = React.useCallback((eventId: string) => {
+    setExpandedNodes(prev => {
+      const newExpanded = new Set(prev);
+      if (newExpanded.has(eventId)) {
+        newExpanded.delete(eventId);
+      } else {
+        newExpanded.add(eventId);
+      }
+      return newExpanded;
+    });
+  }, []);
 
-  const toggleAgentSession = (sessionKey: string) => {
-    const newCollapsed = new Set(collapsedSessions);
-    const newManuallyExpanded = new Set(manuallyExpandedSessions);
+  const toggleAgentSession = React.useCallback((sessionKey: string) => {
+    setCollapsedSessions(prevCollapsed => {
+      const newCollapsed = new Set(prevCollapsed);
+      if (newCollapsed.has(sessionKey)) {
+        newCollapsed.delete(sessionKey);
+      } else {
+        newCollapsed.add(sessionKey);
+      }
+      return newCollapsed;
+    });
     
-    if (newCollapsed.has(sessionKey)) {
-      // User is expanding - mark as manually expanded
-      newCollapsed.delete(sessionKey);
-      newManuallyExpanded.add(sessionKey);
-    } else {
-      // User is collapsing - remove from manually expanded (user wants it collapsed)
-      newCollapsed.add(sessionKey);
-      newManuallyExpanded.delete(sessionKey);
-    }
-    
-    setCollapsedSessions(newCollapsed);
-    setManuallyExpandedSessions(newManuallyExpanded);
-  };
+    setManuallyExpandedSessions(prevManually => {
+      const newManuallyExpanded = new Set(prevManually);
+      const isCurrentlyCollapsed = collapsedSessions.has(sessionKey);
+      
+      if (isCurrentlyCollapsed) {
+        // User is expanding - mark as manually expanded
+        newManuallyExpanded.add(sessionKey);
+      } else {
+        // User is collapsing - remove from manually expanded (user wants it collapsed)
+        newManuallyExpanded.delete(sessionKey);
+      }
+      
+      return newManuallyExpanded;
+    });
+  }, [collapsedSessions]);
 
-  const renderEventNode = (node: EventNode): React.ReactNode => {
+  // Memoized event node renderer to prevent unnecessary re-renders
+  const renderEventNode = React.useCallback((node: EventNode): React.ReactNode => {
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
     // Support up to L10: L0 = 10px, L1 = 20px, ..., L10 = 110px
@@ -398,11 +455,52 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
         )}
       </div>
     );
-  };
+  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact]);
 
   // Build event tree from flat list - memoized to react to collapsedSessions changes
+  // OPTIMIZATION: Filter collapsed events early to reduce processing
   const eventTree = React.useMemo(() => {
-    // Determine which events should be filtered out (collapsed sessions)
+    // Early return: if no collapsed sessions, use all visible events (skip filtering overhead)
+    if (collapsedSessions.size === 0) {
+      const filteredEvents = visibleEvents;
+      
+      const childrenMap = new Map<string, PollingEvent[]>();
+      
+      // Build parent-child map
+      filteredEvents.forEach(event => {
+        const parentId = getParentId(event);
+        if (parentId) {
+          if (!childrenMap.has(parentId)) {
+            childrenMap.set(parentId, []);
+          }
+          childrenMap.get(parentId)!.push(event);
+        }
+      });
+      
+      // Build trees recursively
+      const buildTreeRecursive = (event: PollingEvent): EventNode => {
+        const children = childrenMap.get(event.id) || [];
+        const childNodes = children.map(child => buildTreeRecursive(child));
+        
+        return {
+          event,
+          children: childNodes,
+          level: getHierarchyLevel(event),
+          isExpanded: expandedNodes.has(event.id)
+        };
+      };
+      
+      return filteredEvents.map(event => buildTreeRecursive(event));
+    }
+
+    // Step 1: Build a map of event ID -> event for O(1) lookup (instead of O(n) find)
+    const eventById = new Map<string, PollingEvent>();
+    visibleEvents.forEach(event => {
+      eventById.set(event.id, event);
+    });
+
+    // Step 2: Determine which events should be filtered out (collapsed sessions)
+    // Use Set for O(1) lookup instead of array.find() which is O(n)
     const eventsToFilter = new Set<string>();
     findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
       const isCollapsed = collapsedSessions.has(sessionKey);
@@ -410,7 +508,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       if (isCollapsed) {
         // Filter out all events in this session except the start and end events
         eventIds.forEach(eventId => {
-          const event = displayEvents.find(e => e.id === eventId);
+          const event = eventById.get(eventId);
           if (event && event.type !== 'orchestrator_agent_start' && event.type !== 'orchestrator_agent_end') {
             eventsToFilter.add(eventId);
           }
@@ -418,16 +516,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       }
     });
 
-    // Filter events: remove collapsed events but keep start/end events
-    const filteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
+    // Step 3: Filter events: remove collapsed events but keep start/end events
+    // This reduces the number of events processed in tree building significantly
+    const filteredEvents = visibleEvents.filter(event => !eventsToFilter.has(event.id));
 
-    const eventMap = new Map<string, PollingEvent>();
     const childrenMap = new Map<string, PollingEvent[]>();
     
-    
-    // Build maps
+    // Build parent-child map (only for filtered events)
     filteredEvents.forEach(event => {
-      eventMap.set(event.id, event);
       const parentId = getParentId(event);
       if (parentId) {
         if (!childrenMap.has(parentId)) {
@@ -451,7 +547,22 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     };
     
     return filteredEvents.map(event => buildTreeRecursive(event));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
+  }, [visibleEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
+
+  // Reverse event tree to show latest events first (must be before early return)
+  const reversedEventTree = React.useMemo(() => {
+    return [...eventTree].reverse();
+  }, [eventTree]);
+
+  // Load more events handler (must be before return)
+  // Loads OLDER events (going back in time) - smaller increments for better performance
+  const handleLoadMore = React.useCallback(() => {
+    setVisibleEventCount(prev => Math.min(prev + 30, displayEvents.length));
+  }, [displayEvents.length]);
+
+  const hasMoreEvents = visibleEventCount < displayEvents.length;
+  const totalEventsCount = events.length;
+  const showingCount = Math.min(visibleEventCount, displayEvents.length);
 
   if (eventTree.length === 0) {
     return (
@@ -463,6 +574,13 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
 
   return (
     <div className="event-hierarchy">
+      {/* Performance warning if events are limited */}
+      {totalEventsCount > MAX_EVENTS_TO_PROCESS && (
+        <div className="mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
+          Showing {showingCount} of {totalEventsCount} events (performance limit: {MAX_EVENTS_TO_PROCESS})
+        </div>
+      )}
+      
       {/* Event tree */}
       <div
         className="event-tree-container"
@@ -471,7 +589,21 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
           overflow: 'auto'
         }}
       >
-        {eventTree.map((node) => (
+        {/* Load older events button at TOP (since we show latest first) */}
+        {hasMoreEvents && (
+          <div className="flex justify-center py-4">
+            <button
+              onClick={handleLoadMore}
+              className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors"
+            >
+              Load Older Events ({displayEvents.length - visibleEventCount} remaining)
+            </button>
+          </div>
+        )}
+        
+        {/* Render events in reverse order (latest first) */}
+        {/* Performance: Only render top-level nodes initially to prevent freeze */}
+        {reversedEventTree.map((node) => (
           <div key={node.event.id}>
             {renderEventNode(node)}
           </div>

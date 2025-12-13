@@ -142,7 +142,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 
 	// Initialize the LLM externally (using Bedrock as default)
 	logger.Info(fmt.Sprintf("NewLLMAgentWrapper initializing LLM with provider: %s, model_id: %s", config.Provider, config.ModelID))
-	llm, err := initializeLLMWithConfig(config, logger, tracer, traceID)
+	llm, err := initializeLLMWithConfig(config, logger, traceID)
 	if err != nil {
 		// Emit error event instead of ending trace
 		if tracer != nil && mainTraceID == "" {
@@ -566,7 +566,7 @@ func (w *LLMAgentWrapper) getLastErrorString() string {
 }
 
 // initializeLLMWithConfig initializes an LLM using detailed configuration from frontend
-func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, traceID observability.TraceID) (llmtypes.Model, error) {
+func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, traceID observability.TraceID) (llmtypes.Model, error) {
 	// Validate and convert provider string to llm.Provider type
 	llmProvider, err := llm.ValidateProvider(string(config.Provider))
 	if err != nil {

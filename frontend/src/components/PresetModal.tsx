@@ -434,7 +434,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             openDirection="down"
                           />
                           <div className="text-xs text-gray-500 mt-1">
-                            Default model for all learning-related agents (planning, variable extraction, anonymization, plan improvement, plan tool optimization, plan learnings alignment, learning consolidation)
+                            Default model for all learning-related agents (planning, variable extraction, anonymization, plan debugger, plan tool optimization, plan learnings alignment, learning consolidation)
                           </div>
                         </div>
                         <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">

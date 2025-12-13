@@ -179,14 +179,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitDecisionEvaluatedEvent(c
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
-	// Convert workflow DecisionResponse to events DecisionResponse
+	// Convert workflow DecisionResponse to event DecisionResponseEvent
 	// Since DecisionResponse is in the same package, we can access fields directly
-	eventDecisionResponse := events.DecisionResponse{
+	eventDecisionResponse := DecisionResponseEvent{
 		Result:    decisionResponse.Result,
 		Reasoning: decisionResponse.Reasoning,
 	}
 
-	evaluatedEvent := &events.DecisionEvaluatedEvent{
+	evaluatedEvent := &DecisionEvaluatedEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
@@ -202,7 +202,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitDecisionEvaluatedEvent(c
 	}
 
 	agentEvent := &events.AgentEvent{
-		Type:      events.DecisionEvaluated,
+		Type:      events.EventType("decision_evaluated"),
 		Timestamp: time.Now(),
 		Data:      evaluatedEvent,
 	}

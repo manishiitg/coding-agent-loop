@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
-import { Send, Loader2, Square, Plus, Code2, Sparkles } from 'lucide-react'
+import { Send, Loader2, Square, Plus, Code2, Sparkles, FileText } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -13,6 +13,7 @@ import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { usePresetState, usePresetApplication } from '../stores/useGlobalPresetStore'
+import { agentApi } from '../services/api'
 
 interface ChatInputProps {
   // Handlers (callbacks only)
@@ -49,8 +50,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   const {
     isStreaming,
-    observerId
+    observerId,
+    sessionId
   } = useChatStore()
+  
+  // State for summarization
+  const [isSummarizing, setIsSummarizing] = useState(false)
   
   const {
     enabledServers: availableServers,
@@ -432,6 +437,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     selectedModeCategory === 'workflow' ? isWorkflowReady :
     true
   const submitButtonDisabled = !hasValidQuery || !observerId || !readyForMode
+
+  // Handle manual summarization
+  const handleSummarize = useCallback(async () => {
+    if (!sessionId || isSummarizing || isStreaming) {
+      return
+    }
+
+    setIsSummarizing(true)
+    try {
+      const response = await agentApi.summarizeConversation(sessionId)
+      console.log('[SUMMARIZATION] Success:', response)
+      // Show success notification (you can add a toast library here)
+      alert(`Conversation summarized successfully!\nOriginal: ${response.original_count} messages\nNew: ${response.new_count} messages\nReduced by: ${response.reduced_by} messages`)
+    } catch (error) {
+      console.error('[SUMMARIZATION] Error:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      alert(`Failed to summarize conversation: ${errorMessage}`)
+    } finally {
+      setIsSummarizing(false)
+    }
+  }, [sessionId, isSummarizing, isStreaming])
   
 
   // Memoized placeholder to prevent re-computation
@@ -703,6 +729,29 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               {/* Show old buttons only for chat mode */}
               {selectedModeCategory === 'chat' && (
                 <div className="flex items-center gap-2">
+                  {/* Summarize Button */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSummarize}
+                        disabled={!sessionId || isSummarizing || isStreaming}
+                        className="px-3"
+                      >
+                        {isSummarizing ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <FileText className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Summarize conversation history</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  
                   {/* New Chat Button */}
                   <Tooltip>
                     <TooltipTrigger asChild>

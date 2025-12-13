@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 	"mcpagent/events"
 	"mcpagent/mcpcache"
 
@@ -125,12 +126,12 @@ type EventDataUnion struct {
 	OrchestratorAgentError *events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
 
 	// Step Execution Events
-	StepStarted         *events.StepStartedEvent         `json:"step_execution_start,omitempty"`
-	StepFinished        *events.StepFinishedEvent        `json:"step_execution_end,omitempty"`
-	StepFailed          *events.StepFailedEvent          `json:"step_execution_failed,omitempty"`
-	StepTokenUsage      *events.StepTokenUsageEvent      `json:"step_token_usage,omitempty"`
-	StepProgressUpdated *events.StepProgressUpdatedEvent `json:"step_progress_updated,omitempty"`
-	DecisionEvaluated   *events.DecisionEvaluatedEvent   `json:"decision_evaluated,omitempty"`
+	StepStarted         *events.StepStartedEvent                    `json:"step_execution_start,omitempty"`
+	StepFinished        *events.StepFinishedEvent                   `json:"step_execution_end,omitempty"`
+	StepFailed          *events.StepFailedEvent                     `json:"step_execution_failed,omitempty"`
+	StepTokenUsage      *events.StepTokenUsageEvent                 `json:"step_token_usage,omitempty"`
+	StepProgressUpdated *events.StepProgressUpdatedEvent            `json:"step_progress_updated,omitempty"`
+	DecisionEvaluated   *todo_creation_human.DecisionEvaluatedEvent `json:"decision_evaluated,omitempty"`
 
 	// Todo/Planning Events
 	TodoStepsExtracted       *events.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
@@ -269,12 +270,12 @@ var EventTypeMapping = map[events.EventType]string{
 	events.OrchestratorAgentError: "orchestrator_agent_error",
 
 	// Step Execution Events
-	events.StepExecutionStart:  "step_execution_start",
-	events.StepExecutionEnd:    "step_execution_end",
-	events.StepExecutionFailed: "step_execution_failed",
-	events.StepTokenUsage:      "step_token_usage",
-	events.StepProgressUpdated: "step_progress_updated",
-	events.DecisionEvaluated:   "decision_evaluated",
+	events.StepExecutionStart:              "step_execution_start",
+	events.StepExecutionEnd:                "step_execution_end",
+	events.StepExecutionFailed:             "step_execution_failed",
+	events.StepTokenUsage:                  "step_token_usage",
+	events.StepProgressUpdated:             "step_progress_updated",
+	events.EventType("decision_evaluated"): "decision_evaluated",
 
 	// Todo/Planning Events
 	events.TodoStepsExtracted:       "todo_steps_extracted",

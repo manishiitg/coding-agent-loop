@@ -116,6 +116,21 @@ export interface HumanFeedbackResponse {
   message?: string
 }
 
+// Context Summarization types
+export interface SummarizeConversationRequest {
+  keep_last_messages?: number // Optional: number of recent messages to keep (default: 8)
+}
+
+export interface SummarizeConversationResponse {
+  session_id: string
+  status: string
+  message?: string
+  original_count?: number
+  new_count?: number
+  reduced_by?: number
+  summary?: string
+}
+
 // Slack Feedback Configuration types
 export interface SlackConfig {
   enabled: boolean

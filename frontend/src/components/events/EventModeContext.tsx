@@ -15,6 +15,7 @@ const ADVANCED_MODE_EVENTS = new Set([
   'step_execution_end',
   'step_execution_failed',
   'step_progress_updated',
+  'workspace_file_operation', // File operations for debugging
   // Add more advanced events here as needed
 ]);
 

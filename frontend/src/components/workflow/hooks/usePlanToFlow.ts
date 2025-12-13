@@ -48,6 +48,23 @@ export interface ConditionalNodeData extends Record<string, unknown> {
   selectedRunFolder?: string  // Selected iteration folder for file opening
 }
 
+export interface DecisionNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  decision_evaluation_question?: string
+  decision_step?: PlanStep
+  status: 'pending' | 'executing' | 'evaluating' | 'decided_true' | 'decided_false'
+  stepIndex: number
+  step: PlanStep
+  changeType?: ChangeType  // Highlight type for visual feedback
+  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
+  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
+  isExecuting?: boolean  // Whether execution is in progress
+  canRun?: boolean  // Whether this step can be run (all previous steps completed)
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
+}
+
 export interface LoopNodeData extends Record<string, unknown> {
   id: string
   title: string
@@ -83,7 +100,17 @@ export interface LearningNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | LoopNodeData | ValidationNodeData | LearningNodeData | VariablesNodeData
+export interface EvaluationNodeData extends Record<string, unknown> {
+  id: string
+  parentStepId: string
+  parentStepTitle: string
+  evaluationQuestion?: string
+  status: 'pending' | 'running' | 'evaluated_true' | 'evaluated_false'
+  llmProvider?: string  // LLM provider (e.g., 'openai', 'bedrock')
+  llmModel?: string  // LLM model name
+}
+
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -114,7 +141,7 @@ interface UsePlanToFlowOptions {
 const DAGRE_CONFIG = {
   rankdir: 'LR', // Left to right (tree layout)
   nodesep: 300,  // Vertical spacing between nodes in same rank (increased significantly to prevent branch overlap)
-  ranksep: 150,  // Horizontal spacing between ranks (columns)
+  ranksep: 80,  // Horizontal spacing between ranks (columns) - reduced for tighter layout
   marginx: 60,
   marginy: 60
 }
@@ -123,6 +150,7 @@ const DAGRE_CONFIG = {
 const NODE_DIMENSIONS = {
   step: { width: 340, height: 200 },
   conditional: { width: 300, height: 160 },
+  decision: { width: 300, height: 180 },  // Decision step node (similar to conditional but shows inner step)
   loop: { width: 360, height: 280 },
   validation: { width: 120, height: 50 },
   learning: { width: 120, height: 50 },
@@ -324,6 +352,10 @@ function stepToNode(
       // For conditional nodes, prefer condition_question over generic "Step N"
       return step.title || step.condition_question || `Condition ${stepIndex + 1}`
     }
+    if (step.has_decision_step) {
+      // For decision nodes, prefer decision_evaluation_question over generic title
+      return step.title || step.decision_evaluation_question || `Decision ${stepIndex + 1}`
+    }
     // For regular steps, use step.title or fallback
     // For nested branch steps, use a more descriptive fallback
     if (parentId) {
@@ -357,6 +389,20 @@ function stepToNode(
         condition_context: step.condition_context
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as ConditionalNodeData
+    }
+  }
+
+  if (step.has_decision_step) {
+    return {
+      id: nodeId,
+      type: 'decision',
+      position: { x: 0, y: 0 },
+      data: {
+        ...baseData,
+        decision_evaluation_question: step.decision_evaluation_question,
+        decision_step: step.decision_step
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
+      } as DecisionNodeData
     }
   }
 
@@ -642,6 +688,7 @@ function processSteps(
     }
     
     // Add validation/learning nodes for non-conditional steps
+    // Decision steps also have validation/learning for their inner step execution
     if (!step.has_condition) {
       const vlResult = createValidationLearningNodes(
         step, 
@@ -655,6 +702,42 @@ function processSteps(
       nodes.push(...vlResult.nodes)
       edges.push(...vlResult.edges)
       lastExitNodeId = vlResult.exitNodeId
+      
+      // For decision steps, add an evaluation node after learning for LLM evaluation
+      if (step.has_decision_step && lastExitNodeId) {
+        const agentConfigs = step.agent_configs as AgentConfigs | undefined
+        const conditionalLLM = agentConfigs?.conditional_llm || presetLLMConfig
+        const evaluationLLMInfo = getLLMProviderAndModel(conditionalLLM, presetLLMConfig, availableLLMs)
+        
+        const evaluationNodeId = `${node.id}-evaluation`
+        const evaluationNode: WorkflowNode = {
+          id: evaluationNodeId,
+          type: 'evaluation',
+          position: { x: 0, y: 0 },
+          data: {
+            id: evaluationNodeId,
+            parentStepId: node.id,
+            parentStepTitle: step.title,
+            evaluationQuestion: step.decision_evaluation_question,
+            status: 'pending',
+            llmProvider: evaluationLLMInfo.provider,
+            llmModel: evaluationLLMInfo.model
+          } as EvaluationNodeData
+        }
+        nodes.push(evaluationNode)
+        
+        // Edge from learning (or step if no learning) to evaluation
+        edges.push({
+          id: `${lastExitNodeId}-to-evaluation`,
+          source: lastExitNodeId,
+          target: evaluationNodeId,
+          type: 'smoothstep',
+          animated: false,
+          style: { stroke: '#8b5cf6', strokeWidth: 2 }
+        })
+        
+        lastExitNodeId = evaluationNodeId
+      }
     } else {
       // For conditional nodes, track branch exit nodes to reconnect to next step
       lastExitNodeId = null
@@ -883,6 +966,90 @@ function processSteps(
         }
       }
     }
+
+    // Handle decision step edge routing
+    // Decision steps execute a step first, then route based on evaluation result
+    // They have no branch arrays - just direct routing via next_step_id
+    // Edges should come from the evaluation node (lastExitNodeId) if it exists, otherwise from the decision node
+    if (step.has_decision_step) {
+      const decisionEdges: WorkflowEdge[] = []
+      // Use evaluation node as source if it exists, otherwise use decision node
+      // lastExitNodeId can be string | string[] | null, so we need to handle it properly
+      const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
+      
+      // Handle true branch routing (if_true_next_step_id is REQUIRED for decision steps)
+      if (step.if_true_next_step_id) {
+        const targetNodeId = stepIdToNodeIdMap?.get(step.if_true_next_step_id)
+        if (targetNodeId) {
+          decisionEdges.push({
+            id: `${sourceNodeId}-decision-true-to-${targetNodeId}`,
+            source: sourceNodeId,
+            target: targetNodeId,
+            type: 'smoothstep',
+            label: 'Yes',
+            labelStyle: { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
+            labelBgStyle: { fill: '#f0fdf4', fillOpacity: 0.9 },
+            labelBgPadding: [4, 4] as [number, number],
+            labelBgBorderRadius: 4,
+            style: { stroke: '#22c55e', strokeWidth: 2 },
+            animated: false
+          })
+        } else if (step.if_true_next_step_id === 'end') {
+          decisionEdges.push({
+            id: `${sourceNodeId}-decision-true-to-end`,
+            source: sourceNodeId,
+            target: 'end',
+            type: 'smoothstep',
+            label: 'Yes',
+            labelStyle: { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
+            labelBgStyle: { fill: '#f0fdf4', fillOpacity: 0.9 },
+            labelBgPadding: [4, 4] as [number, number],
+            labelBgBorderRadius: 4,
+            style: { stroke: '#22c55e', strokeWidth: 2 },
+            animated: false
+          })
+        }
+      }
+      
+      // Handle false branch routing (if_false_next_step_id is REQUIRED for decision steps)
+      if (step.if_false_next_step_id) {
+        const targetNodeId = stepIdToNodeIdMap?.get(step.if_false_next_step_id)
+        if (targetNodeId) {
+          decisionEdges.push({
+            id: `${sourceNodeId}-decision-false-to-${targetNodeId}`,
+            source: sourceNodeId,
+            target: targetNodeId,
+            type: 'smoothstep',
+            label: 'No',
+            labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
+            labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
+            labelBgPadding: [4, 4] as [number, number],
+            labelBgBorderRadius: 4,
+            style: { stroke: '#ef4444', strokeWidth: 2 },
+            animated: false
+          })
+        } else if (step.if_false_next_step_id === 'end') {
+          decisionEdges.push({
+            id: `${sourceNodeId}-decision-false-to-end`,
+            source: sourceNodeId,
+            target: 'end',
+            type: 'smoothstep',
+            label: 'No',
+            labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
+            labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
+            labelBgPadding: [4, 4] as [number, number],
+            labelBgBorderRadius: 4,
+            style: { stroke: '#ef4444', strokeWidth: 2 },
+            animated: false
+          })
+        }
+      }
+      
+      edges.push(...decisionEdges)
+      
+      // Decision steps handle their own routing - don't connect to next sequential step
+      lastExitNodeId = null
+    }
   })
 
   return { nodes, edges }
@@ -891,8 +1058,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'loop'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData } {
+  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop'
 }
 
 /**
@@ -1401,8 +1568,8 @@ export function usePlanToFlow(
     
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop') {
-        const stepIndex = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData).stepIndex
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+        const stepIndex = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData).stepIndex
         const canRun = canStepRun(stepIndex)
         return {
           ...node,

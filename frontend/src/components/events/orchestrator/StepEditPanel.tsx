@@ -1149,7 +1149,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
               )}
             </div>
 
-            {/* Conditional Branching Configuration */}
+            {/* Conditional Branching Configuration - Hidden for decision steps */}
+            {!step.has_decision_step && (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
               <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-2">
                 Conditional Branching
@@ -1324,6 +1325,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 )}
               </div>
             </div>
+            )}
 
             {/* Loop Configuration (only shown if has_loop is true) */}
             {step.has_loop && (
@@ -1835,7 +1837,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
               </div>
             </div>
 
-            {/* Prerequisite Detection Configuration */}
+            {/* Prerequisite Detection Configuration - Hidden for decision steps and conditional steps */}
+            {!step.has_decision_step && !step.has_condition && (
             <PrerequisiteConfigPanel
               agentConfigs={agentConfigs}
               onUpdate={(updatedConfigs) => {
@@ -1844,6 +1847,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
               planSteps={planSteps}
               currentStepIndex={stepIndex}
             />
+            )}
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">

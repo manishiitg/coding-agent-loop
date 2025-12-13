@@ -564,23 +564,27 @@ Each agent can be configured with custom LLM settings.
 ### Temporary LLM Override (tempLLM)
 **Purpose**: Override execution agent LLM for specific runs without modifying plan config.
 
+**Flow**: `tempLLM1` (attempt 1) → if FAILED → `tempLLM2` (attempt 2) → if FAILED → original LLM (attempt 3+)
+
 **Behavior**:
 - **When used**: Only when step has learnings (`learnings/step-{N}/` or `learnings/step-{N}-{true/false}-{Y}/` has files)
 - **When skipped**: When step has no learnings (folder empty) → uses original LLM
 - **Scope**: Execution agents only (not validation/learning agents)
-- **Cascading**: `tempLLM1` (attempt 1) → `tempLLM2` (attempt 2) → step LLM
-- **Fallback**: If `fallback_to_original_llm_on_failure=true`, uses original LLM on validation failure
+- **Failure criteria**: Only `ExecutionStatus == "FAILED"` triggers next attempt. `COMPLETED`/`PARTIAL`/`INCOMPLETE` = success (no retry)
+- **Fallback**: `fallback_to_original_llm_on_failure` only blocks tempLLM1, NOT tempLLM2 (tempLLM2 is part of cascading fallback)
 
 **Configuration** (via frontend toolbar):
-- `temp_override_llm`: First override LLM (used on first attempt)
-- `temp_override_llm2`: Second override LLM (used if tempLLM1 fails)
+- `temp_override_llm`: First override LLM (used on attempt 1)
+- `temp_override_llm2`: Second override LLM (used on attempt 2, even if fallback enabled)
 - `temp_override_llm_enabled`: Enable/disable toggle (preserves configs when disabled)
-- `fallback_to_original_llm_on_failure`: Use original LLM instead of temp override on validation failure
+- `fallback_to_original_llm_on_failure`: Skips tempLLM1 after failure, but tempLLM2 still used on attempt 2
 
 **Files**:
 - Frontend: `frontend/src/stores/useWorkflowStore.ts` - `buildExecutionOptions()`
 - Backend: `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go` - `createExecutionOnlyAgent()`
-- Backend: `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go` - `SetExecutionOptions()`
+- Backend: `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go` - retry loop and validation
+
+**Detailed Documentation**: See [`temp_llm_cascading_flow.md`](temp_llm_cascading_flow.md) for LLM-optimized technical details.
 
 ### Learning Configuration
 - **Detail Levels**: `exact` (actual values), `general` (anonymized), `none`

@@ -110,16 +110,6 @@ func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
 	return bo.useCodeExecutionMode
 }
 
-// GetUseStepSpecificLearnings returns the step-specific learnings setting
-func (bo *BaseOrchestrator) GetUseStepSpecificLearnings() bool {
-	return bo.useStepSpecificLearnings
-}
-
-// SetUseStepSpecificLearnings sets the step-specific learnings setting
-func (bo *BaseOrchestrator) SetUseStepSpecificLearnings(enabled bool) {
-	bo.useStepSpecificLearnings = enabled
-}
-
 // GetLLMConfig returns the LLM configuration
 func (bo *BaseOrchestrator) GetLLMConfig() *LLMConfig {
 	return bo.llmConfig

@@ -65,11 +65,6 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) Execute(ctx c
 	if stepNumber, ok := templateVars["StepNumber"]; ok {
 		learningTemplateVars["StepNumber"] = stepNumber
 	}
-	if useStepSpecific, ok := templateVars["UseStepSpecificLearnings"]; ok {
-		learningTemplateVars["UseStepSpecificLearnings"] = useStepSpecific
-	} else {
-		learningTemplateVars["UseStepSpecificLearnings"] = "false"
-	}
 
 	// Create template data for learning
 	templateData := HumanControlledTodoPlannerLearningTemplate{
@@ -154,8 +149,8 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
      - **Merge Duplicates**: When same code pattern appears in multiple files, combine run counts and recalculate success rate
      - **Remove Outdated**: Code patterns with low success (<50%) that have better alternatives
      - **Preserve Unique**: Keep all unique valuable code patterns from all files
-  5. **Output**: Write consolidated content to single file
-  6. **Cleanup**: After successful consolidation, optionally remove old/duplicate files (only if explicitly safe)
+  5. **Output**: Write consolidated content to single file at target path
+  6. **Cleanup (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)
 - **Priority**: Latest patterns → Best success rates → Most runs → Unique patterns
 - **Note**: Consolidation is SECONDARY - PRIMARY goal is always to learn from current execution
 
@@ -247,6 +242,7 @@ When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="w
 - **Code Logic**: Control flow, error handling, data processing logic
 - **Variable Usage**: How variables were used in the code
 - **Code Structure**: Overall code organization and patterns
+- **Output File Formats**: **CRITICAL** - Extract the structure/format of JSON files and other output files created by the code. Since success criteria files are mostly JSON, document the exact JSON structure including field names, data types, required vs optional fields, and nested structure. This ensures future executions create files in the same format.
 
 **Learn from Validation Failures:**
 - If ValidationResult shows failure: Analyze what went wrong in the code
@@ -314,11 +310,13 @@ When documenting errors discovered from ExecutionHistory, use this format:
    **Why Optimal**: Most efficient single-code approach, excellent error handling, handles all edge cases
    **Code saved to**: code/{StepTitle}_code.go (complete runnable code)
    **Key features**: Combined AWS and workspace operations, comprehensive error handling, variable replacement
+   **Output File Format**: [Document the JSON structure/format of output files created by this code]
    
 2. **ALTERNATIVE**: Separate AWS and Workspace Calls [Runs: 8 | Success: 75%] ✅
    **Why Alternative**: More modular but slightly less efficient
    **Code saved to**: code/{StepTitle}_code_v2.go (complete runnable code)
    **Key features**: Separate functions, easier to debug, good for complex workflows
+   **Output File Format**: [Document the JSON structure/format of output files created by this code]
 
 ⚠️ **UNRELIABLE**: Direct HTTP calls without error handling [Runs: 5 | Success: 40%]
    **Why Unreliable**: No error handling caused panics, low success rate
@@ -339,9 +337,11 @@ When documenting errors discovered from ExecutionHistory, use this format:
 **Documentation Guidelines:**
 - **Priority 1**: Success code recipe (code patterns that achieved the goal)
 - **Priority 2**: Success code snippets (save working code to code/ folder and reference them)
-- **Priority 3**: Failures to avoid (save time in future executions)
+- **Priority 3**: Output file formats (JSON structure/format of files created by execution agent - especially files referenced in success criteria)
+- **Priority 4**: Failures to avoid (save time in future executions)
 - **Keep it actionable**: Future executions should be able to replicate success using code patterns
 - **Save BEST Go code**: When Go code worked, save the BEST code to ` + codePath + `/{StepTitle}_code.go (or multiple files if multiple best variations exist)
+- **CRITICAL - Capture Output File Formats**: Document the exact JSON structure/format of output files created by the execution agent. Since success criteria files are mostly JSON, extract the complete JSON structure including field names, data types, required vs optional fields, and nested structure. This ensures future executions create files in the same format that will pass validation.
 - **Rank by effectiveness**: Always rank code by how well it executes the step - best code first
 - **Multiple best codes**: If multiple effective patterns exist, save all of them (ranked best first) - future executions can choose the most appropriate
 - **CRITICAL - Variable Replacement**: Always replace actual values in code with variable placeholders when they match known variables. This ensures code is reusable across different environments, accounts, and configurations.
@@ -516,7 +516,8 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
    
 4. **UPDATE EXISTING PATTERNS**: If latest run differs from consolidated patterns, update them
    
-5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md`
+5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
+6. **CLEANUP (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)`
 			} else {
 				return `1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + existingPath + `
 2. **IF FILE EXISTS**: Merge new learnings with existing content - preserve ALL previous learnings, append new success/failure patterns`
@@ -534,7 +535,8 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 5. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
 6. **IF FILE DOESN'T EXIST**: Create new file with current learnings (all new patterns start with [Runs: 1 | Success: 100%])
 7. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)
-8. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file` + `
+8. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file
+9. **CLEANUP (if multiple files consolidated)**: After successfully writing consolidated file, delete ALL old files that were consolidated` + `
 
 **After writing the file, output ONLY the file path** (e.g., "Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md"). 
 

@@ -583,6 +583,26 @@ func GetDocument(c *gin.Context) {
 		IsDirectory: fileInfo.IsDir(),
 	}
 
+	// Check if this is a download request (query parameter or Accept header)
+	downloadParam := c.Query("download")
+	acceptHeader := c.GetHeader("Accept")
+	downloadRequested := downloadParam == "true" || acceptHeader == "application/octet-stream"
+
+	// Debug logging
+	if !isImage && !isTextBasedFile(filepath.Base(filePath), "") {
+		log.Printf("[GetDocument] Binary file detected: %s, download param: %s, accept header: %s, downloadRequested: %v",
+			filepath.Base(filePath), downloadParam, acceptHeader, downloadRequested)
+	}
+
+	// For binary files when download is requested, return raw file
+	if downloadRequested && !isImage && !isTextBasedFile(filepath.Base(filePath), "") {
+		// Return raw binary file
+		c.Header("Content-Type", "application/octet-stream")
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(filePath)))
+		c.Data(http.StatusOK, "application/octet-stream", content)
+		return
+	}
+
 	c.JSON(http.StatusOK, models.APIResponse[models.Document]{
 		Success: true,
 		Message: "Document retrieved successfully",

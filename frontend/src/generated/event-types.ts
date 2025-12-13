@@ -78,6 +78,7 @@ import type {
   StepFailedEvent,
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
+  DecisionEvaluatedEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -185,6 +186,7 @@ export type EventTypeString =
   | 'step_execution_failed'
   | 'step_token_usage'
   | 'step_progress_updated'
+  | 'decision_evaluated'
   | 'todo_steps_extracted'
   | 'variables_extracted'
   | 'independent_steps_selected'
@@ -295,6 +297,7 @@ export interface EventTypeToDataMap {
   'step_execution_failed': StepFailedEvent;
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
+  'decision_evaluated': DecisionEvaluatedEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
   'independent_steps_selected': IndependentStepsSelectedEvent;
@@ -580,6 +583,7 @@ export type {
   StepFailedEvent,
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
+  DecisionEvaluatedEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,

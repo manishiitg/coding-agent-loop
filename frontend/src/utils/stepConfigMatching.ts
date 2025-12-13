@@ -55,8 +55,16 @@ export interface TodoStepWithConfigs {
   condition_context?: string;
   if_true_steps?: TodoStepWithConfigs[];
   if_false_steps?: TodoStepWithConfigs[];
+  if_true_next_step_id?: string;
+  if_false_next_step_id?: string;
   condition_result?: boolean;
   condition_reason?: string;
+  // Decision step fields (execute step, evaluate output, route based on result)
+  has_decision_step?: boolean;
+  decision_step?: TodoStepWithConfigs;
+  decision_evaluation_question?: string;
+  decision_result?: boolean;
+  decision_reason?: string;
   agent_configs?: AgentConfigs;
 }
 
@@ -130,6 +138,12 @@ export interface PlanStep {
   if_false_next_step_id?: string;     // ID of step to connect to after false branch completes (or "end" to end workflow)
   condition_result?: boolean;
   condition_reason?: string;
+  // Decision step fields (execute step, evaluate output, route based on result)
+  has_decision_step?: boolean;
+  decision_step?: PlanStep;           // The single step to execute
+  decision_evaluation_question?: string; // Question to evaluate step output
+  decision_result?: boolean;          // runtime: stores evaluation result
+  decision_reason?: string;           // runtime: stores evaluation reasoning
   agent_configs?: AgentConfigs;       // Merged from step_config.json
   [key: string]: unknown;              // Allow other fields for flexibility
 }

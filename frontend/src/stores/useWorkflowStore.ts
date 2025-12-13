@@ -19,6 +19,7 @@ const TEMP_OVERRIDE_LLM_ENABLED_KEY = 'workflow_temp_override_llm_enabled'
 const FALLBACK_TO_ORIGINAL_LLM_KEY = 'workflow_fallback_to_original_llm_on_failure'
 const SKIP_LEARNING_WHEN_TEMP_LLM1_KEY = 'workflow_skip_learning_when_temp_llm1'
 const SKIP_LEARNING_WHEN_TEMP_LLM2_KEY = 'workflow_skip_learning_when_temp_llm2'
+const SAVE_VALIDATION_RESPONSES_KEY = 'workflow_save_validation_responses'
 
 export interface RunFolder {
   name: string
@@ -61,6 +62,7 @@ interface WorkflowStore {
       fallbackToOriginalLLMOnFailure: boolean  // If true, use original LLM instead of temp override when validation fails
       skipLearningWhenTempLLM1: boolean  // If true, skip learning phases when tempLLM1 is used
       skipLearningWhenTempLLM2: boolean  // If true, skip learning phases when tempLLM2 is used
+      saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
 
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
@@ -103,6 +105,7 @@ interface WorkflowStore {
   setFallbackToOriginalLLMOnFailure: (enabled: boolean) => void
   setSkipLearningWhenTempLLM1: (enabled: boolean) => void
   setSkipLearningWhenTempLLM2: (enabled: boolean) => void
+  setSaveValidationResponses: (enabled: boolean) => void
 
   // Variables manifest
   setVariablesManifest: (manifest: VariablesManifest | null) => void
@@ -241,6 +244,21 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.error('[WorkflowStore] Failed to load skip learning when tempLLM2 from localStorage:', error)
         }
         return false  // Default to false
+      })(),
+      // Save validation responses to workspace (persists across page refreshes via localStorage)
+      // Load from localStorage on initialization
+      saveValidationResponses: (() => {
+        try {
+          const saved = localStorage.getItem(SAVE_VALIDATION_RESPONSES_KEY)
+          if (saved !== null) {
+            const parsed = JSON.parse(saved) as boolean
+            console.log(`[WorkflowStore] Loaded save validation responses from localStorage: ${parsed}`)
+            return parsed
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load save validation responses from localStorage:', error)
+        }
+        return true  // Default to true (save validation responses by default)
       })(),
 
       // Variables manifest
@@ -414,16 +432,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
               )
             }))
           } else {
-            // No progress file exists - reset start point to 0 (start from beginning)
-            // This ensures that even if localStorage has a saved resume point, we reset it
-            // when there's no actual progress to resume from
-            set({ stepProgress: null, isLoadingProgress: false, selectedStartPoint: 0 })
-            console.log('[WorkflowStore] No progress file found, resetting selectedStartPoint to 0')
+            // No progress file exists - only reset progress, preserve user's selectedStartPoint
+            // The user's selection should only be reset when they explicitly choose "Start from Beginning"
+            const currentStartPoint = get().selectedStartPoint
+            set({ stepProgress: null, isLoadingProgress: false })
+            console.log('[RESUME_DEBUG] No progress file found, preserving selectedStartPoint:', currentStartPoint)
           }
         } catch (error) {
-          console.error('[WorkflowStore] Failed to load progress:', error)
-          // On error, also reset start point to 0 since we can't verify progress exists
-          set({ stepProgress: null, isLoadingProgress: false, selectedStartPoint: 0 })
+          // On error, only reset progress, preserve user's selectedStartPoint
+          // The user's selection should only be reset when they explicitly choose "Start from Beginning"
+          const currentStartPoint = get().selectedStartPoint
+          set({ stepProgress: null, isLoadingProgress: false })
+          console.error('[RESUME_DEBUG] Failed to load progress, preserving selectedStartPoint:', currentStartPoint, error)
         }
       },
 
@@ -463,6 +483,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       setStartPoint: (step: number) => {
+        console.log('[RESUME_DEBUG] setStartPoint called:', step)
         set({ selectedStartPoint: step, selectedBranchStep: null }) // Clear branch step when setting regular step
       },
       setBranchStep: (branchStep: { parentStepIndex: number; branchType: 'if_true' | 'if_false'; branchStepIndex: number } | null) => {
@@ -474,6 +495,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const state = get()
         const isResuming = state.selectedStartPoint > 0
         const isResumingBranch = state.selectedBranchStep !== null
+
+        console.log('[RESUME_DEBUG] buildExecutionOptions called:', {
+          selectedStartPoint: state.selectedStartPoint,
+          selectedBranchStep: state.selectedBranchStep,
+          selectedExecutionMode: state.selectedExecutionMode,
+          isResuming,
+          isResumingBranch
+        })
 
         // Convert UI selections to backend ExecutionStrategy
         let executionStrategy: string
@@ -492,6 +521,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
             : ExecutionStrategy.START_FROM_BEGINNING
         }
 
+        console.log('[RESUME_DEBUG] Selected execution strategy:', executionStrategy)
+
         const options: ExecutionOptions = {
           run_mode: state.selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
           selected_run_folder: state.selectedRunFolder === 'new' ? undefined : state.selectedRunFolder,
@@ -499,16 +530,59 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
 
         // Include resume_from_step for regular step resuming
+        // CRITICAL: Only set resume_from_step if we have a valid step number (> 0)
+        // This prevents sending resume_from_step=0 which causes backend to delete all completed steps
+        console.log('[RESUME_DEBUG] Checking resume_from_step conditions:', {
+          isResuming,
+          isResumingBranch,
+          selectedStartPoint: state.selectedStartPoint,
+          executionStrategy,
+          isResumeStrategy: executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
+                           executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
+                           executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP ||
+                           executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP
+        })
+        
         if (isResuming && !isResumingBranch &&
+            state.selectedStartPoint > 0 &&
             (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
              executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
              executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP ||
              executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP)) {
           options.resume_from_step = state.selectedStartPoint
+          console.log('[RESUME_DEBUG] ✅ Setting resume_from_step:', state.selectedStartPoint)
         } else if (state.selectedStartPoint > 0 && !isResumingBranch) {
           // Log warning if selectedStartPoint > 0 but strategy is not a resume strategy
-          console.warn('[WorkflowStore] selectedStartPoint is', state.selectedStartPoint, 
+          console.warn('[RESUME_DEBUG] ⚠️ selectedStartPoint is', state.selectedStartPoint, 
             'but strategy is', executionStrategy, '- not including resume_from_step')
+          console.warn('[RESUME_DEBUG] ⚠️ This means resume_from_step will NOT be set in options!')
+        } else if ((executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
+                    executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
+                    executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP) &&
+                   !isResumingBranch && state.selectedStartPoint === 0) {
+          // CRITICAL: If resume strategy is selected but no valid step, log error and fallback to start from beginning
+          console.error('[RESUME_DEBUG] 🚨 CRITICAL: Resume strategy selected but selectedStartPoint is 0! Falling back to start from beginning.')
+          console.error('[RESUME_DEBUG] 🚨 This would cause backend to delete all completed steps. Strategy:', executionStrategy)
+          // Override strategy to start from beginning to prevent data loss
+          if (state.selectedExecutionMode === 'fast_execution') {
+            options.execution_strategy = ExecutionStrategy.FAST_EXECUTE_ALL
+          } else if (state.selectedExecutionMode === 'with_learning') {
+            options.execution_strategy = ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
+          } else {
+            options.execution_strategy = ExecutionStrategy.START_FROM_BEGINNING
+          }
+          console.log('[RESUME_DEBUG] ✅ Overridden strategy to:', options.execution_strategy)
+        } else {
+          console.log('[RESUME_DEBUG] ℹ️ Not setting resume_from_step:', {
+            isResuming,
+            isResumingBranch,
+            selectedStartPoint: state.selectedStartPoint,
+            executionStrategy,
+            reason: !isResuming ? 'not resuming' : 
+                    isResumingBranch ? 'resuming branch' :
+                    state.selectedStartPoint === 0 ? 'startPoint is 0' :
+                    'strategy mismatch'
+          })
         }
 
         // Include resume_from_branch_step for branch step resuming
@@ -541,20 +615,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Include fallback to original LLM on failure if enabled
         if (state.fallbackToOriginalLLMOnFailure) {
           options.fallback_to_original_llm_on_failure = true
-          console.log('[WorkflowStore] Including fallback_to_original_llm_on_failure=true in execution options')
-        } else {
-          console.log('[WorkflowStore] fallbackToOriginalLLMOnFailure is false, not including in execution options')
         }
 
         // Include skip learning when tempLLM flags if set
         if (state.skipLearningWhenTempLLM1) {
           options.skip_learning_when_temp_llm1 = true
-          console.log('[WorkflowStore] Including skip_learning_when_temp_llm1=true in execution options')
         }
         if (state.skipLearningWhenTempLLM2) {
           options.skip_learning_when_temp_llm2 = true
-          console.log('[WorkflowStore] Including skip_learning_when_temp_llm2=true in execution options')
         }
+        
+        // Include save validation responses flag (always send to ensure backend knows user preference)
+        options.save_validation_responses = state.saveValidationResponses
 
         // Check if selectedRunFolder contains a specific group path
         // Pattern: iteration-X/group-Y
@@ -577,9 +649,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               const groupExists = state.variablesManifest.groups.some(g => g.group_id === selectedGroupId)
               if (groupExists) {
                 options.enabled_group_ids = [selectedGroupId]
-                console.log(`[WorkflowStore] Running only selected group: ${selectedGroupId}`)
               } else {
-                console.warn(`[WorkflowStore] Selected group ${selectedGroupId} not found in manifest, using all enabled groups`)
                 // Fall back to all enabled groups
                 const enabledGroupIDs = state.variablesManifest.groups
                   .filter(g => g.enabled)
@@ -601,6 +671,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // Single-group mode: if no groups array, all variables are in one virtual group
           // In this case, we don't need to set enabled_group_ids as the backend handles it
         }
+
+        console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({
+          execution_strategy: options.execution_strategy,
+          resume_from_step: options.resume_from_step,
+          resume_from_branch_step: options.resume_from_branch_step,
+          run_mode: options.run_mode,
+          selected_run_folder: options.selected_run_folder
+        }, null, 2))
 
         return options
       },
@@ -700,6 +778,17 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.log(`[WorkflowStore] Skip learning when tempLLM2 set: ${enabled}`)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save skip learning when tempLLM2 to localStorage:', error)
+        }
+      },
+      
+      setSaveValidationResponses: (enabled: boolean) => {
+        set({ saveValidationResponses: enabled })
+        try {
+          // Save to localStorage
+          localStorage.setItem(SAVE_VALIDATION_RESPONSES_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Save validation responses set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save save validation responses to localStorage:', error)
         }
       },
 

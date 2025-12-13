@@ -24,3 +24,6 @@ export { ComprehensiveCacheEventDisplay } from './ComprehensiveCacheEvent'
 // Structured output event components
 export { StructuredOutputStartEventDisplay } from './StructuredOutputStartEvent'
 export { StructuredOutputEndEventDisplay } from './StructuredOutputEndEvent'
+
+// Workspace file operation event component
+export { WorkspaceFileOperationEventDisplay } from './WorkspaceFileOperationEvent'

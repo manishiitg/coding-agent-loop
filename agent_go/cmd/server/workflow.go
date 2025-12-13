@@ -352,6 +352,9 @@ type ExecutionOptions struct {
 
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
+
+	// Logging options
+	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)

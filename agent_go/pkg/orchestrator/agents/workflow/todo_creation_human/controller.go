@@ -9,6 +9,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchestratorllm "mcp-agent-builder-go/agent_go/pkg/orchestrator/llm"
 	mcpagent "mcpagent/agent"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
@@ -86,6 +87,10 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	// Fallback to original LLM on validation failure (from ExecutionOptions)
 	// If true, when validation fails, use original LLM instead of temp override for retry attempts
 	fallbackToOriginalLLMOnFailure bool
+
+	// Save validation responses to workspace (from ExecutionOptions)
+	// If true, save validation responses to workspace validation folder
+	saveValidationResponses bool
 }
 
 // NewHumanControlledTodoPlannerOrchestrator creates a new human-controlled todo planner orchestrator
@@ -211,6 +216,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 		presetVariableExtractionLLM: presetVariableExtractionLLM,
 		presetAnonymizationLLM:      presetAnonymizationLLM,
 		presetPlanImprovementLLM:    presetPlanImprovementLLM,
+		saveValidationResponses:     true, // Default to true (save validation responses by default)
 	}
 
 	// Create VariableManager for variable extraction operations (independent from controller)
@@ -228,7 +234,9 @@ func NewHumanControlledTodoPlannerOrchestrator(
 // getConditionalAgentForStep returns the conditional agent to use for a specific step
 // Priority: step config conditional_llm > default conditionalAgent
 // Uses the standard factory pattern for proper event bridge connection and context setup
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(ctx context.Context, step TodoStep, stepIndex int) (*HumanControlledTodoPlannerConditionalAgent, error) {
+// agentName: custom agent name for this specific use case (e.g., "conditional-step-evaluation", "decision-step-evaluation")
+// phase: orchestrator phase for context (e.g., "conditional_evaluation", "decision_evaluation")
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(ctx context.Context, step TodoStep, stepIndex int, agentName, phase string) *HumanControlledTodoPlannerConditionalAgent {
 	// Check if step has step-specific conditional agent config
 	if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
 		stepID := step.ID
@@ -236,14 +244,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 			stepID = fmt.Sprintf("step-%s", step.Title)
 		}
 
-		// Check cache first
+		// Check cache first (use stepID as cache key, but agent name can vary)
 		hcpo.stepConditionalAgentMutex.RLock()
 		cachedAgent, exists := hcpo.stepConditionalAgentCache[stepID]
 		hcpo.stepConditionalAgentMutex.RUnlock()
 
 		if exists && cachedAgent != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using cached step-specific conditional agent for step '%s' (ID: %s)", step.Title, stepID))
-			return cachedAgent, nil
+			return cachedAgent
 		}
 
 		// Create new conditional agent for this step using factory pattern
@@ -255,26 +263,38 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 			APIKeys:        hcpo.GetLLMConfig().APIKeys, // Preserve API keys from orchestrator
 		}
 
+		// Use provided agent name, or fallback to default format
+		actualAgentName := agentName
+		if actualAgentName == "" {
+			actualAgentName = fmt.Sprintf("conditional-agent-%s", stepID)
+		}
+
+		// Use provided phase, or fallback to default
+		actualPhase := phase
+		if actualPhase == "" {
+			actualPhase = "conditional_evaluation"
+		}
+
 		// Use factory method - this handles initialization, event bridge connection, and tool registration
 		agent, err := hcpo.createConditionalAgent(
 			ctx,
-			"conditional_evaluation", // phase
-			stepIndex,                // step index
-			0,                        // iteration
-			fmt.Sprintf("conditional-agent-%s", stepID), // agent name
+			actualPhase,       // phase (from parameter)
+			stepIndex,         // step index
+			0,                 // iteration
+			actualAgentName,   // agent name (from parameter)
 			step.AgentConfigs, // step config
 			llmConfig,         // conditional LLM config
 		)
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step-specific conditional agent for step '%s': %v, falling back to default", step.Title, err))
-			return hcpo.conditionalAgent, nil // Fallback to default
+			return hcpo.conditionalAgent // Fallback to default
 		}
 
 		// Type assert to conditional agent
 		stepConditionalAgent, ok := agent.(*HumanControlledTodoPlannerConditionalAgent)
 		if !ok {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Factory returned wrong agent type for step '%s', falling back to default", step.Title))
-			return hcpo.conditionalAgent, nil // Fallback to default
+			return hcpo.conditionalAgent // Fallback to default
 		}
 
 		// Cache the conditional agent
@@ -283,11 +303,79 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 		hcpo.stepConditionalAgentMutex.Unlock()
 
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s): %s/%s", step.Title, stepID, conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
-		return stepConditionalAgent, nil
+		return stepConditionalAgent
 	}
 
 	// Use default conditional agent
-	return hcpo.conditionalAgent, nil
+	return hcpo.conditionalAgent
+}
+
+// getConditionalLLMForStep returns the ConditionalLLM to use for a specific step
+// Priority: step config conditional_llm > default LLM config
+// Uses simpler ConditionalLLM instead of full agent (no MCP tools needed for decision evaluation)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalLLMForStep(step TodoStep, stepIndex int) (*orchestratorllm.ConditionalLLM, error) {
+	eventBridge := hcpo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("event bridge is required for conditional LLM")
+	}
+
+	logger := hcpo.GetLogger()
+	tracer := hcpo.GetTracer()
+
+	// Determine LLM config: Priority: step config > orchestrator default
+	var llmConfig *orchestrator.LLMConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+
+	if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
+		// Use step-specific conditional LLM config
+		conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       conditionalLLMConfig.Provider,
+			ModelID:        conditionalLLMConfig.ModelID,
+			FallbackModels: []string{},
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM: %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+	} else {
+		// Use orchestrator default LLM config
+		llmConfig = orchestratorLLMConfig
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
+	}
+
+	// Convert to OrchestratorAgentConfig
+	agentConfig := &agents.OrchestratorAgentConfig{
+		Provider:    llmConfig.Provider,
+		Model:       llmConfig.ModelID,
+		Temperature: 0.0, // Use deterministic temperature for conditional decisions
+		MaxRetries:  3,
+	}
+	// Convert APIKeys from orchestrator.APIKeys to agents.AgentAPIKeys
+	if llmConfig.APIKeys != nil {
+		agentConfig.APIKeys = &agents.AgentAPIKeys{
+			OpenRouter: llmConfig.APIKeys.OpenRouter,
+			OpenAI:     llmConfig.APIKeys.OpenAI,
+			Anthropic:  llmConfig.APIKeys.Anthropic,
+			Vertex:     llmConfig.APIKeys.Vertex,
+		}
+		if llmConfig.APIKeys.Bedrock != nil {
+			agentConfig.APIKeys.Bedrock = &agents.BedrockAgentConfig{
+				Region: llmConfig.APIKeys.Bedrock.Region,
+			}
+		}
+	}
+
+	// Create ConditionalLLM using helper function
+	conditionalLLM, err := orchestratorllm.CreateConditionalLLMWithEventBridge(
+		agentConfig,
+		eventBridge,
+		logger,
+		tracer,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conditional LLM: %w", err)
+	}
+
+	return conditionalLLM, nil
 }
 
 // CreateTodoList orchestrates the human-controlled todo planning process
@@ -592,10 +680,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	isResuming := false
 
 	// Check if user explicitly wants to resume
+	// CRITICAL: Also check execution strategy, because resume strategy with ResumeFromStep=0
+	// should still be treated as resuming (so validation can catch it)
 	if execOpts != nil {
-		if execOpts.ResumeFromStep > 0 || execOpts.ResumeFromBranchStep != nil {
+		// Check if it's a resume strategy
+		isResumeStrategy := execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStep ||
+			execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman ||
+			execOpts.ExecutionStrategy == ExecutionStrategyFastResumeFromStep ||
+			execOpts.ExecutionStrategy == ExecutionStrategyRunSingleStep
+
+		if execOpts.ResumeFromStep > 0 || execOpts.ResumeFromBranchStep != nil || isResumeStrategy {
 			isResuming = true
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 User chose to resume from step"))
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 User chose to resume from step (ResumeFromStep=%d, strategy=%s)", execOpts.ResumeFromStep, execOpts.ExecutionStrategy))
 		}
 	}
 
@@ -636,7 +732,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		if err := execManager.CleanupForStartFromBeginning(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Start from beginning cleanup failed: %v", err))
 		}
+		// Reset progress to nil to ensure fresh initialization (this will reset DecisionEvaluationCounts)
 		existingProgress = nil
+		earlyProgress = nil // Also clear earlyProgress to ensure old counts don't persist
 		startFromStep = 0
 	} else {
 		// Case 2: Resume from step X
@@ -764,13 +862,30 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	// Apply cleanup if explicitly resuming from a step or branch step
 	// This ensures step N and all subsequent steps are cleaned up before execution
 	// Handles both regular step resume (ResumeFromStep) and branch step resume (ResumeFromBranchStep)
-	if execOpts != nil && isResuming && (execOpts.ResumeFromStep > 0 || execOpts.ResumeFromBranchStep != nil) {
+	// CRITICAL: Also call PrepareExecution when resume strategy is selected even if ResumeFromStep=0
+	// This allows validation to catch invalid resume_from_step=0 and request human feedback
+	isResumeStrategy := false
+	if execOpts != nil && execOpts.ExecutionStrategy != "" {
+		isResumeStrategy = execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStep ||
+			execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman ||
+			execOpts.ExecutionStrategy == ExecutionStrategyFastResumeFromStep ||
+			execOpts.ExecutionStrategy == ExecutionStrategyRunSingleStep
+	}
+
+	// Call PrepareExecution if:
+	// 1. Resume strategy is selected (even if ResumeFromStep=0, so validation can catch it), OR
+	// 2. ResumeFromStep > 0, OR
+	// 3. ResumeFromBranchStep is set
+	if execOpts != nil && (isResumeStrategy || execOpts.ResumeFromStep > 0 || execOpts.ResumeFromBranchStep != nil) {
 		execManager := hcpo.GetExecutionManager()
 
 		// Use ExecutionManager to prepare execution setup (includes cleanup scope)
+		// This will validate resume_from_step and request human feedback if invalid
 		setup, err := execManager.PrepareExecution(ctx, execOpts, existingProgress, len(breakdownSteps), hcpo.selectedRunFolder)
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to prepare execution setup: %v (continuing without cleanup)", err))
+			// If PrepareExecution returns error (e.g., user rejected human feedback), stop execution
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to prepare execution setup: %v", err), err)
+			return "", fmt.Errorf("execution preparation failed: %w", err)
 		} else if setup != nil {
 			// Apply cleanup: delete step folders and update progress
 			if err := execManager.ApplyCleanup(ctx, setup); err != nil {
@@ -819,17 +934,30 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize fresh progress: %w", err))
 			// Continue anyway with in-memory progress
 			existingProgress = &StepProgress{
-				CompletedStepIndices: []int{},
-				TotalSteps:           len(breakdownSteps),
-				BranchSteps:          make(map[int]BranchStepProgress),
+				CompletedStepIndices:     []int{},
+				TotalSteps:               len(breakdownSteps),
+				BranchSteps:              make(map[int]BranchStepProgress),
+				DecisionEvaluationCounts: make(DecisionEvaluationCount),
 			}
 		} else {
 			// Create in-memory progress object matching what was saved
 			existingProgress = &StepProgress{
-				CompletedStepIndices: []int{},
-				TotalSteps:           len(breakdownSteps),
-				LastUpdated:          time.Now(),
-				BranchSteps:          make(map[int]BranchStepProgress),
+				CompletedStepIndices:     []int{},
+				TotalSteps:               len(breakdownSteps),
+				LastUpdated:              time.Now(),
+				BranchSteps:              make(map[int]BranchStepProgress),
+				DecisionEvaluationCounts: make(DecisionEvaluationCount),
+			}
+		}
+	} else if existingProgress != nil && !isResuming {
+		// Safety check: if we're starting fresh but existingProgress exists (shouldn't happen, but handle it)
+		// Reset DecisionEvaluationCounts to ensure old counts don't persist
+		if existingProgress.DecisionEvaluationCounts != nil && len(existingProgress.DecisionEvaluationCounts) > 0 {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Starting fresh but found existing DecisionEvaluationCounts with %d entries - resetting to prevent infinite loop errors", len(existingProgress.DecisionEvaluationCounts)))
+			existingProgress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
+			// Save the reset progress
+			if err := hcpo.saveStepProgress(ctx, existingProgress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save reset progress: %w", err))
 			}
 		}
 	} else if existingProgress == nil && planChangeHandled {
@@ -838,14 +966,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Preserving progress mode: progress file doesn't exist, continuing without initializing fresh progress"))
 		// Create minimal in-memory progress for execution to work with
 		existingProgress = &StepProgress{
-			CompletedStepIndices: []int{},
-			TotalSteps:           len(breakdownSteps),
-			BranchSteps:          make(map[int]BranchStepProgress),
+			CompletedStepIndices:     []int{},
+			TotalSteps:               len(breakdownSteps),
+			BranchSteps:              make(map[int]BranchStepProgress),
+			DecisionEvaluationCounts: make(DecisionEvaluationCount),
 		}
 	}
 
 	// Build execution context once from current controller state
-	execCtx := hcpo.buildExecutionContext(len(breakdownSteps))
+	execCtx := hcpo.buildExecutionContext()
 
 	// Check if batch execution should be used (multiple variable groups enabled)
 	if hcpo.shouldUseBatchExecution() {
@@ -859,7 +988,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		}
 	} else {
 		// Single group or no groups - use standard execution
-		_, err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep, execCtx)
+		err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep, execCtx)
 		if err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("execution phase failed: %w", err), nil)
 		}
@@ -937,49 +1066,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetRunSingleStepMode(enabled
 	hcpo.singleStepTarget = stepIndex
 }
 
-// handleResumeStrategy handles resume strategy logic consistently across all resume strategies.
-// If the user explicitly selected a step (isExplicitSelection=true), updates completed list
-// to only include steps before the resume step, ensuring all steps from resume step onwards
-// will be re-executed. This matches the behavior of run_single_step.
-// Returns the 0-based startFromStep index.
-// Uses ExecutionManager for centralized cleanup logic.
-func (hcpo *HumanControlledTodoPlannerOrchestrator) handleResumeStrategy(
-	ctx context.Context,
-	resumeStep int,
-	nextIncompleteStep int,
-	existingProgress *StepProgress,
-	isExplicitSelection bool,
-) int {
-	// Default to next incomplete step if not explicitly provided
-	if resumeStep <= 0 {
-		resumeStep = nextIncompleteStep
-		isExplicitSelection = false
-	}
-
-	startFromStep := resumeStep - 1 // Convert to 0-based
-
-	// If user explicitly selected a step, use ExecutionManager to handle cleanup
-	// This ensures step X and all subsequent steps will be executed with clean state
-	if isExplicitSelection && existingProgress != nil {
-		execManager := hcpo.GetExecutionManager()
-
-		// Use centralized cleanup: deletes step folders and updates progress
-		if err := execManager.CleanupForResumeFromStep(ctx, resumeStep, existingProgress.TotalSteps, hcpo.selectedRunFolder); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup for resume from step %d: %v (continuing anyway)", resumeStep, err))
-		}
-
-		// Reload progress to get updated state (CleanupForResumeFromStep saves it)
-		updatedProgress, err := hcpo.loadStepProgress(ctx)
-		if err == nil && updatedProgress != nil {
-			// Update the passed-in progress pointer to reflect changes
-			existingProgress.CompletedStepIndices = updatedProgress.CompletedStepIndices
-			existingProgress.LastUpdated = updatedProgress.LastUpdated
-		}
-	}
-
-	return startFromStep
-}
-
 // GetLearningDetailLevel returns the stored learning detail level preference
 func (hcpo *HumanControlledTodoPlannerOrchestrator) GetLearningDetailLevel() string {
 	if hcpo.learningDetailLevel == "" {
@@ -1039,11 +1125,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetExecutionOptions(options 
 		if hcpo.fallbackToOriginalLLMOnFailure {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Fallback to original LLM on validation failure enabled - will use original LLM instead of temp override when validation fails"))
 		}
+
+		// Store save validation responses flag (frontend always sends this value)
+		hcpo.saveValidationResponses = options.SaveValidationResponses
+		if !hcpo.saveValidationResponses {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses disabled - validation responses will not be saved to workspace"))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses enabled - validation responses will be saved to workspace"))
+		}
 	} else {
 		// Clear temporary overrides when options are cleared
 		hcpo.tempOverrideLLM = nil
 		hcpo.tempOverrideLLM2 = nil
 		hcpo.fallbackToOriginalLLMOnFailure = false
+		hcpo.saveValidationResponses = true // Default to true when no options provided
 	}
 }
 
@@ -1054,7 +1149,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) GetExecutionOptions() *Execu
 
 // buildExecutionContext creates an ExecutionContext from current controller state
 // This should be called once at execution start to create an immutable context
-func (hcpo *HumanControlledTodoPlannerOrchestrator) buildExecutionContext(totalSteps int) *ExecutionContext {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) buildExecutionContext() *ExecutionContext {
 	execCtx := &ExecutionContext{
 		SkipHumanInput:     hcpo.skipHumanInput,
 		FastExecuteMode:    hcpo.fastExecuteMode,

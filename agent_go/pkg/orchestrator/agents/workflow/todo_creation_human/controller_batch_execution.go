@@ -226,7 +226,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		// Check if folder exists (to determine if we need cleanup)
 		fullRunFolderPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), runFolder)
 		isNewFolder := true
-		if exists, _ := hcpo.workspaceFileExists(ctx, fullRunFolderPath); exists {
+		if exists := hcpo.workspaceFileExists(ctx, fullRunFolderPath); exists {
 			isNewFolder = false
 		}
 
@@ -277,14 +277,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 			// If loading fails, create in-memory progress
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load progress for group %s, using in-memory: %v", group.GroupID, err))
 			progress = &StepProgress{
-				CompletedStepIndices: make([]int, 0),
-				TotalSteps:           len(breakdownSteps),
-				LastUpdated:          time.Now(),
+				CompletedStepIndices:     make([]int, 0),
+				TotalSteps:               len(breakdownSteps),
+				LastUpdated:              time.Now(),
+				DecisionEvaluationCounts: make(DecisionEvaluationCount),
 			}
 		}
 
 		// Run execution phase for this group
-		_, err = hcpo.runExecutionPhase(ctx, breakdownSteps, iteration, progress, groupSetup.StartFromStep, groupSetup.Context)
+		err = hcpo.runExecutionPhase(ctx, breakdownSteps, iteration, progress, groupSetup.StartFromStep, groupSetup.Context)
 
 		groupDuration := time.Since(groupStartTime)
 		remainingGroups := totalGroups - groupIndex - 1
@@ -414,20 +415,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createGroupRunFolder(baseIte
 	}
 	// Single group - use base folder directly
 	return baseIterationFolder
-}
-
-// createBatchRunFolderName creates the run folder name for batch execution
-// Format: iteration-X/group-Y (nested folder structure for multiple groups)
-// Format: iteration-X (when single group - use top-level folder)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createBatchRunFolderName(iterationNum int, groupID string) string {
-	// Check if this is actually batch execution (multiple groups)
-	enabledGroups := hcpo.getEnabledGroupsForExecution()
-	if len(enabledGroups) <= 1 {
-		// Single group or no groups - use top-level iteration folder (not nested)
-		return fmt.Sprintf("iteration-%d", iterationNum)
-	}
-	// Multiple groups - use nested folder structure
-	return fmt.Sprintf("iteration-%d/%s", iterationNum, groupID)
 }
 
 // getNextIterationNumber determines the next iteration number for batch execution

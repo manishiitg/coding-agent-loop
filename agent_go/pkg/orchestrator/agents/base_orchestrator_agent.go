@@ -82,7 +82,7 @@ func NewBaseOrchestratorAgentWithEventBridge(
 // Initialize initializes the base orchestrator agent
 func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 	// Create LLM instance
-	llmInstance, err := boa.createLLM(ctx)
+	llmInstance, err := boa.createLLM()
 	if err != nil {
 		return fmt.Errorf("failed to create LLM: %w", err)
 	}
@@ -560,7 +560,7 @@ func getMapKeys(m map[string]interface{}) []string {
 }
 
 // createLLM creates an LLM instance based on the agent configuration
-func (boa *BaseOrchestratorAgent) createLLM(ctx context.Context) (llmtypes.Model, error) {
+func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 	// Generate trace ID for this agent session
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%d", boa.agentType, time.Now().UnixNano()))
 

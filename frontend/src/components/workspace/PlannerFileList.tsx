@@ -1,4 +1,4 @@
-import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move } from 'lucide-react'
+import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -22,6 +22,8 @@ interface PlannerFileListProps {
   onCreateFolder?: (parentFolder?: PlannerFile | string) => void
   onFileMove?: (file: PlannerFile) => void
   onFolderMove?: (folder: PlannerFile) => void
+  onFileDownload?: (file: PlannerFile) => void
+  hideAddToChat?: boolean
 }
 
 export default function PlannerFileList({
@@ -42,7 +44,9 @@ export default function PlannerFileList({
   onFolderUpload,
   onCreateFolder,
   onFileMove,
-  onFolderMove
+  onFolderMove,
+  onFileDownload,
+  hideAddToChat = false
 }: PlannerFileListProps) {
   const { scrollToFile } = useWorkspaceStore()
 
@@ -117,31 +121,33 @@ export default function PlannerFileList({
 
           {/* Action buttons container - compact space */}
           <div className="flex items-center gap-1 flex-shrink-0">
-            {/* Send to Chat button - always visible */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    // Use the filepath as-is for context
-                    addFileToContext({
-                      name: fileName,
-                      path: file.filepath,
-                      type: (file.type || 'file') as 'file' | 'folder'
-                    })
-                    
-                    // Auto-scroll to the file in workspace
-                    scrollToFile(file.filepath)
-                  }}
-                  className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900/20 rounded text-blue-500 hover:text-blue-700 dark:hover:text-blue-400"
-                >
-                  <MessageSquare className="w-3 h-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Send {file.type || 'file'} to chat context</p>
-              </TooltipContent>
-            </Tooltip>
+            {/* Send to Chat button - hidden in workspace/workflow mode */}
+            {!hideAddToChat && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      // Use the filepath as-is for context
+                      addFileToContext({
+                        name: fileName,
+                        path: file.filepath,
+                        type: (file.type || 'file') as 'file' | 'folder'
+                      })
+                      
+                      // Auto-scroll to the file in workspace
+                      scrollToFile(file.filepath)
+                    }}
+                    className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900/20 rounded text-blue-500 hover:text-blue-700 dark:hover:text-blue-400"
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Send {file.type || 'file'} to chat context</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
 
             {/* More actions dropdown for folders */}
             {file.type === 'folder' && (onCreateFolder || onFolderUpload || onFolderMove) && (
@@ -229,44 +235,66 @@ export default function PlannerFileList({
               </div>
             )}
 
-            {/* Move button for files */}
-            {file.type !== 'folder' && onFileMove && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onFileMove(file)
-                    }}
-                    className="p-1 text-gray-400 hover:text-blue-500 transition-colors"
-                  >
-                    <Move className="w-3 h-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Move file</p>
-                </TooltipContent>
-              </Tooltip>
-            )}
-
-            {/* Delete button for files */}
-            {file.type !== 'folder' && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onFileDelete(file)
-                    }}
-                    className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Delete file</p>
-                </TooltipContent>
-              </Tooltip>
+            {/* More actions dropdown for files */}
+            {file.type !== 'folder' && (onFileMove || onFileDownload) && (
+              <div className="relative group">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        // Toggle dropdown - we'll handle this with CSS
+                      }}
+                      className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                    >
+                      <MoreHorizontal className="w-3 h-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>More actions</p>
+                  </TooltipContent>
+                </Tooltip>
+                
+                {/* Dropdown menu */}
+                <div className="absolute right-0 top-full mt-1 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  <div className="py-1">
+                    {onFileDownload && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onFileDownload(file)
+                        }}
+                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      >
+                        <Download className="w-3 h-3" />
+                        Download
+                      </button>
+                    )}
+                    {onFileMove && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onFileMove(file)
+                        }}
+                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      >
+                        <Move className="w-3 h-3" />
+                        Move
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onFileDelete(file)
+                      }}
+                      className="w-full px-3 py-1 text-left text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

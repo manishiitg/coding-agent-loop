@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
@@ -42,11 +41,14 @@ type StepPathInfo struct {
 //   - "step-1" -> {ParentStepNumber: 1, BranchType: "", BranchIndex: -1, IsBranchStep: false}
 //   - "step-3-if-true-0" -> {ParentStepNumber: 3, BranchType: "true", BranchIndex: 0, IsBranchStep: true}
 //   - "step-3-if-false-1" -> {ParentStepNumber: 3, BranchType: "false", BranchIndex: 1, IsBranchStep: true}
+//   - "step-2-decision" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: false} (decision step inner step)
 func parseStepPath(stepPath string) StepPathInfo {
 	// Regular step pattern: "step-{number}"
 	regularStepRegex := regexp.MustCompile(`^step-(\d+)$`)
 	// Branch step pattern: "step-{number}-if-{true|false}-{index}"
 	branchStepRegex := regexp.MustCompile(`^step-(\d+)-if-(true|false)-(\d+)$`)
+	// Decision step inner step pattern: "step-{number}-decision"
+	decisionStepRegex := regexp.MustCompile(`^step-(\d+)-decision$`)
 
 	if matches := branchStepRegex.FindStringSubmatch(stepPath); matches != nil {
 		// Branch step
@@ -59,6 +61,16 @@ func parseStepPath(stepPath string) StepPathInfo {
 			BranchType:       matches[2], // "true" or "false"
 			BranchIndex:      branchIndex,
 			IsBranchStep:     true,
+		}
+	} else if matches := decisionStepRegex.FindStringSubmatch(stepPath); matches != nil {
+		// Decision step inner step - treat as regular step but use parent step number
+		stepNumber := 0
+		fmt.Sscanf(matches[1], "%d", &stepNumber)
+		return StepPathInfo{
+			ParentStepNumber: stepNumber,
+			BranchType:       "",
+			BranchIndex:      -1,
+			IsBranchStep:     false,
 		}
 	} else if matches := regularStepRegex.FindStringSubmatch(stepPath); matches != nil {
 		// Regular step
@@ -86,12 +98,40 @@ func parseStepPath(stepPath string) StepPathInfo {
 // getExecutionFolderPath returns the execution folder path based on stepPath
 // For regular steps: "execution/step-{X}/"
 // For branch steps: "execution/step-{parentStep}-{true/false}-{branchIdx}/"
+// For decision step inner steps: "execution/step-{X}-decision/"
 func getExecutionFolderPath(executionWorkspacePath string, stepPath string) string {
 	pathInfo := parseStepPath(stepPath)
 	if pathInfo.IsBranchStep {
 		return fmt.Sprintf("%s/step-%d-%s-%d", executionWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
 	}
+	// Check if this is a decision step inner step
+	// Pattern: step-{X}-decision
+	if strings.Contains(stepPath, "-decision") {
+		return fmt.Sprintf("%s/%s", executionWorkspacePath, stepPath)
+	}
 	return fmt.Sprintf("%s/step-%d", executionWorkspacePath, pathInfo.ParentStepNumber)
+}
+
+// getValidationFolderPath returns the validation folder path based on stepPath
+// For regular steps: "logs/step-{X}/"
+// For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/"
+func getValidationFolderPath(validationWorkspacePath string, stepPath string) string {
+	pathInfo := parseStepPath(stepPath)
+	if pathInfo.IsBranchStep {
+		return fmt.Sprintf("%s/logs/step-%d-%s-%d", validationWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
+	}
+	return fmt.Sprintf("%s/logs/step-%d", validationWorkspacePath, pathInfo.ParentStepNumber)
+}
+
+// getExecutionFolderPathForLogs returns the execution logs folder path based on stepPath
+// For regular steps: "logs/step-{X}/execution/"
+// For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/execution/"
+func getExecutionFolderPathForLogs(validationWorkspacePath string, stepPath string) string {
+	pathInfo := parseStepPath(stepPath)
+	if pathInfo.IsBranchStep {
+		return fmt.Sprintf("%s/logs/step-%d-%s-%d/execution", validationWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
+	}
+	return fmt.Sprintf("%s/logs/step-%d/execution", validationWorkspacePath, pathInfo.ParentStepNumber)
 }
 
 // getLearningFolderPath returns the learning folder path based on stepPath
@@ -105,6 +145,22 @@ func getLearningFolderPath(baseWorkspacePath string, stepPath string) string {
 	return fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, pathInfo.ParentStepNumber)
 }
 
+// addCompletedStepIndex safely adds a step index to the completed list, preventing duplicates
+// This is important when decision steps route back to previous steps, which can cause
+// the same step index to be added multiple times if not checked
+func (hcpo *HumanControlledTodoPlannerOrchestrator) addCompletedStepIndex(progress *StepProgress, stepIndex int) {
+	// Check if already in list to prevent duplicates
+	for _, idx := range progress.CompletedStepIndices {
+		if idx == stepIndex {
+			hcpo.GetLogger().Debug(fmt.Sprintf("⚠️ Step %d already in completed list, skipping duplicate", stepIndex+1))
+			return // Already exists, don't add duplicate
+		}
+	}
+	// Not found, safe to append
+	progress.CompletedStepIndices = append(progress.CompletedStepIndices, stepIndex)
+	hcpo.GetLogger().Debug(fmt.Sprintf("✅ Added step %d to completed list (total: %d)", stepIndex+1, len(progress.CompletedStepIndices)))
+}
+
 // getLearningPathIdentifier returns a unique identifier for learning folder based on stepPath
 // For regular steps: "step-{X}"
 // For branch steps: "step-{parentStep}-{true/false}-{branchIdx}"
@@ -116,412 +172,9 @@ func getLearningPathIdentifier(stepPath string) string {
 	return fmt.Sprintf("step-%d", pathInfo.ParentStepNumber)
 }
 
-// executeConditionalStep executes a conditional step by evaluating the condition and executing the chosen branch
-// depth: current nesting depth (0 = main plan, 1 = first level conditional, 2 = second level conditional)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
-	ctx context.Context,
-	step TodoStep,
-	stepIndex int,
-	depth int,
-	progress *StepProgress,
-	previousExecutionResults []string, // Execution results from previous steps (in-memory, not file paths)
-	iteration int, // Current iteration number
-	execCtx *ExecutionContext, // Execution context with flags
-) error {
-	const maxDepth = 2
-	if depth > maxDepth {
-		return fmt.Errorf(fmt.Sprintf("nesting depth %d exceeds maximum allowed depth of %d", depth, maxDepth), nil)
-	}
+// executeConditionalStep is now in controller_conditional.go
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing conditional step %d (depth %d): %s", stepIndex+1, depth, step.Title))
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Conditional step %d has %d if_true_steps and %d if_false_steps", stepIndex+1, len(step.IfTrueSteps), len(step.IfFalseSteps)))
-
-	// Emit step_started event for conditional step
-	// Use regular step path for conditional step (not -conditional suffix)
-	conditionalStepPath := fmt.Sprintf("step-%d", stepIndex+1)
-	hcpo.emitStepStartedEvent(ctx, step, stepIndex, conditionalStepPath, false)
-
-	// Check if we're resuming from a specific branch step (from ExecutionContext)
-	var resumeFromBranchStep int = -1 // -1 means not resuming from specific branch step, use existing logic
-	var shouldUseExistingBranch bool = false
-
-	if execCtx.ResumeBranchStep != nil && execCtx.ResumeBranchStep.ParentStepIndex == stepIndex {
-		// We're resuming from a branch step in this conditional step
-		resumeFromBranchStep = execCtx.ResumeBranchStep.BranchStepIndex
-		shouldUseExistingBranch = true
-		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Resuming from specific branch step: parent=%d, branch=%s, step=%d",
-			stepIndex+1, execCtx.ResumeBranchStep.BranchType, resumeFromBranchStep+1))
-	}
-
-	// Always evaluate the condition - never skip based on existing branch progress
-	// Branch progress is only used to track which branch steps have been completed (for resuming)
-	var existingBranchProgress *BranchStepProgress
-	var conditionResult bool
-	var conditionReason string
-
-	if progress.BranchSteps == nil {
-		progress.BranchSteps = make(map[int]BranchStepProgress)
-	}
-
-	// Check for existing branch progress (only for tracking completed steps, not for skipping evaluation)
-	if branchProgress, exists := progress.BranchSteps[stepIndex]; exists {
-		existingBranchProgress = &branchProgress
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Found existing branch progress for step %d: branch=%s, completed_steps=%d", stepIndex+1, branchProgress.BranchExecuted, len(branchProgress.CompletedSteps)))
-
-		// If resuming from branch step, use existing branch progress instead of re-evaluating
-		if shouldUseExistingBranch {
-			// Verify the branch type matches
-			expectedBranchType := execCtx.ResumeBranchStep.BranchType
-			if branchProgress.BranchExecuted == expectedBranchType {
-				conditionResult = expectedBranchType == "if_true"
-				conditionReason = fmt.Sprintf("Resuming from existing %s branch (step %d)", expectedBranchType, resumeFromBranchStep+1)
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Using existing branch progress: %s (skipping condition evaluation)", expectedBranchType))
-			} else {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Branch type mismatch: expected %s but found %s - will re-evaluate condition", expectedBranchType, branchProgress.BranchExecuted))
-				shouldUseExistingBranch = false
-			}
-		}
-	} else {
-		// No existing branch progress but we're trying to resume from branch step - this shouldn't happen
-		if shouldUseExistingBranch {
-			hcpo.GetLogger().Warn("⚠️ ResumeBranchStep specified but no existing branch progress found - will re-evaluate condition")
-			shouldUseExistingBranch = false
-		}
-	}
-
-	// Evaluate condition unless we're resuming from branch step with existing branch progress
-	if !shouldUseExistingBranch {
-		hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating condition for step %d (depth %d): %s", stepIndex+1, depth, step.ConditionQuestion))
-
-		// Build conditionContext - ONLY the last previous execution agent output (from in-memory results)
-		// Learnings are passed separately as learningHistory variable
-		contextBuilder := strings.Builder{}
-
-		// Add context from the LAST previous execution agent output ONLY
-		// Use only the most recent step's execution result (in-memory, not file paths)
-		if len(previousExecutionResults) > 0 {
-			// Get the last (most recent) execution result
-			lastExecutionResult := ""
-			for i := len(previousExecutionResults) - 1; i >= 0; i-- {
-				if previousExecutionResults[i] != "" {
-					lastExecutionResult = previousExecutionResults[i]
-					break
-				}
-			}
-
-			if lastExecutionResult != "" {
-				contextBuilder.WriteString("Previous Step Execution Output:\n")
-				contextBuilder.WriteString(fmt.Sprintf("%s\n", lastExecutionResult))
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Included last previous step execution output (length: %d chars)", len(lastExecutionResult)))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No previous step execution outputs available for conditional evaluation"))
-			}
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No previous step execution outputs available for conditional evaluation"))
-		}
-
-		conditionContext := contextBuilder.String()
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Condition context length: %d characters (only last execution output)", len(conditionContext)))
-
-		// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
-		stepNumber := stepIndex + 1 // Convert to 1-based
-		baseWorkspacePath := hcpo.GetWorkspacePath()
-		stepLearningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
-
-		// Check if learnings folder exists and has files
-		learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepNumber)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step learnings folder is empty for step %d: %v, proceeding without learnings", stepNumber, err))
-		}
-
-		learningHistory := ""
-		if !learningsFolderEmpty {
-			// Read learning files from step folder
-			learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s: %v - will proceed without learnings", stepLearningsPath, err))
-				learningHistory = "No learning history available."
-			} else if len(learningFiles) > 0 {
-				// Format learnings for system prompt (separate from conditionContext)
-				formattedLearnings := hcpo.formatStepLearningFilesAsHistory(learningFiles)
-				learningHistory = formattedLearnings
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded %d learning file(s) for conditional agent system prompt (separate from conditionContext)", len(learningFiles)))
-			} else {
-				learningHistory = "No learning history available."
-			}
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder is empty or does not exist: %s (proceeding without learnings)", stepNumber, stepLearningsPath))
-			learningHistory = "No learning history available."
-		}
-
-		// Determine code execution mode: Priority: step config > orchestrator default
-		var isCodeExecutionMode bool
-		if step.AgentConfigs != nil && step.AgentConfigs.UseCodeExecutionMode != nil {
-			isCodeExecutionMode = *step.AgentConfigs.UseCodeExecutionMode
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional evaluation: %v", isCodeExecutionMode))
-		} else {
-			isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator code execution mode for conditional evaluation: %v", isCodeExecutionMode))
-		}
-
-		// Get conditional agent for this step (step-specific or default)
-		// Pass stepIndex for proper factory setup
-		conditionalAgent, err := hcpo.getConditionalAgentForStep(ctx, step, stepIndex)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get conditional agent for step %d: %v, using default", stepIndex+1, err))
-			conditionalAgent = hcpo.conditionalAgent // Fallback to default
-		}
-
-		// Set orchestrator context on bridge before using conditional agent
-		// This ensures events from the conditional agent have proper context metadata
-		eventBridge := hcpo.GetContextAwareBridge()
-		if eventBridge != nil {
-			if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
-				cab.SetOrchestratorContext("conditional_evaluation", stepIndex, "conditional-step-evaluation")
-				hcpo.GetLogger().Debug(fmt.Sprintf("🔧 Set orchestrator context for conditional agent: phase=conditional_evaluation, step=%d", stepIndex))
-			}
-		}
-
-		// Evaluate condition using ConditionalAgent
-		conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, step.ConditionQuestion, stepIndex, 0, isCodeExecutionMode, learningHistory)
-
-		// Restore orchestrator context to execution phase after conditional evaluation
-		// This ensures subsequent branch step execution has the correct context
-		if eventBridge != nil {
-			if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
-				cab.SetOrchestratorContext("execution", stepIndex, "execution")
-				hcpo.GetLogger().Debug(fmt.Sprintf("🔧 Restored orchestrator context to execution phase after conditional evaluation"))
-			}
-		}
-
-		if err != nil {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate condition for step %d: %v", stepIndex+1, err), nil)
-			// Emit error event if event bridge is available
-			eventBridge := hcpo.GetContextAwareBridge()
-			if eventBridge != nil {
-				errorEvent := &events.OrchestratorAgentErrorEvent{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-					},
-					AgentType: "conditional",
-					AgentName: "conditional-step-evaluation",
-					Objective: fmt.Sprintf("Evaluate condition: %s", step.ConditionQuestion),
-					Error:     err.Error(),
-					StepIndex: stepIndex,
-					Iteration: 0,
-				}
-				eventBridge.HandleEvent(ctx, &events.AgentEvent{
-					Type:      events.OrchestratorAgentError,
-					Timestamp: time.Now(),
-					Data:      errorEvent,
-				})
-			}
-			return fmt.Errorf(fmt.Sprintf("failed to evaluate condition: %w", err), nil)
-		}
-
-		// Store result
-		conditionResult = conditionalResponse.Result
-		conditionReason = conditionalResponse.Reason
-
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Condition evaluated for step %d: result=%t, reason=%s", stepIndex+1, conditionResult, conditionReason))
-	}
-
-	// Determine which branch was executed
-	branchExecuted := "if_false"
-	if conditionResult {
-		branchExecuted = "if_true"
-	}
-
-	// Check if condition result matches existing branch progress
-	if existingBranchProgress != nil {
-		if existingBranchProgress.BranchExecuted != branchExecuted {
-			// Condition evaluated to a different branch - clear old progress and start fresh
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Condition evaluated to different branch (%s vs previous %s) - clearing old branch progress and starting fresh", branchExecuted, existingBranchProgress.BranchExecuted))
-			progress.BranchSteps[stepIndex] = BranchStepProgress{
-				BranchExecuted: branchExecuted,
-				CompletedSteps: []string{},
-			}
-			existingBranchProgress = nil // Clear reference since we're starting fresh
-		} else {
-			// Same branch - keep existing progress for resuming
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Condition evaluated to same branch (%s) - will resume from existing progress", branchExecuted))
-			// Update branch progress to ensure it matches (in case it was modified)
-			progress.BranchSteps[stepIndex] = *existingBranchProgress
-		}
-	} else {
-		// No existing progress - initialize new branch progress
-		progress.BranchSteps[stepIndex] = BranchStepProgress{
-			BranchExecuted: branchExecuted,
-			CompletedSteps: []string{},
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Initialized branch progress for step %d: branch=%s", stepIndex+1, branchExecuted))
-	}
-
-	// Log decision details
-	hcpo.GetLogger().Info(fmt.Sprintf("📊 Conditional decision details - Step: %s, Question: %s, Result: %t, Depth: %d",
-		step.Title, step.ConditionQuestion, conditionResult, depth))
-
-	// Determine which branch to execute
-	var branchSteps []TodoStep
-	if conditionResult {
-		branchSteps = step.IfTrueSteps
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing TRUE branch with %d steps", len(branchSteps)))
-		if len(branchSteps) == 0 {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Conditional step %d evaluated to TRUE but has no if_true_steps defined in plan. Step will complete immediately without executing any branch steps.", stepIndex+1))
-		}
-	} else {
-		branchSteps = step.IfFalseSteps
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing FALSE branch with %d steps", len(branchSteps)))
-		if len(branchSteps) == 0 {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Conditional step %d evaluated to FALSE but has no if_false_steps defined in plan. Step will complete immediately without executing any branch steps.", stepIndex+1))
-		}
-	}
-
-	// Track context files for branch steps (still needed for executeSingleStep context dependencies)
-	// Note: executeSingleStep still uses file paths for context dependencies, but conditional evaluation uses execution results
-	branchContextFiles := make([]string, 0)
-	// We can't convert execution results back to file paths, so we'll use empty for now
-	// executeSingleStep will handle context dependencies from step.ContextDependencies field
-
-	// Add conditional step's context output to branch context files if it exists
-	if step.ContextOutput != "" {
-		branchContextFiles = append(branchContextFiles, step.ContextOutput)
-	}
-
-	// Track execution results for branch steps (for conditional evaluation)
-	// Start with previous execution results
-	branchExecutionResults := make([]string, len(previousExecutionResults))
-	copy(branchExecutionResults, previousExecutionResults)
-
-	// Get branch executed string for path generation
-	branchExecutedStr := map[bool]string{true: "if-true", false: "if-false"}[conditionResult]
-
-	// Get current branch progress (may have been updated after condition evaluation)
-	currentBranchProgress := progress.BranchSteps[stepIndex]
-
-	// Find first incomplete branch step for resuming
-	// If we're resuming from a specific branch step (from ExecutionContext), use that
-	if resumeFromBranchStep >= 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 Resuming from specified branch step %d (from ExecutionContext)", resumeFromBranchStep+1))
-	} else if len(currentBranchProgress.CompletedSteps) > 0 {
-		// Otherwise, find first incomplete branch step from progress
-		for branchIdx := range branchSteps {
-			branchStepPath := fmt.Sprintf("step-%d-%s-%d", stepIndex+1, branchExecutedStr, branchIdx)
-			completed := false
-			for _, completedPath := range currentBranchProgress.CompletedSteps {
-				if completedPath == branchStepPath {
-					completed = true
-					break
-				}
-			}
-			if !completed {
-				resumeFromBranchStep = branchIdx
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 Resuming from branch step %d (path: %s)", branchIdx+1, branchStepPath))
-				break
-			}
-		}
-	} else {
-		resumeFromBranchStep = 0 // Start from beginning
-	}
-
-	// Execute each step in the chosen branch
-	for branchIdx, branchStep := range branchSteps {
-		// Skip if resuming and this branch step is already completed
-		if branchIdx < resumeFromBranchStep {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping branch step %d/%d (already completed): %s", branchIdx+1, len(branchSteps), branchStep.Title))
-			continue
-		}
-
-		// Check if branch step is already completed (for resume case)
-		branchStepPath := fmt.Sprintf("step-%d-%s-%d", stepIndex+1, branchExecutedStr, branchIdx)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [BRANCH STEP] Generated branchStepPath: %s (stepIndex=%d, branchExecutedStr=%s, branchIdx=%d)", branchStepPath, stepIndex+1, branchExecutedStr, branchIdx))
-
-		// Check if this step is already completed
-		completed := false
-		for _, completedPath := range currentBranchProgress.CompletedSteps {
-			if completedPath == branchStepPath {
-				completed = true
-				break
-			}
-		}
-		if completed {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping branch step %d/%d (marked as completed): %s", branchIdx+1, len(branchSteps), branchStep.Title))
-			continue
-		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing branch step %d/%d (depth %d): %s", branchIdx+1, len(branchSteps), depth+1, branchStep.Title))
-
-		// Check if branch step is conditional (nested conditional)
-		if branchStep.HasCondition {
-			// Recursively execute nested conditional step - pass execution results (not file paths)
-			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing nested conditional step in branch: %s (depth %d)", branchStep.Title, depth+1))
-			if err := hcpo.executeConditionalStep(ctx, branchStep, stepIndex, depth+1, progress, branchExecutionResults, iteration, execCtx); err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute nested conditional step '%s' at depth %d: %v", branchStep.Title, depth+1, err), nil)
-				return fmt.Errorf(fmt.Sprintf("failed to execute nested conditional step '%s': %w", branchStep.Title, err), nil)
-			}
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed nested conditional step: %s", branchStep.Title))
-		} else {
-			// Execute regular branch step using extracted execution logic
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [BRANCH STEP] Calling executeSingleStep with branchStepPath: %s (isBranchStep=true)", branchStepPath))
-			branchExecutionResult, updatedBranchContextFiles, err := hcpo.executeSingleStep(
-				ctx,
-				branchStep,
-				stepIndex, // Use parent step index for now
-				branchStepPath,
-				len(branchSteps), // Total steps in branch
-				iteration,
-				branchContextFiles,
-				progress,
-				true, // isBranchStep = true
-				execCtx,
-				nil, // allSteps - not available in branch step context
-			)
-			if err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute branch step '%s': %v", branchStep.Title, err), nil)
-				return fmt.Errorf(fmt.Sprintf("failed to execute branch step '%s': %w", branchStep.Title, err), nil)
-			}
-
-			// Track branch step completion
-			branchProgress := progress.BranchSteps[stepIndex]
-			branchProgress.CompletedSteps = append(branchProgress.CompletedSteps, branchStepPath)
-			progress.BranchSteps[stepIndex] = branchProgress
-			// Save progress after each branch step completion
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save branch step progress: %w", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved branch step progress: %s completed", branchStepPath))
-			}
-
-			// Update context files with branch step's output (for executeSingleStep context dependencies)
-			branchContextFiles = updatedBranchContextFiles
-
-			// Track execution result for use by subsequent conditional steps
-			branchExecutionResults = append(branchExecutionResults, branchExecutionResult)
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed branch step: %s (execution result length: %d chars)", branchStep.Title, len(branchExecutionResult)))
-			hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored branch step execution result (will be used by subsequent conditional steps)"))
-		}
-	}
-
-	// Verify all branch steps are completed
-	branchProgress := progress.BranchSteps[stepIndex]
-	expectedBranchSteps := len(branchSteps)
-	completedBranchSteps := len(branchProgress.CompletedSteps)
-	if completedBranchSteps < expectedBranchSteps {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Conditional step %d: only %d/%d branch steps completed", stepIndex+1, completedBranchSteps, expectedBranchSteps))
-		// Don't mark as completed - will resume from incomplete branch steps
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ All %d branch steps completed for conditional step %d", expectedBranchSteps, stepIndex+1))
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed conditional step %d: executed %s branch", stepIndex+1, map[bool]string{true: "TRUE", false: "FALSE"}[conditionResult]))
-
-	// Emit step_finished event for conditional step
-	// Use regular step path for conditional step (not -conditional suffix)
-	conditionalStepPath = fmt.Sprintf("step-%d", stepIndex+1)
-	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, conditionalStepPath, false)
-
-	return nil
-}
+// executeDecisionStep is now in controller_decision.go
 
 // PrerequisiteInfo represents information about prerequisite steps for validation
 type PrerequisiteInfo struct {
@@ -550,29 +203,28 @@ type DependencyStepInfo struct {
 
 // gatherPrerequisiteInfo gathers information about prerequisite steps for the current step
 func (hcpo *HumanControlledTodoPlannerOrchestrator) gatherPrerequisiteInfo(
-	ctx context.Context,
 	step TodoStep,
 	stepIndex int,
 	allSteps []TodoStep,
 	progress *StepProgress,
 	workspacePath string,
-) (*PrerequisiteInfo, error) {
+) *PrerequisiteInfo {
 	// Check if prerequisite detection is enabled
 	if step.AgentConfigs == nil || step.AgentConfigs.EnablePrerequisiteDetection == nil || !*step.AgentConfigs.EnablePrerequisiteDetection {
-		return nil, nil // Not enabled, return nil
+		return nil // Not enabled, return nil
 	}
 
 	// If allSteps is nil (e.g., in branch/conditional context), we can't gather prerequisite info
 	if allSteps == nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Prerequisite detection enabled for step %d but allSteps not available (branch/conditional context)", stepIndex+1))
-		return nil, nil
+		return nil
 	}
 
 	// Get prerequisite rules
 	prerequisiteRules := step.AgentConfigs.PrerequisiteRules
 	if len(prerequisiteRules) == 0 {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Prerequisite detection enabled for step %d but no prerequisite_rules configured", stepIndex+1))
-		return nil, nil
+		return nil
 	}
 
 	// Create map of step ID to step index for quick lookup
@@ -639,7 +291,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) gatherPrerequisiteInfo(
 
 	if len(ruleInfos) == 0 {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No valid prerequisite rules found for step %d", stepIndex+1))
-		return nil, nil
+		return nil
 	}
 
 	return &PrerequisiteInfo{
@@ -647,7 +299,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) gatherPrerequisiteInfo(
 		CurrentStepIndex:            stepIndex,
 		EnablePrerequisiteDetection: true,
 		PrerequisiteRules:           ruleInfos,
-	}, nil
+	}
 }
 
 // formatPrerequisiteInfoForAgent formats prerequisite info in a clean, readable format for the agent
@@ -685,6 +337,76 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatPrerequisiteInfoForAge
 	return result.String()
 }
 
+// buildPreviousStepsSummary builds a formatted summary of previous completed steps
+// This provides context to the execution agent about what steps have already been executed
+func (hcpo *HumanControlledTodoPlannerOrchestrator) buildPreviousStepsSummary(allSteps []TodoStep, currentStepIndex int, previousContextFiles []string) string {
+	if len(allSteps) == 0 || currentStepIndex == 0 || len(previousContextFiles) == 0 {
+		return "" // No previous steps
+	}
+
+	// Create a map of context output files to step indices for quick lookup
+	contextFileToStepIndex := make(map[string]int)
+	for i := 0; i < currentStepIndex && i < len(allSteps); i++ {
+		if allSteps[i].ContextOutput != "" {
+			// Resolve variables in context output to match what's in previousContextFiles
+			resolvedOutput := ResolveVariables(allSteps[i].ContextOutput, hcpo.variableValues)
+			contextFileToStepIndex[resolvedOutput] = i
+		}
+	}
+
+	// Build summary for steps that have context outputs in previousContextFiles
+	var summary strings.Builder
+	summary.WriteString("## 📋 Previous Steps Context\n\n")
+	summary.WriteString("The following steps have been completed before this step:\n\n")
+
+	stepCount := 0
+	for i := 0; i < currentStepIndex && i < len(allSteps); i++ {
+		step := allSteps[i]
+		if step.ContextOutput == "" {
+			continue // Skip steps without context output
+		}
+
+		// Check if this step's context output is in previousContextFiles
+		resolvedOutput := ResolveVariables(step.ContextOutput, hcpo.variableValues)
+		found := false
+		for _, prevFile := range previousContextFiles {
+			if prevFile == resolvedOutput {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			continue // Skip steps whose context output is not in previousContextFiles
+		}
+
+		// Resolve variables in title and description
+		resolvedTitle := ResolveVariables(step.Title, hcpo.variableValues)
+		resolvedDescription := ResolveVariables(step.Description, hcpo.variableValues)
+
+		// Truncate description if too long (keep first 200 characters)
+		description := resolvedDescription
+		if len(description) > 200 {
+			description = description[:200] + "..."
+		}
+
+		summary.WriteString(fmt.Sprintf("**Step %d: %s**\n", i+1, resolvedTitle))
+		summary.WriteString(fmt.Sprintf("- **Description**: %s\n", description))
+		summary.WriteString(fmt.Sprintf("- **Output File**: %s\n", resolvedOutput))
+		summary.WriteString("\n")
+
+		stepCount++
+	}
+
+	if stepCount == 0 {
+		return "" // No previous steps with context outputs
+	}
+
+	summary.WriteString("Use this context to understand the workflow progression and what has been accomplished so far.\n")
+
+	return summary.String()
+}
+
 // executeSingleStep executes a single step with full functionality (execution, validation, learning, human feedback)
 // This is a reusable function extracted from runExecutionPhase to support both regular steps and branch steps
 func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
@@ -699,16 +421,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 	isBranchStep bool, // true if this is a branch step (affects progress tracking)
 	execCtx *ExecutionContext, // Execution context with flags (skipHumanInput, fastExecuteMode, etc.)
 	allSteps []TodoStep, // All steps in the plan (for prerequisite detection)
+	isDecisionInnerStep bool, // true if this is the inner step of a decision step (skips final human feedback on success)
+	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step (nil if not routed from decision)
 ) (executionResult string, updatedContextFiles []string, err error) {
 	// Initialize updated context files as copy of previous context files
 	updatedContextFiles = make([]string, len(previousContextFiles))
 	copy(updatedContextFiles, previousContextFiles)
 
-	// Emit step_started event (skip if this is a conditional step execution, as it's already emitted by executeConditionalStep)
-	// Conditional step executions use stepPath like "step-4-conditional", which we want to skip
-	if !strings.Contains(stepPath, "-conditional") {
-		hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
-	}
+	// Emit step_started event
+	// Note: Conditional steps emit their own step_started event in executeConditionalStep before calling executeSingleStep for branch steps
+	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
 
 	// Clean Downloads folder before step execution to ensure clean state
 	execManager := hcpo.GetExecutionManager()
@@ -781,6 +503,36 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			templateVars["VariableValues"] = variableValues
 		}
 
+		// Add decision context if this step was routed from a decision step
+		if decisionContext != nil {
+			decisionReasoning := fmt.Sprintf(
+				"## 🎯 Decision Context\n\n"+
+					"This step was routed from decision step **%d: %s**.\n\n"+
+					"**Decision Result**: %v\n"+
+					"**Decision Reasoning**: %s\n\n"+
+					"## 📋 Decision Step Execution Output\n\n"+
+					"The following is the execution output from the decision step's inner step that was evaluated:\n\n"+
+					"```\n%s\n```\n\n"+
+					"Use this context to understand why this step is being executed and what conditions led to routing here.",
+				decisionContext.DecisionStepIndex+1, // Convert to 1-based for display
+				decisionContext.DecisionStepTitle,
+				decisionContext.DecisionResult,
+				decisionContext.DecisionReasoning,
+				decisionContext.DecisionExecutionResult,
+			)
+			templateVars["DecisionReasoning"] = decisionReasoning
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Added decision context to template variables for step %d (routed from decision step %d)", stepIndex+1, decisionContext.DecisionStepIndex+1))
+		} else {
+			templateVars["DecisionReasoning"] = ""
+		}
+
+		// Build previous steps summary from completed steps
+		previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles)
+		templateVars["PreviousStepsSummary"] = previousStepsSummary
+		if previousStepsSummary != "" {
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Added previous steps summary to template variables for step %d (%d previous steps)", stepIndex+1, len(previousContextFiles)))
+		}
+
 		// Validate loop condition is provided when has_loop is true
 		if step.HasLoop {
 			if step.LoopCondition == "" {
@@ -803,9 +555,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		// Store previous iteration's execution and validation outputs for loop feedback
 		var previousIterationExecutionOutput string
 		var previousIterationValidationOutput string
-		// Cache learning history for loop steps (reuse across iterations when LearningAfterLoopIteration is false)
-		var cachedLearningHistory string
-		var learningHistoryInitialized bool
+
+		// Track validation counter for numbered validation files (validation-1.json, validation-2.json, etc.)
+		// Persists across loop iterations and retry attempts
+		validationCounter := 0
 
 		// Main execution loop (either single execution or loop iterations)
 		// For non-loop steps, this executes once. For loop steps, it iterates until condition is met.
@@ -915,22 +668,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 			// Run learning reading agent ONCE per main loop iteration (before retry loop)
 			// This ensures learning is only discovered once, even if validation fails and we retry
-			// For loop steps: cache learning from first iteration and reuse when LearningAfterLoopIteration is false
+			// Always reads fresh learnings (no caching)
 			var formattedLearningHistory string
 			formattedLearningHistory, err = hcpo.readLearningHistory(
 				ctx,
-				step,
 				stepIndex,
 				stepPath,
-				loopIterationCount,
-				learningsPath,
-				isCodeExecutionMode,
-				executionWorkspacePath,
-				templateVars,
-				sanitizedTitle,
-				iteration,
-				&cachedLearningHistory,
-				&learningHistoryInitialized,
 			)
 			if err != nil {
 				return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to read learning history for step %d: %w", stepIndex+1, err), nil)
@@ -999,6 +742,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				// Works for both:
 				// 1. Retry attempts within the same loop iteration (retryAttempt > 1)
 				// 2. New loop iterations after a previous iteration failed validation (loopIterationCount > 1 for loop steps)
+				// Note: For tempLLM logic, only FAILED status counts as failure - COMPLETED/PARTIAL/INCOMPLETE are considered success
 				isRetryAfterValidationFailure := isValidationFailure(previousValidationResponse) &&
 					(retryAttempt > 1 || (step.HasLoop && loopIterationCount > 1))
 				if isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure {
@@ -1012,7 +756,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						return false
 					}(), isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure))
 				// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch steps)
-				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepPath, iteration, executionAgentName, step.AgentConfigs, isRetryAfterValidationFailure, retryAttempt)
+				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepPath, executionAgentName, step.AgentConfigs, isRetryAfterValidationFailure, retryAttempt)
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to create execution-only agent for step %d: %w", stepIndex+1, err), nil)
 				}
@@ -1037,6 +781,70 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				}
 
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d execution completed successfully (attempt %d)", stepIndex+1, retryAttempt))
+
+				// Store execution response to workspace (if enabled)
+				if hcpo.saveValidationResponses {
+					// Determine validation workspace path (same logic as validation agent)
+					var validationWorkspacePath string
+					if hcpo.selectedRunFolder != "" {
+						validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+					} else {
+						validationWorkspacePath = hcpo.GetWorkspacePath()
+					}
+
+					// Get execution logs folder path based on stepPath
+					executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+
+					// Create unique filename base based on retry attempt and loop iteration
+					// Format: execution-attempt-{retryAttempt}-iteration-{loopIterationCount}
+					filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
+
+					// Save execution result to separate file
+					executionResultFilePath := fmt.Sprintf("%s/%s.json", executionLogsFolderPath, filenameBase)
+					executionResponse := map[string]interface{}{
+						"step_index":       stepIndex + 1,
+						"step_path":        stepPath,
+						"retry_attempt":    retryAttempt,
+						"loop_iteration":   loopIterationCount,
+						"execution_result": executionResult,
+						"timestamp":        time.Now().Format(time.RFC3339),
+					}
+
+					// Marshal and save execution result
+					executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
+					if err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal execution response to JSON: %v", err))
+					} else {
+						if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write execution response to %s: %v", executionResultFilePath, err))
+						} else {
+							hcpo.GetLogger().Info(fmt.Sprintf("💾 Execution response saved to: %s", executionResultFilePath))
+						}
+					}
+
+					// Save conversation history to separate file
+					conversationFilePath := fmt.Sprintf("%s/%s-conversation.json", executionLogsFolderPath, filenameBase)
+					conversationResponse := map[string]interface{}{
+						"step_index":           stepIndex + 1,
+						"step_path":            stepPath,
+						"retry_attempt":        retryAttempt,
+						"loop_iteration":       loopIterationCount,
+						"conversation_history": executionConversationHistory, // Store original JSON structure
+						"timestamp":            time.Now().Format(time.RFC3339),
+					}
+
+					// Marshal and save conversation history
+					conversationJSON, err := json.MarshalIndent(conversationResponse, "", "  ")
+					if err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conversation history to JSON: %v", err))
+					} else {
+						if err := hcpo.WriteWorkspaceFile(ctx, conversationFilePath, string(conversationJSON)); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conversation history to %s: %v", conversationFilePath, err))
+						} else {
+							hcpo.GetLogger().Info(fmt.Sprintf("💾 Conversation history saved to: %s", conversationFilePath))
+						}
+					}
+				}
 
 				// Check if validation is disabled for this step
 				disableValidation := step.AgentConfigs != nil && step.AgentConfigs.DisableValidation != nil && *step.AgentConfigs.DisableValidation
@@ -1063,7 +871,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					if step.HasLoop && loopIterationCount > 0 {
 						validationAgentName = fmt.Sprintf("%s-loop-%d", validationAgentName, loopIterationCount)
 					}
-					validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, iteration, validationAgentName, step.AgentConfigs)
+					validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, validationAgentName, step.AgentConfigs)
 					if err != nil {
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create validation agent for step %d: %v", stepIndex+1, err))
 						if retryAttempt >= maxRetryAttempts {
@@ -1126,7 +934,43 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					}
 
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d validation completed successfully (attempt %d)", stepIndex+1, retryAttempt))
-					hcpo.GetLogger().Info(fmt.Sprintf("📊 Validation result: Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus))
+
+					// Store validation response to workspace (if enabled)
+					if validationResponse != nil && hcpo.saveValidationResponses {
+						// Increment validation counter for numbered files
+						validationCounter++
+						hcpo.GetLogger().Info(fmt.Sprintf("📊 Validation result: Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus))
+						// Determine validation workspace path (same logic as validation agent)
+						var validationWorkspacePath string
+						if hcpo.selectedRunFolder != "" {
+							validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+						} else {
+							validationWorkspacePath = hcpo.GetWorkspacePath()
+						}
+
+						// Get validation folder path based on stepPath
+						validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+						// Use numbered filename for multiple validations (validation-1.json, validation-2.json, etc.)
+						var validationFilePath string
+						if validationCounter == 1 {
+							validationFilePath = fmt.Sprintf("%s/validation.json", validationFolderPath)
+						} else {
+							validationFilePath = fmt.Sprintf("%s/validation-%d.json", validationFolderPath, validationCounter)
+						}
+
+						// Marshal validation response to JSON
+						validationJSON, err := json.MarshalIndent(validationResponse, "", "  ")
+						if err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal validation response to JSON: %v", err))
+						} else {
+							// Write validation response to file
+							if err := hcpo.WriteWorkspaceFile(ctx, validationFilePath, string(validationJSON)); err != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write validation response to %s: %v", validationFilePath, err))
+							} else {
+								hcpo.GetLogger().Info(fmt.Sprintf("💾 Validation response saved to: %s", validationFilePath))
+							}
+						}
+					}
 				}
 
 				// If validation failed, check if prerequisite detection is needed
@@ -1141,7 +985,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					}
 
 					// Gather prerequisite info if enabled
-					prerequisiteInfo, err := hcpo.gatherPrerequisiteInfo(ctx, step, stepIndex, allSteps, progress, validationWorkspacePath)
+					prerequisiteInfo := hcpo.gatherPrerequisiteInfo(step, stepIndex, allSteps, progress, validationWorkspacePath)
 					if err != nil {
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to gather prerequisite info for step %d: %v", stepIndex+1, err))
 					} else if prerequisiteInfo != nil {
@@ -1150,7 +994,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 						// Create prerequisite detection agent
 						prerequisiteDetectionAgentName := fmt.Sprintf("prerequisite-detection-step-%d-iteration-%d", stepIndex+1, iteration)
-						prerequisiteDetectionAgent, err := hcpo.createPrerequisiteDetectionAgent(ctx, "prerequisite-detection", stepIndex+1, iteration, prerequisiteDetectionAgentName, step.AgentConfigs)
+						prerequisiteDetectionAgent, err := hcpo.createPrerequisiteDetectionAgent(ctx, "prerequisite-detection", stepIndex+1, prerequisiteDetectionAgentName, step.AgentConfigs)
 						if err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create prerequisite detection agent for step %d: %v", stepIndex+1, err))
 						} else {
@@ -1301,7 +1145,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							// Loop condition met means step completed successfully
 							learningPathIdentifier := getLearningPathIdentifier(stepPath)
 							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s (loop completed)", stepPath))
-							_, err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+							err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
 							} else {
@@ -1447,7 +1291,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 								learningPathIdentifier := getLearningPathIdentifier(stepPath)
 								hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running learning analysis after loop iteration %d for %s", loopIterationCount, stepPath))
 								// Run learning even though condition not met (for iteration analysis)
-								_, err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+								err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
 								if err != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning phase failed after loop iteration %d for %s: %v", loopIterationCount, stepPath, err))
 								} else {
@@ -1553,7 +1397,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						// Success Learning Agent - analyze what worked well and update plan.json
 						learningPathIdentifier := getLearningPathIdentifier(stepPath)
 						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s", stepPath))
-						_, err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+						err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
 						if err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
 						} else {
@@ -1590,18 +1434,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 										// For regular steps, always re-read after failure learning
 										updatedLearningHistory, readErr := hcpo.readLearningHistory(
 											ctx,
-											step,
 											stepIndex,
 											stepPath,
-											loopIterationCount,
-											learningsPath,
-											isCodeExecutionMode,
-											executionWorkspacePath,
-											templateVars,
-											sanitizedTitle,
-											iteration,
-											&cachedLearningHistory,
-											&learningHistoryInitialized,
 										)
 										if readErr != nil {
 											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
@@ -1617,18 +1451,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 										if learningAfterLoopIteration {
 											updatedLearningHistory, readErr := hcpo.readLearningHistory(
 												ctx,
-												step,
 												stepIndex,
 												stepPath,
-												loopIterationCount,
-												learningsPath,
-												isCodeExecutionMode,
-												executionWorkspacePath,
-												templateVars,
-												sanitizedTitle,
-												iteration,
-												&cachedLearningHistory,
-												&learningHistoryInitialized,
 											)
 											if readErr != nil {
 												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
@@ -1649,8 +1473,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 				// Check if success criteria was met (only for non-loop steps or when loop handling is done)
 				if !step.HasLoop {
-					if !isValidationFailure(validationResponse) {
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d passed validation - success criteria met", stepIndex+1))
+					// Check IsSuccessCriteriaMet instead of just ExecutionStatus - PARTIAL/INCOMPLETE can also mean criteria not met
+					if validationResponse != nil && validationResponse.IsSuccessCriteriaMet {
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d passed validation - success criteria met (Status: %s)", stepIndex+1, validationResponse.ExecutionStatus))
 
 						// Track which tempLLM was used (for learning phase decision)
 						// Determine based on retryAttempt and which tempLLMs exist
@@ -1668,7 +1493,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						templateVars["HumanFeedback"] = ""
 						break // Exit retry loop and continue to next step
 					} else {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d failed validation - success criteria not met (attempt %d/%d)", stepIndex+1, retryAttempt, maxRetryAttempts))
+						statusStr := "unknown"
+						if validationResponse != nil {
+							statusStr = validationResponse.ExecutionStatus
+						}
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d failed validation - success criteria not met (Status: %s, attempt %d/%d)", stepIndex+1, statusStr, retryAttempt, maxRetryAttempts))
 
 						if retryAttempt >= maxRetryAttempts {
 							hcpo.GetLogger().Error(fmt.Sprintf("❌ Step %d failed validation after %d attempts", stepIndex+1, maxRetryAttempts), nil)
@@ -1750,36 +1579,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					validationDetails = "No validation response available"
 				}
 				err := fmt.Errorf(fmt.Sprintf("step %d failed validation after %d retry attempts. %s. Please review the execution results and update the plan if needed", stepIndex+1, maxRetryAttempts, validationDetails), nil)
-				// Emit step_failed event
-				eventBridge := hcpo.GetContextAwareBridge()
-				if eventBridge != nil {
-					stepTitle := step.Title
-					if stepTitle == "" {
-						stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
-					}
-					stepId := step.ID
-					if stepId == "" {
-						stepId = fmt.Sprintf("step-%d", stepIndex+1)
-					}
-					failedEvent := &events.StepFailedEvent{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-							Component: "orchestrator",
-						},
-						StepID:       stepId,
-						StepIndex:    stepIndex,
-						StepTitle:    stepTitle,
-						StepPath:     stepPath,
-						IsBranchStep: isBranchStep,
-						Error:        err.Error(),
-					}
-					eventBridge.HandleEvent(ctx, &events.AgentEvent{
-						Type:      events.StepExecutionFailed,
-						Timestamp: time.Now(),
-						Data:      failedEvent,
-					})
-					hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s (validation failed)", stepIndex+1, stepTitle))
+				// Emit step_failed event using centralized method
+				stepTitle := step.Title
+				if stepTitle == "" {
+					stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
 				}
+				stepId := step.ID
+				if stepId == "" {
+					stepId = fmt.Sprintf("step-%d", stepIndex+1)
+				}
+				hcpo.EmitStepFailedEvent(ctx, stepId, stepTitle, stepPath, err.Error(), stepIndex, isBranchStep)
+				hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s (validation failed)", stepIndex+1, stepTitle))
 				return executionResult, updatedContextFiles, err
 			}
 
@@ -1804,16 +1614,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		// If user provides feedback (doesn't approve), stop workflow and ask user to manually update plan
 		// FAST MODE: Skip human feedback and auto-approve
 		// SKIP HUMAN INPUT MODE: Skip human feedback but keep learning enabled
+		// DECISION INNER STEP: Skip human feedback on success (decision step will handle routing)
 		// NORMAL MODE & LOOP MODE: Always request human feedback before moving to next step
 		isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 		isSkipHumanInput := execCtx.SkipHumanInput
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Step %d human feedback check - execCtx: fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v, skipHumanInput=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, stepIndex, isFastExecuteStep, isSkipHumanInput))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Step %d human feedback check - execCtx: fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v, skipHumanInput=%v, isDecisionInnerStep=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, stepIndex, isFastExecuteStep, isSkipHumanInput, isDecisionInnerStep))
 
 		var approved bool
 		var feedback string
 
-		// In fast execute mode or skip human input mode, always auto-approve without human feedback
-		if isFastExecuteStep || isSkipHumanInput {
+		// For decision inner steps that succeeded, skip human feedback (decision step will handle routing)
+		// Still allow human feedback if validation failed (handled in retry loop above)
+		if isDecisionInnerStep && validationResponse != nil && !isValidationFailure(validationResponse) {
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Decision inner step %d succeeded - auto-approving without human feedback (decision step will handle routing)", stepIndex+1))
+			approved = true
+			feedback = "" // No feedback for decision inner steps
+		} else if isFastExecuteStep || isSkipHumanInput {
 			if isFastExecuteStep {
 				hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Auto-approving step %d without human feedback (stepIndex=%d <= fastExecuteEndStep=%d)", stepIndex+1, stepIndex, execCtx.FastExecuteEndStep))
 			} else {
@@ -1850,7 +1666,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			// User approved - mark step as completed and exit outer loop
 			// Only update progress if this is not a branch step
 			if !isBranchStep {
-				progress.CompletedStepIndices = append(progress.CompletedStepIndices, stepIndex)
+				hcpo.addCompletedStepIndex(progress, stepIndex)
 				// Always save progress after marking a step as completed (both fast and normal mode)
 				if err := hcpo.saveStepProgress(ctx, progress); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save step progress: %w", err))
@@ -1887,11 +1703,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Added step context output to context files: %s", step.ContextOutput))
 	}
 
-	// Emit step_finished event (skip if this is a conditional step execution, as it's handled by executeConditionalStep)
-	// Conditional step executions use stepPath like "step-4-conditional", which we want to skip
-	if !strings.Contains(stepPath, "-conditional") {
-		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
-	}
+	// Emit step_finished event
+	// Note: Conditional steps emit their own step_finished event in executeConditionalStep after branch execution completes
+	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
 
 	return executionResult, updatedContextFiles, nil
 }
@@ -1904,7 +1718,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	progress *StepProgress,
 	startFromStep int,
 	execCtx *ExecutionContext,
-) ([]llmtypes.MessageContent, error) {
+) error {
 	hcpo.GetLogger().Info(fmt.Sprintf("🔄 Starting step-by-step execution of %d steps (starting from step %d)", len(breakdownSteps), startFromStep+1))
 
 	// Learning detail level is now configured per-step via AgentConfigs
@@ -1913,7 +1727,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 	// Run folder should already be resolved early (after plan approval)
 	if hcpo.selectedRunFolder == "" {
-		return nil, fmt.Errorf(fmt.Sprintf("run folder not resolved - this should have been set after plan approval"), nil)
+		return fmt.Errorf(fmt.Sprintf("run folder not resolved - this should have been set after plan approval"), nil)
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("📁 Using resolved run folder: %s", hcpo.selectedRunFolder))
 
@@ -1921,13 +1735,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	// This allows conditional steps to use execution results directly
 	previousExecutionResults := make([]string, 0)
 
+	// Track decision context for steps routed from decision steps
+	// Key: target step index (0-based), Value: decision context
+	decisionContextMap := make(map[int]*DecisionContext)
+
 	// Execute each step one by one
-	for i, step := range breakdownSteps {
+	// Use traditional for loop to allow jumping to different steps
+	for i := 0; i < len(breakdownSteps); i++ {
+		step := breakdownSteps[i]
 		// Check for context cancellation before each step
 		select {
 		case <-ctx.Done():
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Workflow execution canceled before step %d/%d: %s", i+1, len(breakdownSteps), step.Title))
-			return nil, fmt.Errorf(fmt.Sprintf("workflow execution canceled: %w", ctx.Err()), nil)
+			return fmt.Errorf(fmt.Sprintf("workflow execution canceled: %w", ctx.Err()), nil)
 		default:
 		}
 
@@ -2010,35 +1830,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		if step.HasCondition {
 			// Execute conditional step - pass execution results directly (not file paths)
 			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Starting conditional step execution: %s", step.Title))
-			if err := hcpo.executeConditionalStep(ctx, step, i, 0, progress, previousExecutionResults, iteration, execCtx); err != nil {
+			if err := hcpo.executeConditionalStep(ctx, step, i, 0, progress, previousExecutionResults, iteration, execCtx, breakdownSteps); err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Conditional step %d execution failed: %v", i+1, err), nil)
-				// Emit error event
-				eventBridge := hcpo.GetContextAwareBridge()
-				if eventBridge != nil {
-					errorEvent := &events.OrchestratorAgentErrorEvent{
-						BaseEventData: events.BaseEventData{
-							Timestamp: time.Now(),
-						},
-						AgentType: "workflow",
-						AgentName: "conditional-step-execution",
-						Objective: fmt.Sprintf("Execute conditional step: %s", step.Title),
-						Error:     err.Error(),
-						StepIndex: i,
-						Iteration: iteration,
-					}
-					eventBridge.HandleEvent(ctx, &events.AgentEvent{
-						Type:      events.OrchestratorAgentError,
-						Timestamp: time.Now(),
-						Data:      errorEvent,
-					})
-				}
-				return nil, fmt.Errorf(fmt.Sprintf("conditional step %d execution failed: %w", i+1, err), nil)
+				// Emit error event using centralized method
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "conditional-step-execution", fmt.Sprintf("Execute conditional step: %s", step.Title), err.Error(), i, iteration)
+				return fmt.Errorf(fmt.Sprintf("conditional step %d execution failed: %w", i+1, err), nil)
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Conditional step %d completed successfully: %s", i+1, step.Title))
 
 			// Mark conditional step as completed (executeConditionalStep handles progress internally)
-			progress.CompletedStepIndices = append(progress.CompletedStepIndices, i)
+			hcpo.addCompletedStepIndex(progress, i)
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after conditional step: %w", err))
 			} else {
@@ -2109,6 +1911,160 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				}
 				if targetStepIndex >= 0 {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
+
+					// Update startFromStep to allow execution from target step
+					// This prevents the skip check (i < startFromStep) from blocking execution
+					if targetStepIndex < startFromStep {
+						startFromStep = targetStepIndex
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
+					}
+
+					// Set loop index to jump to target step (subtract 1 because loop will increment)
+					i = targetStepIndex - 1
+					continue
+				} else {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
+					// Fall through to default behavior (continue to next step)
+				}
+			}
+
+			// Default: continue to next sequential step
+			continue
+		}
+
+		// Check if this is a decision step
+		if step.HasDecisionStep {
+			// Execute decision step - executes inner step, evaluates output, returns result for routing
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting decision step execution: %s", step.Title))
+			decisionResult, executionResult, err := hcpo.executeDecisionStep(ctx, &step, i, progress, previousContextFiles, iteration, execCtx, breakdownSteps)
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Decision step %d execution failed: %v", i+1, err), nil)
+				// Emit error event using centralized method
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "decision-step-execution", fmt.Sprintf("Execute decision step: %s", step.Title), err.Error(), i, iteration)
+				return fmt.Errorf("decision step %d execution failed: %w", i+1, err)
+			}
+
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step %d completed successfully: %s", i+1, step.Title))
+
+			// Mark decision step as completed
+			hcpo.addCompletedStepIndex(progress, i)
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision step: %w", err))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: decision step %d marked as completed", i+1))
+			}
+
+			// Check if we're in single step mode and should stop
+			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
+				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
+				break
+			}
+
+			// Determine next step based on decision result (using returned value instead of state variable)
+			var nextStepID string
+			var resultStr string
+			if decisionResult {
+				nextStepID = step.IfTrueNextStepID
+				resultStr = "true"
+				hcpo.GetLogger().Info(fmt.Sprintf("🔗 Decision step evaluated to TRUE - using if_true_next_step_id: %s", nextStepID))
+			} else {
+				nextStepID = step.IfFalseNextStepID
+				resultStr = "false"
+				hcpo.GetLogger().Info(fmt.Sprintf("🔗 Decision step evaluated to FALSE - using if_false_next_step_id: %s", nextStepID))
+			}
+
+			// Track decision evaluations to prevent infinite loops
+			// Initialize DecisionEvaluationCounts if nil
+			if progress.DecisionEvaluationCounts == nil {
+				progress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
+			}
+
+			// Create key: stepID:result (e.g., "verify-minute-file:false")
+			decisionKey := fmt.Sprintf("%s:%s", step.ID, resultStr)
+			currentCount := progress.DecisionEvaluationCounts[decisionKey]
+			newCount := currentCount + 1
+			progress.DecisionEvaluationCounts[decisionKey] = newCount
+
+			hcpo.GetLogger().Info(fmt.Sprintf("📊 Decision evaluation count for %s: %d", decisionKey, newCount))
+
+			// Check if we've made this same decision more than 2 times (3rd time = error)
+			if newCount > 2 {
+				errorMsg := fmt.Sprintf("infinite loop detected: decision step '%s' (ID: %s) has evaluated to %s %d times. This indicates a workflow logic error that would cause an infinite loop. Please review the decision step configuration and routing logic.", step.Title, step.ID, resultStr, newCount)
+				hcpo.GetLogger().Error(errorMsg, nil)
+				// Emit error event
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "decision-step-loop-detection", fmt.Sprintf("Decision step: %s", step.Title), errorMsg, i, iteration)
+				return fmt.Errorf("workflow error: %s", errorMsg)
+			}
+
+			// Save progress with updated decision count
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision evaluation: %w", err))
+			}
+
+			// Handle next step navigation
+			if nextStepID == "end" {
+				// End workflow
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Decision step %d specified 'end' - terminating workflow", i+1))
+				break
+			} else if nextStepID != "" {
+				// Find target step by ID and jump to it
+				targetStepIndex := -1
+				for idx, s := range breakdownSteps {
+					if s.ID == nextStepID {
+						targetStepIndex = idx
+						break
+					}
+				}
+				if targetStepIndex >= 0 {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
+
+					// Store decision context for the target step
+					// This will be passed to executeSingleStep when the target step executes
+					decisionContextMap[targetStepIndex] = &DecisionContext{
+						DecisionStepIndex:       i,
+						DecisionStepTitle:       step.Title,
+						DecisionResult:          decisionResult,
+						DecisionReasoning:       step.DecisionResponse.Reasoning,
+						DecisionExecutionResult: executionResult,
+					}
+					hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored decision context for step %d (from decision step %d: %s)", targetStepIndex+1, i+1, step.Title))
+
+					// When decision step routes back to a previous step, we need to:
+					// 1. Remove target step AND all subsequent steps from completed list (they all depend on target step's output)
+					// 2. Delete execution folders for target step AND all subsequent steps
+					// This ensures a clean state for re-execution
+
+					// Use cleanupProgressFromStep to remove all steps from targetStepIndex onward from progress
+					// This also handles branch step cleanup and saves progress to steps_done.json
+					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
+					} else {
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
+					}
+
+					// Delete execution folders for target step and all subsequent steps
+					// This ensures old execution artifacts don't interfere with re-execution
+					cleanedCount := 0
+					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
+						if err := hcpo.deleteStepExecutionFolder(ctx, stepNum); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %v (continuing)", stepNum, err))
+						} else {
+							cleanedCount++
+							hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up execution folder for step %d", stepNum))
+						}
+					}
+					if cleanedCount > 0 {
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Cleaned up execution folders for %d steps (step-%d to step-%d)", cleanedCount, targetStepIndex+1, len(breakdownSteps)))
+					}
+
+					// Update startFromStep to allow execution from target step
+					// This prevents the skip check (i < startFromStep) from blocking execution
+					if targetStepIndex < startFromStep {
+						startFromStep = targetStepIndex
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
+					}
+
 					// Set loop index to jump to target step (subtract 1 because loop will increment)
 					i = targetStepIndex - 1
 					continue
@@ -2132,6 +2088,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			}
 		}
 
+		// Check if this step has decision context (routed from a decision step)
+		var decisionCtx *DecisionContext
+		if dc, exists := decisionContextMap[i]; exists {
+			decisionCtx = dc
+			// Clean up after use (optional, but good practice)
+			delete(decisionContextMap, i)
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using decision context for step %d (routed from decision step %d)", i+1, dc.DecisionStepIndex+1))
+		}
+
 		stepPath := fmt.Sprintf("step-%d", i+1)
 		executionResult, _, err := hcpo.executeSingleStep(
 			ctx,
@@ -2145,6 +2110,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			false, // isBranchStep = false
 			execCtx,
 			breakdownSteps, // allSteps - pass all steps for prerequisite detection
+			false,          // isDecisionInnerStep = false (regular step)
+			decisionCtx,    // decisionContext - nil if not routed from decision step
 		)
 		if err != nil {
 			// Check if this is a prerequisite navigation error
@@ -2170,37 +2137,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			}
 
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Step %d execution failed: %v", i+1, err), nil)
-			// Emit step_failed event
-			eventBridge := hcpo.GetContextAwareBridge()
-			if eventBridge != nil {
-				stepTitle := step.Title
-				if stepTitle == "" {
-					stepTitle = fmt.Sprintf("Step %d", i+1)
-				}
-				stepId := step.ID
-				if stepId == "" {
-					stepId = fmt.Sprintf("step-%d", i+1)
-				}
-				failedEvent := &events.StepFailedEvent{
-					BaseEventData: events.BaseEventData{
-						Timestamp: time.Now(),
-						Component: "orchestrator",
-					},
-					StepID:       stepId,
-					StepIndex:    i,
-					StepTitle:    stepTitle,
-					StepPath:     stepPath,
-					IsBranchStep: false,
-					Error:        err.Error(),
-				}
-				eventBridge.HandleEvent(ctx, &events.AgentEvent{
-					Type:      events.StepExecutionFailed,
-					Timestamp: time.Now(),
-					Data:      failedEvent,
-				})
-				hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s", i+1, stepTitle))
+			// Emit step_failed event using centralized method
+			stepTitle := step.Title
+			if stepTitle == "" {
+				stepTitle = fmt.Sprintf("Step %d", i+1)
 			}
-			return nil, fmt.Errorf(fmt.Sprintf("step %d execution failed: %w", i+1, err), nil)
+			stepId := step.ID
+			if stepId == "" {
+				stepId = fmt.Sprintf("step-%d", i+1)
+			}
+			hcpo.EmitStepFailedEvent(ctx, stepId, stepTitle, stepPath, err.Error(), i, false)
+			hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s", i+1, stepTitle))
+			return fmt.Errorf(fmt.Sprintf("step %d execution failed: %w", i+1, err), nil)
 		}
 
 		// Log execution result (for debugging)
@@ -2235,24 +2183,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ All steps execution completed"))
-	return nil, nil
-}
-
-// OLD CODE REMOVED - The following section was replaced by executeSingleStep() function above
-// All that logic has been extracted into executeSingleStep() for reusability
-
-// max returns the maximum value in a slice of integers
-func max(slice []int) int {
-	if len(slice) == 0 {
-		return -1
-	}
-	maxVal := slice[0]
-	for _, val := range slice {
-		if val > maxVal {
-			maxVal = val
-		}
-	}
-	return maxVal
+	return nil
 }
 
 // sanitizeTitleForAgentName sanitizes a step title for use in agent names
@@ -2297,118 +2228,70 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) sanitizeTitleForAgentName(ti
 
 // readLearningHistory reads learning history from the learnings folder
 // Returns the formatted learning history string and any error
-// For loop steps, handles caching based on LearningAfterLoopIteration setting
+// Always reads fresh learnings (no caching)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) readLearningHistory(
 	ctx context.Context,
-	step TodoStep,
 	stepIndex int,
 	stepPath string,
-	loopIterationCount int,
-	learningsPath string,
-	isCodeExecutionMode bool,
-	executionWorkspacePath string,
-	templateVars map[string]string,
-	sanitizedTitle string,
-	iteration int,
-	cachedLearningHistory *string,
-	learningHistoryInitialized *bool,
 ) (formattedLearningHistory string, err error) {
-	// Determine if we should read learning or reuse cached version
-	shouldReadLearning := true
-	if step.HasLoop {
-		// For loop steps, always default to true
-		learningAfterLoopIteration := true
-		if *learningHistoryInitialized && !learningAfterLoopIteration {
-			// Reuse cached learning from first iteration
-			shouldReadLearning = false
-			formattedLearningHistory = *cachedLearningHistory
-			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Reusing cached learning history from first iteration (loop iteration %d, LearningAfterLoopIteration=false)", loopIterationCount))
-		} else if learningAfterLoopIteration {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Running learning reading agent for loop iteration %d (LearningAfterLoopIteration=true, will get fresh learnings)", loopIterationCount))
+	// Always read learnings (no caching)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔀 Reading learning history for %s", stepPath))
+
+	// Determine step folder path - learnings are at workspace root (not inside runs/)
+	// Use stepPath to determine the correct learning folder (supports branch steps)
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	stepLearningsPath := getLearningFolderPath(baseWorkspacePath, stepPath)
+	pathInfo := parseStepPath(stepPath)
+
+	// Check if step-specific learnings folder exists and has files before proceeding
+	// For new workflows and first steps, the learnings folder won't exist yet
+	// For branch steps, check the branch-specific folder; for regular steps, use the helper function
+	var learningsFolderEmpty bool
+	if pathInfo.IsBranchStep {
+		// For branch steps, check the folder directly
+		files, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
+		if listErr != nil {
+			learningsFolderEmpty = true
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Running learning reading agent for first loop iteration (will cache for reuse)"))
+			// Check if there are any .md files
+			hasMdFiles := false
+			for _, file := range files {
+				if strings.HasSuffix(file, ".md") {
+					hasMdFiles = true
+					break
+				}
+			}
+			learningsFolderEmpty = !hasMdFiles
 		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Running learning reading agent"))
+		// For regular steps, use the existing helper function
+		stepNumber := stepIndex + 1 // Convert to 1-based
+		var checkErr error
+		learningsFolderEmpty, checkErr = hcpo.isStepLearningsFolderEmpty(ctx, stepNumber)
+		if checkErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step learnings folder is empty: %v, proceeding anyway", checkErr))
+		}
 	}
 
-	if shouldReadLearning {
-		// Determine step folder path - learnings are at workspace root (not inside runs/)
-		// Use stepPath to determine the correct learning folder (supports branch steps)
-		baseWorkspacePath := hcpo.GetWorkspacePath()
-		stepLearningsPath := getLearningFolderPath(baseWorkspacePath, stepPath)
-		pathInfo := parseStepPath(stepPath)
+	if learningsFolderEmpty {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping learning reading agent for %s - learnings folder does not exist or is empty: %s", stepPath, stepLearningsPath))
+		return "", nil // Return empty string, no error
+	}
 
-		// Check if step-specific learnings folder exists and has files before proceeding
-		// For new workflows and first steps, the learnings folder won't exist yet
-		// For branch steps, check the branch-specific folder; for regular steps, use the helper function
-		var learningsFolderEmpty bool
-		var err error
-		if pathInfo.IsBranchStep {
-			// For branch steps, check the folder directly
-			files, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
-			if listErr != nil {
-				learningsFolderEmpty = true
-			} else {
-				// Check if there are any .md files
-				hasMdFiles := false
-				for _, file := range files {
-					if strings.HasSuffix(file, ".md") {
-						hasMdFiles = true
-						break
-					}
-				}
-				learningsFolderEmpty = !hasMdFiles
-			}
-		} else {
-			// For regular steps, use the existing helper function
-			stepNumber := stepIndex + 1 // Convert to 1-based
-			learningsFolderEmpty, err = hcpo.isStepLearningsFolderEmpty(ctx, stepNumber)
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step learnings folder is empty: %v, proceeding anyway", err))
-			}
-		}
+	// Create and execute Learning Reading Agent
+	// Include mode in agent name: "code-exec" or "simple"
+	// Step-specific learnings: manually read files from step folder
+	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - manually reading files from step folder for %s", stepPath))
 
-		if learningsFolderEmpty {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping learning reading agent for %s - learnings folder does not exist or is empty: %s", stepPath, stepLearningsPath))
-			return "", nil // Return empty string, no error
-		}
-
-		// Create and execute Learning Reading Agent
-		// Include mode in agent name: "code-exec" or "simple"
-		// Step-specific learnings: manually read files from step folder
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - manually reading files from step folder for %s", stepPath))
-
-		// Read all .md files from step folder
-		learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s: %v - will proceed without learning history", stepLearningsPath, err))
-			formattedLearningHistory = "No learning history available."
-		} else {
-			// Format file contents as learning history
-			formattedLearningHistory = hcpo.formatStepLearningFilesAsHistory(learningFiles)
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Read %d learning file(s) from step folder for %s", len(learningFiles), stepPath))
-		}
-
-		// Cache the result for loop steps
-		if step.HasLoop {
-			// Default to true for loop steps
-			learningAfterLoopIteration := true
-			if !*learningHistoryInitialized {
-				// First iteration: always cache
-				*cachedLearningHistory = formattedLearningHistory
-				*learningHistoryInitialized = true
-				if learningAfterLoopIteration {
-					hcpo.GetLogger().Info(fmt.Sprintf("💾 Cached learning history from first iteration (will refresh each iteration)"))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("💾 Cached learning history for reuse in subsequent iterations (LearningAfterLoopIteration=false)"))
-				}
-			} else if learningAfterLoopIteration {
-				// LearningAfterLoopIteration=true: update cache with fresh learnings each iteration
-				*cachedLearningHistory = formattedLearningHistory
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Updated cached learning history with fresh learnings from iteration %d", loopIterationCount))
-			}
-		}
+	// Read all .md files from step folder
+	learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s: %v - will proceed without learning history", stepLearningsPath, err))
+		formattedLearningHistory = "No learning history available."
+	} else {
+		// Format file contents as learning history
+		formattedLearningHistory = hcpo.formatStepLearningFilesAsHistory(learningFiles)
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Read %d learning file(s) from step folder for %s", len(learningFiles), stepPath))
 	}
 
 	return formattedLearningHistory, nil

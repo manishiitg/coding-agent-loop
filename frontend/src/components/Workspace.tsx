@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
 import { Plus, Upload, FolderPlus, ChevronDown, Filter } from 'lucide-react'
-import { agentApi } from '../services/api'
+import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
@@ -914,6 +914,205 @@ export default function Workspace({
     openMoveDialog(folder)
   }
 
+  // Handle file download
+  const handleFileDownload = async (file: PlannerFile) => {
+    try {
+      // Use original filepath if available (when path was adjusted for display)
+      const fullFilePath = getOriginalFilePath(file)
+      const fileName = fullFilePath.split('/').pop() || fullFilePath
+      const extension = fileName.split('.').pop()?.toLowerCase() || ''
+      
+      // List of binary file extensions
+      const binaryExtensions = ['xls', 'xlsx', 'pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip', 'rar', '7z', 'tar', 'gz', 'exe', 'dll', 'so', 'dylib', 'bin', 'qif']
+      const isLikelyBinary = binaryExtensions.includes(extension)
+      
+      let blob: Blob
+      let mimeType: string
+
+      // For binary files, fetch directly as blob from workspace API with download parameter
+      if (isLikelyBinary) {
+        // Use workspaceApi (same as other workspace operations) with blob response type
+        // IMPORTANT: responseType must be 'blob' to prevent axios from parsing JSON
+        // Also set Accept header to request binary content
+        const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(fullFilePath)}`, {
+          params: { download: 'true' },
+          responseType: 'blob',
+          headers: {
+            'Accept': 'application/octet-stream'
+          }
+        })
+        
+        // Check if we got JSON instead of blob (backend might not have handled download param correctly)
+        if (response.data instanceof Blob) {
+          // Check if it's actually JSON by reading the first few bytes
+          const firstBytes = await response.data.slice(0, 10).arrayBuffer()
+          const firstBytesArray = new Uint8Array(firstBytes)
+          const firstChar = String.fromCharCode(firstBytesArray[0])
+          
+          // JSON typically starts with '{' or '['
+          if (firstChar === '{' || firstChar === '[') {
+            // It's JSON, read it and check
+            const text = await response.data.text()
+            try {
+              const jsonData = JSON.parse(text)
+              if (jsonData.success !== undefined) {
+                // It's the API JSON response, not the binary file
+                if (jsonData.data?.content?.startsWith('[Binary file:')) {
+                  throw new Error('Binary file download is not supported. The API only returns metadata for binary files. Please download the file directly from the file system.')
+                }
+                console.error('[Download] Server returned JSON instead of binary:', jsonData)
+                throw new Error(`Server returned JSON instead of binary file. The download parameter may not be working correctly. Response: ${JSON.stringify(jsonData).substring(0, 200)}`)
+              }
+            } catch {
+              // Not JSON, use as-is
+            }
+          }
+          
+          blob = response.data
+          mimeType = blob.type || getMimeType(extension)
+        } else {
+          // Fallback: if we got something else, try to convert it
+          mimeType = getMimeType(extension)
+          blob = new Blob([response.data], { type: mimeType })
+        }
+      } else {
+        // For text files and images, use the regular API
+        const response = await agentApi.getPlannerFileContent(fullFilePath)
+        
+        if (!response.success || !response.data) {
+          setError(response.message || 'Failed to download file')
+          return
+        }
+
+        // Check if it's a binary file placeholder (even though extension suggests text)
+        // In this case, retry using the binary download endpoint to get actual file content
+        if (response.data.content?.startsWith('[Binary file:')) {
+          // File is actually binary, use binary download path to get the actual file
+          try {
+            const binaryResponse = await workspaceApi.get(`/api/documents/${encodeURIComponent(fullFilePath)}`, {
+              params: { download: 'true' },
+              responseType: 'blob',
+              headers: {
+                'Accept': 'application/octet-stream'
+              },
+              transformResponse: [(data) => data] // Prevent axios from parsing response
+            })
+            
+            // Verify we got actual binary data, not JSON
+            if (binaryResponse.data instanceof Blob) {
+              // Check if it's actually JSON by reading the first few bytes
+              const firstBytes = await binaryResponse.data.slice(0, 10).arrayBuffer()
+              const firstBytesArray = new Uint8Array(firstBytes)
+              const firstChar = String.fromCharCode(firstBytesArray[0])
+              
+              // JSON typically starts with '{' or '['
+              if (firstChar === '{' || firstChar === '[') {
+                // It's JSON, read it and check
+                const text = await binaryResponse.data.text()
+                try {
+                  const jsonData = JSON.parse(text)
+                  if (jsonData.success !== undefined) {
+                    // It's the API JSON response, not the binary file
+                    console.error('[Download] Server returned JSON instead of binary:', jsonData)
+                    throw new Error(`Server returned JSON instead of binary file. The download parameter may not be working correctly.`)
+                  }
+                } catch {
+                  // Not JSON, use as-is
+                }
+              }
+              
+              blob = binaryResponse.data
+              mimeType = blob.type || getMimeType(extension)
+            } else {
+              mimeType = getMimeType(extension)
+              blob = new Blob([binaryResponse.data], { type: mimeType })
+            }
+          } catch (binaryErr) {
+            console.error('[Download] Failed to download binary file:', binaryErr)
+            throw new Error('This file is binary but could not be downloaded. Please download it directly from the file system.')
+          }
+          
+          // Skip the rest of the text/image handling and download immediately
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = fileName
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          URL.revokeObjectURL(url)
+          return
+        }
+
+        // Handle different file types
+        if (response.data.is_image && response.data.content.startsWith('data:image/')) {
+          // Image file - convert base64 data URL to blob
+          const base64Data = response.data.content.split(',')[1]
+          const imageType = response.data.content.match(/data:image\/([^;]+)/)?.[1] || 'png'
+          const binaryString = atob(base64Data)
+          const bytes = new Uint8Array(binaryString.length)
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i)
+          }
+          blob = new Blob([bytes], { type: `image/${imageType}` })
+          mimeType = `image/${imageType}`
+        } else {
+          // Text file - create blob from content
+          const content = response.data.content
+          mimeType = getMimeType(extension)
+          blob = new Blob([content], { type: mimeType })
+        }
+      }
+
+      // Create download link and trigger download
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Failed to download file:', err)
+      setError(err instanceof Error ? err.message : 'Failed to download file')
+    }
+  }
+
+  // Helper function to get MIME type from extension
+  const getMimeType = (extension: string): string => {
+    const mimeTypes: Record<string, string> = {
+      'txt': 'text/plain',
+      'json': 'application/json',
+      'js': 'text/javascript',
+      'ts': 'text/typescript',
+      'tsx': 'text/typescript',
+      'jsx': 'text/javascript',
+      'html': 'text/html',
+      'css': 'text/css',
+      'md': 'text/markdown',
+      'py': 'text/python',
+      'go': 'text/plain',
+      'yaml': 'text/yaml',
+      'yml': 'text/yaml',
+      'xml': 'text/xml',
+      'csv': 'text/csv',
+      'xls': 'application/vnd.ms-excel',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'pdf': 'application/pdf',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'ppt': 'application/vnd.ms-powerpoint',
+      'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'zip': 'application/zip',
+      'rar': 'application/x-rar-compressed',
+      '7z': 'application/x-7z-compressed',
+      'tar': 'application/x-tar',
+      'gz': 'application/gzip',
+    }
+    return mimeTypes[extension] || 'application/octet-stream'
+  }
+
   // Confirm move
   const confirmMove = async (destinationPath: string, commitMessage?: string) => {
     if (!moveDialog.item) return
@@ -1305,6 +1504,8 @@ export default function Workspace({
                 onCreateFolder={handleCreateFolder}
                 onFileMove={handleFileMove}
                 onFolderMove={handleFolderMove}
+                onFileDownload={handleFileDownload}
+                hideAddToChat={selectedModeCategory === 'workflow' && !!workflowFolderPath}
               />
             </div>
           </div>

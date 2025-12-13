@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ExecutionManager centralizes all execution lifecycle decisions
@@ -139,7 +140,85 @@ func (em *ExecutionManager) PrepareExecution(
 			// Regular step resume
 			resumeStep := opts.ResumeFromStep // 1-based
 			if resumeStep <= 0 {
-				resumeStep = 1
+				// CRITICAL: resume_from_step=0 would delete all completed steps!
+				// Request blocking human feedback approval before proceeding
+				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
+
+				// Build context message showing what would be deleted
+				var contextMsg strings.Builder
+				contextMsg.WriteString("⚠️ **CRITICAL WARNING: Invalid Resume Step Detected**\n\n")
+				contextMsg.WriteString(fmt.Sprintf("You selected a resume strategy but `resume_from_step=%d` is invalid.\n\n", resumeStep))
+
+				if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
+					contextMsg.WriteString(fmt.Sprintf("**This would DELETE all %d completed steps and start from the beginning!**\n\n", len(existingProgress.CompletedStepIndices)))
+					contextMsg.WriteString("Completed steps that would be deleted:\n")
+					for _, idx := range existingProgress.CompletedStepIndices {
+						contextMsg.WriteString(fmt.Sprintf("- Step %d\n", idx+1))
+					}
+					contextMsg.WriteString("\n")
+				} else {
+					contextMsg.WriteString("**This would start execution from the beginning.**\n\n")
+				}
+
+				contextMsg.WriteString("**Options:**\n")
+				contextMsg.WriteString("1. **Approve & Continue**: Use next incomplete step (if available) or start from beginning\n")
+				contextMsg.WriteString("2. **Reject**: Cancel execution - fix the resume step selection in the frontend\n")
+
+				// Request blocking human feedback
+				requestID := fmt.Sprintf("resume_step_validation_%d", time.Now().UnixNano())
+				question := fmt.Sprintf("⚠️ Invalid Resume Step Detected (resume_from_step=%d)\n\nDo you want to proceed? This will delete all completed steps and start from the beginning.", resumeStep)
+
+				approved, _, err := orch.RequestHumanFeedback(
+					ctx,
+					requestID,
+					question,
+					contextMsg.String(),
+					orch.getSessionID(),
+					orch.getWorkflowID(),
+				)
+
+				if err != nil {
+					orch.GetLogger().Error(fmt.Sprintf("❌ Failed to request human feedback for resume step validation: %v", err), err)
+					return nil, fmt.Errorf("failed to request approval for invalid resume step: %w", err)
+				}
+
+				if !approved {
+					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - cancelling execution")
+					return nil, fmt.Errorf("execution cancelled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
+				}
+
+				// User approved - proceed with fallback logic
+				orch.GetLogger().Info("✅ User approved proceeding with invalid resume step - using fallback logic")
+
+				if existingProgress != nil {
+					nextIncomplete := findNextIncompleteStep(existingProgress)
+					if nextIncomplete < totalSteps {
+						resumeStep = nextIncomplete + 1 // Convert to 1-based
+						orch.GetLogger().Info(fmt.Sprintf("✅ Using next incomplete step %d instead", resumeStep))
+					} else {
+						// All steps complete - fallback to start from beginning
+						orch.GetLogger().Warn(fmt.Sprintf("⚠️ All steps are complete, falling back to start from beginning"))
+						setup.Mode = ExecutionModeFresh
+						setup.Cleanup = CleanupScope{
+							DeleteProgress:    true,
+							InitFreshProgress: true,
+							CleanAllSteps:     true,
+							NewTotalSteps:     totalSteps,
+						}
+						return setup, nil
+					}
+				} else {
+					// No existing progress - fallback to start from beginning
+					orch.GetLogger().Warn(fmt.Sprintf("⚠️ No existing progress found, falling back to start from beginning"))
+					setup.Mode = ExecutionModeFresh
+					setup.Cleanup = CleanupScope{
+						DeleteProgress:    true,
+						InitFreshProgress: true,
+						CleanAllSteps:     true,
+						NewTotalSteps:     totalSteps,
+					}
+					return setup, nil
+				}
 			}
 			setup.Mode = ExecutionModeResumeFromStep
 			setup.StartFromStep = resumeStep - 1 // Convert to 0-based
@@ -167,7 +246,87 @@ func (em *ExecutionManager) PrepareExecution(
 		} else {
 			resumeStep := opts.ResumeFromStep // 1-based
 			if resumeStep <= 0 {
-				resumeStep = 1
+				// CRITICAL: resume_from_step=0 would delete all completed steps!
+				// Request blocking human feedback approval (even in "no human" mode - this is a safety override)
+				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
+
+				// Build context message showing what would be deleted
+				var contextMsg strings.Builder
+				contextMsg.WriteString("⚠️ **CRITICAL WARNING: Invalid Resume Step Detected**\n\n")
+				contextMsg.WriteString(fmt.Sprintf("You selected a resume strategy but `resume_from_step=%d` is invalid.\n\n", resumeStep))
+
+				if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
+					contextMsg.WriteString(fmt.Sprintf("**This would DELETE all %d completed steps and start from the beginning!**\n\n", len(existingProgress.CompletedStepIndices)))
+					contextMsg.WriteString("Completed steps that would be deleted:\n")
+					for _, idx := range existingProgress.CompletedStepIndices {
+						contextMsg.WriteString(fmt.Sprintf("- Step %d\n", idx+1))
+					}
+					contextMsg.WriteString("\n")
+				} else {
+					contextMsg.WriteString("**This would start execution from the beginning.**\n\n")
+				}
+
+				contextMsg.WriteString("**Options:**\n")
+				contextMsg.WriteString("1. **Approve & Continue**: Use next incomplete step (if available) or start from beginning\n")
+				contextMsg.WriteString("2. **Reject**: Cancel execution - fix the resume step selection in the frontend\n")
+
+				// Request blocking human feedback (safety override - even in "no human" mode)
+				requestID := fmt.Sprintf("resume_step_validation_%d", time.Now().UnixNano())
+				question := fmt.Sprintf("⚠️ Invalid Resume Step Detected (resume_from_step=%d)\n\nDo you want to proceed? This will delete all completed steps and start from the beginning.", resumeStep)
+
+				approved, _, err := orch.RequestHumanFeedback(
+					ctx,
+					requestID,
+					question,
+					contextMsg.String(),
+					orch.getSessionID(),
+					orch.getWorkflowID(),
+				)
+
+				if err != nil {
+					orch.GetLogger().Error(fmt.Sprintf("❌ Failed to request human feedback for resume step validation: %v", err), err)
+					return nil, fmt.Errorf("failed to request approval for invalid resume step: %w", err)
+				}
+
+				if !approved {
+					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - cancelling execution")
+					return nil, fmt.Errorf("execution cancelled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
+				}
+
+				// User approved - proceed with fallback logic
+				orch.GetLogger().Info("✅ User approved proceeding with invalid resume step - using fallback logic")
+
+				if existingProgress != nil {
+					nextIncomplete := findNextIncompleteStep(existingProgress)
+					if nextIncomplete < totalSteps {
+						resumeStep = nextIncomplete + 1 // Convert to 1-based
+						orch.GetLogger().Info(fmt.Sprintf("✅ Using next incomplete step %d instead", resumeStep))
+					} else {
+						// All steps complete - fallback to start from beginning
+						orch.GetLogger().Warn(fmt.Sprintf("⚠️ All steps are complete, falling back to start from beginning"))
+						setup.Mode = ExecutionModeFresh
+						setup.Cleanup = CleanupScope{
+							DeleteProgress:    true,
+							InitFreshProgress: true,
+							CleanAllSteps:     true,
+							NewTotalSteps:     totalSteps,
+						}
+						setup.Context.SkipHumanInput = true
+						return setup, nil
+					}
+				} else {
+					// No existing progress - fallback to start from beginning
+					orch.GetLogger().Warn(fmt.Sprintf("⚠️ No existing progress found, falling back to start from beginning"))
+					setup.Mode = ExecutionModeFresh
+					setup.Cleanup = CleanupScope{
+						DeleteProgress:    true,
+						InitFreshProgress: true,
+						CleanAllSteps:     true,
+						NewTotalSteps:     totalSteps,
+					}
+					setup.Context.SkipHumanInput = true
+					return setup, nil
+				}
 			}
 			setup.Mode = ExecutionModeResumeFromStep
 			setup.StartFromStep = resumeStep - 1 // Convert to 0-based
@@ -198,7 +357,91 @@ func (em *ExecutionManager) PrepareExecution(
 		} else {
 			resumeStep := opts.ResumeFromStep // 1-based
 			if resumeStep <= 0 {
-				resumeStep = 1
+				// CRITICAL: resume_from_step=0 would delete all completed steps!
+				// Request blocking human feedback approval (even in fast mode - this is a safety override)
+				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
+
+				// Build context message showing what would be deleted
+				var contextMsg strings.Builder
+				contextMsg.WriteString("⚠️ **CRITICAL WARNING: Invalid Resume Step Detected**\n\n")
+				contextMsg.WriteString(fmt.Sprintf("You selected a resume strategy but `resume_from_step=%d` is invalid.\n\n", resumeStep))
+
+				if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
+					contextMsg.WriteString(fmt.Sprintf("**This would DELETE all %d completed steps and start from the beginning!**\n\n", len(existingProgress.CompletedStepIndices)))
+					contextMsg.WriteString("Completed steps that would be deleted:\n")
+					for _, idx := range existingProgress.CompletedStepIndices {
+						contextMsg.WriteString(fmt.Sprintf("- Step %d\n", idx+1))
+					}
+					contextMsg.WriteString("\n")
+				} else {
+					contextMsg.WriteString("**This would start execution from the beginning.**\n\n")
+				}
+
+				contextMsg.WriteString("**Options:**\n")
+				contextMsg.WriteString("1. **Approve & Continue**: Use next incomplete step (if available) or start from beginning\n")
+				contextMsg.WriteString("2. **Reject**: Cancel execution - fix the resume step selection in the frontend\n")
+
+				// Request blocking human feedback (safety override - even in fast mode)
+				requestID := fmt.Sprintf("resume_step_validation_%d", time.Now().UnixNano())
+				question := fmt.Sprintf("⚠️ Invalid Resume Step Detected (resume_from_step=%d)\n\nDo you want to proceed? This will delete all completed steps and start from the beginning.", resumeStep)
+
+				approved, _, err := orch.RequestHumanFeedback(
+					ctx,
+					requestID,
+					question,
+					contextMsg.String(),
+					orch.getSessionID(),
+					orch.getWorkflowID(),
+				)
+
+				if err != nil {
+					orch.GetLogger().Error(fmt.Sprintf("❌ Failed to request human feedback for resume step validation: %v", err), err)
+					return nil, fmt.Errorf("failed to request approval for invalid resume step: %w", err)
+				}
+
+				if !approved {
+					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - cancelling execution")
+					return nil, fmt.Errorf("execution cancelled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
+				}
+
+				// User approved - proceed with fallback logic
+				orch.GetLogger().Info("✅ User approved proceeding with invalid resume step - using fallback logic")
+
+				if existingProgress != nil {
+					nextIncomplete := findNextIncompleteStep(existingProgress)
+					if nextIncomplete < totalSteps {
+						resumeStep = nextIncomplete + 1 // Convert to 1-based
+						orch.GetLogger().Info(fmt.Sprintf("✅ Using next incomplete step %d instead", resumeStep))
+					} else {
+						// All steps complete - fallback to start from beginning
+						orch.GetLogger().Warn(fmt.Sprintf("⚠️ All steps are complete, falling back to start from beginning"))
+						setup.Mode = ExecutionModeFresh
+						setup.Cleanup = CleanupScope{
+							DeleteProgress:    true,
+							InitFreshProgress: true,
+							CleanAllSteps:     true,
+							NewTotalSteps:     totalSteps,
+						}
+						setup.Context.FastExecuteMode = true
+						setup.Context.FastExecuteEndStep = totalSteps - 1
+						setup.Context.SkipHumanInput = true
+						return setup, nil
+					}
+				} else {
+					// No existing progress - fallback to start from beginning
+					orch.GetLogger().Warn(fmt.Sprintf("⚠️ No existing progress found, falling back to start from beginning"))
+					setup.Mode = ExecutionModeFresh
+					setup.Cleanup = CleanupScope{
+						DeleteProgress:    true,
+						InitFreshProgress: true,
+						CleanAllSteps:     true,
+						NewTotalSteps:     totalSteps,
+					}
+					setup.Context.FastExecuteMode = true
+					setup.Context.FastExecuteEndStep = totalSteps - 1
+					setup.Context.SkipHumanInput = true
+					return setup, nil
+				}
 			}
 			setup.Mode = ExecutionModeResumeFromStep
 			setup.StartFromStep = resumeStep - 1
@@ -399,11 +642,12 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 	}()
 
 	// 1. Delete progress file if requested
+	// This is a fresh start - delete progress file which includes DecisionEvaluationCounts
 	if scope.DeleteProgress {
 		if err := orch.deleteStepProgress(ctx); err != nil {
 			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete progress: %v (continuing)", err))
 		} else {
-			orch.GetLogger().Info(fmt.Sprintf("🗑️ Deleted steps_done.json (including all branch progress)"))
+			orch.GetLogger().Info(fmt.Sprintf("🗑️ Deleted steps_done.json (including all branch progress and decision evaluation counts)"))
 		}
 	}
 
@@ -431,6 +675,13 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 				orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean all steps: %v (continuing)", err))
 			} else {
 				orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned entire execution/ folder"))
+			}
+			// Also delete logs/ folder
+			logsDir := fmt.Sprintf("%s/runs/%s/logs", orch.GetWorkspacePath(), setup.RunFolder)
+			if err := orch.CleanupDirectory(ctx, logsDir, "logs"); err != nil {
+				orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean logs folder: %v (continuing)", err))
+			} else {
+				orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned entire logs/ folder"))
 			}
 		}
 	}
@@ -862,6 +1113,11 @@ func (em *ExecutionManager) CleanupForFreshStart(ctx context.Context, totalSteps
 	if err := orch.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
 		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean execution folder: %v", err))
 	}
+	// Also delete logs folder
+	logsDir := fmt.Sprintf("%s/runs/%s/logs", orch.GetWorkspacePath(), runFolder)
+	if err := orch.CleanupDirectory(ctx, logsDir, "logs"); err != nil {
+		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean logs folder: %v", err))
+	}
 
 	// Initialize fresh progress
 	if err := orch.initializeFreshProgress(ctx, totalSteps); err != nil {
@@ -907,9 +1163,7 @@ func (em *ExecutionManager) CleanupForPlanChange(ctx context.Context, totalSteps
 	}
 
 	// Clean execution artifacts (handles both new and old structure for backward compat)
-	if err := orch.cleanupExecutionArtifactsForFreshStart(ctx, workspacePath, runMode); err != nil {
-		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup execution artifacts: %v", err))
-	}
+	orch.cleanupExecutionArtifactsForFreshStart(ctx, workspacePath, runMode)
 
 	// Initialize fresh progress
 	if err := orch.initializeFreshProgress(ctx, totalSteps); err != nil {
@@ -933,9 +1187,7 @@ func (em *ExecutionManager) CleanupForStartFromBeginning(ctx context.Context, wo
 	}
 
 	// Clean execution artifacts (handles both new and old structure)
-	if err := orch.cleanupExecutionArtifactsForFreshStart(ctx, workspacePath, runMode); err != nil {
-		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup execution artifacts: %v", err))
-	}
+	orch.cleanupExecutionArtifactsForFreshStart(ctx, workspacePath, runMode)
 
 	orch.GetLogger().Info(fmt.Sprintf("✅ Start from beginning cleanup completed"))
 	return nil
@@ -972,6 +1224,16 @@ func (em *ExecutionManager) CleanupExecutionFolder(ctx context.Context, runFolde
 	}
 
 	orch.GetLogger().Info(fmt.Sprintf("✅ Cleaned execution folder"))
+
+	// Also clean logs folder
+	logsDir := fmt.Sprintf("%s/logs", runWorkspacePath)
+	orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning logs folder: %s", logsDir))
+	if err := orch.CleanupDirectory(ctx, logsDir, "logs"); err != nil {
+		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup logs directory: %v", err))
+		return err
+	}
+
+	orch.GetLogger().Info(fmt.Sprintf("✅ Cleaned logs folder"))
 	return nil
 }
 
@@ -1003,8 +1265,8 @@ func (em *ExecutionManager) CleanupDownloadsFolder(ctx context.Context) error {
 
 	orch.GetLogger().Info(fmt.Sprintf("📊 [DOWNLOADS CLEANUP] Found %d files/directories in Downloads folder before cleanup: %v", len(files), files))
 
-	// Attempt cleanup
-	if err := orch.CleanupDirectory(ctx, downloadsDir, "Downloads"); err != nil {
+	// Attempt bulk cleanup using the efficient bulk delete API endpoint
+	if err := orch.BaseOrchestrator.CleanupDownloadsFolderBulk(ctx); err != nil {
 		// Non-blocking: log warning but don't fail - Downloads folder may not exist
 		orch.GetLogger().Warn(fmt.Sprintf("⚠️ [DOWNLOADS CLEANUP] Failed to cleanup Downloads folder: %v (continuing)", err))
 		return nil // Return nil to allow execution to continue

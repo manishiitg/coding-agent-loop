@@ -25,6 +25,7 @@ export interface UsePlanDataReturn {
   addStep: (step: PlanStep, afterIndex?: number) => Promise<void>
   refresh: () => Promise<PlanChanges | null>  // Returns detected changes (alias for loadPlan)
   clearChanges: () => void  // Clear the changes state
+  setChanges: (changes: PlanChanges | null) => void  // Set changes directly (for granular events)
 }
 
 /**
@@ -676,7 +677,8 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     deleteStep,
     addStep,
     refresh,
-    clearChanges
+    clearChanges,
+    setChanges
   }
 }
 

@@ -72,7 +72,6 @@ linters:
     - goconst           # Magic numbers (29) - low priority
     - whitespace        # Formatting (31) - low priority
     - unconvert         # Unnecessary conversions (9) - low priority
-    - unparam           # Unused parameters (8) - low priority
   
   # Enable only critical/important linters
   enable:
@@ -80,6 +79,7 @@ linters:
     - misspell          # Spelling checker - easy fixes (1 issue)
     - errname           # Error naming conventions
     - errorlint         # Error wrapping lint - important (98 issues)
+    - unparam           # Unused parameters - detects unused function parameters
 
 linters-settings:
   # govet settings - disable printf check to allow %w in fmt.Sprintf/log.Fatalf

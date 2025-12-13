@@ -169,6 +169,19 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
         </div>
       )}
 
+      {/* Context for conditional agents - show prominently after objective */}
+      {!isCollapsed && (event as unknown as { agent_type?: string })?.agent_type === 'conditional' && event.input_data?.context && (
+        <div className="mt-3">
+          <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Context:</div>
+          <div className={`${colors.bg} rounded p-3 text-sm border ${colors.border}`}>
+            <ConversationMarkdownRenderer 
+              content={event.input_data.context} 
+              maxHeight="400px" 
+            />
+          </div>
+        </div>
+      )}
+
       {/* Expandable content - only show when not collapsed */}
       {!isCollapsed && hasInputData && (
         <div className="mt-3 space-y-3">
@@ -186,7 +199,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                   </div>
                 )}
                 {Object.entries(event.input_data || {})
-                  .filter(([key]) => key !== 'step_number')
+                  .filter(([key]) => key !== 'step_number' && key !== 'context') // Exclude context from general input data for conditional agents
                   .filter(([, value]) => {
                     // Filter out empty values: null, undefined, empty string
                     if (value === null || value === undefined || value === '') return false;

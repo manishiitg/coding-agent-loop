@@ -163,6 +163,10 @@ else
     # Exclude test files from critical checks (G304 in test files are usually test fixtures)
     CRITICAL_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | grep -v "_test.go" | grep -v "/testing/" | wc -l | tr -d ' ')
     
+    # Check for unused functions/variables/types (unused linter) - CRITICAL: blocks commit
+    # Unused code indicates dead code that should be removed
+    UNUSED_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | wc -l | tr -d ' ')
+    
     if [ "$CRITICAL_ISSUES" -gt 0 ]; then
         echo ""
         echo -e "${RED}❌ Critical security issues detected ($CRITICAL_ISSUES critical)! Commit blocked.${NC}"
@@ -171,6 +175,17 @@ else
         echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | head -10
         echo ""
         echo "Please fix these security issues before committing."
+        exit 1
+    elif [ "$UNUSED_ISSUES" -gt 0 ]; then
+        # Unused functions/variables/types detected - block commit
+        echo ""
+        echo -e "${RED}❌ Unused code detected ($UNUSED_ISSUES unused functions/variables/types)! Commit blocked.${NC}"
+        echo ""
+        echo "Unused code found (dead code that should be removed):"
+        echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | head -20
+        echo ""
+        echo "Please remove unused code before committing."
+        echo "You can run 'cd agent_go && make lint' to see all unused code."
         exit 1
     elif [ "$ISSUE_COUNT" -gt 200 ]; then
         # Too many issues - block commit

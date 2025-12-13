@@ -543,6 +543,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     return startPointOptions.find(o => o.stepNumber === selectedStartPoint) || startPointOptions[0]
   }, [selectedStartPoint, selectedBranchStep, startPointOptions])
 
+  // Validate selectedStartPoint after progress/options are loaded
+  // Reset to 0 if the saved start point is no longer valid
+  // Only validate if we have both progress data and options generated
+  useEffect(() => {
+    // Only validate if we have progress loaded (not just empty options)
+    // This prevents resetting valid start points before progress loads
+    if (selectedStartPoint > 0 && startPointOptions.length > 1 && stepProgress !== null) {
+      // Check if the selected start point exists in available options
+      const isValid = startPointOptions.some(
+        option => option.stepNumber === selectedStartPoint
+      )
+      if (!isValid) {
+        console.log(`[WorkflowToolbar] Saved start point ${selectedStartPoint} is no longer valid (not in ${startPointOptions.length} options), resetting to 0`)
+        console.log(`[WorkflowToolbar] Available options:`, startPointOptions.map(o => ({ id: o.id, stepNumber: o.stepNumber, label: o.label })))
+        setStartPoint(0)
+      } else {
+        console.log(`[WorkflowToolbar] ✅ Saved start point ${selectedStartPoint} is valid`)
+      }
+    } else if (selectedStartPoint > 0 && startPointOptions.length <= 1) {
+      // Options not fully loaded yet - don't validate
+      console.log(`[WorkflowToolbar] ⏳ Waiting for options to load before validating start point ${selectedStartPoint} (current options: ${startPointOptions.length})`)
+    }
+  }, [selectedStartPoint, startPointOptions, stepProgress, setStartPoint])
+
   // Get current phase details
   const currentPhaseDetails = phases.find((p: WorkflowPhase) => p.id === currentPhase)
   // Only consider it execution phase if currentPhase is explicitly set to 'execution'
@@ -679,7 +703,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const handleExecute = useCallback(() => {
     if (!isRunning && executionPhase) {
       const options = buildExecutionOptions()
-      console.log('[WorkflowToolbar] Execution options:', JSON.stringify(options, null, 2))
+      console.log('[RESUME_DEBUG] 🚀 Starting execution with options:', JSON.stringify({
+        execution_strategy: options.execution_strategy,
+        resume_from_step: options.resume_from_step,
+        resume_from_branch_step: options.resume_from_branch_step
+      }, null, 2))
       onStartPhase(executionPhase.id, options)
     }
   }, [isRunning, executionPhase, buildExecutionOptions, onStartPhase])

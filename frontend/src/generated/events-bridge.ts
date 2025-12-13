@@ -130,6 +130,7 @@ export interface EventDataUnion {
   step_execution_failed?: StepFailedEvent;
   step_token_usage?: StepTokenUsageEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
+  decision_evaluated?: DecisionEvaluatedEvent;
   todo_steps_extracted?: TodoStepsExtractedEvent;
   variables_extracted?: VariablesExtractedEvent;
   independent_steps_selected?: IndependentStepsSelectedEvent;
@@ -1387,6 +1388,41 @@ export interface StepProgressUpdatedEvent {
 export interface BranchStepProgress {
   branch_executed?: string;
   completed_steps?: string[];
+}
+export interface DecisionEvaluatedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  decision_question?: string;
+  decision_response?: DecisionResponse;
+  run_folder?: string;
+  workspace_path?: string;
+}
+export interface DecisionResponse {
+  result?: boolean;
+  reasoning?: string;
+  confidence?: string;
+  feedback?: DecisionFeedback[];
+  evidence?: string[];
+}
+export interface DecisionFeedback {
+  type?: string;
+  description?: string;
+  severity?: string;
 }
 export interface TodoStepsExtractedEvent {
   timestamp?: string;

@@ -15,6 +15,7 @@ import type {
   WorkflowNode, 
   StepNodeData, 
   ConditionalNodeData, 
+  DecisionNodeData,
   LoopNodeData,
   ValidationNodeData,
   LearningNodeData
@@ -67,6 +68,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const [editedTitle, setEditedTitle] = useState('')
   const [editedDescription, setEditedDescription] = useState('')
   const [editedSuccessCriteria, setEditedSuccessCriteria] = useState('')
+  const [editedMaxIterations, setEditedMaxIterations] = useState<string>('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showDeleteLearningsConfirm, setShowDeleteLearningsConfirm] = useState(false)
   const [isDeletingLearnings, setIsDeletingLearnings] = useState(false)
@@ -234,6 +236,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       condition_context: planStep.condition_context,
       condition_result: planStep.condition_result,
       condition_reason: planStep.condition_reason,
+      has_decision_step: planStep.has_decision_step,
+      decision_step: planStep.decision_step ? convertPlanStepToTodoStep(planStep.decision_step) : undefined,
+      decision_evaluation_question: planStep.decision_evaluation_question,
+      if_true_next_step_id: planStep.if_true_next_step_id,
+      if_false_next_step_id: planStep.if_false_next_step_id,
       agent_configs: (planStep as PlanStep & { agent_configs?: AgentConfigs }).agent_configs
     }
   }, [])
@@ -272,6 +279,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       condition_context: planStep.condition_context,
       condition_result: planStep.condition_result,
       condition_reason: planStep.condition_reason,
+      has_decision_step: planStep.has_decision_step,
+      decision_step: planStep.decision_step ? convertPlanStepToTodoStep(planStep.decision_step) : undefined,
+      decision_evaluation_question: planStep.decision_evaluation_question,
+      if_true_next_step_id: planStep.if_true_next_step_id,
+      if_false_next_step_id: planStep.if_false_next_step_id,
       // Include agent_configs if it exists in the step
       agent_configs: (planStep as PlanStep & { agent_configs?: AgentConfigs }).agent_configs
     }
@@ -289,26 +301,38 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'loop')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
         setEditedDescription(step.description || '')
         setEditedSuccessCriteria(step.success_criteria || '')
+        // Initialize max_iterations for loop steps (always initialize for loop nodes)
+        if (step.has_loop || node.type === 'loop') {
+          setEditedMaxIterations(step.max_iterations?.toString() || '10')
+        } else {
+          setEditedMaxIterations('')
+        }
       }
     }
   }, [node, isEditing])
 
   // Handle start edit
   const handleStartEdit = () => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'loop')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
         setEditedDescription(step.description || '')
         setEditedSuccessCriteria(step.success_criteria || '')
+        // Initialize max_iterations for loop steps
+        if (step.has_loop) {
+          setEditedMaxIterations(step.max_iterations?.toString() || '10')
+        } else {
+          setEditedMaxIterations('')
+        }
         setIsEditing(true)
       }
     }
@@ -320,11 +344,27 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
     setIsSaving(true)
     try {
-      await onEditStep(node.id, {
+      const updates: Partial<PlanStep> = {
         title: editedTitle,
         description: editedDescription,
         success_criteria: editedSuccessCriteria
-      })
+      }
+      
+      // Include max_iterations for loop steps
+      if (node.type === 'loop') {
+        const stepData = node.data as LoopNodeData
+        if (stepData.step?.has_loop) {
+          const maxIterations = parseInt(editedMaxIterations, 10)
+          if (!isNaN(maxIterations) && maxIterations > 0) {
+            updates.max_iterations = maxIterations
+          } else if (editedMaxIterations.trim() === '') {
+            // If empty, use default of 10
+            updates.max_iterations = 10
+          }
+        }
+      }
+      
+      await onEditStep(node.id, updates)
       setIsEditing(false)
     } catch (error) {
       console.error('[StepSidebar] Error saving step edit:', error)
@@ -337,13 +377,19 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const handleCancelEdit = () => {
     setIsEditing(false)
     // Reset to original values
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'loop')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
         setEditedDescription(step.description || '')
         setEditedSuccessCriteria(step.success_criteria || '')
+        // Reset max_iterations for loop steps
+        if (step.has_loop) {
+          setEditedMaxIterations(step.max_iterations?.toString() || '10')
+        } else {
+          setEditedMaxIterations('')
+        }
       }
     }
   }
@@ -355,7 +401,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     setIsSaving(true)
     try {
       // Get the actual step ID from step data (not node.id which is React Flow node ID)
-      const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       const stepId = stepData.step?.id
       
       if (!stepId) {
@@ -990,7 +1036,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </div>
               )}
 
-              {step.has_loop && (
+              {(step.has_loop || node.type === 'loop') && (
                 <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
                   <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
                     Loop:
@@ -1003,11 +1049,34 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                       </p>
                     </div>
                   )}
-                  {step.max_iterations && (
-                    <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mt-2">
-                      Max iterations: <span className="text-gray-700 dark:text-gray-300">{step.max_iterations}</span>
+                  <div className="mt-2">
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1">
+                      Max iterations:
+                    </label>
+                    <select
+                      value={editedMaxIterations || step.max_iterations?.toString() || '10'}
+                      onChange={(e) => {
+                        setEditedMaxIterations(e.target.value)
+                        // Auto-save on change
+                        const maxIterations = parseInt(e.target.value, 10)
+                        if (!isNaN(maxIterations) && maxIterations > 0 && node) {
+                          onEditStep(node.id, { max_iterations: maxIterations }).catch((err) => {
+                            console.error('[StepSidebar] Error saving max_iterations:', err)
+                          })
+                        }
+                      }}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {[5, 10, 15, 20, 25, 30, 40, 50, 75, 100].map((value) => (
+                        <option key={value} value={value.toString()}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Maximum number of loop iterations allowed (default: 10)
                     </p>
-                  )}
+                  </div>
                 </div>
               )}
 
@@ -1062,6 +1131,50 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 planSteps={plan?.steps || []}
               />
             </div>
+          ) : step.has_decision_step && node.type === 'decision' ? (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              {/* Decision Step Info */}
+              <div className="mb-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                  <strong>Decision Step:</strong> Executes the inner step first, then evaluates the output to determine routing.
+                </p>
+                {step.decision_step && (
+                  <div className="mt-2 p-2 bg-white dark:bg-gray-800 rounded border border-indigo-100 dark:border-indigo-900">
+                    <p className="text-xs font-medium text-gray-900 dark:text-white">
+                      Inner Step: {step.decision_step.title || 'Untitled'}
+                    </p>
+                    {step.decision_evaluation_question && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                        Evaluates: {step.decision_evaluation_question}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {step.if_true_next_step_id && (
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-2">
+                    ✓ True → {step.if_true_next_step_id === 'end' ? 'End workflow' : step.if_true_next_step_id}
+                  </p>
+                )}
+                {step.if_false_next_step_id && (
+                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                    ✗ False → {step.if_false_next_step_id === 'end' ? 'End workflow' : step.if_false_next_step_id}
+                  </p>
+                )}
+              </div>
+              <StepEditPanel
+                step={stepWithConfigs}
+                stepIndex={stepIndex}
+                onSave={handleSave}
+                onCancel={() => {}}
+                isSaving={isSaving}
+                presetServers={presetServers}
+                presetLLMConfig={presetLLMConfig}
+                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isExpanded={true}
+                onToggleExpanded={() => {}}
+                planSteps={plan?.steps || []}
+              />
+            </div>
           ) : (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               <StepEditPanel
@@ -1095,9 +1208,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         }}
         title="Delete Step"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'loop')
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 return `Are you sure you want to delete "${stepTitle}"? This action cannot be undone. Any context dependencies referencing this step's output will be automatically removed.`
               })()
@@ -1115,9 +1228,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         onConfirm={handleDeleteLearnings}
         title="Delete Learnings"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'loop')
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 return `Are you sure you want to delete all learnings for "${stepTitle}" (Step ${stepIndex + 1})? This will permanently delete the learnings folder at \`learnings/step-${stepIndex + 1}/\` and all its contents. This action cannot be undone.`
               })()

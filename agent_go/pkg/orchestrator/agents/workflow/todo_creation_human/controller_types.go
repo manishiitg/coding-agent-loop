@@ -12,12 +12,17 @@ type BranchStepProgress struct {
 	CompletedSteps []string `json:"completed_steps"` // e.g., ["step-3-if-true-0", "step-3-if-true-1"]
 }
 
+// DecisionEvaluationCount tracks how many times a specific decision has been made
+// Key format: "{stepID}:{result}" where result is "true" or "false"
+type DecisionEvaluationCount map[string]int
+
 // StepProgress tracks which steps have been completed
 type StepProgress struct {
-	CompletedStepIndices []int                      `json:"completed_step_indices"` // 0-based indices
-	TotalSteps           int                        `json:"total_steps"`
-	LastUpdated          time.Time                  `json:"last_updated"`
-	BranchSteps          map[int]BranchStepProgress `json:"branch_steps,omitempty"` // key is step index (0-based)
+	CompletedStepIndices     []int                      `json:"completed_step_indices"` // 0-based indices
+	TotalSteps               int                        `json:"total_steps"`
+	LastUpdated              time.Time                  `json:"last_updated"`
+	BranchSteps              map[int]BranchStepProgress `json:"branch_steps,omitempty"` // key is step index (0-based)
+	DecisionEvaluationCounts DecisionEvaluationCount    `json:"-"`                      // in-memory only: tracks decision step evaluations to prevent infinite loops (not persisted)
 }
 
 // BranchStepResumeTarget represents a branch step to resume from
@@ -53,6 +58,9 @@ type ExecutionOptions struct {
 	SkipLearningWhenTempLLM1 bool `json:"skip_learning_when_temp_llm1,omitempty"` // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
 	SkipLearningWhenTempLLM2 bool `json:"skip_learning_when_temp_llm2,omitempty"` // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
 
+	// Validation response persistence
+	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses to workspace validation folder (default: true)
+
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 }
@@ -77,6 +85,16 @@ type ExecutionContext struct {
 	RunSingleStepOnly  bool                    // Whether to run only a single step and stop
 	SingleStepTarget   int                     // Target step index to run (0-based)
 	ResumeBranchStep   *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
+}
+
+// DecisionContext represents context from a decision step that routed to this step
+// This context is passed to the next step after a decision step routes to it
+type DecisionContext struct {
+	DecisionStepIndex       int    // Index of the decision step that made the decision (0-based)
+	DecisionStepTitle       string // Title of the decision step
+	DecisionResult          bool   // The decision result (true/false)
+	DecisionReasoning       string // The reasoning text from the decision evaluation
+	DecisionExecutionResult string // The execution output from the decision step's inner step
 }
 
 // Execution strategy constants
@@ -118,16 +136,23 @@ type TodoStep struct {
 	MaxIterations            int      `json:"max_iterations,omitempty"`              // max iterations (default: 10)
 	LoopDescription          string   `json:"loop_description,omitempty"`            // human-readable explanation
 	// Conditional branching fields
-	HasCondition      bool          `json:"has_condition"`                   // true if step has conditional branches
-	ConditionQuestion string        `json:"condition_question,omitempty"`    // question to ask ConditionalLLM
-	ConditionContext  string        `json:"condition_context,omitempty"`     // context to provide to ConditionalLLM
-	IfTrueSteps       []TodoStep    `json:"if_true_steps,omitempty"`         // nested steps for true branch
-	IfFalseSteps      []TodoStep    `json:"if_false_steps,omitempty"`        // nested steps for false branch
-	IfTrueNextStepID  string        `json:"if_true_next_step_id,omitempty"`  // ID of step to connect to after true branch completes (or "end" to end workflow)
-	IfFalseNextStepID string        `json:"if_false_next_step_id,omitempty"` // ID of step to connect to after false branch completes (or "end" to end workflow)
-	ConditionResult   *bool         `json:"condition_result,omitempty"`      // runtime: stores decision result
-	ConditionReason   string        `json:"condition_reason,omitempty"`      // runtime: stores LLM reasoning
-	AgentConfigs      *AgentConfigs `json:"agent_configs,omitempty"`         // per-agent configuration (LLM, max turns, toggles)
+	HasCondition      bool       `json:"has_condition"`                   // true if step has conditional branches
+	ConditionQuestion string     `json:"condition_question,omitempty"`    // question to ask ConditionalLLM
+	ConditionContext  string     `json:"condition_context,omitempty"`     // context to provide to ConditionalLLM
+	IfTrueSteps       []TodoStep `json:"if_true_steps,omitempty"`         // nested steps for true branch
+	IfFalseSteps      []TodoStep `json:"if_false_steps,omitempty"`        // nested steps for false branch
+	IfTrueNextStepID  string     `json:"if_true_next_step_id,omitempty"`  // ID of step to connect to after true branch completes (or "end" to end workflow)
+	IfFalseNextStepID string     `json:"if_false_next_step_id,omitempty"` // ID of step to connect to after false branch completes (or "end" to end workflow)
+	ConditionResult   *bool      `json:"condition_result,omitempty"`      // runtime: stores decision result
+	ConditionReason   string     `json:"condition_reason,omitempty"`      // runtime: stores LLM reasoning
+	// Decision step fields (execute step, evaluate output, route based on result)
+	HasDecisionStep            bool              `json:"has_decision_step,omitempty"`            // true if step executes a single step and routes based on result
+	DecisionStep               *TodoStep         `json:"decision_step,omitempty"`                // The single step to execute
+	DecisionEvaluationQuestion string            `json:"decision_evaluation_question,omitempty"` // Question to evaluate step output
+	DecisionResult             *bool             `json:"decision_result,omitempty"`              // runtime: stores evaluation result (backward compatibility)
+	DecisionReason             string            `json:"decision_reason,omitempty"`              // runtime: stores evaluation reasoning (backward compatibility)
+	DecisionResponse           *DecisionResponse `json:"decision_response,omitempty"`            // runtime: stores structured decision evaluation response
+	AgentConfigs               *AgentConfigs     `json:"agent_configs,omitempty"`                // per-agent configuration (LLM, max turns, toggles)
 }
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan

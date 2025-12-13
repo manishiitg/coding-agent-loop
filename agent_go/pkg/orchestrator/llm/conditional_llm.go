@@ -52,6 +52,12 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 
 	// Emit orchestrator agent start event
 	if cl.GetEventEmitter() != nil {
+		// Add context to InputData for display in frontend
+		inputData := make(map[string]string)
+		if context != "" {
+			inputData["context"] = context
+		}
+		
 		startEvent := &events.OrchestratorAgentStartEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
@@ -59,6 +65,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 			AgentType: "conditional",
 			AgentName: "conditional-llm",
 			Objective: fmt.Sprintf("Conditional decision: %s", question),
+			InputData: inputData,
 			StepIndex: stepIndex,
 			Iteration: iteration,
 		}

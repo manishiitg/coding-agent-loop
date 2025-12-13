@@ -524,7 +524,7 @@ export interface PresetLLMConfig {
   planning_llm?: AgentLLMConfig         // Default for planning agent
   variable_extraction_llm?: AgentLLMConfig // Default for variable extraction agent
   anonymization_llm?: AgentLLMConfig    // Default for anonymization agent
-  plan_improvement_llm?: AgentLLMConfig // Default for plan improvement agent
+  plan_improvement_llm?: AgentLLMConfig // Default for plan debugger agent
   plan_tool_optimization_llm?: AgentLLMConfig // Default for plan tool optimization agent
   plan_learnings_alignment_llm?: AgentLLMConfig // Default for plan learnings alignment agent
   learning_consolidation_llm?: AgentLLMConfig // Default for learning consolidation agent
@@ -743,6 +743,9 @@ export interface ExecutionOptions {
   // Learning behavior when tempLLM is active (per-model control)
   skip_learning_when_temp_llm1?: boolean;  // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
   skip_learning_when_temp_llm2?: boolean;  // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
+  
+  // Validation response persistence
+  save_validation_responses?: boolean;  // If true, save validation responses to workspace validation folder (default: true)
   
   // Variable group execution options (for batch execution with multiple groups)
   enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)

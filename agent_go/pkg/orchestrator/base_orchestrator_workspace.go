@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
@@ -140,6 +144,37 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	}
 
 	// Removed verbose logging
+	return nil
+}
+
+// MoveWorkspaceFile moves a file or directory from one location to another in the workspace using MCP tools
+func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath string, destinationPath string) error {
+	// Prepare tool call parameters (MCP tools expect map[string]interface{})
+	moveArgs := map[string]interface{}{
+		"source_filepath":      sourcePath,
+		"destination_filepath": destinationPath,
+	}
+
+	// Get the tool executor
+	moveExecutorInterface, exists := bo.WorkspaceToolExecutors["move_workspace_file"]
+	if !exists {
+		return fmt.Errorf(fmt.Sprintf("move_workspace_file tool executor not found"), nil)
+	}
+
+	moveExecutor, ok := moveExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		return fmt.Errorf(fmt.Sprintf("move_workspace_file tool executor has wrong type"), nil)
+	}
+
+	// Inject event emitter into context before calling executor
+	ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, bo.contextAwareBridge)
+
+	// Execute the tool call using existing workspace tool logic
+	_, err := moveExecutor(ctx, moveArgs)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to move %s to %s: %w", sourcePath, destinationPath, err), nil)
+	}
+
 	return nil
 }
 
@@ -439,8 +474,34 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 
 	fileListJSON, err := listExecutor(ctx, listArgs)
 	if err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err))
-		return []string{}, nil // Don't fail - directory may be empty or not exist
+		// Check if error indicates folder doesn't exist
+		errStr := err.Error()
+		if strings.Contains(errStr, "does not exist") ||
+			strings.Contains(errStr, "not found") ||
+			strings.Contains(errStr, "Folder does not exist") ||
+			strings.Contains(errStr, "Folder not found") {
+			// Return error for non-existent folders
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Folder does not exist: %s", dirPath))
+			return nil, fmt.Errorf("folder does not exist: %s", dirPath)
+		}
+		// For other errors, log and return empty (backward compatibility)
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in %s directory: %v (directory may be empty)", dirPath, err))
+		return []string{}, nil
+	}
+
+	// Check response string for "does not exist" messages (in case error wasn't returned)
+	// But exclude "exists but contains no files" which is a valid empty folder case
+	if (strings.Contains(fileListJSON, "Folder does not exist") ||
+		strings.Contains(fileListJSON, "does not exist")) &&
+		!strings.Contains(fileListJSON, "exists but contains no files") {
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Folder does not exist: %s", dirPath))
+		return nil, fmt.Errorf("folder does not exist: %s", dirPath)
+	}
+
+	// Handle empty folder case (executor returns a message string, not JSON)
+	if strings.Contains(fileListJSON, "exists but contains no files") {
+		bo.GetLogger().Info(fmt.Sprintf("ℹ️ Folder exists but is empty: %s", dirPath))
+		return []string{}, nil
 	}
 
 	// Parse the JSON response using proper WorkspaceFile type from virtualtools
@@ -488,4 +549,75 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 
 	bo.GetLogger().Info(fmt.Sprintf("📁 Found %d files/directories: %v", len(names), names))
 	return names, nil
+}
+
+// getWorkspaceAPIURL returns the workspace API base URL from environment or default
+func getWorkspaceAPIURL() string {
+	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
+		return url
+	}
+	return "http://localhost:8081"
+}
+
+// CleanupDownloadsFolderBulk deletes all files in the Downloads folder using the bulk delete API endpoint
+// This is more efficient than deleting files one by one
+func (bo *BaseOrchestrator) CleanupDownloadsFolderBulk(ctx context.Context) error {
+	bo.GetLogger().Info("🗑️ [DOWNLOADS BULK CLEANUP] Starting bulk cleanup of Downloads folder")
+
+	// Build API URL for bulk delete: DELETE /api/folders/Downloads/files?confirm=true
+	apiURL := getWorkspaceAPIURL() + "/api/folders/Downloads/files?confirm=true"
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Make the request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check HTTP status
+	if resp.StatusCode == http.StatusNotFound {
+		// Folder doesn't exist - that's okay, nothing to clean
+		bo.GetLogger().Info("ℹ️ [DOWNLOADS BULK CLEANUP] Downloads folder does not exist - nothing to clean")
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse JSON response
+	var apiResp struct {
+		Success bool        `json:"success"`
+		Message string      `json:"message"`
+		Error   string      `json:"error,omitempty"`
+		Data    interface{} `json:"data,omitempty"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	// Check API response success
+	if !apiResp.Success {
+		return fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	bo.GetLogger().Info("✅ [DOWNLOADS BULK CLEANUP] Successfully cleaned Downloads folder using bulk delete API")
+	return nil
 }

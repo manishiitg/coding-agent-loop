@@ -85,8 +85,6 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	c.logger.Info(fmt.Sprintf("🔍 ContextAwareBridge: Received event %s (type: %s)", event.Type, event.Type))
-
 	// Copy orchestrator context while holding read lock
 	c.mu.RLock()
 	currentPhase := c.currentPhase
@@ -226,17 +224,13 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 		}
 	}
 
-	// Forward to underlying bridge
-	c.logger.Info(fmt.Sprintf("🔍 ContextAwareBridge: Forwarding event %s to underlying bridge", event.Type))
 	if c.underlyingBridge == nil {
 		c.logger.Error(fmt.Sprintf("❌ ContextAwareBridge: Underlying bridge is nil, cannot forward event %s", event.Type), nil)
 		return fmt.Errorf("underlying bridge is nil")
 	}
 	err := c.underlyingBridge.HandleEvent(ctx, event)
 	if err != nil {
-		c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: Error forwarding event %s: %w", event.Type, err))
-	} else {
-		c.logger.Info(fmt.Sprintf("✅ ContextAwareBridge: Successfully forwarded event %s", event.Type))
+		c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: Error forwarding event %s: %v", event.Type, err))
 	}
 	return err
 }

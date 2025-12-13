@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
@@ -15,7 +16,7 @@ import (
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) error {
 	// Use step-specific learning detail level, default to "exact" if not set
 	learningDetailLevel := "exact" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
@@ -31,7 +32,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	shouldSkipLearning := (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping success learning analysis for %s/%d (learning disabled)", learningPathIdentifier, totalSteps))
-		return "", nil
+		return nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (step.AgentConfigs != nil && step.AgentConfigs.DisableLearning != nil && *step.AgentConfigs.DisableLearning)) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing success learning for %s/%d (overriding step config)", learningPathIdentifier, totalSteps))
@@ -55,9 +56,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		learningMode = "exact"
 	}
 	successLearningAgentName := fmt.Sprintf("%s-success-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
-	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, 1, successLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
+	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, successLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to create success learning agent: %w", err), nil)
+		return fmt.Errorf(fmt.Sprintf("failed to create success learning agent: %w", err), nil)
 	}
 
 	// Format validation result for template
@@ -86,7 +87,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// This allows learnings to be at learnings/step-{X}/ or learnings/step-{X}-{branch}/ (at workspace root, not inside runs/)
 	successLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
 	successLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
-	successLearningTemplateVars["UseStepSpecificLearnings"] = "true"
 
 	// Add context dependencies as a comma-separated string
 	if len(step.ContextDependencies) > 0 {
@@ -105,7 +105,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// For branch steps, we'll use the parent step number
 	var stepNumberForFileCheck int
 	fmt.Sscanf(learningPathIdentifier, "step-%d", &stepNumberForFileCheck)
-	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumberForFileCheck, step.Title, isCodeExecutionMode)
+	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumberForFileCheck, step.Title)
 	if existingLearningFilePath != "" {
 		successLearningTemplateVars["ExistingLearningFilePath"] = existingLearningFilePath
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Found existing learning file: %s", existingLearningFilePath))
@@ -115,13 +115,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	}
 
 	// Execute success learning agent and capture output
-	successLearningOutput, _, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
+	_, _, err = successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("success learning analysis failed: %w", err), nil)
+		return fmt.Errorf(fmt.Sprintf("success learning analysis failed: %w", err), nil)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
-	return successLearningOutput, nil
+	return nil
 }
 
 // runFailureLearningPhase analyzes failed executions to provide refined task descriptions for retry
@@ -169,7 +169,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		learningMode = "general"
 	}
 	failureLearningAgentName := fmt.Sprintf("%s-failure-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
-	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", learningPathIdentifier, 1, failureLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
+	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", learningPathIdentifier, failureLearningAgentName, step.AgentConfigs, isCodeExecutionMode)
 	if err != nil {
 		return "", "", fmt.Errorf(fmt.Sprintf("failed to create failure learning agent: %w", err), nil)
 	}
@@ -200,7 +200,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// This allows learnings to be at learnings/step-{X}/ or learnings/step-{X}-{branch}/ (at workspace root, not inside runs/)
 	failureLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
 	failureLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
-	failureLearningTemplateVars["UseStepSpecificLearnings"] = "true"
 
 	// Add context dependencies as a comma-separated string
 	if len(step.ContextDependencies) > 0 {
@@ -219,7 +218,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// For branch steps, we'll use the parent step number
 	var stepNumberForFileCheck int
 	fmt.Sscanf(learningPathIdentifier, "step-%d", &stepNumberForFileCheck)
-	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumberForFileCheck, step.Title, isCodeExecutionMode)
+	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumberForFileCheck, step.Title)
 	if existingLearningFilePath != "" {
 		failureLearningTemplateVars["ExistingLearningFilePath"] = existingLearningFilePath
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Found existing learning file: %s", existingLearningFilePath))
@@ -234,148 +233,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		return "", "", fmt.Errorf(fmt.Sprintf("failure learning analysis failed: %w", err), nil)
 	}
 
-	// Extract refined task description from the output
-	refinedTaskDescription := hcpo.extractRefinedTaskDescription(failureLearningOutput)
-	learningAnalysis := failureLearningOutput // Use the full output as learning analysis
-
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
-	return refinedTaskDescription, learningAnalysis, nil
-}
-
-// extractRefinedTaskDescription extracts the refined task description from learning agent output
-func (hcpo *HumanControlledTodoPlannerOrchestrator) extractRefinedTaskDescription(learningOutput string) string {
-	// Look for "### Refined Task:" section in the output
-	lines := strings.Split(learningOutput, "\n")
-	inRefinedTaskSection := false
-	var refinedTaskLines []string
-
-	for _, line := range lines {
-		if strings.Contains(line, "### Refined Task:") {
-			inRefinedTaskSection = true
-			continue
-		}
-		if inRefinedTaskSection {
-			// Stop when we hit the next section (starts with ###)
-			if strings.HasPrefix(strings.TrimSpace(line), "###") && !strings.Contains(line, "Refined Task") {
-				break
-			}
-			// Skip empty lines at the start
-			if len(refinedTaskLines) == 0 && strings.TrimSpace(line) == "" {
-				continue
-			}
-			refinedTaskLines = append(refinedTaskLines, line)
-		}
-	}
-
-	refinedTask := strings.TrimSpace(strings.Join(refinedTaskLines, "\n"))
-	if refinedTask == "" {
-		// Fallback: return the original step description if no refined task found
-		return ""
-	}
-
-	return refinedTask
-}
-
-// formatLearningHistoryForExecution formats learning conversation history for inclusion in execution-only agent system prompt
-// Extracts the most relevant content: learning file contents and agent's final analysis
-func (hcpo *HumanControlledTodoPlannerOrchestrator) formatLearningHistoryForExecution(learningHistory []llmtypes.MessageContent) string {
-	if len(learningHistory) == 0 {
-		return "No learning history available."
-	}
-
-	var result strings.Builder
-	var learningFileContents []string
-	var agentSummary string
-
-	// Extract relevant content from conversation history
-	for _, message := range learningHistory {
-		// Skip user messages (instructions)
-		if message.Role == llmtypes.ChatMessageTypeHuman {
-			continue
-		}
-
-		for _, part := range message.Parts {
-			switch p := part.(type) {
-			case llmtypes.TextContent:
-				// Capture the last assistant text as the summary/analysis
-				if message.Role == llmtypes.ChatMessageTypeAI && p.Text != "" {
-					agentSummary = p.Text
-				}
-
-			case llmtypes.ToolCallResponse:
-				// Only capture read_workspace_file responses for learning files
-				if strings.Contains(p.Name, "read_workspace_file") || strings.Contains(p.Name, "read_file") {
-					content := p.Content
-					// Check if this is a learning file (contains workflow or patterns)
-					if strings.Contains(content, "_learning.md") ||
-						strings.Contains(content, "EXECUTION WORKFLOW") ||
-						strings.Contains(content, "SUCCESS TOOL") ||
-						strings.Contains(content, "SUCCESS CODE") ||
-						strings.Contains(content, "[Runs:") {
-						learningFileContents = append(learningFileContents, content)
-					}
-				}
-			}
-		}
-	}
-
-	// Build the formatted output
-	result.WriteString("## 📚 Learning Context for Execution\n\n")
-
-	// Include learning file contents (the actual patterns/workflows)
-	if len(learningFileContents) > 0 {
-		result.WriteString("### 📄 Learning File Contents\n\n")
-		for i, content := range learningFileContents {
-			if i > 0 {
-				result.WriteString("\n---\n\n")
-			}
-			result.WriteString(content)
-			result.WriteString("\n")
-		}
-		result.WriteString("\n")
-	}
-
-	// Include agent's analysis/summary
-	if agentSummary != "" {
-		result.WriteString("### 🔍 Learning Agent Analysis\n\n")
-		result.WriteString(agentSummary)
-		result.WriteString("\n\n")
-	}
-
-	// If no learning content found, indicate that
-	if len(learningFileContents) == 0 && agentSummary == "" {
-		result.WriteString("No learning patterns found for this step.\n")
-		result.WriteString("Execute based on step description and success criteria.\n\n")
-	}
-
-	// Add usage guidance based on content type
-	if len(learningFileContents) > 0 {
-		// Check if we have workflow-style learnings
-		hasWorkflow := false
-		for _, content := range learningFileContents {
-			if strings.Contains(content, "EXECUTION WORKFLOW") || strings.Contains(content, "Step 1:") {
-				hasWorkflow = true
-				break
-			}
-		}
-
-		if hasWorkflow {
-			result.WriteString("### ⚡ Execution Mode: WORKFLOW\n")
-			result.WriteString("**Follow the EXECUTION WORKFLOW steps in order.**\n")
-			result.WriteString("- Execute Step 1 → Step 2 → Step 3... exactly as documented\n")
-			result.WriteString("- Check prerequisites before each step\n")
-			result.WriteString("- Use exact tool calls and arguments (resolve variables)\n")
-			result.WriteString("- Apply error recovery if steps fail\n\n")
-		} else {
-			result.WriteString("### ⚡ Execution Mode: PATTERN-GUIDED\n")
-			result.WriteString("**Use the patterns above as guidance.**\n")
-			result.WriteString("- Adapt successful patterns to current step requirements\n")
-			result.WriteString("- Avoid documented failure patterns\n")
-			result.WriteString("- Step description is the primary source of truth\n\n")
-		}
-	}
-
-	return result.String()
+	return failureLearningOutput, failureLearningOutput, nil
 }
 
 // readStepLearningFiles reads all .md learning files from a step-specific folder
@@ -432,52 +291,31 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx co
 	return learningFiles, nil
 }
 
-// formatStepLearningFilesAsHistory formats step learning files as learning history for execution agent
-// Similar to formatLearningHistoryForExecution but works with file contents directly
+// formatStepLearningFilesAsHistory formats a map of learning files (filename -> content) into a formatted history string
 func (hcpo *HumanControlledTodoPlannerOrchestrator) formatStepLearningFilesAsHistory(learningFiles map[string]string) string {
 	if len(learningFiles) == 0 {
 		return "No learning history available."
 	}
 
 	var result strings.Builder
-	result.WriteString("## 📚 Learning Context for Execution\n\n")
+	result.WriteString("## 📚 Learning Context\n\n")
 
-	// Include learning file contents (the actual patterns/workflows)
-	result.WriteString("### 📄 Learning File Contents\n\n")
-	fileIndex := 0
-	for filename, content := range learningFiles {
-		if fileIndex > 0 {
+	// Sort filenames for consistent output
+	filenames := make([]string, 0, len(learningFiles))
+	for filename := range learningFiles {
+		filenames = append(filenames, filename)
+	}
+	sort.Strings(filenames)
+
+	// Format each file
+	for i, filename := range filenames {
+		content := learningFiles[filename]
+		if i > 0 {
 			result.WriteString("\n---\n\n")
 		}
-		result.WriteString(fmt.Sprintf("**File**: %s\n\n", filename))
+		result.WriteString(fmt.Sprintf("### 📄 %s\n\n", filename))
 		result.WriteString(content)
 		result.WriteString("\n")
-		fileIndex++
-	}
-	result.WriteString("\n")
-
-	// Check if we have workflow-style learnings
-	hasWorkflow := false
-	for _, content := range learningFiles {
-		if strings.Contains(content, "EXECUTION WORKFLOW") || strings.Contains(content, "Step 1:") {
-			hasWorkflow = true
-			break
-		}
-	}
-
-	if hasWorkflow {
-		result.WriteString("### ⚡ Execution Mode: WORKFLOW\n")
-		result.WriteString("**Follow the EXECUTION WORKFLOW steps in order.**\n")
-		result.WriteString("- Execute Step 1 → Step 2 → Step 3... exactly as documented\n")
-		result.WriteString("- Check prerequisites before each step\n")
-		result.WriteString("- Use exact tool calls and arguments (resolve variables)\n")
-		result.WriteString("- Apply error recovery if steps fail\n\n")
-	} else {
-		result.WriteString("### ⚡ Execution Mode: PATTERN-GUIDED\n")
-		result.WriteString("**Use the patterns above as guidance.**\n")
-		result.WriteString("- Adapt successful patterns to current step requirements\n")
-		result.WriteString("- Avoid documented failure patterns\n")
-		result.WriteString("- Step description is the primary source of truth\n\n")
 	}
 
 	return result.String()
@@ -485,7 +323,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatStepLearningFilesAsHis
 
 // getExistingLearningFilePath checks if an existing learning file exists for the given step
 // Returns the full file path if it exists, empty string otherwise
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getExistingLearningFilePath(ctx context.Context, stepNumber int, stepTitle string, isCodeExecutionMode bool) string {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getExistingLearningFilePath(ctx context.Context, stepNumber int, stepTitle string) string {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 
 	// Resolve variables in step title

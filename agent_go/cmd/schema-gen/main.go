@@ -130,6 +130,7 @@ type EventDataUnion struct {
 	StepFailed          *events.StepFailedEvent          `json:"step_execution_failed,omitempty"`
 	StepTokenUsage      *events.StepTokenUsageEvent      `json:"step_token_usage,omitempty"`
 	StepProgressUpdated *events.StepProgressUpdatedEvent `json:"step_progress_updated,omitempty"`
+	DecisionEvaluated   *events.DecisionEvaluatedEvent   `json:"decision_evaluated,omitempty"`
 
 	// Todo/Planning Events
 	TodoStepsExtracted       *events.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
@@ -273,6 +274,7 @@ var EventTypeMapping = map[events.EventType]string{
 	events.StepExecutionFailed: "step_execution_failed",
 	events.StepTokenUsage:      "step_token_usage",
 	events.StepProgressUpdated: "step_progress_updated",
+	events.DecisionEvaluated:   "decision_evaluated",
 
 	// Todo/Planning Events
 	events.TodoStepsExtracted:       "todo_steps_extracted",

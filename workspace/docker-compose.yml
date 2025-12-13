@@ -23,8 +23,8 @@ services:
       # MCP Cache Configuration
       - MCP_CACHE_TTL_MINUTES=${MCP_CACHE_TTL_MINUTES:-10080}
     volumes:
-      # Persist documents outside container
-      - workspace-docs:/app/workspace-docs
+      # Persist documents outside container (bind mount to sync with host)
+      - ../workspace-docs:/app/workspace-docs
       # Mount local docs for development (optional)
       - ./test-docs:/app/test-docs:ro
     restart: unless-stopped
@@ -35,10 +35,6 @@ services:
       retries: 3
       start_period: 40s
 
-
-volumes:
-  workspace-docs:
-    driver: local
 
 networks:
   default:

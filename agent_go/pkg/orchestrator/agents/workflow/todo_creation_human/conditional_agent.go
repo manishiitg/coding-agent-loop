@@ -24,6 +24,12 @@ func (cr *ConditionalResponse) GetResult() bool {
 	return cr.Result
 }
 
+// DecisionResponse represents the structured response from decision evaluation
+type DecisionResponse struct {
+	Result    bool   `json:"result"`    // The decision result (true or false)
+	Reasoning string `json:"reasoning"` // Detailed reasoning for the decision
+}
+
 // HumanControlledTodoPlannerConditionalAgent evaluates conditional decisions for step branching
 type HumanControlledTodoPlannerConditionalAgent struct {
 	*agents.BaseOrchestratorAgent
@@ -45,15 +51,11 @@ func NewHumanControlledTodoPlannerConditionalAgent(config *agents.OrchestratorAg
 }
 
 // Decide makes a true/false decision based on context and question
+// Returns ConditionalResponse for backward compatibility with conditional steps
 func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Context, conditionContext, question string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string) (*ConditionalResponse, error) {
 	// Verify event bridge is set (factory pattern ensures it's set, but check for safety)
 	// The factory pattern handles event bridge connection, so this is just a safety check
 	// Note: Event bridge is set by the factory pattern, so this check is mostly for debugging
-	eventBridge := hctpca.GetEventBridge()
-	if eventBridge == nil {
-		// Factory pattern should have set this - this is unexpected
-		// Logging is handled by the factory pattern, so we can skip here
-	}
 
 	// Build template variables
 	templateVars := map[string]string{
@@ -269,6 +271,198 @@ Return ONLY valid JSON: {"result": true/false, "reason": "detailed explanation o
 
 	if err != nil {
 		return nil, fmt.Errorf("conditional decision failed: %w", err)
+	}
+
+	return &result, nil
+}
+
+// EvaluateDecision makes a structured decision evaluation for decision steps
+// Returns DecisionResponse with rich structured output similar to validation agent
+func (hctpca *HumanControlledTodoPlannerConditionalAgent) EvaluateDecision(ctx context.Context, executionOutput, question string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string) (*DecisionResponse, error) {
+	// Build template variables
+	templateVars := map[string]string{
+		"ExecutionOutput": executionOutput,
+		"Question":        question,
+		"StepIndex":       fmt.Sprintf("%d", stepIndex),
+		"Iteration":       fmt.Sprintf("%d", iteration),
+		"LearningHistory": learningHistory,
+	}
+
+	// Build system prompt for decision evaluation
+	var systemPrompt string
+	if isCodeExecutionMode {
+		codeExecutionInstructions := prompt.GetCodeExecutionInstructions()
+		systemPrompt = fmt.Sprintf(`# Decision Evaluation Agent
+
+You are an expert decision evaluation agent specialized in analyzing execution outputs and making structured decisions. Your role is to evaluate decision step execution results and provide comprehensive structured analysis.
+
+## 🔍 DECISION EVALUATION FRAMEWORK
+
+### Step 1: Analyze Execution Output
+**Review the execution output:** What was the result of the decision step's execution?
+
+### Step 2: Understand the Evaluation Question
+**Analyze the question:** What specific condition or criteria needs to be evaluated?
+
+### Step 3: Systematic Evaluation
+**Evaluation Strategy:**
+- Identify key information in the execution output
+- Cross-reference with the evaluation question
+- Determine if the execution output meets the evaluation criteria
+
+### Step 4: Structured Decision
+**Decision Criteria:**
+- **TRUE** if: Execution output clearly meets the evaluation criteria
+- **FALSE** if: Execution output does not meet the evaluation criteria
+
+## 📋 OUTPUT REQUIREMENTS
+
+**USE THE 'submit_decision_result' TOOL TO SUBMIT YOUR DECISION ANALYSIS**
+
+You MUST call the 'submit_decision_result' tool with your structured decision response. Do NOT return JSON directly in your response - use the tool instead.
+
+The tool accepts a structured object with:
+- result: boolean - Whether the evaluation question is answered as true or false
+- reasoning: string - Detailed reasoning explaining how the execution output relates to the evaluation question
+
+**Example JSON structure:**
+`+"```json"+`
+{
+  "result": true,
+  "reasoning": "The execution output shows that the deployment was successful. All services are running and health checks passed."
+}
+`+"```"+`
+
+**CRITICAL**: You MUST call the 'submit_decision_result' tool with your decision analysis. The tool will be available to you - use it to submit your structured decision response.
+
+%s
+
+## 📚 LEARNING CONTEXT (Reference Only)
+%s
+
+**Learning Usage Guidelines:**
+- Use learnings to understand typical evaluation patterns
+- Reference learnings for decision-making strategies, not as current state
+- Verify that learning patterns apply to current execution output
+`, codeExecutionInstructions, learningHistory)
+	} else {
+		systemPrompt = fmt.Sprintf(`# Decision Evaluation Agent
+
+You are an expert decision evaluation agent specialized in analyzing execution outputs and making structured decisions. Your role is to evaluate decision step execution results and provide comprehensive structured analysis.
+
+## 🔍 DECISION EVALUATION FRAMEWORK
+
+### Step 1: Analyze Execution Output
+**Review the execution output:** What was the result of the decision step's execution?
+
+### Step 2: Understand the Evaluation Question
+**Analyze the question:** What specific condition or criteria needs to be evaluated?
+
+### Step 3: Systematic Evaluation
+**Evaluation Strategy:**
+- Identify key information in the execution output
+- Cross-reference with the evaluation question
+- Determine if the execution output meets the evaluation criteria
+
+### Step 4: Structured Decision
+**Decision Criteria:**
+- **TRUE** if: Execution output clearly meets the evaluation criteria
+- **FALSE** if: Execution output does not meet the evaluation criteria
+
+## 📋 OUTPUT REQUIREMENTS
+
+**USE THE 'submit_decision_result' TOOL TO SUBMIT YOUR DECISION ANALYSIS**
+
+You MUST call the 'submit_decision_result' tool with your structured decision response. Do NOT return JSON directly in your response - use the tool instead.
+
+The tool accepts a structured object with:
+- result: boolean - Whether the evaluation question is answered as true or false
+- reasoning: string - Detailed reasoning explaining how the execution output relates to the evaluation question
+
+**Example JSON structure:**
+`+"```json"+`
+{
+  "result": true,
+  "reasoning": "The execution output shows that the deployment was successful. All services are running and health checks passed."
+}
+`+"```"+`
+
+**CRITICAL**: You MUST call the 'submit_decision_result' tool with your decision analysis. The tool will be available to you - use it to submit your structured decision response.
+
+## 📚 LEARNING CONTEXT (Reference Only)
+%s
+
+**Learning Usage Guidelines:**
+- Use learnings to understand typical evaluation patterns
+- Reference learnings for decision-making strategies, not as current state
+- Verify that learning patterns apply to current execution output
+`, learningHistory)
+	}
+
+	// Build user message input processor
+	inputProcessor := func(vars map[string]string) string {
+		return fmt.Sprintf(`## 📝 DECISION EVALUATION TASK
+
+**Execution Output** (from decision step execution):
+%s
+
+**Evaluation Question**:
+%s
+
+## 🔧 EVALUATION REQUIRED
+
+Analyze the execution output and determine if it answers the evaluation question as true or false.
+
+**Evaluation Process:**
+1. Review the execution output carefully
+2. Understand what the evaluation question is asking
+3. Determine if the execution output indicates the answer is true or false
+
+## 📤 OUTPUT FORMAT
+
+**USE THE 'submit_decision_result' TOOL** to submit your structured decision analysis.
+
+Your decision should include:
+- result: true or false based on the evaluation question
+- reasoning: Detailed explanation of how execution output relates to the question`, vars["ExecutionOutput"], vars["Question"])
+	}
+
+	// Build schema for structured output
+	schema := `{
+		"type": "object",
+		"properties": {
+			"result": {
+				"type": "boolean",
+				"description": "The decision result - true if execution output indicates the evaluation question is true, false otherwise"
+			},
+			"reasoning": {
+				"type": "string",
+				"description": "Detailed reasoning explaining how the execution output relates to the evaluation question and supports the decision"
+			}
+		},
+		"required": ["result", "reasoning"]
+	}`
+
+	// Define tool name and description for structured output via tool calls
+	toolName := "submit_decision_result"
+	toolDescription := "Submit the decision evaluation result. This tool should be called with the structured decision response containing the result and reasoning."
+
+	// Use ExecuteStructuredWithInputProcessorViaTool similar to validation agent
+	result, _, err := agents.ExecuteStructuredWithInputProcessorViaTool[DecisionResponse](
+		hctpca.BaseOrchestratorAgent,
+		ctx,
+		templateVars,
+		inputProcessor,
+		[]llmtypes.MessageContent{},
+		schema,
+		systemPrompt,
+		isCodeExecutionMode, // Overwrite in code exec mode, append otherwise
+		toolName,
+		toolDescription,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("decision evaluation failed: %w", err)
 	}
 
 	return &result, nil

@@ -64,7 +64,7 @@ export type {
 } from './api-types'
 
 const API_BASE_URL = 'http://localhost:8000'
-const WORKSPACE_API_BASE_URL = 'http://localhost:8081'
+export const WORKSPACE_API_BASE_URL = 'http://localhost:8081'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -418,6 +418,30 @@ export const agentApi = {
       source_path: sourcePath,
       destination_path: destinationPath,
       commit_message: commitMessage
+    })
+    return response.data
+  },
+
+  // Workspace Backup API
+  exportWorkflowBackup: async (workspacePath: string): Promise<Blob> => {
+    const response = await workspaceApi.post('/api/workspace/export', {
+      workspace_path: workspacePath
+    }, {
+      responseType: 'blob'
+    })
+    return response.data
+  },
+
+  importWorkflowBackup: async (workspacePath: string, file: File, overwrite: boolean = false): Promise<{ success: boolean; message: string; data?: { workspace_path: string; files_extracted: number; extracted_files: string[] } }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('workspace_path', workspacePath)
+    formData.append('overwrite', overwrite.toString())
+
+    const response = await workspaceApi.post('/api/workspace/import', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
     })
     return response.data
   },

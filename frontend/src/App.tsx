@@ -17,6 +17,7 @@ import { EventModeProvider } from "./components/events";
 import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import "./App.css";
 
 // Extend window interface for global functions
@@ -28,6 +29,37 @@ declare global {
 }
 
 const queryClient = new QueryClient();
+
+// Utility function to format file path for display
+// Shows directory with ellipsis if needed, always shows filename
+const formatFilePathForDisplay = (filepath: string, maxLength: number = 60): string => {
+  if (!filepath) return ''
+  
+  // Extract filename
+  const parts = filepath.split('/')
+  const filename = parts[parts.length - 1]
+  const directory = parts.slice(0, -1).join('/')
+  
+  // If the full path fits, show it
+  if (filepath.length <= maxLength) {
+    return filepath
+  }
+  
+  // If only filename fits, show just filename
+  if (filename.length >= maxLength - 3) {
+    return filename
+  }
+  
+  // Show directory with ellipsis + filename
+  const availableSpace = maxLength - filename.length - 3 // 3 for "..."
+  if (directory.length <= availableSpace) {
+    return `${directory}/${filename}`
+  }
+  
+  // Truncate directory from the start
+  const truncatedDir = '...' + directory.slice(-(availableSpace - 3))
+  return `${truncatedDir}/${filename}`
+}
 
 // Utility function to detect code files and get their language
 const getCodeFileLanguage = (filepath: string): string | null => {
@@ -578,12 +610,23 @@ function App() {
                   >
                     ← Back to Chat
                   </button>
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate min-w-0">
-                    {selectedFile?.path}
-                    {getHasUnsavedChanges() && (
-                      <span className="ml-2 text-xs text-orange-500">●</span>
-                    )}
-                  </h2>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate min-w-0 cursor-help">
+                          {selectedFile?.path ? formatFilePathForDisplay(selectedFile.path) : ''}
+                          {getHasUnsavedChanges() && (
+                            <span className="ml-2 text-xs text-orange-500">●</span>
+                          )}
+                        </h2>
+                      </TooltipTrigger>
+                      {selectedFile?.path && formatFilePathForDisplay(selectedFile.path) !== selectedFile.path && (
+                        <TooltipContent>
+                          <p className="max-w-md break-all">{selectedFile.path}</p>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {!isEditMode ? (

@@ -9,6 +9,7 @@ import (
 
 	mcpagent "mcpagent/agent"
 	internalLLM "mcpagent/llm"
+	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -175,9 +176,9 @@ func NewBaseAgent(
 	// Use logger directly (already loggerv2.Logger)
 	v2Logger := logger
 
-	// Determine server name (join multiple servers with comma, or use first server, or empty string)
+	// Determine server name (join multiple servers with comma, or use first server, or AllServers)
 	// NewAgentConnection supports comma-separated server names to connect to multiple servers
-	serverName := ""
+	serverName := mcpclient.AllServers
 	if len(serverNames) > 0 {
 		if len(serverNames) == 1 {
 			serverName = serverNames[0]
@@ -187,8 +188,24 @@ func NewBaseAgent(
 		}
 	}
 
+	// Build options from parameters
+	options := agentOptions
+	if serverName != "" && serverName != mcpclient.AllServers {
+		options = append(options, mcpagent.WithServerName(serverName))
+	}
+	if tracer != nil {
+		options = append(options, mcpagent.WithTracer(tracer))
+	}
+	if traceID != "" {
+		options = append(options, mcpagent.WithTraceID(traceID))
+	}
+	if v2Logger != nil {
+		options = append(options, mcpagent.WithLogger(v2Logger))
+	}
+
 	// Create agent with all options
-	agent, err := mcpagent.NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, v2Logger, agentOptions...)
+	// modelID is automatically extracted from llm
+	agent, err := mcpagent.NewAgent(ctx, llm, configPath, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}

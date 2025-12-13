@@ -250,31 +250,38 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		v2Logger = loggerv2.NewDefault()
 	}
 
+	// Build options from parameters
+	options := agentOptions
+	if config.ServerName != "" && config.ServerName != "all" {
+		options = append(options, mcpagent.WithServerName(config.ServerName))
+	}
+	if tracer != nil {
+		options = append(options, mcpagent.WithTracer(tracer))
+	}
+	if traceID != "" {
+		options = append(options, mcpagent.WithTraceID(traceID))
+	}
+	if v2Logger != nil {
+		options = append(options, mcpagent.WithLogger(v2Logger))
+	}
+
 	if config.AgentMode == mcpagent.SimpleAgent {
 		// Create Simple agent
+		// modelID is automatically extracted from llm
 		agent, err = mcpagent.NewSimpleAgent(
 			ctx,
 			llm,
-			config.ServerName,
 			config.ConfigPath,
-			config.ModelID,
-			tracer,
-			traceID,
-			v2Logger,
-			agentOptions...,
+			options...,
 		)
 	} else {
 		// Create Simple agent (default)
+		// modelID is automatically extracted from llm
 		agent, err = mcpagent.NewSimpleAgent(
 			ctx,
 			llm,
-			config.ServerName,
 			config.ConfigPath,
-			config.ModelID,
-			tracer,
-			traceID,
-			v2Logger,
-			agentOptions...,
+			options...,
 		)
 	}
 	if err != nil {

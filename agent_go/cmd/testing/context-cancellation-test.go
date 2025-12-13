@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
 	mcpagent "mcpagent/agent"
 	"mcpagent/llm"
+	loggerv2 "mcpagent/logger/v2"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -107,16 +107,13 @@ func testContextCancellationDuringLLMGeneration(provider string, logger loggerv2
 	}
 
 	// Create agent with valid context first
+	// modelID is automatically extracted from llmModel
 	ctx := context.Background()
 	agent, err := mcpagent.NewAgent(
 		ctx,
 		llmModel,
-		"filesystem",                      // server name
-		"configs/mcp_servers_simple.json", // config path
-		modelID,                           // model ID
-		nil,                               // tracer
-		"",                                // trace ID
-		nil,                               // logger (use default)
+		"configs/mcp_servers_simple.json",     // config path
+		mcpagent.WithServerName("filesystem"), // server name
 		mcpagent.WithMaxTurns(5),
 	)
 	if err != nil {

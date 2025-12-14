@@ -224,7 +224,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       title: planStep.title,
       description: planStep.description,
       success_criteria: planStep.success_criteria,
-      why_this_step: planStep.why_this_step,
       context_dependencies: planStep.context_dependencies,
       context_output: Array.isArray(planStep.context_output) 
         ? planStep.context_output.join(', ') 
@@ -267,7 +266,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       title: planStep.title,
       description: planStep.description,
       success_criteria: planStep.success_criteria,
-      why_this_step: planStep.why_this_step,
       context_dependencies: planStep.context_dependencies,
       context_output: Array.isArray(planStep.context_output) 
         ? planStep.context_output.join(', ') 
@@ -450,7 +448,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         title: updatedStep.title,
         description: updatedStep.description,
         success_criteria: updatedStep.success_criteria,
-        why_this_step: updatedStep.why_this_step,
         context_dependencies: updatedStep.context_dependencies,
         context_output: updatedStep.context_output,
         has_loop: updatedStep.has_loop,

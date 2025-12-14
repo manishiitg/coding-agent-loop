@@ -1448,7 +1448,6 @@ export interface TodoStep {
   title?: string;
   description?: string;
   success_criteria?: string;
-  why_this_step?: string;
   context_dependencies?: string[];
   context_output?: string;
   success_patterns?: string[];

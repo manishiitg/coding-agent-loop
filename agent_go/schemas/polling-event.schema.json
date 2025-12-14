@@ -5129,9 +5129,6 @@
         "success_criteria": {
           "type": "string"
         },
-        "why_this_step": {
-          "type": "string"
-        },
         "context_dependencies": {
           "items": {
             "type": "string"

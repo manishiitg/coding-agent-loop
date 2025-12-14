@@ -1,12 +1,9 @@
 package todo_creation_human
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -102,18 +99,16 @@ type AgentConfigs struct {
 
 // PlanStep represents a step in the planning output
 type PlanStep struct {
-	ID                       string                `json:"id"` // Stable step ID (generated from title) - required
-	Title                    string                `json:"title"`
-	Description              string                `json:"description"`
-	SuccessCriteria          string                `json:"success_criteria"`
-	WhyThisStep              string                `json:"why_this_step,omitempty"` // Optional explanation of why this step is needed
-	ContextDependencies      []string              `json:"context_dependencies"`
-	ContextOutput            FlexibleContextOutput `json:"context_output"`                        // Use flexible type to handle string or array
-	LearningFilesToReference []string              `json:"learning_files_to_reference,omitempty"` // learning files to read for context (execution agent reads full files)
-	HasLoop                  bool                  `json:"has_loop"`                              // true if step needs to loop
-	LoopCondition            string                `json:"loop_condition"`                        // condition description (same as success criteria) - REQUIRED when has_loop=true
-	MaxIterations            int                   `json:"max_iterations,omitempty"`              // max iterations (default: 10)
-	LoopDescription          string                `json:"loop_description,omitempty"`            // human-readable explanation
+	ID                  string                `json:"id"` // Stable step ID (generated from title) - required
+	Title               string                `json:"title"`
+	Description         string                `json:"description"`
+	SuccessCriteria     string                `json:"success_criteria"`
+	ContextDependencies []string              `json:"context_dependencies"`
+	ContextOutput       FlexibleContextOutput `json:"context_output"`             // Use flexible type to handle string or array
+	HasLoop             bool                  `json:"has_loop"`                   // true if step needs to loop
+	LoopCondition       string                `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
+	MaxIterations       int                   `json:"max_iterations,omitempty"`   // max iterations (default: 10)
+	LoopDescription     string                `json:"loop_description,omitempty"` // human-readable explanation
 	// Conditional branching fields
 	HasCondition      bool       `json:"has_condition"`                   // true if step has conditional branches
 	ConditionQuestion string     `json:"condition_question,omitempty"`    // question to ask ConditionalLLM
@@ -1486,16 +1481,11 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			}
 		}
 
-		// Read current plan (store old plan for comparison)
+		// Read current plan
 		oldPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
-
-		// Create a deep copy of old plan for comparison
-		oldPlanJSON, _ := json.Marshal(oldPlan)
-		var oldPlanCopy PlanningResponse
-		json.Unmarshal(oldPlanJSON, &oldPlanCopy)
 
 		// Create set of deleted step IDs
 		deletedSet := make(map[string]bool)
@@ -1542,18 +1532,6 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Sync learnings folders after deletion
-		renames := calculateLearningsFolderRenames(&oldPlanCopy, newPlan)
-		var syncMessage string
-		if len(renames) > 0 {
-			syncMsg, err := syncLearningsFolders(ctx, workspacePath, renames, logger, moveFile)
-			if err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Failed to sync learnings folders after deletion: %v", err))
-			} else if syncMsg != "" {
-				syncMessage = "\n\n" + syncMsg
-			}
-		}
-
 		// Write changelog entry with complete deleted step data for revert support
 		detailsJSON, _ := json.Marshal(map[string]interface{}{
 			"deleted_step_ids": deletedIDs,
@@ -1571,11 +1549,7 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 		}
 
 		logger.Info(fmt.Sprintf("✅ Deleted %d steps from plan", len(deletedIDs)))
-		response := fmt.Sprintf("Successfully deleted %d step(s) from the plan", len(deletedIDs))
-		if syncMessage != "" {
-			response += syncMessage
-		}
-		return response, nil
+		return fmt.Sprintf("Successfully deleted %d step(s) from the plan", len(deletedIDs)), nil
 	}
 }
 
@@ -1632,16 +1606,11 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 			return "", fmt.Errorf(fmt.Sprintf("step is missing required ID field. Step title: %q", step.Title), nil)
 		}
 
-		// Read current plan (store old plan for comparison)
+		// Read current plan
 		oldPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 		}
-
-		// Create a deep copy of old plan for comparison
-		oldPlanJSON, _ := json.Marshal(oldPlan)
-		var oldPlanCopy PlanningResponse
-		json.Unmarshal(oldPlanJSON, &oldPlanCopy)
 
 		// Find insertion point
 		var insertAfterStepID string
@@ -1705,18 +1674,6 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Sync learnings folders after insertion (if insertion caused renumbering)
-		renames := calculateLearningsFolderRenames(&oldPlanCopy, newPlan)
-		var syncMessage string
-		if len(renames) > 0 {
-			syncMsg, err := syncLearningsFolders(ctx, workspacePath, renames, logger, moveFile)
-			if err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Failed to sync learnings folders after insertion: %v", err))
-			} else if syncMsg != "" {
-				syncMessage = "\n\n" + syncMsg
-			}
-		}
-
 		// Write changelog entry with complete step data for revert support
 		detailsJSON, _ := json.Marshal(map[string]interface{}{
 			"step_id":              step.ID,
@@ -1738,11 +1695,7 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		}
 
 		logger.Info(fmt.Sprintf("✅ Added %s step '%s' (ID: %s) to plan", stepType, step.Title, step.ID))
-		response := fmt.Sprintf("Successfully added %s step '%s' (ID: %s) to the plan", stepType, step.Title, step.ID)
-		if syncMessage != "" {
-			response += syncMessage
-		}
-		return response, nil
+		return fmt.Sprintf("Successfully added %s step '%s' (ID: %s) to the plan", stepType, step.Title, step.ID), nil
 	}
 }
 
@@ -1964,26 +1917,6 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf(fmt.Sprintf("failed to register convert_conditional_to_regular tool: %w", err), nil)
-	}
-
-	// Register sync_learnings_folders tool
-	syncLearningsSchema := `{
-		"type": "object",
-		"properties": {},
-		"description": "Synchronize learnings folders with current plan. This renames learnings folders (learnings/step-{X}/) to match current step numbers after plan changes. Use this if learnings folders are out of sync with the plan."
-	}`
-	syncLearningsParams, err := parseSchemaForToolParameters(syncLearningsSchema)
-	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse sync_learnings_folders schema: %w", err), nil)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"sync_learnings_folders",
-		"Synchronize learnings folders with current plan. This renames learnings folders (learnings/step-{X}/) to match current step numbers. Use this if learnings folders are out of sync after plan changes (e.g., after deleting or adding steps).",
-		syncLearningsParams,
-		createSyncLearningsFoldersExecutor(workspacePath, logger, readFile, moveFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register sync_learnings_folders tool: %w", err), nil)
 	}
 
 	if logger != nil {
@@ -2843,75 +2776,6 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 	}
 }
 
-// createSyncLearningsFoldersExecutor creates an executor function for sync_learnings_folders tool
-func createSyncLearningsFoldersExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), moveFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Read current plan to validate it exists
-		_, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
-		}
-
-		// Find all existing learnings folders and check if they match current step numbers
-		// We'll scan the learnings directory to find existing folders
-		learningsBasePath := filepath.Join(workspacePath, "learnings")
-
-		// Use shell command to list learnings folders
-		// Get workspace API URL from environment or use default
-		workspaceAPIURL := "http://localhost:8081"
-		if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
-			workspaceAPIURL = url
-		}
-		apiURL := workspaceAPIURL + "/api/execute"
-		listCmd := fmt.Sprintf("find %q -maxdepth 1 -type d -name 'step-*' | sort", learningsBasePath)
-
-		requestBody := map[string]interface{}{
-			"command":           listCmd,
-			"use_shell":         true,
-			"working_directory": workspacePath,
-			"timeout":           10,
-		}
-
-		jsonBody, err := json.Marshal(requestBody)
-		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal request: %w", err), nil)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(jsonBody))
-		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to create request: %w", err), nil)
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{Timeout: 15 * time.Second}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to list learnings folders: %v (continuing anyway)", err))
-			return fmt.Sprintf("Sync attempted but could not list existing folders. Learnings folders should be automatically synced when steps are added or deleted."), nil
-		}
-		defer resp.Body.Close()
-
-		var result struct {
-			Success bool `json:"success"`
-			Data    struct {
-				Stdout string `json:"stdout"`
-			} `json:"data"`
-		}
-
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || !result.Success {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to parse folder list response: %v", err))
-			return fmt.Sprintf("Sync attempted but could not list existing folders. Learnings folders should be automatically synced when steps are added or deleted."), nil
-		}
-
-		// Parse folder list and calculate renames needed
-		// For now, since we don't have the old plan to compare against, we'll just inform the user
-		// that sync happens automatically on add/delete operations
-		logger.Info(fmt.Sprintf("ℹ️ Manual sync tool called. Learnings folders are automatically synced when steps are added or deleted."))
-		return fmt.Sprintf("Learnings folders are automatically synchronized when steps are added or deleted. If folders are still out of sync, try deleting and re-adding steps, or manually rename folders to match step numbers."), nil
-	}
-}
-
 // createConvertConditionalToRegularExecutor creates an executor function for convert_conditional_to_regular tool
 func createConvertConditionalToRegularExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -3504,19 +3368,196 @@ Available variables:
 - Examples: execution/step-1/, execution/step-2/
 - For branch steps: execution/step-PARENT-BRANCHTYPE-BRANCHIDX/
 
-### Planning Guidelines
+### 🔗 Context Flow (CRITICAL - How Steps Share Data)
 
-**Context Dependencies**:
-- Specify context files needed from previous steps
-- Use empty array [] if no dependencies
-- Reference by file name only (e.g., 'step_1_results.json')
-- Execution agents will locate files automatically
+**Understanding Context Flow**:
+Steps communicate through context files. Each step can:
+- **Read** from previous steps via context_dependencies (input files)
+- **Write** results via context_output (output file for next steps)
 
-**Context Output**:
-- Specify context file name to create for subsequent steps
-- Example: 'step_1_results.json'
-- Execution agents will write to appropriate step folder
-- Use relative paths only - NEVER use absolute paths
+**How It Works**:
+1. Each step executes in its own folder (execution/step-X/)
+2. Step reads files listed in context_dependencies (from previous steps)
+3. Step executes its task
+4. Step writes results to file specified in context_output
+5. Next step uses that context_output file in its context_dependencies
+
+#### Context Output (REQUIRED for all steps)
+
+**Purpose**: The file name this step creates with its execution results.
+
+**Rules**:
+- **REQUIRED**: Every step MUST have a context_output file name
+- **File name only**: Use just the filename (e.g., 'step_1_results.json'), NOT paths
+- **Naming conventions**:
+  - Descriptive names: 'deployment_status.json', 'database_list.json', 'api_credentials.json'
+  - Step-based names: 'step_1_results.json', 'step_2_output.json'
+  - Use lowercase with underscores or hyphens
+- **Must be referenced in success_criteria**: The validation agent uses this file to verify completion
+- **Execution agent writes it**: The execution agent automatically writes to the correct step folder
+
+**Examples**:
+- ✅ 'step_1_results.json' - Clear, descriptive
+- ✅ 'login_session.json' - Describes the content
+- ✅ 'deployment_status.json' - Indicates what it contains
+- ❌ 'execution/step-1/step_1_results.json' - Don't include paths
+- ❌ 'results.json' - Too generic, might conflict
+
+#### Context Dependencies (OPTIONAL - Input files from previous steps)
+
+**Purpose**: List of file names from previous steps that this step needs as input.
+
+**Rules**:
+- **OPTIONAL**: Use empty array [] if step doesn't need previous context
+- **File names only**: Reference the context_output values from earlier steps
+- **Order matters**: List files in order of dependency (if order matters)
+- **Execution agent locates automatically**: No need to specify paths
+
+**How to Determine Dependencies**:
+1. **What data does this step need?**
+   - Credentials from login step? → Add login step's context_output
+   - Configuration from setup step? → Add setup step's context_output
+   - Results from previous calculation? → Add calculation step's context_output
+2. **Does step need multiple files?** → List all in the array
+3. **Is step independent?** → Use empty array []
+
+**Examples**:
+- ✅ ["step_1_results.json"] - Depends on step 1's output
+- ✅ ["login_session.json", "config.json"] - Depends on two previous outputs
+- ✅ [] - No dependencies (first step or independent step)
+
+#### Complete Context Flow Example
+
+**Step 1: Login**
+- context_dependencies: [] (no previous steps)
+- context_output: 'login_session.json'
+- **What happens**: Step 1 executes, creates 'login_session.json' with session token
+
+**Step 2: Fetch Data**
+- context_dependencies: ["login_session.json"] (needs session from step 1)
+- context_output: 'api_data.json'
+- **What happens**: Step 2 reads 'login_session.json', uses token to fetch data, creates 'api_data.json'
+
+**Step 3: Process Data**
+- context_dependencies: ["api_data.json"] (needs data from step 2)
+- context_output: 'processed_results.json'
+- **What happens**: Step 3 reads 'api_data.json', processes it, creates 'processed_results.json'
+
+**Step 4: Generate Report**
+- context_dependencies: ["login_session.json", "api_data.json", "processed_results.json"] (needs all previous data)
+- context_output: 'final_report.json'
+- **What happens**: Step 4 reads all three files, generates report, creates 'final_report.json'
+
+#### Relationship to Success Criteria
+
+**CRITICAL**: The context_output file MUST be referenced in success_criteria for validation.
+
+**Example**:
+- context_output: 'step_1_results.json'
+- success_criteria: "File 'step_1_results.json' exists and contains 'status: \"success\"' field"
+
+The validation agent will:
+1. Look for 'step_1_results.json' (the context_output file)
+2. Check if it contains the specified content
+3. Verify step completion based on this
+
+#### Best Practices
+
+1. **Descriptive file names**: Use names that describe the content (e.g., 'login_session.json' not 'file1.json')
+2. **Consistent naming**: Use similar patterns across steps (e.g., all use '_results.json' suffix)
+3. **Chain dependencies properly**: Each step's context_output should match what next step needs in context_dependencies (if needed)
+4. **Verify the chain**: Ensure step N's context_output appears in step N+1's context_dependencies (when data is needed)
+5. **First step**: Always has empty context_dependencies []
+6. **Last step**: Still needs context_output for validation (even if no next step uses it)
+
+#### Context Flow Validation (CRITICAL)
+
+**CRITICAL RULE**: A step can ONLY reference context_dependencies from steps that execute BEFORE it in the execution order.
+
+**Execution Order Rules**:
+- Steps execute sequentially in the order they appear in the plan
+- Step N can only depend on outputs from steps 1, 2, ..., N-1
+- Step N CANNOT depend on outputs from steps N+1, N+2, ... (future steps)
+
+**When Creating Steps**:
+- Always check: Does this step need data from a previous step?
+- If yes: Add that step's context_output to context_dependencies
+- If no: Use empty array []
+- Verify: All files in context_dependencies exist in previous steps' context_output values
+
+**When Moving/Reordering Steps** (UPDATE MODE):
+- **CRITICAL**: After moving a step, you MUST update its context_dependencies
+- **Check execution order**: Identify which steps now execute BEFORE the moved step
+- **Update dependencies**: Only include context_output files from steps that execute BEFORE the moved step
+- **Remove invalid dependencies**: Remove any context_dependencies that reference steps that now execute AFTER the moved step
+- **Verify downstream steps**: Check if any steps after the moved step need to update their context_dependencies
+
+**Example - Moving a Step**:
+
+**Original Plan**:
+- Step 1: context_output: 'step1.json', context_dependencies: []
+- Step 2: context_output: 'step2.json', context_dependencies: ['step1.json']
+- Step 3: context_output: 'step3.json', context_dependencies: ['step1.json', 'step2.json']
+
+**After moving Step 3 before Step 2**:
+- Step 1: context_output: 'step1.json', context_dependencies: []
+- Step 3: context_output: 'step3.json', context_dependencies: ['step1.json'] ← MUST UPDATE: Remove 'step2.json' (Step 2 now executes after Step 3)
+- Step 2: context_output: 'step2.json', context_dependencies: ['step1.json', 'step3.json'] ← CAN UPDATE: Can now include 'step3.json' since Step 3 executes before Step 2
+
+**Validation Checklist** (After any step movement):
+1. ✅ Does the moved step's context_dependencies only reference steps that execute BEFORE it?
+2. ✅ Are all referenced context_output files from previous steps?
+3. ✅ Do downstream steps need their context_dependencies updated to include the moved step's output?
+4. ✅ Are there any circular dependencies? (Step A depends on Step B, but Step B executes after Step A)
+
+**Common Mistakes to Avoid**:
+- ❌ Step 2 depending on 'step3.json' when Step 3 executes after Step 2
+- ❌ Not updating context_dependencies after moving a step
+- ❌ Including context_output from a step that hasn't executed yet
+- ❌ Creating circular dependencies
+
+## 📁 LEARNING FOLDERS SYNCHRONIZATION
+
+**IMPORTANT**: When you modify the plan in ways that change step numbering, you must synchronize the learning folders to match. You MUST ask the user for permission before renaming any learning folders.
+
+### Learning Folder Structure
+
+Learning folders store step-specific learning data and follow this naming convention:
+- **Top-level steps**: learnings/step-{number}/ where number is the 1-based step position
+  - Example: learnings/step-1/, learnings/step-2/, learnings/step-3/
+- **Branch steps** (inside conditionals): learnings/step-{parentNumber}-{true/false}-{branchIndex}/
+  - Example: learnings/step-3-true-0/, learnings/step-3-true-1/, learnings/step-3-false-0/
+
+### When to Sync Learning Folders
+
+You must manually sync learning folders when plan changes affect step numbering:
+- **After deleting steps**: Remaining steps shift positions (step 3 becomes step 2, etc.)
+- **After adding steps**: Steps inserted before others cause renumbering
+- **After reordering steps**: Any manual reordering changes step positions
+- **After converting steps**: Converting between regular/conditional may affect numbering
+- **After branch step changes**: Adding/deleting branch steps changes branch indices
+
+### How to Sync
+
+**CRITICAL**: You MUST ask the user for permission before renaming any learning folders. Use the human_feedback tool to request approval.
+
+**Workflow**:
+1. After making plan changes that affect step numbering, identify which learning folders need to be renamed
+2. Use human_feedback tool to ask the user for permission to sync learning folders:
+   - Clearly describe which folders will be renamed (old name → new name)
+   - Explain why the rename is needed (e.g., "After deleting step 2, step 3 becomes step 2, so learnings/step-3/ needs to be renamed to learnings/step-2/")
+   - List all folder renames that will be performed
+3. If user approves, use workspace tools (like move_workspace_file) to rename folders:
+   - Use move_workspace_file to rename each folder
+   - Old: learnings/step-3/ → New: learnings/step-2/
+   - Old: learnings/step-4/ → New: learnings/step-3/
+4. For branch steps, update both parent number and branch index as needed
+
+**Example**: If you delete step 2 from a plan with steps 1, 2, 3, 4:
+- First, use human_feedback to ask: "After deleting step 2, I need to rename learning folders to match the new step numbers. Should I rename learnings/step-3/ to learnings/step-2/ and learnings/step-4/ to learnings/step-3/?"
+- After approval, use move_workspace_file to perform the renames
+
+**Note**: If a learning folder doesn't exist for a step, you can skip it. Only rename folders that actually exist.
 
 ## 🛠️ AVAILABLE TOOLS
 
@@ -3651,6 +3692,34 @@ Update this plan based on human feedback. Use judgment to determine what changes
 - Update related parts to maintain consistency
 - Preserve variable placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) exactly as-is
 - Keep same detail level in all steps
+- **CRITICAL**: Always validate context flow after any step movement or reordering
+
+### Context Flow Validation When Updating Steps (CRITICAL)
+
+**When Moving/Reordering Steps**:
+- **MUST update context_dependencies**: After moving a step, check which steps now execute BEFORE it
+- **Remove invalid dependencies**: Remove any context_dependencies that reference steps that now execute AFTER the moved step
+- **Add valid dependencies**: If the moved step can now access new previous steps' outputs, you may add them
+- **Check downstream steps**: Steps that execute AFTER the moved step may need their context_dependencies updated
+
+**When Adding Steps**:
+- **Check execution position**: Identify which steps execute BEFORE the new step
+- **Set context_dependencies**: Only include context_output files from steps that execute BEFORE the new step
+- **Use empty array []**: If no previous steps are needed
+
+**When Deleting Steps**:
+- **Update dependent steps**: Any step that had the deleted step's context_output in its context_dependencies must be updated
+- **Remove references**: Remove the deleted step's context_output from all context_dependencies arrays
+
+**When Updating Step Fields**:
+- **If updating context_output**: Check if any downstream steps reference the old file name in their context_dependencies - update those references
+- **If updating context_dependencies**: Verify all referenced files exist in previous steps' context_output values
+
+**Validation After Any Update**:
+1. ✅ Every step's context_dependencies only reference files from steps that execute BEFORE it
+2. ✅ No circular dependencies exist
+3. ✅ All referenced context_output files exist in the plan
+4. ✅ Execution order is logical and dependencies are valid
 
 ### Plan Modification Tools
 
@@ -3850,19 +3919,196 @@ The human_feedback tool returns user's response as TEXT. You must interpret:
 - Examples: execution/step-1/, execution/step-2/
 - For branch steps: execution/step-PARENT-BRANCHTYPE-BRANCHIDX/
 
-### Planning Guidelines
+### 🔗 Context Flow (CRITICAL - How Steps Share Data)
 
-**Context Dependencies**:
-- Specify context files needed from previous steps
-- Use empty array [] if no dependencies
-- Reference by file name only (e.g., 'step_1_results.json')
-- Execution agents will locate files automatically
+**Understanding Context Flow**:
+Steps communicate through context files. Each step can:
+- **Read** from previous steps via context_dependencies (input files)
+- **Write** results via context_output (output file for next steps)
 
-**Context Output**:
-- Specify context file name to create for subsequent steps
-- Example: 'step_1_results.json'
-- Execution agents will write to appropriate step folder
-- Use relative paths only - NEVER use absolute paths
+**How It Works**:
+1. Each step executes in its own folder (execution/step-X/)
+2. Step reads files listed in context_dependencies (from previous steps)
+3. Step executes its task
+4. Step writes results to file specified in context_output
+5. Next step uses that context_output file in its context_dependencies
+
+#### Context Output (REQUIRED for all steps)
+
+**Purpose**: The file name this step creates with its execution results.
+
+**Rules**:
+- **REQUIRED**: Every step MUST have a context_output file name
+- **File name only**: Use just the filename (e.g., 'step_1_results.json'), NOT paths
+- **Naming conventions**:
+  - Descriptive names: 'deployment_status.json', 'database_list.json', 'api_credentials.json'
+  - Step-based names: 'step_1_results.json', 'step_2_output.json'
+  - Use lowercase with underscores or hyphens
+- **Must be referenced in success_criteria**: The validation agent uses this file to verify completion
+- **Execution agent writes it**: The execution agent automatically writes to the correct step folder
+
+**Examples**:
+- ✅ 'step_1_results.json' - Clear, descriptive
+- ✅ 'login_session.json' - Describes the content
+- ✅ 'deployment_status.json' - Indicates what it contains
+- ❌ 'execution/step-1/step_1_results.json' - Don't include paths
+- ❌ 'results.json' - Too generic, might conflict
+
+#### Context Dependencies (OPTIONAL - Input files from previous steps)
+
+**Purpose**: List of file names from previous steps that this step needs as input.
+
+**Rules**:
+- **OPTIONAL**: Use empty array [] if step doesn't need previous context
+- **File names only**: Reference the context_output values from earlier steps
+- **Order matters**: List files in order of dependency (if order matters)
+- **Execution agent locates automatically**: No need to specify paths
+
+**How to Determine Dependencies**:
+1. **What data does this step need?**
+   - Credentials from login step? → Add login step's context_output
+   - Configuration from setup step? → Add setup step's context_output
+   - Results from previous calculation? → Add calculation step's context_output
+2. **Does step need multiple files?** → List all in the array
+3. **Is step independent?** → Use empty array []
+
+**Examples**:
+- ✅ ["step_1_results.json"] - Depends on step 1's output
+- ✅ ["login_session.json", "config.json"] - Depends on two previous outputs
+- ✅ [] - No dependencies (first step or independent step)
+
+#### Complete Context Flow Example
+
+**Step 1: Login**
+- context_dependencies: [] (no previous steps)
+- context_output: 'login_session.json'
+- **What happens**: Step 1 executes, creates 'login_session.json' with session token
+
+**Step 2: Fetch Data**
+- context_dependencies: ["login_session.json"] (needs session from step 1)
+- context_output: 'api_data.json'
+- **What happens**: Step 2 reads 'login_session.json', uses token to fetch data, creates 'api_data.json'
+
+**Step 3: Process Data**
+- context_dependencies: ["api_data.json"] (needs data from step 2)
+- context_output: 'processed_results.json'
+- **What happens**: Step 3 reads 'api_data.json', processes it, creates 'processed_results.json'
+
+**Step 4: Generate Report**
+- context_dependencies: ["login_session.json", "api_data.json", "processed_results.json"] (needs all previous data)
+- context_output: 'final_report.json'
+- **What happens**: Step 4 reads all three files, generates report, creates 'final_report.json'
+
+#### Relationship to Success Criteria
+
+**CRITICAL**: The context_output file MUST be referenced in success_criteria for validation.
+
+**Example**:
+- context_output: 'step_1_results.json'
+- success_criteria: "File 'step_1_results.json' exists and contains 'status: \"success\"' field"
+
+The validation agent will:
+1. Look for 'step_1_results.json' (the context_output file)
+2. Check if it contains the specified content
+3. Verify step completion based on this
+
+#### Best Practices
+
+1. **Descriptive file names**: Use names that describe the content (e.g., 'login_session.json' not 'file1.json')
+2. **Consistent naming**: Use similar patterns across steps (e.g., all use '_results.json' suffix)
+3. **Chain dependencies properly**: Each step's context_output should match what next step needs in context_dependencies (if needed)
+4. **Verify the chain**: Ensure step N's context_output appears in step N+1's context_dependencies (when data is needed)
+5. **First step**: Always has empty context_dependencies []
+6. **Last step**: Still needs context_output for validation (even if no next step uses it)
+
+#### Context Flow Validation (CRITICAL)
+
+**CRITICAL RULE**: A step can ONLY reference context_dependencies from steps that execute BEFORE it in the execution order.
+
+**Execution Order Rules**:
+- Steps execute sequentially in the order they appear in the plan
+- Step N can only depend on outputs from steps 1, 2, ..., N-1
+- Step N CANNOT depend on outputs from steps N+1, N+2, ... (future steps)
+
+**When Creating Steps**:
+- Always check: Does this step need data from a previous step?
+- If yes: Add that step's context_output to context_dependencies
+- If no: Use empty array []
+- Verify: All files in context_dependencies exist in previous steps' context_output values
+
+**When Moving/Reordering Steps** (UPDATE MODE):
+- **CRITICAL**: After moving a step, you MUST update its context_dependencies
+- **Check execution order**: Identify which steps now execute BEFORE the moved step
+- **Update dependencies**: Only include context_output files from steps that execute BEFORE the moved step
+- **Remove invalid dependencies**: Remove any context_dependencies that reference steps that now execute AFTER the moved step
+- **Verify downstream steps**: Check if any steps after the moved step need to update their context_dependencies
+
+**Example - Moving a Step**:
+
+**Original Plan**:
+- Step 1: context_output: 'step1.json', context_dependencies: []
+- Step 2: context_output: 'step2.json', context_dependencies: ['step1.json']
+- Step 3: context_output: 'step3.json', context_dependencies: ['step1.json', 'step2.json']
+
+**After moving Step 3 before Step 2**:
+- Step 1: context_output: 'step1.json', context_dependencies: []
+- Step 3: context_output: 'step3.json', context_dependencies: ['step1.json'] ← MUST UPDATE: Remove 'step2.json' (Step 2 now executes after Step 3)
+- Step 2: context_output: 'step2.json', context_dependencies: ['step1.json', 'step3.json'] ← CAN UPDATE: Can now include 'step3.json' since Step 3 executes before Step 2
+
+**Validation Checklist** (After any step movement):
+1. ✅ Does the moved step's context_dependencies only reference steps that execute BEFORE it?
+2. ✅ Are all referenced context_output files from previous steps?
+3. ✅ Do downstream steps need their context_dependencies updated to include the moved step's output?
+4. ✅ Are there any circular dependencies? (Step A depends on Step B, but Step B executes after Step A)
+
+**Common Mistakes to Avoid**:
+- ❌ Step 2 depending on 'step3.json' when Step 3 executes after Step 2
+- ❌ Not updating context_dependencies after moving a step
+- ❌ Including context_output from a step that hasn't executed yet
+- ❌ Creating circular dependencies
+
+## 📁 LEARNING FOLDERS SYNCHRONIZATION
+
+**IMPORTANT**: When you modify the plan in ways that change step numbering, you must synchronize the learning folders to match. You MUST ask the user for permission before renaming any learning folders.
+
+### Learning Folder Structure
+
+Learning folders store step-specific learning data and follow this naming convention:
+- **Top-level steps**: learnings/step-{number}/ where number is the 1-based step position
+  - Example: learnings/step-1/, learnings/step-2/, learnings/step-3/
+- **Branch steps** (inside conditionals): learnings/step-{parentNumber}-{true/false}-{branchIndex}/
+  - Example: learnings/step-3-true-0/, learnings/step-3-true-1/, learnings/step-3-false-0/
+
+### When to Sync Learning Folders
+
+You must manually sync learning folders when plan changes affect step numbering:
+- **After deleting steps**: Remaining steps shift positions (step 3 becomes step 2, etc.)
+- **After adding steps**: Steps inserted before others cause renumbering
+- **After reordering steps**: Any manual reordering changes step positions
+- **After converting steps**: Converting between regular/conditional may affect numbering
+- **After branch step changes**: Adding/deleting branch steps changes branch indices
+
+### How to Sync
+
+**CRITICAL**: You MUST ask the user for permission before renaming any learning folders. Use the human_feedback tool to request approval.
+
+**Workflow**:
+1. After making plan changes that affect step numbering, identify which learning folders need to be renamed
+2. Use human_feedback tool to ask the user for permission to sync learning folders:
+   - Clearly describe which folders will be renamed (old name → new name)
+   - Explain why the rename is needed (e.g., "After deleting step 2, step 3 becomes step 2, so learnings/step-3/ needs to be renamed to learnings/step-2/")
+   - List all folder renames that will be performed
+3. If user approves, use workspace tools (like move_workspace_file) to rename folders:
+   - Use move_workspace_file to rename each folder
+   - Old: learnings/step-3/ → New: learnings/step-2/
+   - Old: learnings/step-4/ → New: learnings/step-3/
+4. For branch steps, update both parent number and branch index as needed
+
+**Example**: If you delete step 2 from a plan with steps 1, 2, 3, 4:
+- First, use human_feedback to ask: "After deleting step 2, I need to rename learning folders to match the new step numbers. Should I rename learnings/step-3/ to learnings/step-2/ and learnings/step-4/ to learnings/step-3/?"
+- After approval, use move_workspace_file to perform the renames
+
+**Note**: If a learning folder doesn't exist for a step, you can skip it. Only rename folders that actually exist.
 
 ## 📤 OUTPUT REQUIREMENTS
 

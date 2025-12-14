@@ -41,7 +41,6 @@ export interface TodoStepWithConfigs {
   title?: string;
   description?: string;
   success_criteria?: string;
-  why_this_step?: string;
   context_dependencies?: string[];
   context_output?: string;
   success_patterns?: string[];
@@ -122,10 +121,8 @@ export interface PlanStep {
   title: string;
   description?: string;
   success_criteria?: string;
-  why_this_step?: string;
   context_dependencies?: string[];
   context_output?: string | string[];
-  learning_files_to_reference?: string[];
   has_loop?: boolean;
   loop_condition?: string;
   max_iterations?: number;

@@ -27,3 +27,8 @@ export { StructuredOutputEndEventDisplay } from './StructuredOutputEndEvent'
 
 // Workspace file operation event component
 export { WorkspaceFileOperationEventDisplay } from './WorkspaceFileOperationEvent'
+
+// Context summarization event components
+export { ContextSummarizationStartedEventDisplay } from './ContextSummarizationStartedEvent'
+export { ContextSummarizationCompletedEventDisplay } from './ContextSummarizationCompletedEvent'
+export { ContextSummarizationErrorEventDisplay } from './ContextSummarizationErrorEvent'

@@ -97,7 +97,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     agentMode?: 'simple' | 'workflow', 
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig,
-    useCodeExecutionMode?: boolean
+    useCodeExecutionMode?: boolean,
+    enableContextSummarization?: boolean
   ) => {
     try {
       console.log('[code_execution] [ChatHeader] handleSavePreset called with:', {
@@ -117,7 +118,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         selectedFolder, 
         llmConfig,
         useCodeExecutionMode,
-        editingPreset?.id // Pass id if editing, undefined if creating
+        editingPreset?.id, // Pass id if editing, undefined if creating
+        enableContextSummarization
       )
       
       // Apply the preset immediately if it's a new one

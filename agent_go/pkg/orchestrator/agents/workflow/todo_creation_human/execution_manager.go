@@ -139,8 +139,13 @@ func (em *ExecutionManager) PrepareExecution(
 		} else {
 			// Regular step resume
 			resumeStep := opts.ResumeFromStep // 1-based
-			if resumeStep <= 0 {
-				// CRITICAL: resume_from_step=0 would delete all completed steps!
+			// Normalize resume_from_step=0 to 1 (start from step 1)
+			if resumeStep == 0 {
+				resumeStep = 1
+				orch.GetLogger().Info("📝 Normalized resume_from_step=0 to 1 (start from step 1)")
+			}
+			if resumeStep < 0 {
+				// CRITICAL: resume_from_step < 0 is invalid!
 				// Request blocking human feedback approval before proceeding
 				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
 
@@ -245,8 +250,13 @@ func (em *ExecutionManager) PrepareExecution(
 				opts.ResumeFromBranchStep.ParentStepIndex+1, opts.ResumeFromBranchStep.BranchType, opts.ResumeFromBranchStep.BranchStepIndex+1))
 		} else {
 			resumeStep := opts.ResumeFromStep // 1-based
-			if resumeStep <= 0 {
-				// CRITICAL: resume_from_step=0 would delete all completed steps!
+			// Normalize resume_from_step=0 to 1 (start from step 1)
+			if resumeStep == 0 {
+				resumeStep = 1
+				orch.GetLogger().Info("📝 Normalized resume_from_step=0 to 1 (start from step 1)")
+			}
+			if resumeStep < 0 {
+				// CRITICAL: resume_from_step < 0 is invalid!
 				// Request blocking human feedback approval (even in "no human" mode - this is a safety override)
 				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
 
@@ -356,8 +366,13 @@ func (em *ExecutionManager) PrepareExecution(
 				opts.ResumeFromBranchStep.ParentStepIndex+1, opts.ResumeFromBranchStep.BranchType, opts.ResumeFromBranchStep.BranchStepIndex+1))
 		} else {
 			resumeStep := opts.ResumeFromStep // 1-based
-			if resumeStep <= 0 {
-				// CRITICAL: resume_from_step=0 would delete all completed steps!
+			// Normalize resume_from_step=0 to 1 (start from step 1)
+			if resumeStep == 0 {
+				resumeStep = 1
+				orch.GetLogger().Info("📝 Normalized resume_from_step=0 to 1 (start from step 1)")
+			}
+			if resumeStep < 0 {
+				// CRITICAL: resume_from_step < 0 is invalid!
 				// Request blocking human feedback approval (even in fast mode - this is a safety override)
 				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
 

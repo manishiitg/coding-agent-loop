@@ -231,14 +231,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 		}
 	}
 
-	// Convert BranchStepProgress to events.BranchStepProgress
-	branchSteps := make(map[int]events.BranchStepProgress)
-	for k, v := range progress.BranchSteps {
-		branchSteps[k] = events.BranchStepProgress{
-			BranchExecuted: v.BranchExecuted,
-			CompletedSteps: v.CompletedSteps,
-		}
-	}
+	// Use local BranchStepProgress (already in same package)
+	branchSteps := progress.BranchSteps
 
 	eventData := &StepProgressUpdatedEvent{
 		BaseEventData: events.BaseEventData{

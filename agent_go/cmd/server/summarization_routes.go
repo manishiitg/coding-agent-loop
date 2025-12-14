@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -15,6 +16,8 @@ import (
 	"mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+
+	"mcp-agent-builder-go/agent_go/internal/events"
 )
 
 // SummarizeConversationRequest represents a request to summarize conversation history
@@ -47,6 +50,22 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Also check header as fallback (for consistency with other endpoints)
+	if sessionID == "" {
+		sessionID = r.Header.Get("X-Session-ID")
+	}
+
+	log.Printf("[SUMMARIZATION DEBUG] Requested session ID: %s", sessionID)
+	log.Printf("[SUMMARIZATION DEBUG] Available session IDs in conversation history: %v", func() []string {
+		api.conversationMux.RLock()
+		defer api.conversationMux.RUnlock()
+		keys := make([]string, 0, len(api.conversationHistory))
+		for k := range api.conversationHistory {
+			keys = append(keys, k)
+		}
+		return keys
+	}())
+
 	var req SummarizeConversationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		// If body is empty, use defaults
@@ -58,8 +77,16 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 	messages, exists := api.conversationHistory[sessionID]
 	api.conversationMux.RUnlock()
 
+	log.Printf("[SUMMARIZATION DEBUG] Session %s exists: %v, message count: %d", sessionID, exists, len(messages))
+
 	if !exists || len(messages) == 0 {
-		http.Error(w, "No conversation history found for this session", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(SummarizeConversationResponse{
+			SessionID: sessionID,
+			Status:    "error",
+			Message:   "No conversation history found for this session",
+		})
 		return
 	}
 
@@ -94,6 +121,22 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 		keepLastMessages = 8 // Default: keep last 8 messages
 	}
 
+	// Get observer ID from active session or request header
+	observerID := r.Header.Get("X-Observer-ID")
+	if observerID == "" {
+		// Try to get observer ID from active session
+		if activeSession, exists := api.getActiveSession(sessionID); exists {
+			observerID = activeSession.ObserverID
+			log.Printf("[SUMMARIZATION] Using observer ID from active session: %s", observerID)
+		}
+	}
+
+	// If still no observer ID, create a temporary one for event storage
+	if observerID == "" {
+		observerID = fmt.Sprintf("summarization_%s_%d", sessionID, time.Now().UnixNano())
+		log.Printf("[SUMMARIZATION] Created temporary observer ID: %s", observerID)
+	}
+
 	// Create minimal agent with NO_SERVERS to avoid connecting to MCP servers
 	tempAgent, err := mcpagent.NewAgent(
 		ctx,
@@ -107,6 +150,15 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create agent for summarization: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Attach event observer to capture summarization events
+	if api.eventStore != nil {
+		eventObserver := events.NewEventObserverWithLogger(api.eventStore, observerID, sessionID, api.logger)
+		tempAgent.AddEventListener(eventObserver)
+		log.Printf("[SUMMARIZATION] Attached event observer %s to capture summarization events", observerID)
+	} else {
+		log.Printf("[SUMMARIZATION] Warning: eventStore is nil, events will not be captured")
 	}
 
 	// Call summarization

@@ -93,6 +93,11 @@ type EventDataUnion struct {
 	MaxTurnsReached  *events.MaxTurnsReachedEvent  `json:"max_turns_reached,omitempty"`
 	ContextCancelled *events.ContextCancelledEvent `json:"context_cancelled,omitempty"`
 
+	// Context Summarization Events
+	ContextSummarizationStarted   *events.ContextSummarizationStartedEvent   `json:"context_summarization_started,omitempty"`
+	ContextSummarizationCompleted *events.ContextSummarizationCompletedEvent `json:"context_summarization_completed,omitempty"`
+	ContextSummarizationError     *events.ContextSummarizationErrorEvent     `json:"context_summarization_error,omitempty"`
+
 	// Large Output Events
 	LargeToolOutputDetected          *events.LargeToolOutputDetectedEvent          `json:"large_tool_output_detected,omitempty"`
 	LargeToolOutputFileWritten       *events.LargeToolOutputFileWrittenEvent       `json:"large_tool_output_file_written,omitempty"`
@@ -128,8 +133,8 @@ type EventDataUnion struct {
 	// Step Execution Events
 	StepStarted         *todo_creation_human.StepStartedEvent         `json:"step_execution_start,omitempty"`
 	StepFinished        *todo_creation_human.StepFinishedEvent        `json:"step_execution_end,omitempty"`
-	StepFailed          *events.StepFailedEvent                       `json:"step_execution_failed,omitempty"`
-	StepTokenUsage      *events.StepTokenUsageEvent                   `json:"step_token_usage,omitempty"`
+	StepFailed          *todo_creation_human.StepFailedEvent          `json:"step_execution_failed,omitempty"`
+	StepTokenUsage      *todo_creation_human.StepTokenUsageEvent      `json:"step_token_usage,omitempty"`
 	StepProgressUpdated *todo_creation_human.StepProgressUpdatedEvent `json:"step_progress_updated,omitempty"`
 	DecisionEvaluated   *todo_creation_human.DecisionEvaluatedEvent   `json:"decision_evaluated,omitempty"`
 
@@ -237,6 +242,11 @@ var EventTypeMapping = map[events.EventType]string{
 	events.ErrorDetail:      "error_detail",
 	events.MaxTurnsReached:  "max_turns_reached",
 	events.ContextCancelled: "context_cancelled",
+
+	// Context Summarization Events
+	events.ContextSummarizationStarted:   "context_summarization_started",
+	events.ContextSummarizationCompleted: "context_summarization_completed",
+	events.ContextSummarizationError:     "context_summarization_error",
 
 	// Large Output Events
 	events.LargeToolOutputDetected:                   "large_tool_output_detected",
@@ -446,6 +456,11 @@ type UnifiedEvent struct {
 	MaxTurnsReachedEvent            events.MaxTurnsReachedEvent            `json:"max_turns_reached"`
 	ContextCancelledEvent           events.ContextCancelledEvent           `json:"context_cancelled"`
 
+	// Context Summarization Events
+	ContextSummarizationStartedEvent   events.ContextSummarizationStartedEvent   `json:"context_summarization_started"`
+	ContextSummarizationCompletedEvent events.ContextSummarizationCompletedEvent `json:"context_summarization_completed"`
+	ContextSummarizationErrorEvent     events.ContextSummarizationErrorEvent     `json:"context_summarization_error"`
+
 	// Additional MCP Agent Events that exist in backend
 	ToolOutputEvent   events.ToolOutputEvent   `json:"tool_output"`
 	ToolResponseEvent events.ToolResponseEvent `json:"tool_response"`
@@ -475,8 +490,8 @@ type UnifiedEvent struct {
 	// Step Execution Events
 	StepStartedEvent         todo_creation_human.StepStartedEvent         `json:"step_execution_start"`
 	StepFinishedEvent        todo_creation_human.StepFinishedEvent        `json:"step_execution_end"`
-	StepFailedEvent          events.StepFailedEvent                       `json:"step_execution_failed"`
-	StepTokenUsageEvent      events.StepTokenUsageEvent                   `json:"step_token_usage"`
+	StepFailedEvent          todo_creation_human.StepFailedEvent          `json:"step_execution_failed"`
+	StepTokenUsageEvent      todo_creation_human.StepTokenUsageEvent      `json:"step_token_usage"`
 	StepProgressUpdatedEvent todo_creation_human.StepProgressUpdatedEvent `json:"step_progress_updated"`
 
 	// Todo/Planning Events

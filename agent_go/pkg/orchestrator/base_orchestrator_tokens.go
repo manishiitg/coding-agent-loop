@@ -10,6 +10,12 @@ import (
 	"time"
 
 	"mcpagent/events"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/bedrock"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
 
 // tokenFileMutex ensures thread-safe access to token_usage.json
@@ -25,6 +31,87 @@ func formatTokensM(tokens int) string {
 	}
 	millions := float64(tokens) / 1_000_000.0
 	return fmt.Sprintf("%.3fM", millions)
+}
+
+// calculateCostFromTokens calculates the cost for tokens based on model metadata
+// Returns cost in USD
+func calculateCostFromTokens(tokenCount int, costPer1MTokens float64) float64 {
+	if tokenCount <= 0 || costPer1MTokens <= 0 {
+		return 0.0
+	}
+	// Convert from cost per 1M tokens to cost for this token count
+	return (float64(tokenCount) / 1_000_000.0) * costPer1MTokens
+}
+
+// getModelMetadata retrieves model metadata based on provider and modelID
+func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error) {
+	switch strings.ToLower(provider) {
+	case "openai", "openrouter":
+		// Check if it's an OpenRouter model (contains "/")
+		if strings.Contains(modelID, "/") {
+			return openai.GetOpenRouterModelMetadata(modelID)
+		}
+		return openai.GetOpenAIModelMetadata(modelID)
+	case "anthropic":
+		return anthropic.GetAnthropicModelMetadata(modelID)
+	case "vertex":
+		// Vertex supports both Gemini and Anthropic models
+		if strings.Contains(modelID, "claude") || strings.Contains(modelID, "anthropic") {
+			return anthropic.GetAnthropicModelMetadata(modelID)
+		}
+		return vertex.GetVertexGeminiModelMetadata(modelID)
+	case "bedrock":
+		return bedrock.GetBedrockModelMetadata(modelID)
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+// calculatePricingFromModelData calculates pricing from ModelTokenData using model metadata
+func calculatePricingFromModelData(modelData *ModelTokenData) (inputCost, outputCost, reasoningCost, cacheCost, totalCost float64, contextWindow int) {
+	if modelData == nil {
+		return 0, 0, 0, 0, 0, 0
+	}
+
+	// Get model metadata
+	metadata, err := getModelMetadata(modelData.Provider, modelData.ModelID)
+	if err != nil || metadata == nil {
+		// If metadata is not available, return zeros (pricing will be 0)
+		return 0, 0, 0, 0, 0, 0
+	}
+
+	contextWindow = metadata.ContextWindow
+
+	// Calculate input cost (excluding cached tokens which are charged separately)
+	// Input tokens = total input tokens - cached tokens (cached tokens are charged separately at a different rate)
+	inputTokens := modelData.InputTokens - modelData.CacheTokens
+	if inputTokens < 0 {
+		// Safety check: cache tokens should not exceed input tokens
+		// This could indicate a data inconsistency, but we'll clamp to 0 to prevent negative costs
+		inputTokens = 0
+	}
+	if inputTokens > 0 {
+		inputCost = calculateCostFromTokens(inputTokens, metadata.InputCostPer1MTokens)
+	}
+
+	// Calculate output cost
+	if modelData.OutputTokens > 0 {
+		outputCost = calculateCostFromTokens(modelData.OutputTokens, metadata.OutputCostPer1MTokens)
+	}
+
+	// Calculate reasoning cost
+	if modelData.ReasoningTokens > 0 && metadata.ReasoningCostPer1MTokens > 0 {
+		reasoningCost = calculateCostFromTokens(modelData.ReasoningTokens, metadata.ReasoningCostPer1MTokens)
+	}
+
+	// Calculate cache cost (cached tokens are charged at a different rate)
+	if modelData.CacheTokens > 0 && metadata.CachedInputCostPer1MTokens > 0 {
+		cacheCost = calculateCostFromTokens(modelData.CacheTokens, metadata.CachedInputCostPer1MTokens)
+	}
+
+	totalCost = inputCost + outputCost + reasoningCost + cacheCost
+
+	return inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow
 }
 
 // GetStepTokenUsage reads token usage from file for a specific step (aggregated across all models)
@@ -55,13 +142,25 @@ func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int) *StepToken
 
 	// Aggregate across all models for this step
 	result := &StepTokenUsage{}
+	var maxContextUsagePercent float64
 	for _, modelUsage := range modelMap {
 		result.InputTokens += modelUsage.InputTokens
 		result.OutputTokens += modelUsage.OutputTokens
 		result.CacheTokens += modelUsage.CacheTokens
 		result.ReasoningTokens += modelUsage.ReasoningTokens
 		result.LLMCallCount += modelUsage.LLMCallCount
+		// Aggregate pricing
+		result.InputCost += modelUsage.InputCost
+		result.OutputCost += modelUsage.OutputCost
+		result.ReasoningCost += modelUsage.ReasoningCost
+		result.CacheCost += modelUsage.CacheCost
+		result.TotalCost += modelUsage.TotalCost
+		// Track max context usage percentage
+		if modelUsage.ContextUsagePercent > maxContextUsagePercent {
+			maxContextUsagePercent = modelUsage.ContextUsagePercent
+		}
 	}
+	result.ContextUsagePercent = maxContextUsagePercent
 
 	return result
 }
@@ -98,21 +197,33 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 		return
 	}
 
-	// Aggregate tokens across all models for this step
+	// Aggregate tokens and pricing across all models for this step
 	var inputTokens, outputTokens, cacheTokens, reasoningTokens, llmCallCount int
+	var inputCost, outputCost, reasoningCost, cacheCost, totalCost float64
+	var maxContextUsagePercent float64
 	for _, modelUsage := range modelMap {
 		inputTokens += modelUsage.InputTokens
 		outputTokens += modelUsage.OutputTokens
 		cacheTokens += modelUsage.CacheTokens
 		reasoningTokens += modelUsage.ReasoningTokens
 		llmCallCount += modelUsage.LLMCallCount
+		// Aggregate pricing
+		inputCost += modelUsage.InputCost
+		outputCost += modelUsage.OutputCost
+		reasoningCost += modelUsage.ReasoningCost
+		cacheCost += modelUsage.CacheCost
+		totalCost += modelUsage.TotalCost
+		// Track max context usage percentage
+		if modelUsage.ContextUsagePercent > maxContextUsagePercent {
+			maxContextUsagePercent = modelUsage.ContextUsagePercent
+		}
 	}
 
 	// Calculate total for event
 	totalTokens := inputTokens + outputTokens
 
-	// Create and emit step token usage event
-	stepTokenEvent := events.NewStepTokenUsageEvent(
+	// Create and emit step token usage event with pricing
+	stepTokenEvent := events.NewStepTokenUsageEventWithPricing(
 		phase,
 		step,
 		stepTitle,
@@ -123,12 +234,18 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 		reasoningTokens,
 		llmCallCount,
 		0, // CacheEnabledCallCount not stored in file (could be calculated if needed)
+		inputCost,
+		outputCost,
+		reasoningCost,
+		cacheCost,
+		totalCost,
+		maxContextUsagePercent,
 	)
 
 	bo.emitEvent(ctx, events.StepTokenUsage, stepTokenEvent)
 
-	bo.GetLogger().Info(fmt.Sprintf("📊 Emitted step token usage for %s:%d - Input: %d, Output: %d, Cache: %d, Reasoning: %d, Calls: %d",
-		phase, step, inputTokens, outputTokens, cacheTokens, reasoningTokens, llmCallCount))
+	bo.GetLogger().Info(fmt.Sprintf("📊 Emitted step token usage for %s:%d - Input: %d, Output: %d, Cache: %d, Reasoning: %d, Calls: %d, Cost: $%.4f, Context: %.1f%%",
+		phase, step, inputTokens, outputTokens, cacheTokens, reasoningTokens, llmCallCount, totalCost, maxContextUsagePercent))
 }
 
 // GetModelTokenUsage reads token usage from file for a specific model
@@ -254,16 +371,24 @@ func (bo *BaseOrchestrator) GetStepModels(phase string, step int) map[string]*Mo
 	result := make(map[string]*ModelTokenUsage)
 	for modelID, usage := range modelMap {
 		result[modelID] = &ModelTokenUsage{
-			Provider:         usage.Provider,
-			InputTokens:      usage.InputTokens,
-			OutputTokens:     usage.OutputTokens,
-			InputTokensM:     usage.InputTokensM,
-			OutputTokensM:    usage.OutputTokensM,
-			CacheTokens:      usage.CacheTokens,
-			CacheTokensM:     usage.CacheTokensM,
-			ReasoningTokens:  usage.ReasoningTokens,
-			ReasoningTokensM: usage.ReasoningTokensM,
-			LLMCallCount:     usage.LLMCallCount,
+			Provider:            usage.Provider,
+			InputTokens:         usage.InputTokens,
+			OutputTokens:        usage.OutputTokens,
+			InputTokensM:        usage.InputTokensM,
+			OutputTokensM:       usage.OutputTokensM,
+			CacheTokens:         usage.CacheTokens,
+			CacheTokensM:        usage.CacheTokensM,
+			ReasoningTokens:     usage.ReasoningTokens,
+			ReasoningTokensM:    usage.ReasoningTokensM,
+			LLMCallCount:        usage.LLMCallCount,
+			InputCost:           usage.InputCost,
+			OutputCost:          usage.OutputCost,
+			ReasoningCost:       usage.ReasoningCost,
+			CacheCost:           usage.CacheCost,
+			TotalCost:           usage.TotalCost,
+			ContextWindowUsage:  usage.ContextWindowUsage,
+			ModelContextWindow:  usage.ModelContextWindow,
+			ContextUsagePercent: usage.ContextUsagePercent,
 		}
 	}
 
@@ -326,16 +451,24 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		if existingFile.ByModel != nil {
 			for k, v := range existingFile.ByModel {
 				tokenFile.ByModel[k] = &ModelTokenUsage{
-					Provider:         v.Provider,
-					InputTokens:      v.InputTokens,
-					OutputTokens:     v.OutputTokens,
-					InputTokensM:     v.InputTokensM,
-					OutputTokensM:    v.OutputTokensM,
-					CacheTokens:      v.CacheTokens,
-					CacheTokensM:     v.CacheTokensM,
-					ReasoningTokens:  v.ReasoningTokens,
-					ReasoningTokensM: v.ReasoningTokensM,
-					LLMCallCount:     v.LLMCallCount,
+					Provider:            v.Provider,
+					InputTokens:         v.InputTokens,
+					OutputTokens:        v.OutputTokens,
+					InputTokensM:        v.InputTokensM,
+					OutputTokensM:       v.OutputTokensM,
+					CacheTokens:         v.CacheTokens,
+					CacheTokensM:        v.CacheTokensM,
+					ReasoningTokens:     v.ReasoningTokens,
+					ReasoningTokensM:    v.ReasoningTokensM,
+					LLMCallCount:        v.LLMCallCount,
+					InputCost:           v.InputCost,
+					OutputCost:          v.OutputCost,
+					ReasoningCost:       v.ReasoningCost,
+					CacheCost:           v.CacheCost,
+					TotalCost:           v.TotalCost,
+					ContextWindowUsage:  v.ContextWindowUsage,
+					ModelContextWindow:  v.ModelContextWindow,
+					ContextUsagePercent: v.ContextUsagePercent,
 				}
 			}
 		}
@@ -345,16 +478,24 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 				tokenFile.ByStepAndModel[stepKey] = make(map[string]*ModelTokenUsage)
 				for modelID, v := range modelMap {
 					tokenFile.ByStepAndModel[stepKey][modelID] = &ModelTokenUsage{
-						Provider:         v.Provider,
-						InputTokens:      v.InputTokens,
-						OutputTokens:     v.OutputTokens,
-						InputTokensM:     v.InputTokensM,
-						OutputTokensM:    v.OutputTokensM,
-						CacheTokens:      v.CacheTokens,
-						CacheTokensM:     v.CacheTokensM,
-						ReasoningTokens:  v.ReasoningTokens,
-						ReasoningTokensM: v.ReasoningTokensM,
-						LLMCallCount:     v.LLMCallCount,
+						Provider:            v.Provider,
+						InputTokens:         v.InputTokens,
+						OutputTokens:        v.OutputTokens,
+						InputTokensM:        v.InputTokensM,
+						OutputTokensM:       v.OutputTokensM,
+						CacheTokens:         v.CacheTokens,
+						CacheTokensM:        v.CacheTokensM,
+						ReasoningTokens:     v.ReasoningTokens,
+						ReasoningTokensM:    v.ReasoningTokensM,
+						LLMCallCount:        v.LLMCallCount,
+						InputCost:           v.InputCost,
+						OutputCost:          v.OutputCost,
+						ReasoningCost:       v.ReasoningCost,
+						CacheCost:           v.CacheCost,
+						TotalCost:           v.TotalCost,
+						ContextWindowUsage:  v.ContextWindowUsage,
+						ModelContextWindow:  v.ModelContextWindow,
+						ContextUsagePercent: v.ContextUsagePercent,
 					}
 				}
 			}
@@ -366,6 +507,19 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 
 	// Merge new model token data if provided
 	if modelTokenData != nil {
+		// Calculate pricing for this model data
+		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
+
+		// Calculate context window usage percentage
+		var contextUsagePercent float64
+		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+		if contextWindow > 0 {
+			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
+			if contextUsagePercent > 100.0 {
+				contextUsagePercent = 100.0
+			}
+		}
+
 		if existing, exists := tokenFile.ByModel[modelTokenData.ModelID]; exists {
 			// Merge with existing data (add raw integers)
 			existing.InputTokens += modelTokenData.InputTokens
@@ -378,19 +532,44 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
+			// Accumulate pricing
+			existing.InputCost += inputCost
+			existing.OutputCost += outputCost
+			existing.ReasoningCost += reasoningCost
+			existing.CacheCost += cacheCost
+			existing.TotalCost += totalCost
+			// Update context window tracking
+			if contextWindow > 0 {
+				existing.ModelContextWindow = contextWindow
+				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
+				if existing.ModelContextWindow > 0 {
+					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
+					if existing.ContextUsagePercent > 100.0 {
+						existing.ContextUsagePercent = 100.0
+					}
+				}
+			}
 		} else {
 			// New model - create entry
 			tokenFile.ByModel[modelTokenData.ModelID] = &ModelTokenUsage{
-				Provider:         modelTokenData.Provider,
-				InputTokens:      modelTokenData.InputTokens,
-				OutputTokens:     modelTokenData.OutputTokens,
-				InputTokensM:     formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:    formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:      modelTokenData.CacheTokens,
-				CacheTokensM:     formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:  modelTokenData.ReasoningTokens,
-				ReasoningTokensM: formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:     modelTokenData.LLMCallCount,
+				Provider:            modelTokenData.Provider,
+				InputTokens:         modelTokenData.InputTokens,
+				OutputTokens:        modelTokenData.OutputTokens,
+				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:         modelTokenData.CacheTokens,
+				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
+				ReasoningTokens:     modelTokenData.ReasoningTokens,
+				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:        modelTokenData.LLMCallCount,
+				InputCost:           inputCost,
+				OutputCost:          outputCost,
+				ReasoningCost:       reasoningCost,
+				CacheCost:           cacheCost,
+				TotalCost:           totalCost,
+				ContextWindowUsage:  totalTokens,
+				ModelContextWindow:  contextWindow,
+				ContextUsagePercent: contextUsagePercent,
 			}
 		}
 	}
@@ -403,6 +582,19 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		// Initialize step map if it doesn't exist
 		if tokenFile.ByStepAndModel[stepKey] == nil {
 			tokenFile.ByStepAndModel[stepKey] = make(map[string]*ModelTokenUsage)
+		}
+
+		// Calculate pricing for this model data
+		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
+
+		// Calculate context window usage percentage
+		var contextUsagePercent float64
+		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+		if contextWindow > 0 {
+			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
+			if contextUsagePercent > 100.0 {
+				contextUsagePercent = 100.0
+			}
 		}
 
 		// Merge with existing model data for this step if it exists
@@ -418,19 +610,44 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
+			// Accumulate pricing
+			existing.InputCost += inputCost
+			existing.OutputCost += outputCost
+			existing.ReasoningCost += reasoningCost
+			existing.CacheCost += cacheCost
+			existing.TotalCost += totalCost
+			// Update context window tracking
+			if contextWindow > 0 {
+				existing.ModelContextWindow = contextWindow
+				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
+				if existing.ModelContextWindow > 0 {
+					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
+					if existing.ContextUsagePercent > 100.0 {
+						existing.ContextUsagePercent = 100.0
+					}
+				}
+			}
 		} else {
 			// New model for this step - create entry
 			tokenFile.ByStepAndModel[stepKey][modelID] = &ModelTokenUsage{
-				Provider:         modelTokenData.Provider,
-				InputTokens:      modelTokenData.InputTokens,
-				OutputTokens:     modelTokenData.OutputTokens,
-				InputTokensM:     formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:    formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:      modelTokenData.CacheTokens,
-				CacheTokensM:     formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:  modelTokenData.ReasoningTokens,
-				ReasoningTokensM: formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:     modelTokenData.LLMCallCount,
+				Provider:            modelTokenData.Provider,
+				InputTokens:         modelTokenData.InputTokens,
+				OutputTokens:        modelTokenData.OutputTokens,
+				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:         modelTokenData.CacheTokens,
+				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
+				ReasoningTokens:     modelTokenData.ReasoningTokens,
+				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:        modelTokenData.LLMCallCount,
+				InputCost:           inputCost,
+				OutputCost:          outputCost,
+				ReasoningCost:       reasoningCost,
+				CacheCost:           cacheCost,
+				TotalCost:           totalCost,
+				ContextWindowUsage:  totalTokens,
+				ModelContextWindow:  contextWindow,
+				ContextUsagePercent: contextUsagePercent,
 			}
 		}
 	}
@@ -528,16 +745,24 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 				tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*ModelTokenUsage)
 				for modelID, v := range modelMap {
 					tokenFile.ByPhaseAndModel[phaseKey][modelID] = &ModelTokenUsage{
-						Provider:         v.Provider,
-						InputTokens:      v.InputTokens,
-						OutputTokens:     v.OutputTokens,
-						InputTokensM:     v.InputTokensM,
-						OutputTokensM:    v.OutputTokensM,
-						CacheTokens:      v.CacheTokens,
-						CacheTokensM:     v.CacheTokensM,
-						ReasoningTokens:  v.ReasoningTokens,
-						ReasoningTokensM: v.ReasoningTokensM,
-						LLMCallCount:     v.LLMCallCount,
+						Provider:            v.Provider,
+						InputTokens:         v.InputTokens,
+						OutputTokens:        v.OutputTokens,
+						InputTokensM:        v.InputTokensM,
+						OutputTokensM:       v.OutputTokensM,
+						CacheTokens:         v.CacheTokens,
+						CacheTokensM:        v.CacheTokensM,
+						ReasoningTokens:     v.ReasoningTokens,
+						ReasoningTokensM:    v.ReasoningTokensM,
+						LLMCallCount:        v.LLMCallCount,
+						InputCost:           v.InputCost,
+						OutputCost:          v.OutputCost,
+						ReasoningCost:       v.ReasoningCost,
+						CacheCost:           v.CacheCost,
+						TotalCost:           v.TotalCost,
+						ContextWindowUsage:  v.ContextWindowUsage,
+						ModelContextWindow:  v.ModelContextWindow,
+						ContextUsagePercent: v.ContextUsagePercent,
 					}
 				}
 			}
@@ -546,16 +771,24 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 		if existingFile.ByModel != nil {
 			for k, v := range existingFile.ByModel {
 				tokenFile.ByModel[k] = &ModelTokenUsage{
-					Provider:         v.Provider,
-					InputTokens:      v.InputTokens,
-					OutputTokens:     v.OutputTokens,
-					InputTokensM:     v.InputTokensM,
-					OutputTokensM:    v.OutputTokensM,
-					CacheTokens:      v.CacheTokens,
-					CacheTokensM:     v.CacheTokensM,
-					ReasoningTokens:  v.ReasoningTokens,
-					ReasoningTokensM: v.ReasoningTokensM,
-					LLMCallCount:     v.LLMCallCount,
+					Provider:            v.Provider,
+					InputTokens:         v.InputTokens,
+					OutputTokens:        v.OutputTokens,
+					InputTokensM:        v.InputTokensM,
+					OutputTokensM:       v.OutputTokensM,
+					CacheTokens:         v.CacheTokens,
+					CacheTokensM:        v.CacheTokensM,
+					ReasoningTokens:     v.ReasoningTokens,
+					ReasoningTokensM:    v.ReasoningTokensM,
+					LLMCallCount:        v.LLMCallCount,
+					InputCost:           v.InputCost,
+					OutputCost:          v.OutputCost,
+					ReasoningCost:       v.ReasoningCost,
+					CacheCost:           v.CacheCost,
+					TotalCost:           v.TotalCost,
+					ContextWindowUsage:  v.ContextWindowUsage,
+					ModelContextWindow:  v.ModelContextWindow,
+					ContextUsagePercent: v.ContextUsagePercent,
 				}
 			}
 		}
@@ -566,6 +799,19 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 
 	// Merge new model token data if provided (aggregate across all phases)
 	if modelTokenData != nil {
+		// Calculate pricing for this model data
+		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
+
+		// Calculate context window usage percentage
+		var contextUsagePercent float64
+		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+		if contextWindow > 0 {
+			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
+			if contextUsagePercent > 100.0 {
+				contextUsagePercent = 100.0
+			}
+		}
+
 		if existing, exists := tokenFile.ByModel[modelTokenData.ModelID]; exists {
 			// Merge with existing data (add raw integers)
 			existing.InputTokens += modelTokenData.InputTokens
@@ -578,19 +824,44 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
+			// Accumulate pricing
+			existing.InputCost += inputCost
+			existing.OutputCost += outputCost
+			existing.ReasoningCost += reasoningCost
+			existing.CacheCost += cacheCost
+			existing.TotalCost += totalCost
+			// Update context window tracking
+			if contextWindow > 0 {
+				existing.ModelContextWindow = contextWindow
+				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
+				if existing.ModelContextWindow > 0 {
+					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
+					if existing.ContextUsagePercent > 100.0 {
+						existing.ContextUsagePercent = 100.0
+					}
+				}
+			}
 		} else {
 			// New model - create entry
 			tokenFile.ByModel[modelTokenData.ModelID] = &ModelTokenUsage{
-				Provider:         modelTokenData.Provider,
-				InputTokens:      modelTokenData.InputTokens,
-				OutputTokens:     modelTokenData.OutputTokens,
-				InputTokensM:     formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:    formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:      modelTokenData.CacheTokens,
-				CacheTokensM:     formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:  modelTokenData.ReasoningTokens,
-				ReasoningTokensM: formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:     modelTokenData.LLMCallCount,
+				Provider:            modelTokenData.Provider,
+				InputTokens:         modelTokenData.InputTokens,
+				OutputTokens:        modelTokenData.OutputTokens,
+				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:         modelTokenData.CacheTokens,
+				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
+				ReasoningTokens:     modelTokenData.ReasoningTokens,
+				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:        modelTokenData.LLMCallCount,
+				InputCost:           inputCost,
+				OutputCost:          outputCost,
+				ReasoningCost:       reasoningCost,
+				CacheCost:           cacheCost,
+				TotalCost:           totalCost,
+				ContextWindowUsage:  totalTokens,
+				ModelContextWindow:  contextWindow,
+				ContextUsagePercent: contextUsagePercent,
 			}
 		}
 	}
@@ -606,6 +877,19 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 			tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*ModelTokenUsage)
 		}
 
+		// Calculate pricing for this model data
+		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
+
+		// Calculate context window usage percentage
+		var contextUsagePercent float64
+		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+		if contextWindow > 0 {
+			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
+			if contextUsagePercent > 100.0 {
+				contextUsagePercent = 100.0
+			}
+		}
+
 		// Merge with existing model data for this phase if it exists
 		if existing, exists := tokenFile.ByPhaseAndModel[phaseKey][modelID]; exists {
 			// Merge with existing data (add raw integers)
@@ -619,19 +903,44 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
+			// Accumulate pricing
+			existing.InputCost += inputCost
+			existing.OutputCost += outputCost
+			existing.ReasoningCost += reasoningCost
+			existing.CacheCost += cacheCost
+			existing.TotalCost += totalCost
+			// Update context window tracking
+			if contextWindow > 0 {
+				existing.ModelContextWindow = contextWindow
+				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
+				if existing.ModelContextWindow > 0 {
+					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
+					if existing.ContextUsagePercent > 100.0 {
+						existing.ContextUsagePercent = 100.0
+					}
+				}
+			}
 		} else {
 			// New model for this phase - create entry
 			tokenFile.ByPhaseAndModel[phaseKey][modelID] = &ModelTokenUsage{
-				Provider:         modelTokenData.Provider,
-				InputTokens:      modelTokenData.InputTokens,
-				OutputTokens:     modelTokenData.OutputTokens,
-				InputTokensM:     formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:    formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:      modelTokenData.CacheTokens,
-				CacheTokensM:     formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:  modelTokenData.ReasoningTokens,
-				ReasoningTokensM: formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:     modelTokenData.LLMCallCount,
+				Provider:            modelTokenData.Provider,
+				InputTokens:         modelTokenData.InputTokens,
+				OutputTokens:        modelTokenData.OutputTokens,
+				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:         modelTokenData.CacheTokens,
+				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
+				ReasoningTokens:     modelTokenData.ReasoningTokens,
+				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:        modelTokenData.LLMCallCount,
+				InputCost:           inputCost,
+				OutputCost:          outputCost,
+				ReasoningCost:       reasoningCost,
+				CacheCost:           cacheCost,
+				TotalCost:           totalCost,
+				ContextWindowUsage:  totalTokens,
+				ModelContextWindow:  contextWindow,
+				ContextUsagePercent: contextUsagePercent,
 			}
 		}
 	}
@@ -675,13 +984,25 @@ func (bo *BaseOrchestrator) GetPhaseTokenUsage(phase string) *StepTokenUsage {
 
 	// Aggregate across all models for this phase
 	result := &StepTokenUsage{}
+	var maxContextUsagePercent float64
 	for _, modelUsage := range modelMap {
 		result.InputTokens += modelUsage.InputTokens
 		result.OutputTokens += modelUsage.OutputTokens
 		result.CacheTokens += modelUsage.CacheTokens
 		result.ReasoningTokens += modelUsage.ReasoningTokens
 		result.LLMCallCount += modelUsage.LLMCallCount
+		// Aggregate pricing
+		result.InputCost += modelUsage.InputCost
+		result.OutputCost += modelUsage.OutputCost
+		result.ReasoningCost += modelUsage.ReasoningCost
+		result.CacheCost += modelUsage.CacheCost
+		result.TotalCost += modelUsage.TotalCost
+		// Track max context usage percentage
+		if modelUsage.ContextUsagePercent > maxContextUsagePercent {
+			maxContextUsagePercent = modelUsage.ContextUsagePercent
+		}
 	}
+	result.ContextUsagePercent = maxContextUsagePercent
 
 	return result
 }
@@ -745,16 +1066,24 @@ func (bo *BaseOrchestrator) GetAllPhaseTokenUsage() map[string]map[string]*Model
 		result[phase] = make(map[string]*ModelTokenUsage)
 		for modelID, usage := range modelMap {
 			result[phase][modelID] = &ModelTokenUsage{
-				Provider:         usage.Provider,
-				InputTokens:      usage.InputTokens,
-				OutputTokens:     usage.OutputTokens,
-				InputTokensM:     usage.InputTokensM,
-				OutputTokensM:    usage.OutputTokensM,
-				CacheTokens:      usage.CacheTokens,
-				CacheTokensM:     usage.CacheTokensM,
-				ReasoningTokens:  usage.ReasoningTokens,
-				ReasoningTokensM: usage.ReasoningTokensM,
-				LLMCallCount:     usage.LLMCallCount,
+				Provider:            usage.Provider,
+				InputTokens:         usage.InputTokens,
+				OutputTokens:        usage.OutputTokens,
+				InputTokensM:        usage.InputTokensM,
+				OutputTokensM:       usage.OutputTokensM,
+				CacheTokens:         usage.CacheTokens,
+				CacheTokensM:        usage.CacheTokensM,
+				ReasoningTokens:     usage.ReasoningTokens,
+				ReasoningTokensM:    usage.ReasoningTokensM,
+				LLMCallCount:        usage.LLMCallCount,
+				InputCost:           usage.InputCost,
+				OutputCost:          usage.OutputCost,
+				ReasoningCost:       usage.ReasoningCost,
+				CacheCost:           usage.CacheCost,
+				TotalCost:           usage.TotalCost,
+				ContextWindowUsage:  usage.ContextWindowUsage,
+				ModelContextWindow:  usage.ModelContextWindow,
+				ContextUsagePercent: usage.ContextUsagePercent,
 			}
 		}
 	}

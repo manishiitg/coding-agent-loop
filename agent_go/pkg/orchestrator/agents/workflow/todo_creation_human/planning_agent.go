@@ -79,9 +79,9 @@ type AgentConfigs struct {
 	ValidationLLM                 *AgentLLMConfig    `json:"validation_llm,omitempty"`
 	LearningLLM                   *AgentLLMConfig    `json:"learning_llm,omitempty"`
 	ConditionalLLM                *AgentLLMConfig    `json:"conditional_llm,omitempty"`                   // Step-specific conditional LLM for conditional step evaluation
-	ExecutionMaxTurns             *int               `json:"execution_max_turns,omitempty"`               // default: 25
-	ValidationMaxTurns            *int               `json:"validation_max_turns,omitempty"`              // default: 25
-	LearningMaxTurns              *int               `json:"learning_max_turns,omitempty"`                // default: 25
+	ExecutionMaxTurns             *int               `json:"execution_max_turns,omitempty"`               // default: 100
+	ValidationMaxTurns            *int               `json:"validation_max_turns,omitempty"`              // default: 100
+	LearningMaxTurns              *int               `json:"learning_max_turns,omitempty"`                // default: 100
 	DisableValidation             *bool              `json:"disable_validation,omitempty"`                // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	DisableLearning               *bool              `json:"disable_learning,omitempty"`                  // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LockLearnings                 *bool              `json:"lock_learnings,omitempty"`                    // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)

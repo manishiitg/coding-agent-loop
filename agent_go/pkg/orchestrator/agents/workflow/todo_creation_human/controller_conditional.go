@@ -133,7 +133,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 
 	// Evaluate condition using ConditionalAgent
 	// Note: Branch step execution agents will set their own context when created via createExecutionOnlyAgent
-	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, step.ConditionQuestion, stepIndex, 0, isCodeExecutionMode, learningHistory)
+	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, step.ConditionQuestion, step.Description, stepIndex, 0, isCodeExecutionMode, learningHistory)
 
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate condition for step %d: %v", stepIndex+1, err), nil)

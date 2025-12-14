@@ -21,6 +21,7 @@ interface NodeConfigFooterProps {
   executionMaxTurns?: number
   learningLLM?: string | null
   learningDetailLevel?: string | null
+  lockLearnings?: boolean
   effectiveServers?: string[]
   toolsDisplayInfo?: ToolsDisplayInfo[]
   workspaceToolsInfo?: WorkspaceToolsInfo
@@ -36,6 +37,7 @@ export const NodeConfigFooter = memo(({
   executionMaxTurns = 25,
   learningLLM,
   learningDetailLevel,
+  lockLearnings = false,
   effectiveServers = [],
   toolsDisplayInfo = [],
   workspaceToolsInfo,
@@ -73,7 +75,12 @@ export const NodeConfigFooter = memo(({
         )}
         {learningLLM && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/30 text-amber-600 dark:text-amber-400">
-            Learn: {learningLLM}{learningDetailLevel && ` (${learningDetailLevel})`}
+            Learn: {learningLLM}{learningDetailLevel && ` (${learningDetailLevel})`}{lockLearnings && ' 🔒'}
+          </span>
+        )}
+        {lockLearnings && !learningLLM && (
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300" title="Learnings are locked - learning agent will not run but existing learnings will be used">
+            Learnings Locked 🔒
           </span>
         )}
         {effectiveServers.map((s, i) => (

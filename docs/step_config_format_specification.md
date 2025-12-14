@@ -22,6 +22,7 @@ Both frontend and backend **read and write** only the object format with `steps`
         "use_code_execution_mode": true,
         "disable_validation": false,
         "disable_learning": false,
+        "lock_learnings": false,
         "learning_detail_level": "general",
         "enable_large_output_virtual_tools": false,
         "enable_prerequisite_detection": true,

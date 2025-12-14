@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings } from 'lucide-react'
+import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings, Lock } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -129,6 +129,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     execution_max_turns?: number
     learning_llm?: { provider?: string; model_id?: string }
     disable_learning?: boolean
+    lock_learnings?: boolean
     learning_detail_level?: 'exact' | 'general'
     learning_after_loop_iteration?: boolean
     selected_servers?: string[]
@@ -200,6 +201,11 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     }
     return stepConfig?.agent_configs?.learning_detail_level || 'exact'
   }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
+
+  // Lock learnings status
+  const lockLearnings = useMemo(() => {
+    return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
+  }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
 
   // Execution max turns (defaults to 25)
   const executionMaxTurns = useMemo(() => {
@@ -486,6 +492,16 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
               <span>Agent</span>
             </div>
           )}
+          {/* Lock Learnings Badge */}
+          {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
+            <div 
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
+              title="Learnings are locked - learning agent will not run but existing learnings will be used"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Locked</span>
+            </div>
+          )}
           {statusIcons[status]}
         </div>
       </div>
@@ -597,6 +613,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
         executionMaxTurns={executionMaxTurns}
         learningLLM={learningLLM}
         learningDetailLevel={learningDetailLevel}
+        lockLearnings={lockLearnings}
         effectiveServers={effectiveServers}
         toolsDisplayInfo={toolsDisplayInfo}
         workspaceToolsInfo={workspaceToolsInfo}

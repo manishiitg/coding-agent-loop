@@ -596,6 +596,16 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       }
     }
 
+    // Handle lock_learnings: explicitly save true when locked, false when unlocked
+    if (agentConfigs.lock_learnings === true) {
+      finalConfigs.lock_learnings = true;
+    } else if (agentConfigs.lock_learnings === false) {
+      finalConfigs.lock_learnings = false;
+    } else {
+      // State is undefined - keep undefined (default unlocked, field omitted from JSON)
+      finalConfigs.lock_learnings = undefined;
+    }
+
     // Handle disable_validation: explicitly save false when enabled, true when disabled
     // Similar logic to disable_learning
     if (agentConfigs.disable_validation === false) {
@@ -1140,6 +1150,36 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         </select>
                       );
                     })()}
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={agentConfigs.lock_learnings || false}
+                        onChange={(e) => {
+                          setAgentConfigs((prev): AgentConfigs => ({
+                            ...prev,
+                            lock_learnings: e.target.checked,
+                          }));
+                        }}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-xs text-gray-600 dark:text-gray-400">
+                        Lock Learnings
+                      </span>
+                    </label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help">ℹ️</span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="text-xs">
+                            Prevents learning agent from running but still uses existing learnings. Useful when learnings are stable and don't need updates.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 </div>
               ) : (

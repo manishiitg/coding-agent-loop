@@ -113,6 +113,29 @@ export const LearningNode = memo(({ data, selected }: LearningNodeProps) => {
         position={Position.Right}
         className="!w-2.5 !h-2.5 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
       />
+
+      {/* Prerequisite source handles (bottom, for edges going back to previous steps when prerequisite is detected during execution) */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="prereq-left"
+        style={{ left: '25%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-800"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="prereq-middle"
+        style={{ left: '50%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-800"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="prereq-right"
+        style={{ left: '75%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-800"
+      />
     </div>
   )
 })

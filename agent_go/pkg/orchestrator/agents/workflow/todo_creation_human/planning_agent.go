@@ -87,6 +87,7 @@ type AgentConfigs struct {
 	LearningMaxTurns              *int               `json:"learning_max_turns,omitempty"`                // default: 25
 	DisableValidation             *bool              `json:"disable_validation,omitempty"`                // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	DisableLearning               *bool              `json:"disable_learning,omitempty"`                  // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LockLearnings                 *bool              `json:"lock_learnings,omitempty"`                    // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration    bool               `json:"learning_after_loop_iteration,omitempty"`     // run learning after each loop iteration
 	LearningDetailLevel           string             `json:"learning_detail_level,omitempty"`             // "exact", "general", or "none" (default: "exact")
 	SelectedServers               []string           `json:"selected_servers,omitempty"`                  // step-level MCP server selection (subset of preset servers)

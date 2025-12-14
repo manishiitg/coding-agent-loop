@@ -92,7 +92,10 @@ import {
   ComprehensiveCacheEventDisplay,
   StructuredOutputStartEventDisplay,
   StructuredOutputEndEventDisplay,
-  WorkspaceFileOperationEventDisplay
+  WorkspaceFileOperationEventDisplay,
+  ContextSummarizationStartedEventDisplay,
+  ContextSummarizationCompletedEventDisplay,
+  ContextSummarizationErrorEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
@@ -414,6 +417,17 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'structured_output_end')) {
     return <CompactWrapper><StructuredOutputEndEventDisplay event={getEventData(event)} /></CompactWrapper>
+  }
+
+  // Context Summarization Events
+  if (isEventType(event, 'context_summarization_started')) {
+    return <CompactWrapper><ContextSummarizationStartedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+  if (isEventType(event, 'context_summarization_completed')) {
+    return <CompactWrapper><ContextSummarizationCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+  if (isEventType(event, 'context_summarization_error')) {
+    return <CompactWrapper><ContextSummarizationErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Planning Events

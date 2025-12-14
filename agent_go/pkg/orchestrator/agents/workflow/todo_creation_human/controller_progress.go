@@ -94,7 +94,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepStartedEvent(ctx con
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
-	startedEvent := &events.StepStartedEvent{
+	startedEvent := &StepStartedEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
@@ -137,7 +137,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepFinishedEvent(ctx co
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
-	finishedEvent := &events.StepFinishedEvent{
+	finishedEvent := &StepFinishedEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
@@ -231,16 +231,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 		}
 	}
 
-	// Convert BranchStepProgress to events.BranchStepProgress
-	branchSteps := make(map[int]events.BranchStepProgress)
-	for k, v := range progress.BranchSteps {
-		branchSteps[k] = events.BranchStepProgress{
-			BranchExecuted: v.BranchExecuted,
-			CompletedSteps: v.CompletedSteps,
-		}
-	}
+	// Use local BranchStepProgress (already in same package)
+	branchSteps := progress.BranchSteps
 
-	eventData := &events.StepProgressUpdatedEvent{
+	eventData := &StepProgressUpdatedEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},

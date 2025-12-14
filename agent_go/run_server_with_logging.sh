@@ -58,6 +58,12 @@ export TOOL_EXECUTION_TIMEOUT="2m"
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"
 
+# Context summarization configuration
+export ENABLE_CONTEXT_SUMMARIZATION="true"
+export SUMMARIZE_ON_TOKEN_THRESHOLD="true"
+export TOKEN_THRESHOLD_PERCENT="0.1"  # 10% for testing (default: 0.1 = 10%)
+export SUMMARY_KEEP_LAST_MESSAGES="8"  # Keep last 8 messages when summarizing
+
 # Set main LLM configuration
 export DEEP_SEARCH_MAIN_LLM_PROVIDER="openrouter"
 export DEEP_SEARCH_MAIN_LLM_MODEL="x-ai/grok-code-fast-1"
@@ -123,6 +129,9 @@ echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" | tee -a "$LO
 echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" | tee -a "$LOG_FILE"
 echo "- Workspace tools: Enabled" | tee -a "$LOG_FILE"
+echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" | tee -a "$LOG_FILE"
+echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (10% for testing)" | tee -a "$LOG_FILE"
+echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" | tee -a "$LOG_FILE"
 echo "=========================================" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
@@ -139,6 +148,7 @@ echo "🔄 OpenRouter Cross-Provider Fallback: $OPENROUTER_CROSS_FALLBACK_PROVID
 echo "🔄 Vertex Anthropic Fallback Models: $VERTEX_ANTHROPIC_FALLBACK_MODELS"
 echo "🔧 Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL"
 echo "📁 Workspace Tools: Enabled"
+echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 10% for testing)"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console

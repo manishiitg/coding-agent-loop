@@ -18,6 +18,9 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
     reasoning_tokens?: number
   }) : null
 
+  // Extract context usage from metadata
+  const contextUsagePercent = event.metadata?.context_usage_percent as number | undefined
+
   const bgColor = isSuccess
     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
     : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
@@ -70,6 +73,11 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
                         </span>
                       )}
                     </>
+                  )}
+                  {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                    <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}>
+                      {' • Context: '}{contextUsagePercent.toFixed(1)}%
+                    </span>
                   )}
                 </span>
               </div>

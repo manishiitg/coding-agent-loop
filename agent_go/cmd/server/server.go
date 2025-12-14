@@ -247,6 +247,11 @@ type QueryRequest struct {
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
+	// Context summarization configuration
+	EnableContextSummarization bool    `json:"enable_context_summarization,omitempty"` // Enable context summarization feature
+	SummarizeOnTokenThreshold  bool    `json:"summarize_on_token_threshold,omitempty"` // Enable token-based summarization trigger
+	TokenThresholdPercent      float64 `json:"token_threshold_percent,omitempty"`      // Percentage of context window to trigger summarization (0.0-1.0, default: 0.7 = 70%)
+	SummaryKeepLastMessages    int     `json:"summary_keep_last_messages,omitempty"`   // Number of recent messages to keep when summarizing (default: 8)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -258,6 +263,7 @@ type CrossProviderFallback struct {
 // QueryResponse represents an agent query response
 type QueryResponse struct {
 	QueryID    string `json:"query_id"`
+	SessionID  string `json:"session_id"` // The actual session ID used for conversation history
 	ObserverID string `json:"observer_id"`
 	Status     string `json:"status"`
 	Message    string `json:"message,omitempty"`
@@ -1151,6 +1157,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Return immediate response with query ID and observer ID
 		response := QueryResponse{
 			QueryID:    queryID,
+			SessionID:  sessionID,  // Include the actual session ID used for conversation history
 			ObserverID: observerID, // Include observer ID in response
 			Status:     "started",
 			Message:    "Query processing started. Use polling API to get real-time updates.",
@@ -1374,6 +1381,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Return immediate response with query ID and observer ID
 	response := QueryResponse{
 		QueryID:    queryID,
+		SessionID:  sessionID,  // Include the actual session ID used for conversation history
 		ObserverID: observerID, // Include observer ID in response
 		Status:     "started",
 		Message:    "Query processing started. Use polling API to get real-time updates.",
@@ -1538,6 +1546,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create new agent with streamCtx instead of r.Context()
+		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
 		agentConfig := agent.LLMAgentConfig{
 			Name:               sessionID,
 			ServerName:         serverList, // Use full server list, not just first one
@@ -1579,6 +1588,54 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return llmKeys
 				}
 				return nil
+			}(),
+			// Context summarization configuration
+			// Priority: Request > Environment Variable > Default
+			EnableContextSummarization: func() bool {
+				if req.EnableContextSummarization {
+					return true
+				}
+				// Check environment variable
+				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "true" {
+					return true
+				}
+				return false
+			}(),
+			SummarizeOnTokenThreshold: func() bool {
+				if req.SummarizeOnTokenThreshold {
+					return true
+				}
+				// Check environment variable
+				if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "true" {
+					return true
+				}
+				return false
+			}(),
+			TokenThresholdPercent: func() float64 {
+				// Request takes highest priority
+				if req.TokenThresholdPercent > 0 {
+					return req.TokenThresholdPercent
+				}
+				// Check environment variable
+				if envVal := os.Getenv("TOKEN_THRESHOLD_PERCENT"); envVal != "" {
+					if threshold, err := strconv.ParseFloat(envVal, 64); err == nil && threshold > 0 && threshold <= 1.0 {
+						return threshold
+					}
+				}
+				// Default to 10% (0.1) for testing
+				return 0.1
+			}(),
+			SummaryKeepLastMessages: func() int {
+				if req.SummaryKeepLastMessages > 0 {
+					return req.SummaryKeepLastMessages
+				}
+				// Check environment variable
+				if envVal := os.Getenv("SUMMARY_KEEP_LAST_MESSAGES"); envVal != "" {
+					if keepLast, err := strconv.Atoi(envVal); err == nil && keepLast > 0 {
+						return keepLast
+					}
+				}
+				return 0 // 0 means use default (8 messages)
 			}(),
 		}
 
@@ -1780,9 +1837,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[CONVERSATION DEBUG] No conversation history found for session %s, starting fresh", sessionID)
 		}
 
-		// Add the current user message
-		llmAgent.AppendUserMessage(req.Query)
-
+		// Note: User message is added by StreamWithEvents internally, no need to add it here
 		// --- END: Load conversation history and accumulate for streaming ---
 
 		log.Printf("[AGENT DEBUG] Starting agent processing for query %s", queryID)

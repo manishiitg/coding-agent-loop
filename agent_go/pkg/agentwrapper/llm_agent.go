@@ -61,6 +61,12 @@ type LLMAgentConfig struct {
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool
 	APIKeys              *llm.ProviderAPIKeys // API keys for providers
+
+	// Context summarization configuration
+	EnableContextSummarization bool    // Enable context summarization feature
+	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
+	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.7 = 70%)
+	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default: 8)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -215,6 +221,23 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.UseCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
 		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
+	}
+
+	// Add context summarization options if enabled
+	if config.EnableContextSummarization {
+		agentOptions = append(agentOptions, mcpagent.WithContextSummarization(true))
+		if config.SummarizeOnTokenThreshold {
+			thresholdPercent := config.TokenThresholdPercent
+			if thresholdPercent <= 0 || thresholdPercent > 1.0 {
+				thresholdPercent = 0.7 // Default to 70%
+			}
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, thresholdPercent))
+		}
+		if config.SummaryKeepLastMessages > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(config.SummaryKeepLastMessages))
+		}
+		logger.Info(fmt.Sprintf("📝 Context summarization enabled - Token threshold: %v (%.0f%%), Keep last messages: %d",
+			config.SummarizeOnTokenThreshold, config.TokenThresholdPercent*100, config.SummaryKeepLastMessages))
 	}
 
 	// Add smart routing options if enabled

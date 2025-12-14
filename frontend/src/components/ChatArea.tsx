@@ -306,6 +306,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const lastEventIndexRef = useRef<number>(-1)
   const totalEventsRef = useRef<number>(0)
 
+  // Track if observer initialization is in progress to prevent duplicate calls (React StrictMode)
+  const isInitializingObserverRef = useRef<boolean>(false)
+
   // Immediate scroll handler for better responsiveness
   const handleScroll = useCallback(() => {
     if (!chatContentRef.current) return;
@@ -549,6 +552,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Initialize observer on mount (only if not loading from chat session)
   useEffect(() => {
+    // Prevent duplicate initialization calls (React StrictMode in development)
+    if (isInitializingObserverRef.current) {
+      console.log('[INIT] Skipping observer initialization - already in progress')
+      return
+    }
+
     // If we have a chatSessionId and don't require a new chat, don't initialize observer
     if (chatSessionId && !requiresNewChat) {
       console.log('[INIT] Skipping observer initialization - chatSessionId exists and requiresNewChat is false')
@@ -568,6 +577,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     console.log('[INIT] Starting observer initialization...')
+    
+    // Mark initialization as in progress to prevent duplicate calls
+    isInitializingObserverRef.current = true
     
     // Clear any existing observer ID to ensure fresh start
     setObserverId('')
@@ -592,6 +604,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           // Clear the requiresNewChat flag after successful initialization
           useAppStore.getState().clearRequiresNewChat()
           console.log('[INIT] Cleared requiresNewChat flag after successful observer registration')
+          
+          // Clear initialization flag on success
+          isInitializingObserverRef.current = false
         } else {
           console.error('[INIT] No observer_id received from server')
           // Retry if we haven't exceeded max retries
@@ -601,6 +616,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             retryTimeout = setTimeout(() => initializeObserver(), retryDelay)
           } else {
             console.error('[INIT] Max retries exceeded, giving up on observer registration')
+            // Clear initialization flag on max retries exceeded
+            isInitializingObserverRef.current = false
           }
         }
       } catch (error) {
@@ -622,20 +639,27 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           retryTimeout = setTimeout(() => initializeObserver(), retryDelay)
         } else {
           console.error('[INIT] Max retries exceeded, giving up on observer registration')
+          // Clear initialization flag on max retries exceeded
+          isInitializingObserverRef.current = false
         }
       }
     }
 
     initializeObserver()
     
-    // Cleanup function to clear any pending retry timeout
+    // Cleanup function to clear any pending retry timeout and reset initialization flag
     return () => {
       if (retryTimeout) {
         clearTimeout(retryTimeout)
         console.log('[INIT] Cleaned up observer registration retry timeout')
       }
+      // Reset initialization flag on cleanup (component unmount)
+      isInitializingObserverRef.current = false
     }
-  }, [chatSessionId, setObserverId, requiresNewChat, observerId])
+    // Note: observerId is intentionally NOT in dependencies to prevent re-initialization loops
+    // We check observerId inside the effect, but don't want to re-run when it changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatSessionId, requiresNewChat])
 
   // Event batching for performance
   const eventBatchRef = useRef<PollingEvent[]>([])
@@ -1371,12 +1395,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         use_code_execution_mode: useCodeExecutionMode !== undefined ? useCodeExecutionMode : undefined,
         // Execution options from frontend (for workflow execution phase)
         execution_options: executionOptionsRef.current,
+        // Context summarization: Enable by default for chat mode
+        enable_context_summarization: selectedModeCategory === 'chat' ? true : undefined,
+        summarize_on_max_turns: selectedModeCategory === 'chat' ? true : undefined,
+        summary_keep_last_messages: selectedModeCategory === 'chat' ? 8 : undefined,
       }
       
       console.log('[code_execution] [ChatArea] API Request payload:', {
         use_code_execution_mode: requestPayload.use_code_execution_mode,
         type: typeof requestPayload.use_code_execution_mode,
-        preset_query_id: requestPayload.preset_query_id
+        preset_query_id: requestPayload.preset_query_id,
+        enabled_servers: requestPayload.enabled_servers,
+        enabled_servers_count: requestPayload.enabled_servers?.length || 0
       })
       
       // Submit query to backend
@@ -1384,7 +1414,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
       if (response.status === 'started' || response.status === 'workflow_started') {
         // Update session ID for subsequent requests
-        if (response.query_id) {
+        // Use session_id from response (matches backend storage), fallback to query_id for backwards compatibility
+        if (response.session_id) {
+          setSessionId(response.session_id)
+        } else if (response.query_id) {
           setSessionId(response.query_id)
         }
         

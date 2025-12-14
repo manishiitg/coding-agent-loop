@@ -41,6 +41,11 @@ export const SystemPromptEventDisplay: React.FC<SystemPromptEventDisplayProps> =
                 {isExpanded ? '↑ Collapse' : '↓ Expand'}
               </button>
             )}
+            {event.token_count !== undefined && event.token_count > 0 && (
+              <div className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
+                📊 {event.token_count.toLocaleString()} tokens
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -71,11 +76,18 @@ export const SystemPromptEventDisplay: React.FC<SystemPromptEventDisplayProps> =
             </button>
           )}
 
-          {event.timestamp && (
-            <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-              {new Date(event.timestamp).toLocaleString()}
-            </div>
-          )}
+          <div className="flex items-center gap-3 mt-2">
+            {event.token_count !== undefined && event.token_count > 0 && (
+              <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                📊 {event.token_count.toLocaleString()} tokens
+              </div>
+            )}
+            {event.timestamp && (
+              <div className="text-xs text-blue-600 dark:text-blue-400">
+                {new Date(event.timestamp).toLocaleString()}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

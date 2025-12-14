@@ -2052,6 +2052,132 @@ func registerVariableExtractionTools(
 	return nil
 }
 
+// getExtractVariablesSchema returns the JSON schema for extract_variables tool
+func getExtractVariablesSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"text": {
+				"type": "string",
+				"description": "Text or objective to extract variables from. Look for hard-coded values like URLs, account IDs, ports, credentials, resource names, environment values, hosts/endpoints, specific identifiers, paths, and configurations."
+			}
+		},
+		"required": ["text"]
+	}`
+}
+
+// createExtractVariablesExecutor creates an executor function for extract_variables tool
+func createExtractVariablesExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Extract text to analyze
+		textRaw, ok := args["text"].(string)
+		if !ok || textRaw == "" {
+			return "", fmt.Errorf(fmt.Sprintf("invalid text argument"), nil)
+		}
+		text := textRaw
+
+		// Check if variables.json already exists, create if it doesn't
+		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			// Variables file doesn't exist - create new manifest
+			manifest = &VariablesManifest{
+				Variables:      []Variable{},
+				Groups:         []VariableGroup{},
+				ExtractionDate: time.Now().Format(time.RFC3339),
+				Objective:      "", // Not important anymore, but keep for backward compatibility
+			}
+			// Write the new manifest
+			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
+				return "", fmt.Errorf(fmt.Sprintf("failed to create variables.json: %w", err), nil)
+			}
+		}
+
+		// Log the extraction request
+		textPreview := text
+		if len(text) > 100 {
+			textPreview = text[:100] + "..."
+		}
+		logger.Info(fmt.Sprintf("📝 Extract variables tool called with text: %s", textPreview))
+
+		// Write changelog entry for extraction initiation
+		detailsJSON, _ := json.Marshal(map[string]interface{}{
+			"text_preview":             textPreview,
+			"existing_variables_count": len(manifest.Variables),
+		})
+		changelogEntry := VariableChangeLogEntry{
+			Timestamp:   time.Now().Format(time.RFC3339),
+			ChangeType:  "extraction",
+			Description: fmt.Sprintf("Variable extraction initiated from text (existing variables: %d)", len(manifest.Variables)),
+			Details:     string(detailsJSON),
+			Changes:     []VariableFieldChange{},
+		}
+		if err := writeVariableChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to write variable changelog entry: %v", err))
+		}
+
+		// Return guidance for the LLM to extract variables
+		// The LLM should analyze the text and use update_variable tool to add each variable
+		return fmt.Sprintf("Variables file ready. Analyze the provided text and extract hard-coded values as variables. Use update_variable tool with action='add' to add each extracted variable. Look for: URLs, account IDs, ports, credentials, resource names, environment values, hosts/endpoints, specific identifiers, paths, and configurations. For each value found, create a variable with UPPER_SNAKE_CASE name, the original value, and a clear description. Current variables file has %d variables.", len(manifest.Variables)), nil
+	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// registerVariableExtractionTools registers variable extraction and management tools
+// This allows the planning agent to extract and manage variables based on human input
+func registerVariableExtractionTools(
+	mcpAgent *mcpagent.Agent,
+	workspacePath string,
+	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
+	agentName string, // e.g., "planning agent"
+) error {
+	// Register extract_variables tool
+	extractSchema := getExtractVariablesSchema()
+	extractParams, err := parseSchemaForToolParameters(extractSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse extract_variables schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"extract_variables",
+		"Extract variables from text or objective. Provide the text to analyze, and the tool will guide you to extract hard-coded values (URLs, account IDs, ports, credentials, resource names, etc.) as variables. After extraction, use update_variable tool to add each variable.",
+		extractParams,
+		createExtractVariablesExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register extract_variables tool: %w", err), nil)
+	}
+
+	// Register update_variable tool (reuse from variable_extraction_agent.go)
+	updateVariableSchema := getUpdateVariableSchema()
+	updateVariableParams, err := parseSchemaForToolParameters(updateVariableSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse update_variable schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_variable",
+		"Update, add, or delete variables in variables.json. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update. The variables.json file is updated immediately when this tool is called.",
+		updateVariableParams,
+		createUpdateVariableExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register update_variable tool: %w", err), nil)
+	}
+
+	if logger != nil {
+		logger.Info(fmt.Sprintf("✅ Registered variable extraction tools for %s", agentName))
+	}
+
+	return nil
+}
+
 // createConvertStepToConditionalExecutor creates an executor function for convert_step_to_conditional tool
 func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -3921,6 +4047,7 @@ The human_feedback tool returns user's response as TEXT. You must interpret:
 
 ### 🔗 Context Flow (CRITICAL - How Steps Share Data)
 
+<<<<<<< HEAD
 **Understanding Context Flow**:
 Steps communicate through context files. Each step can:
 - **Read** from previous steps via context_dependencies (input files)
@@ -4109,6 +4236,19 @@ You must manually sync learning folders when plan changes affect step numbering:
 - After approval, use move_workspace_file to perform the renames
 
 **Note**: If a learning folder doesn't exist for a step, you can skip it. Only rename folders that actually exist.
+=======
+**Context Dependencies**:
+- Specify context files needed from previous steps
+- Use empty array [] if no dependencies
+- Reference by file name only (e.g., 'step_1_results.json')
+- Execution agents will locate files automatically
+
+**Context Output**:
+- Specify context file name to create for subsequent steps
+- Example: 'step_1_results.json'
+- Execution agents will write to appropriate step folder
+- Use relative paths only - NEVER use absolute paths
+>>>>>>> 39cbb2ac3f60f1bfdfb61e89bb21c7d1e5ee8c14
 
 ## 📤 OUTPUT REQUIREMENTS
 
